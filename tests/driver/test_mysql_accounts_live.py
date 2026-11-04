@@ -276,6 +276,45 @@ def test_guardrail_9_refuses_a_described_account_with_a_global_privilege(stage: 
     assert [refusal.check for refusal in review.refusals] == [guardrails.GLOBAL_PRIVILEGE]
 
 
+@pytest.mark.parametrize("password", ["Acme-pässwörd-é", "Acme-pass-€-word"])
+def test_a_password_that_is_not_ascii_is_set_and_verified_by_login(
+    stage: Stage, password: str
+) -> None:
+    """The hash is over the password's UTF-8 bytes, and so is the login:
+    PyMySQL would encode a str as latin-1, refusing `é` with 1045 and raising
+    on `€` (#1285)."""
+    user = stage.account("%")
+    stage.session.set_password(f"{user}@%", Secret(password))
+
+    result = stage.session.verify_password(f"{user}@%", Secret(password))
+
+    assert result.result == "pass", result.detail
+
+
+@pytest.mark.parametrize("password", ["Acme-pässwörd-é", "Acme-pass-€-word"])
+def test_a_tool_account_whose_password_is_not_ascii_logs_in(live_mysql: Any, password: str) -> None:
+    """The tool's own login goes through the same arguments (#1285)."""
+    tool = f"sopuli_tool_{uuid.uuid4().hex[:8]}"
+    with live_mysql.connect() as admin, admin.cursor() as cursor:
+        cursor.execute("create user %s@'%%' identified by %s", (tool, password))
+    target = ExpandedTarget(
+        target=Target(
+            name="tier1-mysql",
+            type="mysql",
+            dsn=live_mysql.dsn,
+            mysql=TargetMysql(ssl_mode="REQUIRED"),
+        )
+    )
+    try:
+        session = session_module.MysqlDriver(correlation_id="tier1").connect(
+            target, Credential(username=tool, secret=Secret(password))
+        )
+        session.close()
+    finally:
+        with live_mysql.connect() as admin, admin.cursor() as cursor:
+            cursor.execute("drop user %s@'%%'", (tool,))
+
+
 def test_a_password_set_by_the_driver_reaches_no_log_and_logs_in(
     stage: Stage, live_mysql: Any
 ) -> None:

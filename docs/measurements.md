@@ -337,3 +337,7 @@ Not measured: every other release, Galera, and every managed service.
 | `05_identity_grants_probe.py` | `11.4.13` | 2026-11-04 | #1267 | As on 10.11.19 |
 | `05_identity_grants_probe.py` | `11.8.9` | 2026-11-04 | #1267 | As on 10.11.19 |
 | `05_identity_grants_probe.py` | `12.3.3` | 2026-11-01 | #1220 | As on 10.11.19 |
+| `06_pymysql_login_probe.py` | `10.11.19` | 2026-11-04 | #1267 | PyMySQL 1.2.3 logs in on `mysql_native_password`, and on `ed25519` with PyNaCl 1.6.2; a wrong password is refused, `1045`. Without PyNaCl, `ed25519` raises `RuntimeError`. TLS is off, and PyMySQL, given a context, refuses each login itself, `2026` |
+| `06_pymysql_login_probe.py` | `11.4.13` | 2026-11-04 | #1267 | As on 10.11.19, but TLS is on, and the same logins work over it |
+| `06_pymysql_login_probe.py` | `11.8.9` | 2026-11-04 | #1267 | As on 11.4.13. On `parsec`, PyMySQL refuses the login itself, `2059`: it has no client for the plugin |
+| `06_pymysql_login_probe.py` | `12.3.3` | 2026-11-04 | #1267 | As on 11.8.9 |

@@ -720,6 +720,16 @@ full.
   `ACCOUNT UNLOCK` and `PASSWORD EXPIRE`; the error numbers both send, such as
   `1045`, `1396`, `1044`, `1142` and `1143`; and the `mysql_native_password`
   hash. Every result above is in `sql/mariadb/` and `sql/mysql/`.
+- `verified` `mariadb-pymysql-login` (#1267) — **Does PyMySQL log in on each
+  plugin?**
+  On `mysql_native_password`, yes. On `ed25519`, only with PyNaCl installed;
+  without it PyMySQL raises `RuntimeError`. The `mysql` extra installs
+  `PyMySQL[rsa]`, which does not bring PyNaCl; PyMySQL's own `ed25519` extra
+  does. On `parsec`, no: PyMySQL 1.2.3 has no client for it and refuses the
+  login itself, `2059`, with TLS or without. The two plugins that log in do so
+  over TLS too on 11.4, 11.8 and 12.3, which the image starts with TLS on.
+  10.11 starts with it off, and PyMySQL, given a context, refuses with `2026`.
+  `sql/mariadb/06_pymysql_login_probe.py` measures it.
 
 ### Vault
 

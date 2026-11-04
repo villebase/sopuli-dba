@@ -35,8 +35,8 @@
 # one-time init lives in them; `down -v` is the one form that discards them.
 #
 # A SECOND CLONE can run its own tier0/tier1 stack beside this one. Set
-# COMPOSE_PROJECT_NAME and the four SOPULI_TEST_*_PORT variables in that clone's
-# environment; the suite reads the same five. The project name overrides `name:`
+# COMPOSE_PROJECT_NAME and the six SOPULI_TEST_*_PORT variables that README.md
+# lists in that clone's environment. The project name overrides `name:`
 # below. Without a project name of its own, a second clone's `up` recreates the
 # first clone's containers. A second clone that starts postgres-matrix also sets
 # SOPULI_TEST_POSTGRES13_PORT to SOPULI_TEST_POSTGRES18_PORT, and one that
@@ -270,6 +270,33 @@ services:
       - "[::1]:${SOPULI_TEST_MYSQL_PORT:-3306}:3306"
     healthcheck:
       test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -psopuli-test --silent"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  # -------------------------------------------------------------- mariadb ---
+  # The MariaDB driver's tier-1 server (#1268). 11.8 is a long-term support
+  # release, and its image starts with TLS on, under a certificate it generates
+  # for itself. mariadb-init/ runs once, on an empty data directory: it creates
+  # the tool account with the grants of docs/design/02-mariadb-privileges.md
+  # §2.1 and installs ed25519. performance_schema and the binary log are on, as
+  # in the matrix: MariaDB leaves both off by default, neither can be turned on
+  # while the server runs, and each keeps password text that invariant 15's
+  # test must look for. The probes' release matrix is `mariadb-matrix` below.
+  mariadb:
+    image: mariadb:11.8
+    profiles: [tier1, tier2]
+    command: ["--performance-schema=ON", "--log-bin=mariadb-bin"]
+    environment:
+      MARIADB_ROOT_PASSWORD: sopuli-test
+      MARIADB_DATABASE: sopuli
+    volumes:
+      - ./mariadb-init:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "127.0.0.1:${SOPULI_TEST_MARIADB_PORT:-3307}:3306"
+      - "[::1]:${SOPULI_TEST_MARIADB_PORT:-3307}:3306"
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
       interval: 5s
       timeout: 3s
       retries: 30

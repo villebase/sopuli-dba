@@ -16,6 +16,7 @@ from typing import Any
 import pytest
 
 from sopuli.config.model import ExpandedTarget, Runtime, Target, TargetMysql
+from sopuli.driver.mysql_family.accounts import CURRENT_USER
 from sopuli.driver.mysql_family.connection import UnencryptedSessionError, require_tls
 from sopuli.driver.mysql_family.encryption import TLS_VERSION
 from sopuli.driver.protocol import (
@@ -55,7 +56,7 @@ class _Cursor:
             scope_module.VERSION: (connection.version,),
             scope_module.READ_ONLY_SETTINGS: (0, 0, 0),
             TLS_VERSION: ("Ssl_version", connection.tls),
-            privileges_module.SELF: ("sopuli_admin@%",),
+            CURRENT_USER: ("sopuli_admin@%",),
             accounts_module.DEFAULT_LIFETIME: (0,),
             "select @@global.caching_sha2_password_digest_rounds": (connection.rounds,),
             session_module.SERVER_NOW: (connection.now,),

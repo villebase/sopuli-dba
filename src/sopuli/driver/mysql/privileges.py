@@ -21,7 +21,7 @@ from collections.abc import Iterable
 from sopuli.driver.mysql.admin import PRIV_COLUMNS, TABLES_READ
 from sopuli.driver.mysql.grants import ALL_PRIVILEGES, GLOBAL, Grant, Grants
 from sopuli.driver.mysql.grants import read as read_grants
-from sopuli.driver.mysql_family.accounts import Principal
+from sopuli.driver.mysql_family.accounts import Principal, current_user
 from sopuli.driver.protocol import Cursor, PrivilegeAudit
 
 DOCUMENT = "02-mysql-privileges.md"
@@ -46,9 +46,6 @@ COLUMNS = (
     "password_lifetime",
     *PRIV_COLUMNS,
 )
-
-#: The account the session runs as, for the hint.
-SELF = "select current_user()"
 
 #: Every role the tool account reaches, through any chain of grants, default
 #: or not, mandatory included (``07_own_grants_probe.py``).
@@ -207,8 +204,7 @@ def audit(cursor: Cursor) -> PrivilegeAudit:
     its grants with every role expanded (:func:`~sopuli.driver.mysql.grants.read`),
     and every role it reaches.
     """
-    cursor.execute(SELF)
-    user = str(cursor.fetchone()[0])
+    user = current_user(cursor)
     grants = read_grants(cursor)
     cursor.execute(ALL_ROLES)
     roles = [f"{name}@{host}" for name, host in cursor.fetchall()]

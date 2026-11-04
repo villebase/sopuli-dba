@@ -17,6 +17,7 @@ from sopuli.driver.mariadb.scope import (
     observe,
     writable,
 )
+from sopuli.driver.mysql_family.accounts import CURRENT_USER
 from sopuli.driver.mysql_family.encryption import TLS_VERSION
 from sopuli.driver.protocol import ENCRYPTION_NONE, ENCRYPTION_TLS, SERVER
 from sopuli.exit_codes import ExitCode
@@ -186,7 +187,7 @@ def test_the_audit_asks_by_its_own_grantee_and_reads_every_applicable_role() -> 
     and spells its grantee without quotes, so it is read whole (#1287)."""
     cursor = FakeCursor(
         {
-            privileges.SELF: ("sopuli_admin@%",),
+            CURRENT_USER: ("sopuli_admin@%",),
             privileges.GLOBAL_PRIVILEGES: [("CREATE USER", "NO")],
             privileges.SCHEMA_PRIVILEGES: [],
             privileges.TABLE_PRIVILEGES: [],
@@ -310,12 +311,47 @@ def test_a_broad_select_holds_what_it_covers_and_is_over_granted() -> None:
 # ----------------------------------------------------------------- survey ---
 
 
-def survey_cursor(rows: list[tuple[str, str, str]]) -> FakeCursor:
+def survey_cursor(rows: list[tuple[str, ...]]) -> FakeCursor:
+    """Rows as the view gives them; ``password_expired`` defaults to ``N``."""
+    full = [row if len(row) == 4 else (*row, "N") for row in rows]
+
     class Rows(FakeCursor):
         def fetchall(self) -> Any:
-            return rows
+            return full
 
     return Rows({})
+
+
+# --------------------------------------------------------------- describe ---
+
+
+def test_an_account_on_another_plugin_is_refused_by_name() -> None:
+    cursor = survey_cursor([("acme_app", "%", "parsec")])
+
+    with pytest.raises(accounts.OtherPluginError) as caught:
+        accounts.read_one(cursor, "acme_app@%", target="mariadb-dev")
+
+    assert caught.value.exit_code == ExitCode.CONFIG_INVALID
+    assert 'account "acme_app@%" on target "mariadb-dev" uses parsec' in str(caught.value)
+
+
+def test_an_expired_account_reads_as_expired_and_never_as_locked() -> None:
+    """The view's `password_expired` is the expiry (LK3); the lock is never
+    read (#1267, decision 2), and the time of a change is beside the hash."""
+    found = accounts.read_one(
+        survey_cursor([("acme_app", "%", "ed25519", "Y")]), "acme_app@%", target="t"
+    )
+    assert found is not None
+
+    state = accounts.state_of(found)
+
+    assert (state.status, state.expired, state.locked) == ("EXPIRED", True, False)
+    assert state.password_changed_at is None
+    assert state.password_changed_unknown == accounts.NO_CHANGE_DATE
+
+
+def test_a_missing_account_is_none() -> None:
+    assert accounts.read_one(survey_cursor([]), "acme_app@%", target="t") is None
 
 
 def test_the_survey_names_a_missing_account_another_plugin_and_an_undeclared_host() -> None:

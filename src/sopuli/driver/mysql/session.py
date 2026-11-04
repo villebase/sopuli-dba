@@ -43,7 +43,7 @@ from sopuli.driver.mysql.errors import UNKNOWN_SYSTEM_VARIABLE, from_error
 from sopuli.driver.mysql.limits import LIMIT
 from sopuli.driver.mysql.privileges import audit as privilege_audit
 from sopuli.driver.mysql.scope import observe, require_read_write
-from sopuli.driver.mysql_family.accounts import Principal, split
+from sopuli.driver.mysql_family.accounts import Principal, current_user, split
 from sopuli.driver.mysql_family.client import client_lines
 from sopuli.driver.mysql_family.connection import connect_arguments, require_tls
 from sopuli.driver.mysql_family.encryption import read_encryption
@@ -280,7 +280,7 @@ class MysqlSession(ClosesConnection):
 
     def _describe(self, cursor: Any, account: str) -> UserState | None:
         if self._session_user is None:
-            self._session_user = accounts_module.current_user(cursor)
+            self._session_user = current_user(cursor)
         state = accounts_module.describe(
             cursor, account, target=self.target.name, session_user=self._session_user
         )
@@ -896,7 +896,7 @@ class MysqlSession(ClosesConnection):
                 # The same TLS rule as the tool's own session (`require_tls`),
                 # before anything else is read over this one.
                 require_tls(read_encryption(cursor), self.target)
-                answered = accounts_module.current_user(cursor)
+                answered = current_user(cursor)
         except pymysql.err.MySQLError as error:
             # The password was accepted, and which account accepted it is
             # unknown. A result, not an exception: a scheduled check must not

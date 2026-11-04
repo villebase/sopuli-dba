@@ -23,7 +23,7 @@ from collections.abc import Iterable
 from contextlib import suppress
 from dataclasses import dataclass
 
-from sopuli.driver.mysql_family.accounts import Principal, split, text
+from sopuli.driver.mysql_family.accounts import Principal, current_user, split, text
 from sopuli.driver.protocol import Cursor, PrivilegeAudit
 
 DOCUMENT = "02-mariadb-privileges.md"
@@ -82,8 +82,6 @@ TABLES_READ = (
     "mysql.procs_priv",
     "mysql.proxies_priv",
 )
-
-SELF = "select current_user()"
 GLOBAL_PRIVILEGES = (
     "select PRIVILEGE_TYPE, IS_GRANTABLE from information_schema.USER_PRIVILEGES where GRANTEE = %s"
 )
@@ -302,8 +300,7 @@ def read(cursor: Cursor, user: str) -> Grants:
 
 def audit(cursor: Cursor) -> PrivilegeAudit:
     """Read the tool account's grants and roles, and classify them."""
-    cursor.execute(SELF)
-    user = str(cursor.fetchone()[0])
+    user = current_user(cursor)
     grants = read(cursor, user)
     cursor.execute(ROLES)
     roles = [str(row[0]) for row in cursor.fetchall()]

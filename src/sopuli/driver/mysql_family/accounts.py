@@ -17,8 +17,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from sopuli.config.products import same_mysql_host
-from sopuli.driver.protocol import DriverError
+from sopuli.driver.protocol import Cursor, DriverError
 from sopuli.exit_codes import ExitCode
+
+#: The account the session authenticated as: ``user@host``, with the host as
+#: the account's own pattern (``%``), not the client's address.
+CURRENT_USER = "select current_user()"
 
 
 class BareAccountError(DriverError):
@@ -38,6 +42,16 @@ class BareAccountError(DriverError):
 def text(value: object) -> str:
     """A column as text: PyMySQL returns some ``mysql`` columns as bytes."""
     return value.decode("utf-8") if isinstance(value, bytes) else str(value)
+
+
+def current_user(cursor: Cursor) -> str:
+    """The account this session is connected as, ``user@host``. It is the
+    account the server matched at login, so a tool connected as
+    ``sopuli_svc@%`` is that account, whichever address it came from. It does
+    not change for the life of a connection, so a session reads it once."""
+    cursor.execute(CURRENT_USER)
+    (value,) = cursor.fetchone()
+    return text(value)
 
 
 def split(account: str) -> tuple[str, str]:

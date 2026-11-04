@@ -593,6 +593,20 @@ class MariadbStack(MysqlStack):
     tool_user: str = "sopuli_admin"
     tool_password: str = "sopuli-test-admin"
 
+    def grant_section_2(self, user: str, host: str = "%") -> None:
+        """Give an account `02-mariadb-privileges.md` §2.1's grants, from the
+        lists the MariaDB audit checks. MySQL's lists are another product's, so
+        the inherited method is replaced, not reused."""
+        from sopuli.driver.mariadb.privileges import COLUMNS, TABLES_READ
+
+        with self.connect() as admin, admin.cursor() as cursor:
+            cursor.execute("grant create user on *.* to %s@%s", (user, host))
+            cursor.execute(
+                f"grant select ({', '.join(COLUMNS)}) on mysql.user to %s@%s", (user, host)
+            )
+            for table in TABLES_READ:
+                cursor.execute(f"grant select on {table} to %s@%s", (user, host))
+
 
 @pytest.fixture(scope="session")
 def live_mariadb() -> MariadbStack:

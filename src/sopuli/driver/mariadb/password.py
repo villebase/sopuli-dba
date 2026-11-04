@@ -39,8 +39,10 @@ import base64
 import hashlib
 
 # PyNaCl comes with the `mariadb` extra, for PyMySQL's own ed25519 login and for
-# this value (#1267, decision 5). The registry lists `nacl` in the driver's
-# `provides`, so an install without it is refused before this module loads.
+# this value (#1267, decision 5). Imported at the top, not when a value is
+# computed: an install without it then fails as the driver's modules load, which
+# `registry.resolve` turns into `DriverNotInstalledError`, because the driver's
+# `provides` lists `nacl`. A later import would fail in the middle of a run.
 from nacl.bindings import crypto_scalarmult_ed25519_base_noclamp
 
 # Re-exported: the driver's callers and tests catch it from here.

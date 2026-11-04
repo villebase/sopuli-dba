@@ -943,8 +943,14 @@ mariadb-dev  yes        server  -          READ WRITE  0             tls
 when it holds exactly those grants. Declare accounts under `applications:`, and it
 names one that does not exist, one on a plugin other than
 `mysql_native_password` and `ed25519`, and the same user name at a host the
-config does not declare. Two targets on one MariaDB server are not caught yet
-(#1286).
+config does not declare. With any declared account, it also says what
+guardrail 9 cannot see:
+
+```
+  mariadb-dev: check 9 cannot see nine of the privileges MariaDB split from SUPER, such as SET USER: they set no column of the mysql.user view, so a declared account that holds one is not refused. Revoke them from accounts the tool manages (02-mariadb-privileges.md section 5)
+```
+
+Two targets on one MariaDB server are not caught yet (#1286).
 
 ---
 

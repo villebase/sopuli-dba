@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.84.0](https://github.com/villebase/sopuli-dba/compare/v0.83.0...v0.84.0) (2026-11-03)
+
+
+### Features
+
+* run account list on MySQL with a role: rule ([#1225](https://github.com/villebase/sopuli-dba/issues/1225)) ([#1263](https://github.com/villebase/sopuli-dba/issues/1263)) ([abf8031](https://github.com/villebase/sopuli-dba/commit/abf80314bae84641789d14d72032130ca70d54db))
+* run account reset-password on MySQL ([#1225](https://github.com/villebase/sopuli-dba/issues/1225)) ([#1265](https://github.com/villebase/sopuli-dba/issues/1265)) ([4c7e777](https://github.com/villebase/sopuli-dba/commit/4c7e777f2506943f175dbe62b106e2bb7f169cac))
+* run account suspend and expire-password on MySQL ([#1225](https://github.com/villebase/sopuli-dba/issues/1225)) ([#1266](https://github.com/villebase/sopuli-dba/issues/1266)) ([9d9dfad](https://github.com/villebase/sopuli-dba/commit/9d9dfadbd2c665e3b620b7888c2955185a121b99))
+
 ## [0.83.0](https://github.com/villebase/sopuli-dba/compare/v0.82.0...v0.83.0) (2026-11-03)
 
 

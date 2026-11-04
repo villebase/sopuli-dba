@@ -14,11 +14,14 @@ checked by a login. The tool never changes an account's plugin.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
-from sopuli.driver.mysql_family.accounts import same_host, split, text
-from sopuli.driver.protocol import Cursor
+from sopuli.config.products import same_mysql_account
+from sopuli.driver.mariadb import admin
+from sopuli.driver.mysql_family.accounts import Principal, same_host, split, text
+from sopuli.driver.protocol import Cursor, DriverError, UserState
+from sopuli.exit_codes import ExitCode
 
 #: The plugins whose stored value the tool computes and whose login PyMySQL
 #: makes (#1267, decision 1).
@@ -27,7 +30,19 @@ SUPPORTED_PLUGINS = ("mysql_native_password", "ed25519")
 #: Every row for the given user names, at any host, one ``%s`` per name. A role
 #: is a row too, with ``is_role = 'Y'`` and an empty host (TG7), and is left out.
 ROWS_FOR_USERS = (
-    "select User, Host, plugin from mysql.user where is_role = 'N' and User in ({names})"
+    "select User, Host, plugin, password_expired from mysql.user "
+    "where is_role = 'N' and User in ({names})"
+)
+
+#: ``UserState.status``, in the words Oracle and MySQL use.
+OPEN = "OPEN"
+EXPIRED = "EXPIRED"
+
+#: ``UserState.password_changed_unknown``: MariaDB keeps the time of a change
+#: only in ``mysql.global_priv``, beside the stored value (#1275, RD1).
+NO_CHANGE_DATE = (
+    "MariaDB keeps the time of a password change beside the stored value, which the "
+    "tool does not read"
 )
 
 OTHER_PLUGIN_HINT = (
@@ -44,6 +59,7 @@ class Account:
     user: str
     host: str
     plugin: str
+    expired: bool = False
 
     @property
     def name(self) -> str:
@@ -52,8 +68,54 @@ class Account:
 
 
 def account_of(row: Sequence[Any]) -> Account:
-    user, host, plugin = row
-    return Account(user=text(user), host=text(host), plugin=text(plugin))
+    user, host, plugin, expired = row
+    return Account(
+        user=text(user), host=text(host), plugin=text(plugin), expired=text(expired) == "Y"
+    )
+
+
+class OtherPluginError(DriverError):
+    """A declared account authenticates with a plugin the tool does not set
+    passwords for (#1267, decision 1). ``config``, exit 9, before anything is
+    changed (invariant 4)."""
+
+    category = "config"
+    exit_code = ExitCode.CONFIG_INVALID
+
+    def __init__(self, account: str, plugin: str, *, target: str) -> None:
+        super().__init__(
+            f'account "{account}" on target "{target}" uses {plugin}, and sopuli changes '
+            f"only {' and '.join(SUPPORTED_PLUGINS)} accounts",
+            hint=OTHER_PLUGIN_HINT,
+        )
+
+
+def read_one(cursor: Cursor, account: str, *, target: str) -> Account | None:
+    """The declared account's row, ``None`` where it does not exist. Raises
+    :class:`OtherPluginError` for an account on another plugin."""
+    user, host = split(account)
+    found = find(read(cursor, [user])[user], host)
+    if found is not None and found.plugin not in SUPPORTED_PLUGINS:
+        raise OtherPluginError(found.name, found.plugin, target=target)
+    return found
+
+
+def state_of(account: Account) -> UserState:
+    """One account as a :class:`~sopuli.driver.protocol.UserState`.
+
+    The expiry is the view's ``password_expired``, which ``PASSWORD EXPIRE``
+    sets (``04_lock_expiry_probe.py``, LK3). A lifetime that has run out is not
+    seen: the time of the last change is beside the stored value. The lock is
+    never read (#1267, decision 2), so an account reads as not locked; a login
+    to a locked one answers ``4151``.
+    """
+    return UserState(
+        name=account.name,
+        status=EXPIRED if account.expired else OPEN,
+        expired=account.expired,
+        password_changed_unknown=NO_CHANGE_DATE,
+        password_file_member=False,
+    )
 
 
 def read(cursor: Cursor, users: Sequence[str]) -> dict[str, list[Account]]:
@@ -71,6 +133,35 @@ def read(cursor: Cursor, users: Sequence[str]) -> dict[str, list[Account]]:
 def find(accounts: Sequence[Account], host: str) -> Account | None:
     """The account at ``host``, compared as the server compares hosts."""
     return next((account for account in accounts if same_host(account.host, host)), None)
+
+
+#: The account the session authenticated as: ``user@host``, with the host as
+#: the account's own pattern, not the client's address.
+CURRENT_USER = "select current_user()"
+
+
+def current_user(cursor: Cursor) -> str:
+    cursor.execute(CURRENT_USER)
+    return text(cursor.fetchone()[0])
+
+
+def describe(
+    cursor: Cursor, account: str, *, target: str, session_user: str | None = None
+) -> UserState | None:
+    """The declared account's state, ``None`` where it does not exist.
+
+    Raises :class:`OtherPluginError` for an account on another plugin. Reads
+    the privileges guardrail 9 checks (:func:`~sopuli.driver.mariadb.admin.
+    global_privileges`, ``02-mariadb-privileges.md`` §5), so every command that
+    describes an account before it changes it has them. ``session_user`` is
+    :func:`current_user` where the session already read it.
+    """
+    found = read_one(cursor, account, target=target)
+    if found is None:
+        return None
+    held = admin.global_privileges(cursor, Principal(found.user, found.host))
+    own = same_mysql_account(found.name, session_user or current_user(cursor))
+    return replace(state_of(found), global_privileges=held, session_account=own)
 
 
 def survey(cursor: Cursor, declared: Sequence[str]) -> tuple[str, ...]:

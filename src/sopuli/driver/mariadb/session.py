@@ -11,9 +11,10 @@ correlation id, checks that a mode which requires TLS got it, and reports the
 scope: ``server``, whether it takes writes, and its encryption. For ``doctor
 --check-privileges`` it audits the tool account's grants
 (:mod:`~sopuli.driver.mariadb.privileges`) and surveys the declared accounts
-(:mod:`~sopuli.driver.mariadb.accounts`). Every other method refuses with
-``SOPULI-20006``, and the registry lists no command but `doctor`: UC-1 is
-#1270 and UC-2 #1272.
+(:mod:`~sopuli.driver.mariadb.accounts`). It describes a declared account,
+with the privileges guardrail 9 checks (#1270). Every other method refuses with
+``SOPULI-20006``, and the registry lists no command but `doctor`: the rest of
+UC-1 is #1270 and UC-2 #1272.
 
 The session claims no server identity: MariaDB has no ``server_uuid``, and
 11.8.9 shows no ``server_uid`` status either, so two targets on one server are
@@ -48,11 +49,19 @@ from sopuli.driver.protocol import (
     PrivilegeAudit,
     Scope,
     Timeouts,
+    UserState,
 )
 from sopuli.driver.registry import NotWrittenError
 from sopuli.output.debug import logger
 
 LOG = logger("mariadb")
+
+MISSING_GRANT_HINT = (
+    "the tool account lacks a grant of 02-mariadb-privileges.md section 2.1, which it "
+    "needs to read an account and the privileges guardrail 9 checks. "
+    "`sopuli doctor --check-privileges` lists the missing ones, and the statements "
+    "that grant them"
+)
 
 #: The server refused a read of a table (``1142``) or a column (``1143``).
 REFUSED_READ = frozenset({str(TABLE_ACCESS_DENIED), str(COLUMN_ACCESS_DENIED)})
@@ -99,6 +108,9 @@ class MariadbSession(ClosesConnection):
     encryption: Encryption | None = None
     #: Invariant 3's cache, probed on first use.
     _scope: Scope | None = field(default=None, init=False, repr=False)
+    #: ``CURRENT_USER()``, read on the first :meth:`describe_user`. It does
+    #: not change for the life of a connection.
+    _session_user: str | None = field(default=None, init=False, repr=False)
 
     def scope(self) -> Scope:
         """What this session is: a server, read-write or not, and its
@@ -156,8 +168,32 @@ class MariadbSession(ClosesConnection):
             ),
         )
 
-    def describe_user(self, account: str) -> NoReturn:
-        self._not_written("describe an account")
+    def describe_user(self, account: str) -> UserState | None:
+        """The account's state, ``None`` where it does not exist
+        (:func:`~sopuli.driver.mariadb.accounts.describe`), with the
+        privileges guardrail 9 checks. An account on another plugin is
+        refused with :class:`~sopuli.driver.mariadb.accounts.OtherPluginError`.
+
+        A tool account without §2.1's grants for the reads is refused with
+        ``1142`` or ``1143``, and the hint then says where the grants are: the
+        server's own hint names only the table.
+        """
+        try:
+            return self._read(self._describe_with(account))
+        except DriverError as error:
+            if error.code in REFUSED_READ:
+                error.hint = MISSING_GRANT_HINT
+            raise
+
+    def _describe_with(self, account: str) -> Callable[[Any], UserState | None]:
+        def describe(cursor: Any) -> UserState | None:
+            if self._session_user is None:
+                self._session_user = accounts_module.current_user(cursor)
+            return accounts_module.describe(
+                cursor, account, target=self.target.name, session_user=self._session_user
+            )
+
+        return describe
 
     def byte_limit(self) -> NoReturn:
         self._not_written("say how long a password may be")

@@ -187,6 +187,17 @@ def test_a_personal_account_names_its_host() -> None:
     assert "on MariaDB target 'mariadb-dev'" in rendered
 
 
+def test_a_role_names_no_host_on_mariadb() -> None:
+    """A MariaDB role is stored with an empty host and named without one
+    (`sql/mariadb/05_identity_grants_probe.py`, TG7), so a bare `role:` loads.
+    On MySQL a role is an account and must name its host (#1225)."""
+    rule = {"targets": [SERVER["name"]], "role": "dev_role"}
+
+    loaded(targets=[SERVER], personal_accounts=[rule])
+    rendered = refused(targets=[MYSQL], personal_accounts=[{**rule, "targets": [MYSQL["name"]]}])
+    assert "on MySQL target 'mysql-dev'" in rendered
+
+
 # ------------------------------------------------------------- the driver ---
 
 

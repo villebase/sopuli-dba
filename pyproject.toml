@@ -138,7 +138,7 @@ onepassword = [
 # everything. It is deliberately not what README recommends -- an install line
 # that reads `sopuli[all]` undoes the split for every reader who copies it.
 all = [
-  "sopuli-dba[oracle,postgres,mysql,hashicorp,oci,notify,yopass,onepassword]",
+  "sopuli-dba[oracle,postgres,mysql,mariadb,hashicorp,oci,notify,yopass,onepassword]",
 ]
 
 dev = [

@@ -72,7 +72,7 @@ def tls_arguments(target: ExpandedTarget) -> dict[str, Any]:
     if block.ssl_mode == "PREFERRED":
         return {}
     if block.ssl_mode not in TLS_REQUIRED_MODES:
-        raise ValueError(f"not a MySQL ssl_mode: {block.ssl_mode!r}")
+        raise ValueError(f"not a `{key}.ssl_mode`: {block.ssl_mode!r}")
     try:
         context = ssl.create_default_context(cafile=block.ssl_ca)
     except OSError as error:
@@ -91,7 +91,7 @@ def tls_arguments(target: ExpandedTarget) -> dict[str, Any]:
         context.check_hostname = False
         context.verify_mode = ssl.CERT_REQUIRED
     elif block.ssl_mode != "VERIFY_IDENTITY":
-        raise ValueError(f"not a MySQL ssl_mode: {block.ssl_mode!r}")
+        raise ValueError(f"not a `{key}.ssl_mode`: {block.ssl_mode!r}")
     return {"ssl": context}
 
 

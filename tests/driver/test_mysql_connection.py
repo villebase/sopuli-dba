@@ -121,7 +121,7 @@ def test_a_ca_file_that_is_not_a_certificate_is_a_config_error(tmp_path: Path) -
 
 
 def test_an_unknown_mode_is_a_fault_not_a_weaker_connection() -> None:
-    with pytest.raises(ValueError, match="not a MySQL ssl_mode"):
+    with pytest.raises(ValueError, match="not a `mysql.ssl_mode`"):
         _context("verify-full")
 
 

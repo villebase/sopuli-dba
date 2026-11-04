@@ -2686,15 +2686,16 @@ def _refuse_a_bare_mysql_name(account: str, reached: Sequence[ExpandedTarget]) -
         return
     product = product_name(hosted[0].target.type)
     # Every product reached whose accounts are user@host, in a stable order.
-    products = " and ".join(
+    names = [
         product_name(kind)
         for kind in USER_AT_HOST_TYPES
         if any(target.target.type == kind for target in hosted)
-    )
+    ]
+    products = " and ".join(names)
     user = typed_user(account, default="jdoe")
     hint = (
         f"name the host after the last `@`, without quotes, as `{user}@%` or `{user}@10.%`: "
-        f"{products} keep{'s' if ' and ' not in products else ''} one account per host, "
+        f"{products} {'keeps' if len(names) == 1 else 'keep'} one account per host, "
         "each with its own password"
     )
     if len(hosted) < len(reached):

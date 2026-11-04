@@ -549,15 +549,19 @@ def check_personal_mysql_accounts(config: Config) -> None:
     """A `personal_accounts:` rule names its hosts on a MySQL or MariaDB target too.
 
     Personal accounts never become bindings, so :mod:`sopuli.config.bindings`
-    does not see them. A ``role:`` names its host too: a MySQL role is an
-    account, and ``CREATE ROLE dev_role`` makes ``dev_role@%`` (decision 4 of
-    #1225). A ``profile:`` names no account, and has nothing to check. Run
-    after references are resolved, so the rule's ``targets:`` names exist.
+    does not see them. A ``role:`` names its host on MySQL only: a MySQL role is
+    an account, and ``CREATE ROLE dev_role`` makes ``dev_role@%`` (decision 4 of
+    #1225). A MariaDB role has no host: it is stored with an empty one, and
+    ``mysql.roles_mapping`` names it without one
+    (``sql/mariadb/05_identity_grants_probe.py``, TG7). How a ``role:`` rule
+    matches on MariaDB is #1272's. A ``profile:`` names no account, and has
+    nothing to check. Run after references are resolved, so the rule's
+    ``targets:`` names exist.
     """
     for index, rule in enumerate(config.personal_accounts):
         at = ROOT.key("personal_accounts").index(index)
         for expanded in select(config, rule.targets):
-            if rule.role is not None:
+            if rule.role is not None and expanded.target.type == MYSQL:
                 refuse_a_bare_mysql_account(
                     expanded,
                     rule.role,

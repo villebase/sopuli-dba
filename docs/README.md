@@ -737,9 +737,10 @@ full.
   for a lifetime or for a lock. A password change, a rollover and a lock leave
   everything it reads as it was. 11.8 and 12.3 add `information_schema.USERS`,
   whose `PASSWORD_ERRORS` shows a `max_password_errors` block and whose
-  `PASSWORD_EXPIRATION_TIME` moves with each change when the account has a
-  lifetime. It shows the tool account only its own row, unless it holds
-  `SELECT` on `mysql.*`, which also reads the hashes in `mysql.global_priv`.
+  `PASSWORD_EXPIRATION_TIME` moves with each change and each rollover when the
+  account has a lifetime. It shows the tool account only its own row, unless
+  it holds `SELECT` on `mysql.*`, which also reads the hashes in
+  `mysql.global_priv`.
   `sql/mariadb/07_readable_state_probe.py` measures it.
 
 ### Vault

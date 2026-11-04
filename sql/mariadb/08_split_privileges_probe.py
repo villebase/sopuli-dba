@@ -9,17 +9,20 @@ looks for any other place the tool account can read them from. On each server:
   SP1  the privileges SHOW PRIVILEGES gives the context Server: the split ones
   SP2  an account granted each of them alone ON *.*, and a role granted SET
        USER and given to a second account as its default role. As root: which
-       of the view's *_priv columns read Y for the account and for the role,
-       and whether global_priv's access bits are above 0. Then how many rows
-       information_schema.USER_PRIVILEGES shows root for the role
+       of the view's *_priv columns read Y for the account, the role and the
+       second account, and whether global_priv's access bits are above 0 for
+       the account and the role. Then, in information_schema.USER_PRIVILEGES,
+       the second account's privileges and how many rows root sees for the
+       role
   SP3  the account, now granted all of them, and the tool account, which
-       holds CREATE USER, with each of these grants,
-       one at a time: none; SELECT on the view's columns User, Host, plugin,
-       password_expired and is_role; SELECT (User, Host) on mysql.global_priv;
-       SELECT on mysql.user; SELECT on mysql.global_priv; SELECT on mysql.*.
-       With each: how many rows information_schema.USER_PRIVILEGES shows it
-       for the account and for the role, and SHOW GRANTS FOR the account:
-       refused, or shown, and whether it prints the hash
+       holds CREATE USER, with each of these grants, one at a time: none;
+       SELECT on the view's columns User, Host, plugin, password_expired,
+       is_role and Repl_client_priv; SELECT (User, Host) on
+       mysql.global_priv; SELECT on mysql.user; SELECT on mysql.global_priv;
+       SELECT on mysql.*. With each: how many USER_PRIVILEGES rows the tool
+       account sees for the account and for the role; SHOW GRANTS FOR the
+       account, refused, or shown, and whether it prints the hash; and the
+       account's Repl_client_priv as the tool account reads it
 
 The probe checks each result against the one RESULTS below records, as
 02_client_hash_probe.py does. A difference, or a step that fails, makes it exit
@@ -38,23 +41,29 @@ RESULTS -- the same on every release
        FEDERATED ADMIN, READ_ONLY ADMIN, REPLICATION MASTER ADMIN,
        REPLICATION SLAVE ADMIN, SET USER and SLAVE MONITOR
   SP2  BINLOG MONITOR, once called REPLICATION CLIENT, sets Repl_client_priv.
-       The other nine, and the role's SET USER, set no column. Each sets
-       global_priv's access bits. USER_PRIVILEGES shows root no row for the
-       role
+       The other nine, and the role's SET USER, set no column, and the second
+       account has none either. Each sets global_priv's access bits.
+       USER_PRIVILEGES shows root only USAGE for the second account, and no
+       row at all for the role
   SP3  with each grant but the last, USER_PRIVILEGES shows the tool account no
        row, and SHOW GRANTS is refused, 1044 (42000). With SELECT on mysql.*,
        USER_PRIVILEGES shows the account's ten rows, still none for the role,
-       and SHOW GRANTS shows the grants with the hash
+       and SHOW GRANTS shows the grants with the hash. Repl_client_priv reads
+       Y with the column grant, SELECT on mysql.user and SELECT on mysql.*,
+       and is refused, 1142 (42000), otherwise
 
-  So the tool account can read nine of the ten split privileges only through
-  SELECT on mysql.*, which also reads mysql.global_priv and its hashes. A
-  role's split privileges are not in USER_PRIVILEGES even then.
+  So the tool account reads BINLOG MONITOR from the view's column, without
+  the hash. It can read the other nine only through SELECT on mysql.*, which
+  also reads mysql.global_priv and its hashes. A role has no row in
+  USER_PRIVILEGES even then, and an account that holds a split privilege
+  through a role shows only USAGE there.
 
 HOW TO RUN, against the matrix (test/README.md), from the repo root:
 
     .venv/Scripts/python sql/mariadb/08_split_privileges_probe.py
 
-It needs 02_client_hash_probe.py beside it.
+It needs 02_client_hash_probe.py beside it, and what 02 needs:
+sql/mysql/02_client_hash_probe.py.
 
 THROWAWAY SERVERS ONLY. It creates the accounts sopuli_probe_hash,
 sopuli_probe_tool, as 02 does, sopuli_probe_split and sopuli_probe_member, and
@@ -83,7 +92,7 @@ ROLE = "sopuli_probe_role"
 TOOL = f"'{ch.TOOL}'@'%'"
 GRANTS = (
     "",
-    "SELECT (User, Host, plugin, password_expired, is_role) ON mysql.user",
+    "SELECT (User, Host, plugin, password_expired, is_role, Repl_client_priv) ON mysql.user",
     "SELECT (User, Host) ON mysql.global_priv",
     "SELECT ON mysql.user",
     "SELECT ON mysql.global_priv",
@@ -100,13 +109,16 @@ def tool_reads(service: str, statement: str) -> tuple[bool, str]:
     return ch.mysql(service, ch.TOOL, ch.TOOL_PASSWORD, statement)
 
 
-def priv_columns(service: str, user: str, host: str) -> str:
-    """The view's *_priv columns that read Y for this row, or `-`."""
-    columns = ch.root(
+def priv_column_names(service: str) -> list[str]:
+    return ch.root(
         service,
         "SELECT GROUP_CONCAT(column_name) FROM information_schema.columns "
         "WHERE table_schema = 'mysql' AND table_name = 'user' AND column_name LIKE '%\\_priv'",
     ).split(",")
+
+
+def priv_columns(service: str, columns: list[str], user: str, host: str) -> str:
+    """The view's *_priv columns that read Y for this row, or `-`."""
     listed = ", ".join(f"IF(`{c}` = 'Y', '{c}', NULL)" for c in columns)
     found = ch.root(
         service,
@@ -126,11 +138,24 @@ def access_bits(service: str, user: str, host: str) -> int:
     )
 
 
-def privilege_rows(service: str, grantee: str) -> str:
+def grantee_like(name: str) -> str:
+    """A USER_PRIVILEGES predicate for every grantee spelled with this name."""
+    return f"grantee LIKE {ch.quote('%' + name + '%')}"
+
+
+def privilege_rows(service: str, name: str) -> str:
+    """How many USER_PRIVILEGES rows the tool account sees for this name."""
     ok, out = tool_reads(
         service,
-        "SELECT COUNT(*) FROM information_schema.USER_PRIVILEGES "
-        f"WHERE grantee = {ch.quote(grantee)}",
+        f"SELECT COUNT(*) FROM information_schema.USER_PRIVILEGES WHERE {grantee_like(name)}",
+    )
+    return out if ok else ch.code(out)
+
+
+def repl_client(service: str) -> str:
+    """The account's Repl_client_priv, as the tool account reads it."""
+    ok, out = tool_reads(
+        service, f"SELECT Repl_client_priv FROM mysql.user WHERE user = '{SPLIT}' AND host = '%'"
     )
     return out if ok else ch.code(out)
 
@@ -163,11 +188,12 @@ def cases(service: str) -> None:
     password = "Acme-Split-pw1"
     value = ch.native_hash(password)
     ch.root(service, f"CREATE USER '{SPLIT}'@'%' IDENTIFIED BY {ch.quote(password)}")
+    names = priv_column_names(service)
     columns = {}
     for privilege in split_list:
         ch.root(service, f"GRANT {privilege} ON *.* TO '{SPLIT}'@'%'")
         columns[privilege] = (
-            priv_columns(service, SPLIT, "%"),
+            priv_columns(service, names, SPLIT, "%"),
             access_bits(service, SPLIT, "%") > 0,
         )
         ch.root(service, f"REVOKE ALL PRIVILEGES ON *.* FROM '{SPLIT}'@'%'")
@@ -181,32 +207,40 @@ def cases(service: str) -> None:
         f"CREATE USER '{MEMBER}'@'%' IDENTIFIED BY 'Acme-Member-pw1';"
         f"GRANT {ROLE} TO '{MEMBER}'@'%'; SET DEFAULT ROLE {ROLE} FOR '{MEMBER}'@'%'",
     )
-    role = (priv_columns(service, ROLE, ""), access_bits(service, ROLE, "") > 0)
-    print(f"SP2 role with SET USER: {role}")
-    ch.check("SP2 role", role, ("-", True))
-
+    role = (priv_columns(service, names, ROLE, ""), access_bits(service, ROLE, "") > 0)
+    member = (
+        priv_columns(service, names, MEMBER, "%"),
+        ch.root(
+            service,
+            "SELECT GROUP_CONCAT(privilege_type) FROM information_schema.USER_PRIVILEGES "
+            f"WHERE {grantee_like(MEMBER)}",
+        ),
+    )
     role_as_root = ch.root(
         service,
-        "SELECT COUNT(*) FROM information_schema.USER_PRIVILEGES "
-        f"WHERE grantee LIKE {ch.quote('%' + ROLE + '%')}",
+        f"SELECT COUNT(*) FROM information_schema.USER_PRIVILEGES WHERE {grantee_like(ROLE)}",
     )
-    print(f"SP2 USER_PRIVILEGES rows for the role, as root: {role_as_root}")
-    ch.check("SP2 role as root", role_as_root, "0")
+    print(
+        f"SP2 role with SET USER: {role}; its member's *_priv columns and USER_PRIVILEGES: "
+        f"{member}; USER_PRIVILEGES rows for the role, as root: {role_as_root}"
+    )
+    ch.check("SP2 role", (role, member, role_as_root), (("-", True), ("-", "USAGE"), "0"))
 
     seen = []
     for grant in GRANTS:
         if grant:
             ch.root(service, f"GRANT {grant} TO {TOOL}")
         row = (
-            privilege_rows(service, f"'{SPLIT}'@'%'"),
-            privilege_rows(service, f"'{ROLE}'@''"),
+            privilege_rows(service, SPLIT),
+            privilege_rows(service, ROLE),
             show_grants(service, value),
+            repl_client(service),
         )
         if grant:
             ch.root(service, f"REVOKE {grant} FROM {TOOL}")
         print(f"SP3 {grant or 'no grant'}: {row}")
         seen.append(row)
-    ch.check("SP3", seen, SP3)
+    ch.check("SP3", seen, sp3(len(split_list)))
 
 
 SP1 = (
@@ -223,9 +257,19 @@ def sp2(split_list: list[str]) -> dict[str, tuple[str, bool]]:
     }
 
 
-#: For each of GRANTS: USER_PRIVILEGES rows for the account and for the role,
-#: and SHOW GRANTS FOR the account. Only SELECT on mysql.* shows anything.
-SP3 = [("0", "0", "1044 (42000)")] * 5 + [("10", "0", "shown, with the hash")]
+def sp3(split_count: int) -> object:
+    """For each of GRANTS: USER_PRIVILEGES rows for the account and for the role,
+    SHOW GRANTS FOR the account, and its Repl_client_priv as the tool account reads it.
+    """
+    refused = ("0", "0", "1044 (42000)")
+    return [
+        (*refused, "1142 (42000)"),
+        (*refused, "Y"),
+        (*refused, "1142 (42000)"),
+        (*refused, "Y"),
+        (*refused, "1142 (42000)"),
+        (str(split_count), "0", "shown, with the hash", "Y"),
+    ]
 
 
 def main() -> int:

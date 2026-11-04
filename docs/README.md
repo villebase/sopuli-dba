@@ -728,6 +728,17 @@ full.
   11.8 and 12.3, which the image starts with TLS on. 10.11 starts with it off,
   and PyMySQL, given a context, refuses with `2026`.
   `sql/mariadb/06_pymysql_login_probe.py` measures it.
+- `verified` `mariadb-readable-state` (#1267) — **What does the tool account
+  read of another account without the hash?**
+  The plugin and `password_expired`, from a column grant on the `mysql.user`
+  view, and nothing else. The view has no column for when a password changed,
+  for a lifetime or for a lock. A password change, a rollover and a lock leave
+  everything it reads as it was. 11.8 and 12.3 add `information_schema.USERS`,
+  whose `PASSWORD_ERRORS` shows a `max_password_errors` block and whose
+  `PASSWORD_EXPIRATION_TIME` moves with each change when the account has a
+  lifetime. It shows the tool account only its own row, unless it holds
+  `SELECT` on `mysql.*`, which also reads the hashes in `mysql.global_priv`.
+  `sql/mariadb/07_readable_state_probe.py` measures it.
 
 ### Vault
 

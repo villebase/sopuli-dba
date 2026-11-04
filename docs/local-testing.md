@@ -947,7 +947,7 @@ config does not declare. With any declared account, it also says what
 guardrail 9 cannot see:
 
 ```
-  mariadb-dev: check 9 cannot see nine of the privileges MariaDB split from SUPER, such as SET USER: they set no column of the mysql.user view, so a declared account that holds one is not refused. Revoke them from accounts the tool manages (02-mariadb-privileges.md section 5)
+  mariadb-dev: check 9 cannot see BINLOG ADMIN, BINLOG REPLAY, CONNECTION ADMIN, FEDERATED ADMIN, READ_ONLY ADMIN, REPLICATION MASTER ADMIN, REPLICATION SLAVE ADMIN, SET USER or SLAVE MONITOR: they set no column of the mysql.user view, so it does not refuse a declared account that holds one. Revoke them from accounts the tool manages (02-mariadb-privileges.md section 5)
 ```
 
 Two targets on one MariaDB server are not caught yet (#1286).

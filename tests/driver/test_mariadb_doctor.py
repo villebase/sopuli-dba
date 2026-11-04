@@ -126,9 +126,9 @@ def test_doctor_surveys_the_declared_accounts(
     assert f"{accounts}@localhost uses unix_socket" in result.output
     # The gap in guardrail 9 that decision 4 accepts, said with declared
     # accounts (02-mariadb-privileges.md section 5).
-    assert "check 9 cannot see nine of the privileges MariaDB split from SUPER" in (
-        " ".join(result.output.split())
-    )
+    shown = " ".join(result.output.split())
+    assert "check 9 cannot see BINLOG ADMIN," in shown
+    assert "SET USER or SLAVE MONITOR: they set no column of the mysql.user view" in shown
 
 
 def test_without_declared_accounts_doctor_says_nothing_of_check_9(
@@ -141,7 +141,8 @@ def test_without_declared_accounts_doctor_says_nothing_of_check_9(
         env={PASSWORD_ENV: live_mariadb.tool_password},
     )
 
-    assert "tier1-mariadb" in result.output
+    # The audit ran: its always-present PUBLIC line is there.
+    assert "privileges granted to PUBLIC" in " ".join(result.output.split())
     assert "check 9" not in result.output
 
 

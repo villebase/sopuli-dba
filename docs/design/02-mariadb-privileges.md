@@ -158,10 +158,12 @@ MariaDB has no `server_uuid`. It warns, and never fails
   declare, as on MySQL ([`02-mysql-privileges.md`](02-mysql-privileges.md) §4).
   The other account keeps its own password. On MariaDB the line names it even
   when it is locked, because the lock cannot be read (decision 2);
-- the gap in guardrail 9 that §5 describes, wherever the config declares an
-  account. Check 9 cannot read the privileges that MariaDB split from `SUPER`,
-  so it cannot fully check the managed accounts
-  ([#1267](../decisions/log.md#1267), decision 4).
+- the gap in guardrail 9 that §5 describes, wherever an application's
+  `accounts:` are bound to the target. Check 9 cannot read the nine privileges
+  that MariaDB split from `SUPER`, so it cannot fully check the managed
+  accounts, and the line names the nine
+  ([#1267](../decisions/log.md#1267), decision 4). Check 9 itself refuses
+  once the driver changes passwords (open: #1270).
 
 ---
 

@@ -57,13 +57,27 @@ LOG = logger("mariadb")
 #: The server refused a read of a table (``1142``) or a column (``1143``).
 REFUSED_READ = frozenset({str(TABLE_ACCESS_DENIED), str(COLUMN_ACCESS_DENIED)})
 
+#: The privileges MariaDB split from ``SUPER`` that set no column of the
+#: ``mysql.user`` view, as ``SHOW PRIVILEGES`` names them (SP1, SP2).
+UNSEEN_PRIVILEGES = (
+    "BINLOG ADMIN",
+    "BINLOG REPLAY",
+    "CONNECTION ADMIN",
+    "FEDERATED ADMIN",
+    "READ_ONLY ADMIN",
+    "REPLICATION MASTER ADMIN",
+    "REPLICATION SLAVE ADMIN",
+    "SET USER",
+    "SLAVE MONITOR",
+)
+
 #: The gap in guardrail 9 that ``02-mariadb-privileges.md`` §5 accepts
-#: (#1267, decision 4): said wherever the config declares accounts, because
-#: check 9 cannot fully check any of them.
+#: (#1267, decision 4): said wherever the config binds accounts to the
+#: target, because check 9 cannot fully check any of them.
 CHECK_9_GAP = (
-    "check 9 cannot see nine of the privileges MariaDB split from SUPER, such as SET USER: "
-    "they set no column of the mysql.user view, so a declared account that holds one is "
-    "not refused. Revoke them from accounts the tool manages "
+    f"check 9 cannot see {', '.join(UNSEEN_PRIVILEGES[:-1])} or {UNSEEN_PRIVILEGES[-1]}: "
+    "they set no column of the mysql.user view, so it does not refuse a declared account "
+    "that holds one. Revoke them from accounts the tool manages "
     "(02-mariadb-privileges.md section 5)"
 )
 

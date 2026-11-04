@@ -267,8 +267,12 @@ The value is the plugin's (`02_client_hash_probe.py`, CH1):
   base64 without the trailing `=`. The password is not a 32-byte Ed25519 seed,
   so a library that takes only such a seed does not compute it.
 
-Values computed in Python agree with the server's, and an account with only
-`CREATE USER` sets them (CH1, CH2). The server refuses a malformed value with
+`sopuli.driver.mariadb.password` computes both. Values computed in Python agree
+with the server's, and an account with only `CREATE USER` sets them (CH1, CH2).
+**There is no length limit**: the server sees only the value, and a password of
+1 byte to 1 MiB is set and logs in (`09_password_length_probe.py`, PW1). The
+driver refuses an empty password, control characters, and text that cannot be
+encoded as UTF-8, as the other drivers do. The server refuses a malformed value with
 the plain `1396` (CH3). A new server loads only `mysql_native_password`;
 `ed25519` must be installed with `INSTALL SONAME 'auth_ed25519'` (CH4).
 

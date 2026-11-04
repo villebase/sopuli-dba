@@ -54,6 +54,11 @@ PERMITTED = {
         "caching_sha2_password value the statement carries (invariant 15). The "
         "password itself is not sent"
     ),
+    "driver/mariadb/password.py": (
+        "the driver call, for MariaDB: the password is hashed on this machine into the "
+        "mysql_native_password or ed25519 value the statement carries (invariant 15). "
+        "The password itself is not sent"
+    ),
     "output/policy_view.py": "`policy sample --reveal` -- the third; a sample is not a credential",
     "output/reset_view.py": (
         "UC-2's seen reset -- the fourth, under five structural guards (decision #439)"

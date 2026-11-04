@@ -16,6 +16,7 @@ from typing import Any
 import pytest
 
 from sopuli.config.model import ExpandedTarget, Runtime, Target, TargetMysql
+from sopuli.driver.mysql_family.encryption import TLS_VERSION
 from sopuli.driver.protocol import (
     ACCOUNT_UNLOCK,
     EXPIRE_PASSWORD,
@@ -52,7 +53,7 @@ class _Cursor:
         self._rows = {
             scope_module.VERSION: (connection.version,),
             scope_module.READ_ONLY_SETTINGS: (0, 0, 0),
-            scope_module.TLS_VERSION: ("Ssl_version", connection.tls),
+            TLS_VERSION: ("Ssl_version", connection.tls),
             privileges_module.SELF: ("sopuli_admin@%",),
             accounts_module.DEFAULT_LIFETIME: (0,),
             "select @@global.caching_sha2_password_digest_rounds": (connection.rounds,),
@@ -841,9 +842,9 @@ def test_connect_reads_only_the_encryption_and_the_scope_does_not_read_it_again(
 
     session = _connected(monkeypatch, connection)
 
-    assert connection.queries == [scope_module.TLS_VERSION]
+    assert connection.queries == [TLS_VERSION]
     assert session.scope().encryption.method == "tls"
-    assert connection.queries.count(scope_module.TLS_VERSION) == 1
+    assert connection.queries.count(TLS_VERSION) == 1
 
 
 def test_a_mariadb_server_connects_and_is_refused_by_its_scope(

@@ -81,7 +81,7 @@ x-mysql-matrix: &mysql-matrix
     timeout: 3s
     retries: 30
 
-# The settings mariadb-1011 and mariadb-123 share. MariaDB starts with
+# The settings mariadb-1011, mariadb-114, mariadb-118 and mariadb-123 share. MariaDB starts with
 # performance_schema and the binary log off, and MySQL with both on, so they are
 # turned on here: the probes measure what each keeps of a password.
 x-mariadb-matrix: &mariadb-matrix

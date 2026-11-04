@@ -8,18 +8,18 @@ PyMySQL in the repo's .venv, from the host over TCP:
   PW1  for mysql_native_password and ed25519, and passwords of 1, 255, 256,
        257, 1024, 65,536 and 1,048,576 bytes of ASCII: the value 02 computes,
        set with IDENTIFIED VIA ... USING by a tool account that holds only
-       CREATE USER. Then a PyMySQL login with the password, and one with the
-       password less its last byte
+       CREATE USER. Then a PyMySQL login with the password, and one with its
+       last byte changed
   PW2  the same for `pässwörd-é` and `pass-€-word`, whose value is over the
        UTF-8 bytes. Then a login with the password given to PyMySQL as UTF-8
        bytes, and one given as a str
   PW3  the server's own values for three passwords, one of 300 bytes, from root's
        `IDENTIFIED VIA <plugin> USING PASSWORD(%s)` over PyMySQL with a utf8mb4
-       connection. The values are recorded here, and
-       tests/driver/test_mariadb_password.py checks the driver's against them
+       connection. The values are recorded here, as vectors for the driver's
+       tier-0 tests
 
 A login answers `ok`, or the error's number, or for an error PyMySQL raises
-itself, its class.
+itself, its class and the start of its message, as in 06.
 
 The probe checks each result against the one RESULTS below records, as
 02_client_hash_probe.py does. A difference, or a step that fails, makes it exit
@@ -36,8 +36,8 @@ times.
 RESULTS -- the same on every release
 
   PW1  each value is set, `ok`. At every length the password logs in, and
-       the password less its last byte is refused, 1045. There is no length
-       limit: the server sees only the value
+       the password with its last byte changed is refused, 1045. There is no
+       length limit: the server sees only the value
   PW2  each value is set. Given as UTF-8 bytes, each password logs in. Given
        as a str, PyMySQL 1.2.3 encodes it as latin-1: `pässwörd-é` is
        refused, 1045, and `pass-€-word` raises UnicodeEncodeError in PyMySQL
@@ -65,25 +65,27 @@ from pathlib import Path
 
 import pymysql
 
-
-def _load(name: str, file: str):  # type: ignore[no-untyped-def]
-    # The probes' names start with a digit, so each is loaded by its path.
-    spec = importlib.util.spec_from_file_location(name, Path(__file__).with_name(file))
-    assert spec is not None
-    assert spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-pl = _load("mariadb_pymysql_login_probe", "06_pymysql_login_probe.py")
+# 06's name starts with a digit, so it is loaded by its path. It loads 02.
+_SPEC = importlib.util.spec_from_file_location(
+    "mariadb_pymysql_login_probe", Path(__file__).with_name("06_pymysql_login_probe.py")
+)
+assert _SPEC is not None
+assert _SPEC.loader is not None
+pl = importlib.util.module_from_spec(_SPEC)
+_SPEC.loader.exec_module(pl)
 ch = pl.ch
 
 PLUGINS = ("mysql_native_password", "ed25519")
 LENGTHS = (1, 255, 256, 257, 1024, 65_536, 1_048_576)
 #: PW2: each password, and what a login given it as a str answers. PyMySQL
 #: encodes a str as latin-1, which has `é` and not `€`.
-AS_STR = {"pässwörd-é": "1045", "pass-€-word": "UnicodeEncodeError"}
+AS_STR = {
+    "pässwörd-é": "1045",
+    "pass-€-word": (
+        "UnicodeEncodeError: 'latin-1' codec can't encode character '\\u20ac' in position 5: "
+        "ordinal"
+    ),
+}
 
 #: PW3: the server's values, as 11.8.9 stored them. The same on every release.
 SERVER_VALUES = {
@@ -98,29 +100,11 @@ SERVER_VALUES = {
 }
 
 
-def connect(service: str, user: str, password: str | bytes) -> pymysql.Connection:  # type: ignore[type-arg]
-    # Without TLS: neither plugin sends the password, and 10.11.19 offers no
-    # TLS (06, PL2).
-    return pymysql.connect(
-        host="127.0.0.1",
-        port=pl.PORTS[service],
-        user=user,
-        password=password,
-        ssl_disabled=True,
-        charset="utf8mb4",
-        connect_timeout=10,
-    )
-
-
 def py_login(service: str, password: str | bytes) -> str:
-    """`ok`, the error's number, or the class of what PyMySQL raised."""
-    try:
-        connect(service, ch.ACCOUNT, password).close()
-    except pymysql.err.MySQLError as exc:
-        return pl.answer(exc)
-    except Exception as exc:  # noqa: BLE001 - the probe records whatever is raised
-        return type(exc).__name__
-    return ch.OK
+    """06's login without TLS, which neither plugin needs: it sends no password,
+    and 10.11.19 offers no TLS (06, PL2). PyMySQL takes bytes as they are."""
+    answer: str = pl.py_login(service, password, tls=False)[0]
+    return answer
 
 
 def set_value(service: str, plugin: str, password: str) -> str:
@@ -132,9 +116,20 @@ def set_value(service: str, plugin: str, password: str) -> str:
 
 
 def server_value(service: str, plugin: str, password: str) -> str:
-    connection = connect(service, "root", ch.ROOT_PASSWORD)
+    """The value the server stores for `password`, set by root over PyMySQL,
+    because a password that is not ASCII would not survive docker exec's argv
+    on Windows. A failure is a failed step, not a result."""
     try:
-        with connection.cursor() as cursor:
+        connection = pymysql.connect(
+            host="127.0.0.1",
+            port=pl.PORTS[service],
+            user="root",
+            password=ch.ROOT_PASSWORD,
+            ssl_disabled=True,
+            charset="utf8mb4",
+            connect_timeout=10,
+        )
+        with connection, connection.cursor() as cursor:
             cursor.execute(
                 f"ALTER USER '{ch.ACCOUNT}'@'%%' IDENTIFIED VIA {plugin} USING PASSWORD(%s)",
                 (password,),
@@ -144,8 +139,8 @@ def server_value(service: str, plugin: str, password: str) -> str:
                 (ch.ACCOUNT,),
             )
             row = cursor.fetchone()
-    finally:
-        connection.close()
+    except pymysql.err.MySQLError as exc:
+        raise ch.StepError(f"{service}: the server's {plugin} value: {exc}") from exc
     if row is None:
         raise ch.StepError(f"{service}: no row for {ch.ACCOUNT}")
     return str(row[0])
@@ -175,9 +170,13 @@ def cases(service: str) -> None:
             password = ("Ab9-" * (length // 4 + 1))[:length]
             answer = set_value(service, plugin, password)
             good = py_login(service, password.encode("utf-8"))
-            short = py_login(service, password[:-1].encode("utf-8"))
-            print(f"PW1 {plugin} {length} bytes: set {answer}; password: {good}; less one: {short}")
-            ch.check(f"PW1 {plugin} {length}", (answer, good, short), (ch.OK, ch.OK, "1045"))
+            # `B` is not in the pattern, so this changes the last byte.
+            changed = py_login(service, (password[:-1] + "B").encode("utf-8"))
+            print(
+                f"PW1 {plugin} {length} bytes: set {answer}; password: {good}; "
+                f"last byte changed: {changed}"
+            )
+            ch.check(f"PW1 {plugin} {length}", (answer, good, changed), (ch.OK, ch.OK, "1045"))
 
         for password in AS_STR:
             answer = set_value(service, plugin, password)
@@ -187,10 +186,10 @@ def cases(service: str) -> None:
             recorded = (ch.OK, ch.OK, AS_STR[password])
             ch.check(f"PW2 {plugin} {password!a}", (answer, as_bytes, as_str), recorded)
 
-    for (plugin, password), recorded in SERVER_VALUES.items():
+    for (plugin, password), stored in SERVER_VALUES.items():
         value = server_value(service, plugin, password)
-        print(f"PW3 {plugin} {password!a}: {value}")
-        ch.check(f"PW3 {plugin} {password!a}", value, recorded)
+        print(f"PW3 {plugin} {password[:20]!a}: {value}")
+        ch.check(f"PW3 {plugin} {password[:20]!a}", value, stored)
 
 
 def main() -> int:

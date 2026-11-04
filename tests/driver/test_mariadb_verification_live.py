@@ -41,7 +41,7 @@ class Stage:
         self.root("CREATE USER %s@%s IDENTIFIED BY %s", (self.user, host, password))
         self.hosts.append(host)
 
-    def verify(self, host: str, password: str) -> VerifyResult:
+    def verify(self, host: str, password: str, ssl_mode: str = "REQUIRED") -> VerifyResult:
         """As the driver will: read the user's accounts as the tool account,
         decide the competitor, and log in."""
         with (
@@ -56,7 +56,7 @@ class Stage:
                 name="tier1-mariadb",
                 type="mariadb",
                 dsn=self.live.dsn,
-                mariadb=TargetMysql(ssl_mode="REQUIRED"),
+                mariadb=TargetMysql(ssl_mode=ssl_mode),
             )
         )
         return login(
@@ -108,6 +108,38 @@ def test_an_expired_account_s_right_password_passes(stage: Stage) -> None:
     assert result.result == PASS
     assert "(1820)" in str(result.detail)
     assert stage.verify("%", "Not-the-pw9").result == FAIL
+
+
+def test_an_expired_account_refused_at_connect_passes(stage: Stage) -> None:
+    """With `disconnect_on_expired_password = ON` the right password gets
+    `1862` at connect, and a wrong one `1045`."""
+    stage.create("%")
+    stage.root("ALTER USER %s@'%%' PASSWORD EXPIRE", (stage.user,))
+    stage.root("SET GLOBAL disconnect_on_expired_password = ON")
+    try:
+        right = stage.verify("%", PASSWORD)
+        wrong = stage.verify("%", "Not-the-pw9")
+    finally:
+        stage.root("SET GLOBAL disconnect_on_expired_password = OFF")
+
+    assert right.result == PASS
+    assert "(1862)" in str(right.detail)
+    assert wrong.result == FAIL
+
+
+def test_a_refusal_without_tls_says_nothing(stage: Stage) -> None:
+    """An account that requires TLS answers its right password with `1045`
+    over a session without it, so a target whose mode does not require TLS
+    cannot read `1045` as a wrong password."""
+    stage.create("%")
+    stage.root("ALTER USER %s@'%%' REQUIRE SSL", (stage.user,))
+
+    plain = stage.verify("%", PASSWORD, ssl_mode="DISABLED")
+    over_tls = stage.verify("%", PASSWORD)
+
+    assert plain.result == UNAVAILABLE
+    assert "does not require TLS" in str(plain.detail)
+    assert over_tls.result == PASS
 
 
 def test_a_locked_account_s_right_password_passes(stage: Stage) -> None:

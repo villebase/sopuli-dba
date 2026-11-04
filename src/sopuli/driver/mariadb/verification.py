@@ -12,8 +12,8 @@ the declared account (#1267, decision 8):
 - an answer that comes before ``CURRENT_USER()`` can be read says something
   only where no other account can answer: the declared account is
   ``user@%``, it is the user's only account, and no anonymous account sits at
-  a named host (:func:`competitor`). The same rule decides where the MySQL
-  driver logs in at all (:mod:`sopuli.driver.mysql.verification`).
+  a named host (:func:`competitor`). The MySQL driver logs in only there; the
+  rule is :func:`~sopuli.driver.mysql_family.verification.competition`.
 
 What the server answers at a login, measured on 11.8.9 with PyMySQL 1.2.3 and
 the password as UTF-8 bytes:
@@ -21,14 +21,23 @@ the password as UTF-8 bytes:
 | Account | Right password | Wrong password |
 |---|---|---|
 | open | logs in | ``1045`` |
-| expired | logs in, then ``1820`` to ``SELECT CURRENT_USER()`` | ``1045`` |
+| expired | logs in, then ``1820`` to the first statement | ``1045`` |
+| expired, ``disconnect_on_expired_password = ON`` | ``1862`` | ``1045`` |
 | locked | ``4151`` | ``1045`` |
 | blocked after failed logins | ``4150`` | ``4150`` |
+| ``REQUIRE SSL``, over a session without TLS | ``1045`` | ``1045`` |
 
-``1820`` and ``4151`` say the password is right, for the account the login
-reached. ``4150`` answers any password, so it says nothing. The lock cannot be
-read on MariaDB (#1267, decision 2), so a locked account is logged in to, and
-answers ``4151``.
+``1820``, ``1862`` and ``4151`` say the password is right, for the account the
+login reached. ``4150`` answers any password, so it says nothing. ``1045``
+says the password is wrong only over TLS: an account that requires TLS
+answers its right password with it too. So ``1045`` is a fail only where the
+target's ``ssl_mode`` requires TLS. The lock cannot be read on MariaDB (#1267,
+decision 2), so a locked account is logged in to, and answers ``4151``.
+
+On an expired session the first statement is the TLS read, and it gets
+``1820``. The session's TLS is then not confirmed. Neither plugin sends the
+password, and under a mode that requires TLS PyMySQL refused a session
+without it at connect.
 
 **There is no lockout guard.** MariaDB counts failed logins against
 ``max_password_errors`` in ``mysql.global_priv``, beside the stored value, which
@@ -48,10 +57,18 @@ from sopuli.config.model import ExpandedTarget
 from sopuli.config.products import same_mysql_account
 from sopuli.driver.mariadb.accounts import Account
 from sopuli.driver.mariadb.errors import ACCOUNT_BLOCKED, ACCOUNT_LOCKED, from_error
-from sopuli.driver.mysql_family.accounts import same_host, text
-from sopuli.driver.mysql_family.connection import connect_arguments, require_tls
+from sopuli.driver.mariadb.privileges import SELF as CURRENT_USER
+from sopuli.driver.mysql.errors import MUST_CHANGE_PASSWORD_LOGIN
+from sopuli.driver.mysql_family.accounts import text
+from sopuli.driver.mysql_family.connection import (
+    TLS_REQUIRED_MODES,
+    connect_arguments,
+    require_tls,
+    settings_of,
+)
 from sopuli.driver.mysql_family.encryption import read_encryption
 from sopuli.driver.mysql_family.errors import ACCESS_DENIED, MUST_CHANGE_PASSWORD
+from sopuli.driver.mysql_family.verification import competition
 from sopuli.driver.protocol import (
     FAIL,
     PASS,
@@ -66,13 +83,6 @@ from sopuli.secrets import Secret
 
 LOG = logger("mariadb")
 
-#: The host of the one kind of account only its own login can reach.
-ANY_HOST = "%"
-
-#: The account a session is connected as: ``user@host``, the account's own
-#: host pattern, not the client's address.
-CURRENT_USER = "select current_user()"
-
 #: Said on every login, because MariaDB gives the tool nothing to guard it with.
 UNGUARDED = (
     "the lockout guard is unavailable: MariaDB counts failed logins against "
@@ -86,33 +96,23 @@ def competitor(
     """Why a login meant for ``declared`` may reach another account, or
     ``None`` where only ``declared`` can answer it.
 
-    ``same_user`` is every account with the declared user name, at any host,
-    ``declared`` included. ``anonymous`` is every account with the empty user
-    name. **An anonymous account at a named host competes**: the server
-    matches the host first, so ``''@localhost`` wins over ``acme_app@%`` for a
-    client on ``localhost``. One at ``%`` does not: at one host, a named user
-    wins.
+    The arguments are :func:`~sopuli.driver.mysql_family.verification.competition`'s.
     """
-    if not same_host(declared.host, ANY_HOST):
+    found = competition(declared, same_user, anonymous)
+    if found.named_host:
         return (
             f"the login reaches the account the server matches from the tool's host, "
             f"which need not be {declared.name}"
         )
-    others = sorted(
-        account.name for account in same_user if not same_host(account.host, declared.host)
-    )
-    if others:
+    if found.others:
         return (
-            f"the user also exists as {', '.join(others)}, which a login from the tool's "
-            f"host may reach instead of {declared.name}"
+            f"the user also exists as {', '.join(found.others)}, which a login from the "
+            f"tool's host may reach instead of {declared.name}"
         )
-    named_anonymous = sorted(
-        f"''@{account.host}" for account in anonymous if not same_host(account.host, ANY_HOST)
-    )
-    if named_anonymous:
+    if found.named_anonymous:
         return (
-            f"the server has the anonymous account {', '.join(named_anonymous)}, which a "
-            f"login from a host it matches reaches instead of {declared.name}"
+            f"the server has the anonymous account {', '.join(found.named_anonymous)}, "
+            f"which a login from a host it matches reaches instead of {declared.name}"
         )
     return None
 
@@ -131,19 +131,30 @@ def _accepted(declared: Account, competing: str | None, why: str, number: int) -
     )
 
 
-def outcome(declared: Account, number: int, competing: str | None) -> tuple[str, str] | None:
+#: Why a refusal over a session that need not be TLS says nothing.
+NOT_OVER_TLS = (
+    "the target's `mariadb.ssl_mode` does not require TLS, and an account that "
+    "requires TLS answers its right password with the same refusal over a session "
+    "without it"
+)
+
+
+def outcome(
+    declared: Account, number: int, competing: str | None, *, tls: bool
+) -> tuple[str, str] | None:
     """The result and detail for a login that ended with ``number``, or
     ``None`` where the number says nothing about the password and the caller
-    raises it. ``competing`` is :func:`competitor`'s answer."""
+    raises it. ``competing`` is :func:`competitor`'s answer; ``tls`` whether
+    the target's ``ssl_mode`` requires TLS."""
     if number == ACCESS_DENIED:
-        if competing is None:
+        if competing is None and tls:
             return FAIL, f"the server refused the password ({ACCESS_DENIED}); {UNGUARDED}"
+        why = competing if competing is not None else NOT_OVER_TLS
         return UNAVAILABLE, (
-            f"the server refused the password ({ACCESS_DENIED}), but {competing}, and a "
-            f"refusal does not say which account refused, so it says nothing certain "
-            f"about {declared.name}"
+            f"the server refused the password ({ACCESS_DENIED}), but {why}, so it says "
+            f"nothing certain about {declared.name}"
         )
-    if number == MUST_CHANGE_PASSWORD:
+    if number in (MUST_CHANGE_PASSWORD, MUST_CHANGE_PASSWORD_LOGIN):
         return _accepted(declared, competing, "the password has expired", number)
     if number == ACCOUNT_LOCKED:
         return _accepted(declared, competing, "the account is locked", number)
@@ -180,11 +191,12 @@ def login(
         correlation_id=correlation_id,
         timeouts=timeouts,
     )
+    tls = settings_of(target).ssl_mode in TLS_REQUIRED_MODES
     started = time.monotonic()
     try:
         connection = pymysql.connect(**arguments)
     except pymysql.err.MySQLError as error:
-        return _ended(declared, error, competing, started, connecting=True)
+        return _ended(declared, error, competing, started, tls=tls, connecting=True)
     latency = _ms(started)
     try:
         with connection.cursor() as cursor:
@@ -193,7 +205,9 @@ def login(
             cursor.execute(CURRENT_USER)
             (answered,) = cursor.fetchone()
     except pymysql.err.MySQLError as error:
-        return _ended(declared, error, competing, started, connecting=False, latency=latency)
+        return _ended(
+            declared, error, competing, started, tls=tls, connecting=False, latency=latency
+        )
     finally:
         # The login has answered. A socket that drops as it closes does not
         # change the answer.
@@ -220,6 +234,7 @@ def _ended(
     competing: str | None,
     started: float,
     *,
+    tls: bool,
     connecting: bool,
     latency: int | None = None,
 ) -> VerifyResult:
@@ -227,15 +242,27 @@ def _ended(
     latency = _ms(started) if latency is None else latency
     failure = from_error(error, connecting=connecting)
     LOG.debug("login as %s ended with %s in %.3fs", declared.name, failure.code, latency / 1000)
-    result = outcome(declared, failure.number, competing) if failure.number else None
+    result = outcome(declared, failure.number, competing, tls=tls) if failure.number else None
     if result is not None:
         return VerifyResult(
             method=VERIFY_LOGIN, result=result[0], latency_ms=latency, detail=result[1]
         )
     if not connecting:
-        # The password was accepted, and which account accepted it is
+        # The password was accepted. Where only the declared account can
+        # answer, that settles it; elsewhere which account accepted it is
         # unknown. A result, not an exception: a scheduled check must not look
         # broken for a socket that dropped after the answer.
+        if competing is None:
+            return VerifyResult(
+                method=VERIFY_LOGIN,
+                result=PASS,
+                latency_ms=latency,
+                detail=(
+                    f"the server accepted the password, and reading the session afterwards "
+                    f"failed ({failure.code}); only {declared.name} can answer this login. "
+                    f"{UNGUARDED}"
+                ),
+            )
         return VerifyResult(
             method=VERIFY_LOGIN,
             result=UNAVAILABLE,

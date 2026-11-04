@@ -361,15 +361,21 @@ What the server answers at a login, measured with the `mariadb` client:
 | locked | `4151` (LK1) | `1045` |
 | blocked after failed logins | `4150` (LK4) | `1045` |
 
-`1820` and `4151` come only to the right password, but before the tool can read
-`CURRENT_USER()`, and `1045` does not say which account refused. So each counts
-only where no other account can answer the login: the declared account is
-`user@%`, it is the user's only account, and no anonymous account sits at a
-named host. The MySQL driver logs in only there ([#1223](../decisions/log.md#1223)).
-Elsewhere the result is `unavailable`, and the detail names the other account.
-`4150` answers any password, so it is `unavailable` everywhere.
-`sopuli/driver/mariadb/verification.py` holds the rule; measured on 11.8.9 with
-PyMySQL 1.2.3.
+With PyMySQL 1.2.3 on 11.8.9, an expired account's first statement after login
+gets `1820`, which is the tool's TLS read. With `disconnect_on_expired_password
+= ON`, the right password gets `1862` at connect instead. An account with
+`REQUIRE SSL` answers its right password with `1045` over a session without
+TLS.
+
+`1820`, `1862` and `4151` come only to the right password, but before the tool
+can read `CURRENT_USER()`. `1045` does not say which account refused. So each
+counts only where no other account can answer the login: the declared account
+is `user@%`, it is the user's only account, and no anonymous account sits at a
+named host. The MySQL driver logs in only there
+([#1223](../decisions/log.md#1223)). Elsewhere the result is `unavailable`, and
+the detail names the other account. `1045` is a `fail` only where the target's
+`ssl_mode` requires TLS. `4150` answers any password, so it is `unavailable`
+everywhere. `sopuli/driver/mariadb/verification.py` holds the rule.
 
 A failed verification login counts toward `max_password_errors` on the account
 it reaches. That is an accepted cost of decision 8.

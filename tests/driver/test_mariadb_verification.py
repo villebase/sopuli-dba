@@ -8,6 +8,7 @@ import pytest
 from sopuli.driver.mariadb.accounts import Account
 from sopuli.driver.mariadb.errors import ACCOUNT_BLOCKED, ACCOUNT_LOCKED, RULES
 from sopuli.driver.mariadb.verification import UNGUARDED, competitor, outcome
+from sopuli.driver.mysql.errors import MUST_CHANGE_PASSWORD_LOGIN
 from sopuli.driver.mysql_family.errors import ACCESS_DENIED, MUST_CHANGE_PASSWORD
 from sopuli.driver.protocol import FAIL, PASS, UNAVAILABLE
 
@@ -42,41 +43,58 @@ def test_another_account_that_may_answer_is_named(
     assert words in reason
 
 
-def test_a_refusal_fails_only_where_nothing_else_answers() -> None:
-    assert outcome(ANY, ACCESS_DENIED, None) == (
+def test_a_refusal_fails_only_over_tls_where_nothing_else_answers() -> None:
+    assert outcome(ANY, ACCESS_DENIED, None, tls=True) == (
         FAIL,
         f"the server refused the password ({ACCESS_DENIED}); {UNGUARDED}",
     )
-    result, detail = outcome(LOCAL, ACCESS_DENIED, "another account may answer") or ("", "")
+    result, detail = outcome(LOCAL, ACCESS_DENIED, "another account may answer", tls=True) or (
+        "",
+        "",
+    )
     assert result == UNAVAILABLE
     assert "nothing certain about acme_app@localhost" in detail
 
 
+def test_a_refusal_without_tls_says_nothing() -> None:
+    """`REQUIRE SSL` answers its right password with `1045` over a session
+    without TLS (measured on 11.8.9)."""
+    result, detail = outcome(ANY, ACCESS_DENIED, None, tls=False) or ("", "")
+
+    assert result == UNAVAILABLE
+    assert "does not require TLS" in detail
+
+
 @pytest.mark.parametrize(
     ("number", "why"),
-    [(MUST_CHANGE_PASSWORD, "has expired"), (ACCOUNT_LOCKED, "is locked")],
+    [
+        (MUST_CHANGE_PASSWORD, "has expired"),
+        # `disconnect_on_expired_password = ON` (11.8.9).
+        (MUST_CHANGE_PASSWORD_LOGIN, "has expired"),
+        (ACCOUNT_LOCKED, "is locked"),
+    ],
 )
 def test_an_answer_only_the_right_password_gets_passes_where_nothing_else_answers(
     number: int, why: str
 ) -> None:
-    result, detail = outcome(ANY, number, None) or ("", "")
+    result, detail = outcome(ANY, number, None, tls=False) or ("", "")
     assert result == PASS
     assert why in detail
     assert f"({number})" in detail
 
-    result, detail = outcome(LOCAL, number, "another account may answer") or ("", "")
+    result, detail = outcome(LOCAL, number, "another account may answer", tls=True) or ("", "")
     assert result == UNAVAILABLE
 
 
 def test_a_block_answers_any_password_and_says_nothing() -> None:
-    result, detail = outcome(ANY, ACCOUNT_BLOCKED, None) or ("", "")
+    result, detail = outcome(ANY, ACCOUNT_BLOCKED, None, tls=True) or ("", "")
 
     assert result == UNAVAILABLE
     assert f"({ACCOUNT_BLOCKED})" in detail
 
 
 def test_any_other_number_is_left_to_the_caller() -> None:
-    assert outcome(ANY, 2003, None) is None
+    assert outcome(ANY, 2003, None, tls=True) is None
 
 
 @pytest.mark.parametrize("number", [ACCOUNT_LOCKED, ACCOUNT_BLOCKED])

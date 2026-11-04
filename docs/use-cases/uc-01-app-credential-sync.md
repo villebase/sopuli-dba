@@ -642,6 +642,18 @@ These rules decide what `apply` does with each account:
   new password ends the expiry, with `RETAIN CURRENT PASSWORD` or without, and
   a rollover's retained password logs in too (`04_lock_expiry_probe.py`, LE7
   and LE8, [#1225](../decisions/log.md#1225)).
+- **On MariaDB, a login verifies only when `CURRENT_USER()` is the declared
+  account** ([#1267](../decisions/log.md#1267), decision 8). The tool logs in
+  as any declared account, after a change and for `creds check`. A login
+  reaches the account the server matches from the tool's host, which may be
+  another. So a session whose `CURRENT_USER()` names another account says
+  nothing, and its `pending` is not promoted. An answer that comes before
+  `CURRENT_USER()` can be read, the refusal `1045`, or `1820` for an expired
+  password or `4151` for a locked account, both sent only to the right
+  password, counts only where no other account can answer: a `user@%` account
+  that is the user's only one, with no anonymous account at a named host.
+  Elsewhere it is `unavailable`. MariaDB keeps no `password_last_changed`
+  the tool can read, so there is no `stored` result (open: #1270).
 - **A locked account is not changed at all,** unless the policy asks for an
   unlock (below). The statement would succeed and the verification could never
   pass. The run would end with a database whose password is in no vault stage,

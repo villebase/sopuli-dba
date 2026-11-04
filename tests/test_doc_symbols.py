@@ -156,13 +156,23 @@ def _walk(obj: Any, parts: list[str]) -> bool:
 
 
 @cache
+def _normalised(name: str) -> str:
+    """A distribution or module name in one spelling: lower case, `-` and `.` as `_`.
+
+    `pyproject.toml` writes `PyMySQL`, and the import error names `pymysql`.
+    """
+    return re.sub(r"[-.]", "_", name.lower())
+
+
 def _declared_dependencies() -> frozenset[str]:
-    """The import names of what `pyproject.toml` declares, extras included."""
+    """The import names of what `pyproject.toml` declares, extras included, normalised."""
     project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
     declared = list(project.get("dependencies", []))
     for extra in project.get("optional-dependencies", {}).values():
         declared += extra
-    return frozenset(re.split(r"[<>=!~\[; ]", name, maxsplit=1)[0] for name in declared)
+    return frozenset(
+        _normalised(re.split(r"[<>=!~\[; ]", name, maxsplit=1)[0]) for name in declared
+    )
 
 
 def _imported(dotted: str) -> bool | None:
@@ -177,7 +187,7 @@ def _imported(dotted: str) -> bool | None:
         try:
             module = importlib.import_module(".".join(parts[:split]))
         except ModuleNotFoundError as error:
-            if error.name in _declared_dependencies():
+            if error.name and _normalised(error.name) in _declared_dependencies():
                 return None
             if split == 1:
                 return False
@@ -388,6 +398,15 @@ def test_the_role_lookup_tells_a_real_name_from_a_missing_one() -> None:
     assert _resolves_in_source("NoSuchName", module, []) is False
     assert _imported("sopuli.config.errors.KeyPath") is True
     assert _imported("sopuli.config.errors.NoSuchName") is False
+
+
+def test_a_declared_extra_is_found_by_its_import_name() -> None:
+    """`pyproject.toml` writes `PyMySQL`; a missing module is named `pymysql` (#1280)."""
+    declared = _declared_dependencies()
+
+    assert "pymysql" in declared
+    assert _normalised("PyMySQL") == "pymysql"
+    assert _normalised("python-oracledb") == "python_oracledb"
 
 
 def test_a_test_module_reference_is_walked_to_its_end() -> None:

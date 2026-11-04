@@ -256,9 +256,10 @@ entry lists UC-1's `creds generate`, `apply`, `check`, `rotate`, `status` and
 `finish-rollover` (#1223, #1224), and UC-2's `account list`,
 `reset-password`, `suspend` and `expire-password` (#1225): every command that
 connects to a target, as for PostgreSQL. The config accepts `type: mariadb`
-too, and PyMySQL with PyNaCl comes with `sopuli-dba[mariadb]`. Its driver is
-not written yet (#1268), so every command refuses a MariaDB target with
-`SOPULI-20006`. What
+too, and PyMySQL with PyNaCl comes with `sopuli-dba[mariadb]`. `doctor`
+connects to a MariaDB server and reports the scope, `server` (#1268). The
+MariaDB entry lists no other command yet, so every other command refuses a
+MariaDB target with `SOPULI-20006` (UC-1 is #1270, UC-2 #1272). What
 PostgreSQL lacks, such as a rollover window, a profile, or a forced password
 change at next login, is refused at plan time by capability, not by product. A libpq older than 16 is a property of the client,
 not of the target, and is refused per account during the run: the one accepted
@@ -483,7 +484,7 @@ pip install sopuli-dba                 # config, selection, schema — no networ
 pip install "sopuli-dba[oracle]"       # + python-oracledb, to reach Oracle
 pip install "sopuli-dba[postgres]"     # + psycopg, to reach PostgreSQL
 pip install "sopuli-dba[mysql]"        # + PyMySQL, to reach MySQL
-pip install "sopuli-dba[mariadb]"      # + PyMySQL and PyNaCl, for MariaDB; driver not written yet
+pip install "sopuli-dba[mariadb]"      # + PyMySQL and PyNaCl, for MariaDB; so far `doctor` only
 pip install "sopuli-dba[hashicorp]"    # + HashiCorp Vault
 pip install "sopuli-dba[oci]"          # + OCI Vault / Secrets
 pip install "sopuli-dba[notify]"       # + UC-2's webhook notify channel

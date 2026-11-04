@@ -1,7 +1,7 @@
 """The MariaDB driver (#1268).
 
-Not written yet: there is no ``session`` module, so a MariaDB target resolves to
-:class:`~sopuli.driver.registry.DriverNotImplementedError`, ``SOPULI-20006``. The
-package exists so that the registry's lookup of ``sopuli.driver.mariadb.session``
-finds no module, rather than failing on a missing parent.
+:mod:`~sopuli.driver.mariadb.session` connects and serves `doctor`; the modules
+beside it are tier 0. MariaDB gets a driver of its own, not a variant of
+MySQL's (#1202, decision 2), and shares :mod:`sopuli.driver.mysql_family` with
+it (#1267, decision 7).
 """

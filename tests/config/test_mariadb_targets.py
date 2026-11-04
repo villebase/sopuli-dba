@@ -201,9 +201,9 @@ def test_a_role_names_no_host_on_mariadb() -> None:
 # ------------------------------------------------------------- the driver ---
 
 
-def test_the_driver_is_not_written_yet() -> None:
-    """Every command, `doctor` aside, is refused before anything connects, and
-    resolving the driver says it is not written (#1268)."""
+def test_the_driver_serves_doctor_and_no_other_command_yet() -> None:
+    """`doctor` connects (#1268); every other command is refused before anything
+    connects, until UC-1 (#1270) and UC-2 (#1272) write it."""
     target = loaded(targets=[SERVER]).expanded_targets[0].target
 
     assert DRIVERS["mariadb"].commands == frozenset()
@@ -214,6 +214,4 @@ def test_the_driver_is_not_written_yet() -> None:
     with pytest.raises(DriverNotImplementedError) as caught:
         require_command(target, "creds.check")
     assert caught.value.code == DRIVER_NOT_IMPLEMENTED
-    with pytest.raises(DriverNotImplementedError) as resolving:
-        resolve(target)
-    assert "this build has no mariadb driver yet" in str(resolving.value)
+    assert resolve(target).__name__ == "sopuli.driver.mariadb.session"

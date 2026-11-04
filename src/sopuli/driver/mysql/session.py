@@ -42,10 +42,11 @@ from sopuli.driver.mysql import roles, verification
 from sopuli.driver.mysql.errors import UNKNOWN_SYSTEM_VARIABLE, from_error
 from sopuli.driver.mysql.limits import LIMIT
 from sopuli.driver.mysql.privileges import audit as privilege_audit
-from sopuli.driver.mysql.scope import observe, read_encryption, require_read_write
+from sopuli.driver.mysql.scope import observe, require_read_write
 from sopuli.driver.mysql_family.accounts import Principal, split
 from sopuli.driver.mysql_family.client import client_lines
 from sopuli.driver.mysql_family.connection import TLS_REQUIRED_MODES, connect_arguments
+from sopuli.driver.mysql_family.encryption import read_encryption
 from sopuli.driver.mysql_family.errors import (
     COLUMN_ACCESS_DENIED,
     TABLE_ACCESS_DENIED,

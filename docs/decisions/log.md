@@ -4298,11 +4298,16 @@ the register.
   3. The tool never reads whether a rollover is open. `creds finish-rollover`
      always sends the new value alone and reports `changed: true`.
   4. Check 9 reads what the tool account can read without the hash: the
-     `mysql.user` view's privilege columns, `Repl_client_priv` among them, and
-     roles through `mysql.roles_mapping`. It cannot see a privilege split from
-     `SUPER`, held directly or through a role. The privileges document records
-     that as an accepted risk, and `doctor` warns that it cannot fully check
-     the managed MariaDB accounts.
+     `mysql.user` view's privilege columns, `Repl_client_priv` among them,
+     roles through `mysql.roles_mapping`, and, as on MySQL
+     ([#1222](#1222)), privileges on the `mysql` schema and `PROXY` grants
+     through `mysql.db`, `tables_priv`, `columns_priv`, `procs_priv` and
+     `proxies_priv`. The last five were added on 2026-11-04 while #1268 was
+     written, when the maintainer chose to keep MySQL's scope; none of them
+     holds a stored value on 10.11.19, 11.4.13, 11.8.9 or 12.3.3. It cannot
+     see a privilege split from `SUPER`, held directly or through a role. The
+     privileges document records that as an accepted risk, and `doctor` warns
+     that it cannot fully check the managed MariaDB accounts.
   5. The client comes in a `mariadb` extra of its own, `PyMySQL[ed25519]`.
   6. The supported releases are 10.11 and later.
   7. The code both drivers can share moves to `sopuli/driver/mysql_family/`

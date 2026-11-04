@@ -33,6 +33,7 @@ so. That is a design decision, not an implementation detail.
 | `docs/design/02-oracle-privileges.md` | any SQL issued against Oracle |
 | `docs/design/02-postgres-privileges.md` | any SQL issued against PostgreSQL, and the tool account's grants there |
 | `docs/design/02-mysql-privileges.md` | any SQL issued against MySQL, and the tool account's grants there |
+| `docs/design/02-mariadb-privileges.md` | any SQL issued against MariaDB, and the tool account's grants there |
 | `docs/design/03-json-output.md` | anything that produces output, and redaction |
 | `docs/design/04-testing.md` | tests and the test stack |
 | `docs/use-cases/uc-01-app-credential-sync.md` | application credentials: `creds generate`, `apply`, `check`, `rotate` |

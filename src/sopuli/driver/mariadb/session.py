@@ -1,0 +1,272 @@
+"""Connecting to a MariaDB server, and reporting what it is.
+
+The module :data:`sopuli.driver.registry.DRIVERS` imports for ``type: mariadb``.
+It imports ``pymysql`` at module scope, so a machine without the ``mariadb``
+extra gets ``SOPULI-20002`` from the registry rather than a traceback (ADR-006
+rule 1). The modules beside it are tier 0.
+
+**What this build does** (#1268). It connects through
+:mod:`sopuli.driver.mysql_family`, labels the session with the run's
+correlation id, checks that a mode which requires TLS got it, and reports the
+scope: ``server``, whether it takes writes, and its encryption. For ``doctor
+--check-privileges`` it audits the tool account's grants
+(:mod:`~sopuli.driver.mariadb.privileges`) and surveys the declared accounts
+(:mod:`~sopuli.driver.mariadb.accounts`). Every other method refuses with
+``SOPULI-20006``, and the registry lists no command but `doctor`: UC-1 is
+#1270 and UC-2 #1272.
+
+The session claims no server identity: MariaDB has no ``server_uuid``, and
+11.8.9 shows no ``server_uid`` status either, so two targets on one server are
+not caught here (#1286).
+"""
+
+from __future__ import annotations
+
+import logging
+import time
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field, replace
+from typing import Any, NoReturn, TypeVar
+
+import pymysql
+
+from sopuli.config.model import ExpandedTarget, Runtime
+from sopuli.driver.mariadb import accounts as accounts_module
+from sopuli.driver.mariadb.errors import from_error
+from sopuli.driver.mariadb.privileges import audit as privilege_audit
+from sopuli.driver.mariadb.scope import observe
+from sopuli.driver.mysql_family.client import client_lines
+from sopuli.driver.mysql_family.connection import TLS_REQUIRED_MODES, connect_arguments
+from sopuli.driver.mysql_family.encryption import read_encryption
+from sopuli.driver.mysql_family.errors import TLS_CONNECTION_ERROR
+from sopuli.driver.protocol import (
+    ENCRYPTION_TLS,
+    UNKNOWN,
+    ClosesConnection,
+    Credential,
+    DriverContext,
+    DriverError,
+    Encryption,
+    PrivilegeAudit,
+    Scope,
+    Timeouts,
+)
+from sopuli.driver.registry import NotWrittenError
+from sopuli.output.debug import logger
+
+LOG = logger("mariadb")
+
+T = TypeVar("T")
+
+
+class UnencryptedSessionError(DriverError):
+    """A mode that requires TLS got a session it could not confirm as TLS. The
+    session is closed before anything is sent over it."""
+
+    category = "connectivity"
+
+
+@dataclass
+class MariadbSession(ClosesConnection):
+    """One open connection to a MariaDB server. Implements the
+    :class:`~sopuli.driver.protocol.Session` methods `doctor` uses; every other
+    one refuses with ``SOPULI-20006``."""
+
+    connection: Any
+    target: ExpandedTarget
+    correlation_id: str
+    timeouts: Timeouts
+    #: The session's encryption, read at connect to hold a mode that requires
+    #: TLS to it, so :meth:`scope` does not read it again.
+    encryption: Encryption | None = None
+    #: Invariant 3's cache, probed on first use.
+    _scope: Scope | None = field(default=None, init=False, repr=False)
+
+    def scope(self) -> Scope:
+        """What this session is: a server, read-write or not, and its
+        encryption. Probed on the first call and cached (invariant 3)."""
+        if self._scope is None:
+            self._scope = self._read(
+                lambda cursor: observe(cursor, target=self.target.name, encryption=self.encryption)
+            )
+            if LOG.isEnabledFor(logging.DEBUG):
+                LOG.debug(
+                    "%s is a server, %s %s, encryption %s",
+                    self.target.name,
+                    self._scope.db_version,
+                    self._scope.open_mode,
+                    self._scope.encryption.method,
+                )
+        return self._scope
+
+    def privileges(self, *, accounts: tuple[str, ...] = ()) -> PrivilegeAudit:
+        """What the tool account holds, needs and should not hold, and a line
+        for each declared account that does not exist, uses a plugin the tool
+        does not change, or shares its user name with an account at an
+        undeclared host. Where the survey's read fails, the audit stands and a
+        line says why, as on MySQL."""
+        audit = self._read(privilege_audit)
+        if not accounts:
+            return audit
+        try:
+            lines = self._read(lambda cursor: accounts_module.survey(cursor, accounts))
+        except DriverError as error:
+            return replace(
+                audit,
+                unreadable=(*audit.unreadable, "mysql.user"),
+                remedies=(*audit.remedies, f"the declared accounts were not read: {error}"),
+            )
+        return replace(audit, remedies=(*audit.remedies, *lines))
+
+    def _not_written(self, what: str) -> NoReturn:
+        raise NotWrittenError(
+            self.target.name,
+            product="a MariaDB server",
+            what=what,
+            hint=(
+                "the MariaDB driver connects and reports the server for `doctor`, and "
+                "the rest of it is not written yet (#1270, #1272)"
+            ),
+        )
+
+    def describe_user(self, account: str) -> NoReturn:
+        self._not_written("describe an account")
+
+    def byte_limit(self) -> NoReturn:
+        self._not_written("say how long a password may be")
+
+    def set_password(self, *args: Any, **kwargs: Any) -> NoReturn:
+        self._not_written("set a password")
+
+    def suspend_account(self, account: str) -> NoReturn:
+        self._not_written("suspend an account")
+
+    def reset_password(self, *args: Any, **kwargs: Any) -> NoReturn:
+        self._not_written("reset a password")
+
+    def expire_password(self, account: str) -> NoReturn:
+        self._not_written("expire a password")
+
+    def audit_coverage(self, account: str) -> NoReturn:
+        self._not_written("read audit coverage")
+
+    def apply_attributes(self, *args: Any, **kwargs: Any) -> NoReturn:
+        self._not_written("apply account attributes")
+
+    def resolve_profile(self, profile: str) -> NoReturn:
+        self._not_written("resolve a profile")
+
+    def resolve_role(self, role: str) -> NoReturn:
+        self._not_written("resolve a role")
+
+    def accounts_matching(self, *args: Any, **kwargs: Any) -> NoReturn:
+        self._not_written("list accounts")
+
+    def verify_password(self, *args: Any, **kwargs: Any) -> NoReturn:
+        self._not_written("verify a password")
+
+    def require_verifier(self, *args: Any, **kwargs: Any) -> NoReturn:
+        self._not_written("check a password by its stored value")
+
+    def require_rollover(self, account: str) -> NoReturn:
+        self._not_written("keep a rollover window")
+
+    def finish_rollover(self, account: str) -> NoReturn:
+        self._not_written("finish a rollover")
+
+    def _read(self, reader: Callable[[Any], T]) -> T:
+        """Run ``reader`` on a cursor of this session. A closed session is a
+        fault in sopuli, and a MariaDB error is classified by
+        :mod:`~sopuli.driver.mariadb.errors`."""
+        if self.connection is None:
+            raise DriverError(
+                f'the session to target "{self.target.name}" is closed',
+                hint="this is a fault in sopuli: a closed session was used again",
+            )
+        try:
+            with self.connection.cursor() as cursor:
+                return reader(cursor)
+        except pymysql.err.MySQLError as error:
+            raise from_error(error).as_error() from error
+
+
+def require_tls(encryption: Encryption, target: ExpandedTarget) -> None:
+    """Refuse a session not known to be TLS where ``mariadb.ssl_mode`` requires
+    it, as on MySQL: the answer is read from the session itself, so the rule
+    does not rest on the client library alone. ``unknown`` is refused too."""
+    mode = target.target.mariadb_settings.ssl_mode
+    if mode not in TLS_REQUIRED_MODES or encryption.method == ENCRYPTION_TLS:
+        return
+    if encryption.method == UNKNOWN:
+        raise UnencryptedSessionError(
+            f'target "{target.name}" could not confirm TLS under `ssl_mode: {mode}`',
+            hint=encryption.hint or "the server did not say whether the session is TLS",
+            code=str(TLS_CONNECTION_ERROR),
+        )
+    raise UnencryptedSessionError(
+        f'target "{target.name}" connected without TLS under `ssl_mode: {mode}`',
+        hint="the server negotiated no TLS; give it a certificate, and keep the mode",
+        code=str(TLS_CONNECTION_ERROR),
+    )
+
+
+@dataclass(frozen=True)
+class MariadbDriver:
+    """P1's :class:`~sopuli.driver.protocol.Driver`, for MariaDB."""
+
+    correlation_id: str
+    timeouts: Timeouts = field(default_factory=Timeouts)
+
+    def connect(self, target: ExpandedTarget, credential: Credential) -> MariadbSession:
+        """Reach ``target`` as ``credential``. A failure is classified with
+        ``connecting=True``, and the debug line names the code and never the
+        arguments, which hold the password."""
+        arguments = connect_arguments(
+            target, credential, correlation_id=self.correlation_id, timeouts=self.timeouts
+        )
+        started = time.monotonic()
+        try:
+            connection = pymysql.connect(**arguments)
+        except pymysql.err.MySQLError as error:
+            failure = from_error(error, connecting=True)
+            LOG.debug(
+                "connect to %s as %s failed with %s in %.3fs",
+                target.name,
+                credential.username,
+                failure.code,
+                time.monotonic() - started,
+            )
+            raise failure.as_error() from error
+        LOG.debug(
+            "connect to %s as %s in %.3fs",
+            target.name,
+            credential.username,
+            time.monotonic() - started,
+        )
+        try:
+            with connection.cursor() as cursor:
+                encryption = read_encryption(cursor, block="mariadb")
+            require_tls(encryption, target)
+        except pymysql.err.MySQLError as error:
+            connection.close()
+            raise from_error(error).as_error() from error
+        except BaseException:
+            connection.close()
+            raise
+        return MariadbSession(
+            connection=connection,
+            target=target,
+            correlation_id=self.correlation_id,
+            timeouts=self.timeouts,
+            encryption=encryption,
+        )
+
+
+def build_driver(context: DriverContext) -> MariadbDriver:
+    """The registry's way in: a :class:`MariadbDriver` for this run."""
+    return MariadbDriver(correlation_id=context.correlation_id, timeouts=context.timeouts)
+
+
+def client_report(*, env: Mapping[str, str], runtime: Runtime) -> dict[str, Any]:
+    """`doctor`'s client line: PyMySQL's release, as on MySQL."""
+    return client_lines(pymysql_version=".".join(str(part) for part in pymysql.VERSION[:3]))

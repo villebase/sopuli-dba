@@ -279,11 +279,14 @@ services:
   # release, and its image starts with TLS on, under a certificate it generates
   # for itself. mariadb-init/ runs once, on an empty data directory: it creates
   # the tool account with the grants of docs/design/02-mariadb-privileges.md
-  # §2.1 and installs ed25519. The probes' release matrix is `mariadb-matrix`
-  # below.
+  # §2.1 and installs ed25519. performance_schema and the binary log are on, as
+  # in the matrix: MariaDB leaves both off by default, neither can be turned on
+  # while the server runs, and each keeps password text that invariant 15's
+  # test must look for. The probes' release matrix is `mariadb-matrix` below.
   mariadb:
     image: mariadb:11.8
     profiles: [tier1, tier2]
+    command: ["--performance-schema=ON", "--log-bin=mariadb-bin"]
     environment:
       MARIADB_ROOT_PASSWORD: sopuli-test
       MARIADB_DATABASE: sopuli

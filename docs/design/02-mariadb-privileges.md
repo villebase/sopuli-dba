@@ -119,8 +119,9 @@ Give the account no other privilege, and no role.
 
 **`SHOW GRANTS` prints the tool account's own hash.** Any account can run
 `SHOW GRANTS` for itself, and on MariaDB its first line carries the account's
-stored value, such as ``GRANT CREATE USER ON *.* TO `sopuli_admin`@`%`
-IDENTIFIED BY PASSWORD '*…'`` (checked on 11.8.9). Code that reads it
+stored value, such as ``GRANT CREATE USER ON *.* TO
+`sopuli_admin`@`192.0.2.10` IDENTIFIED BY PASSWORD '*…'`` (checked on
+11.8.9). Code that reads it
 treats that line as holding a secret (invariant 2), and keeps no copy of the
 value (open: #1268).
 
@@ -260,7 +261,11 @@ The value is the plugin's (`02_client_hash_probe.py`, CH1):
 
 - `mysql_native_password`: `*` and the SHA-1 of the SHA-1 of the password, in
   upper-case hex (§2.1);
-- `ed25519`: the Ed25519 public key whose seed is the password.
+- `ed25519`: the Ed25519 public key derived from the password's UTF-8 bytes
+  as RFC 8032 derives one from a private key: SHA-512 of the bytes, of any
+  length, then the clamped scalar times the base point. It is written in
+  base64 without the trailing `=`. The password is not a 32-byte Ed25519 seed,
+  so a library that takes only such a seed does not compute it.
 
 Values computed in Python agree with the server's, and an account with only
 `CREATE USER` sets them (CH1, CH2). The server refuses a malformed value with

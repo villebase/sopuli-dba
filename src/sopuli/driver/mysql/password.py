@@ -40,11 +40,15 @@ import hashlib
 # and a name that reads like the `random` module invites the wrong swap.
 import secrets as csprng
 
-from sopuli.config import charsets
 from sopuli.driver.mysql.accounts import SUPPORTED_PLUGIN as PLUGIN
 from sopuli.driver.mysql.limits import LIMIT
 from sopuli.driver.mysql_family.accounts import Principal
-from sopuli.driver.protocol import DriverError
+
+# Re-exported: the driver's callers and tests catch it from here.
+from sopuli.driver.mysql_family.password import (
+    PasswordNotAdmissibleError as PasswordNotAdmissibleError,
+)
+from sopuli.driver.mysql_family.password import refuse_unusable
 from sopuli.secrets import Secret
 
 #: The rounds variable, which any account reads (CH5).
@@ -61,28 +65,14 @@ _ORDER = (
 )  # fmt: skip
 
 
-class PasswordNotAdmissibleError(DriverError):
-    """The password cannot be set on this target. ``policy``, as on the other
-    drivers. The message names a class of problem and never a character of the
-    password."""
-
-    category = "policy"
-
-
 def admit(secret: Secret) -> None:
     """Refuse a password the target cannot take, before anything is computed.
 
-    An empty password, control characters (as on Oracle and PostgreSQL), text
-    that cannot be encoded as UTF-8, and more than
-    :data:`~sopuli.driver.mysql.limits.MAX_PASSWORD_BYTES`.
+    What :func:`~sopuli.driver.mysql_family.password.refuse_unusable` refuses,
+    and more than :data:`~sopuli.driver.mysql.limits.MAX_PASSWORD_BYTES`.
     """
     text = secret.reveal()
-    if not text:
-        raise PasswordNotAdmissibleError("the password is empty")
-    if any(charsets.is_control(character) for character in text):
-        raise PasswordNotAdmissibleError("the password contains control characters")
-    if not LIMIT.encodable(text):
-        raise PasswordNotAdmissibleError("the password cannot be encoded as UTF-8")
+    refuse_unusable(text)
     width = LIMIT.width(text)
     if width > LIMIT.max_bytes:
         raise PasswordNotAdmissibleError(

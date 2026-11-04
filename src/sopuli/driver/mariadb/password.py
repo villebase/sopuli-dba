@@ -38,8 +38,16 @@ from __future__ import annotations
 import base64
 import hashlib
 
-from sopuli.config import charsets
-from sopuli.driver.protocol import DriverError
+# PyNaCl comes with the `mariadb` extra, for PyMySQL's own ed25519 login and for
+# this value (#1267, decision 5). The registry lists `nacl` in the driver's
+# `provides`, so an install without it is refused before this module loads.
+from nacl.bindings import crypto_scalarmult_ed25519_base_noclamp
+
+# Re-exported: the driver's callers and tests catch it from here.
+from sopuli.driver.mysql_family.password import (
+    PasswordNotAdmissibleError as PasswordNotAdmissibleError,
+)
+from sopuli.driver.mysql_family.password import refuse_unusable
 from sopuli.secrets import Secret
 
 #: The plugins this module computes a value for, by the server's name.
@@ -47,29 +55,13 @@ NATIVE = "mysql_native_password"
 ED25519 = "ed25519"
 
 
-class PasswordNotAdmissibleError(DriverError):
-    """The password cannot be set on this target. ``policy``, as on the other
-    drivers. The message names a class of problem and never a character of the
-    password."""
-
-    category = "policy"
-
-
 def admit(secret: Secret) -> None:
     """Refuse a password the target cannot take, before anything is computed.
 
-    An empty password, control characters (as on the other drivers), and text
-    that cannot be encoded as UTF-8. There is no length limit (PW1).
+    What :func:`~sopuli.driver.mysql_family.password.refuse_unusable` refuses.
+    There is no length limit (PW1).
     """
-    text = secret.reveal()
-    if not text:
-        raise PasswordNotAdmissibleError("the password is empty")
-    if any(charsets.is_control(character) for character in text):
-        raise PasswordNotAdmissibleError("the password contains control characters")
-    try:
-        text.encode("utf-8")
-    except UnicodeEncodeError:
-        raise PasswordNotAdmissibleError("the password cannot be encoded as UTF-8") from None
+    refuse_unusable(secret.reveal())
 
 
 def _utf8(secret: Secret) -> bytes:
@@ -78,8 +70,8 @@ def _utf8(secret: Secret) -> bytes:
 
 def native_value(secret: Secret) -> Secret:
     """The value ``mysql_native_password`` stores for ``secret``."""
-    inner = hashlib.sha1(_utf8(secret)).digest()  # noqa: S324 -- the plugin's format
-    return Secret("*" + hashlib.sha1(inner).hexdigest().upper())  # noqa: S324
+    inner = hashlib.sha1(_utf8(secret)).digest()
+    return Secret("*" + hashlib.sha1(inner).hexdigest().upper())
 
 
 def ed25519_value(secret: Secret) -> Secret:
@@ -88,10 +80,6 @@ def ed25519_value(secret: Secret) -> Secret:
     The scalar is the first half of SHA-512 of the password, clamped as RFC 8032
     §5.1.5 says: the low three bits and the top bit cleared, and bit 254 set.
     """
-    # Imported here: PyNaCl comes with the `mariadb` extra (#1267, decision 5),
-    # and nothing else in the tool needs it.
-    from nacl.bindings import crypto_scalarmult_ed25519_base_noclamp
-
     scalar = bytearray(hashlib.sha512(_utf8(secret)).digest()[:32])
     scalar[0] &= 248
     scalar[31] &= 127

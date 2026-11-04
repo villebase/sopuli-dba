@@ -11,7 +11,12 @@ from __future__ import annotations
 
 import pytest
 
-from sopuli.driver.mariadb.password import (
+from sopuli.secrets import Secret
+
+# Before the module, which imports PyNaCl: it comes with the `mariadb` extra.
+pytest.importorskip("nacl", reason="PyNaCl comes with the `mariadb` extra")
+
+from sopuli.driver.mariadb.password import (  # noqa: E402
     ED25519,
     NATIVE,
     VALUES,
@@ -20,9 +25,6 @@ from sopuli.driver.mariadb.password import (
     ed25519_value,
     native_value,
 )
-from sopuli.secrets import Secret
-
-pytest.importorskip("nacl", reason="PyNaCl comes with the `mariadb` extra")
 
 LONG = "Acme-Long-" * 30
 

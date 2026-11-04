@@ -18,11 +18,13 @@ from typing import Any
 import pytest
 
 from conftest import _missing_environment
-from sopuli.driver.mariadb.password import ED25519, NATIVE, VALUES, admit
 from sopuli.secrets import Secret
 
 pymysql = pytest.importorskip("pymysql")
+# Before the module, which imports PyNaCl: it comes with the `mariadb` extra.
 pytest.importorskip("nacl", reason="PyNaCl comes with the `mariadb` extra")
+
+from sopuli.driver.mariadb.password import ED25519, NATIVE, VALUES, admit  # noqa: E402
 
 PORT = int(os.environ.get("SOPULI_TEST_MARIADB_PORT", "3307"))
 

@@ -353,3 +353,7 @@ Not measured: every other release, Galera, and every managed service.
 | `09_password_length_probe.py` | `11.4.13` | 2026-11-04 | #1268 | As on 10.11.19 |
 | `09_password_length_probe.py` | `11.8.9` | 2026-11-04 | #1268 | As on 10.11.19 |
 | `09_password_length_probe.py` | `12.3.3` | 2026-11-04 | #1268 | As on 10.11.19 |
+| `10_role_reads_probe.py` | `10.11.19` | 2026-11-04 | #1269 | `mysql.roles_mapping` holds a role granted to an account as (`%`, account, role), and one granted to a role as (``, role, role): a role's host is empty. A role is a row of the `mysql.user` view at host ``, with `is_role` `Y` and its own `*_priv` columns. An account gets a role's privileges after `SET ROLE`, and a nested role's through the role that holds it; `SET ROLE` to the nested role is refused, `1959`. **`PUBLIC` is a role every account holds, always active.** It is a row of the view at host `` with `is_role` `Y`, and may hold a global privilege, rows in `mysql.db` and `mysql.tables_priv`, and a role, in `roles_mapping` as (``, `PUBLIC`, role). An account with no grant of its own uses all of them with no `SET ROLE`, the role's privileges included, and `SET ROLE` to that role is refused, `1959`. The tool account reads each with §2.1's grants |
+| `10_role_reads_probe.py` | `11.4.13` | 2026-11-04 | #1269 | As on 10.11.19 |
+| `10_role_reads_probe.py` | `11.8.9` | 2026-11-04 | #1269 | As on 10.11.19 |
+| `10_role_reads_probe.py` | `12.3.3` | 2026-11-04 | #1269 | As on 10.11.19 |

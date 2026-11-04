@@ -50,7 +50,7 @@ def test_a_target_with_no_block_connects_verifying_the_server_and_its_name() -> 
         "program_name": f"sopuli {RUN}",
         "autocommit": True,
         "init_command": "SET time_zone = '+00:00'",
-        "password": PASSWORD,
+        "password": PASSWORD.encode("utf-8"),
     }
     assert isinstance(context, ssl.SSLContext)
     assert context.verify_mode == ssl.CERT_REQUIRED
@@ -142,6 +142,20 @@ def test_no_query_budget_sets_no_socket_timeout() -> None:
 
     assert "read_timeout" not in arguments
     assert "write_timeout" not in arguments
+
+
+@pytest.mark.parametrize("password", ["pässwörd-é", "pass-€-word"])
+def test_the_password_goes_to_pymysql_as_utf8_bytes(password: str) -> None:
+    """PyMySQL encodes a str as latin-1, which logs in with the wrong bytes for
+    `é` and raises for `€`; the server hashes UTF-8 (#1285)."""
+    arguments = connect_arguments(
+        _target(),
+        Credential(username="sopuli_svc", secret=Secret(password)),
+        correlation_id=RUN,
+        timeouts=Timeouts(),
+    )
+
+    assert arguments["password"] == password.encode("utf-8")
 
 
 def test_the_password_is_only_in_its_own_argument() -> None:

@@ -50,7 +50,7 @@ from sopuli.clock import to_rfc3339
 from sopuli.config.model import ResetRecords
 from sopuli.config.products import fold_mysql_host, mysql_account, mysql_host_token
 from sopuli.config.secret_refs import TRAVERSAL, normalise_path
-from sopuli.config.targets import MYSQL
+from sopuli.config.targets import USER_AT_HOST_TYPES
 from sopuli.lock.keys import LockKey
 from sopuli.lock.record import Holder
 from sopuli.secrets import Secret
@@ -210,7 +210,7 @@ def account_segment(account: str, product: str) -> str:
     last reset of either. ``{host}`` in a secret template has the same
     collision (#1221).
     """
-    if product == MYSQL:
+    if product in USER_AT_HOST_TYPES:
         split = mysql_account(account)
         if split is not None:
             user, host = split

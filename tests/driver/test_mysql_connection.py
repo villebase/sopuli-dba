@@ -121,7 +121,7 @@ def test_a_ca_file_that_is_not_a_certificate_is_a_config_error(tmp_path: Path) -
 
 
 def test_an_unknown_mode_is_a_fault_not_a_weaker_connection() -> None:
-    with pytest.raises(ValueError, match="not a MySQL ssl_mode"):
+    with pytest.raises(ValueError, match="not a `mysql.ssl_mode`"):
         _context("verify-full")
 
 
@@ -164,3 +164,26 @@ def test_a_credential_with_a_part_missing_is_refused(credential: Credential, mes
     empty password."""
     with pytest.raises(ConfigError, match=message):
         connect_arguments(_target(), credential, correlation_id=RUN, timeouts=Timeouts())
+
+
+def _mariadb(block: TargetMysql | None) -> ExpandedTarget:
+    return ExpandedTarget(
+        target=Target(
+            name="mariadb-dev", type="mariadb", dsn="mariadb-dev.example.com:3306", mariadb=block
+        )
+    )
+
+
+def test_a_mariadb_target_is_reached_by_its_own_block() -> None:
+    """The shared code reads `mariadb:` on a MariaDB target (#1268), not `mysql:`,
+    which a MariaDB target never has."""
+    assert tls_arguments(_mariadb(TargetMysql(ssl_mode="DISABLED"))) == {"ssl_disabled": True}
+    assert tls_arguments(_mariadb(TargetMysql(ssl_mode="PREFERRED"))) == {}
+
+
+def test_a_mariadb_ca_file_is_named_by_its_own_key(tmp_path: Path) -> None:
+    with pytest.raises(ConfigError) as caught:
+        tls_arguments(_mariadb(TargetMysql(ssl_mode="VERIFY_CA", ssl_ca=str(tmp_path / "x.pem"))))
+
+    assert "target 'mariadb-dev': `mariadb.ssl_ca` could not be loaded" in str(caught.value)
+    assert "point `mariadb.ssl_ca` at" in str(caught.value.hint)

@@ -261,6 +261,7 @@ def _render_target(template: Target, combination: _Combination, *, at: KeyPath) 
         oracle=_render_oracle(template.oracle, variables, at=at.key("oracle")),
         postgres=_render_postgres(template.postgres, variables, at=at.key("postgres")),
         mysql=_render_mysql(template.mysql, variables, at=at.key("mysql")),
+        mariadb=_render_mysql(template.mariadb, variables, at=at.key("mariadb")),
         labels=_render_labels(template.labels, combination, at=at.key("labels")),
         safety=_render_safety(template.safety, variables, at=at.key("safety")),
     )
@@ -453,8 +454,8 @@ def _patched_keys(patch: TargetPatch) -> tuple[str, ...]:
     tuple with an empty default rather than an optional, so "absent" and "given"
     are the same value.
 
-    A ``postgres:`` or ``mysql:`` patch also adds ``<block>.<key>`` for each
-    key it writes, because it merges key by key (:func:`block_key_at`).
+    A ``postgres:``, ``mysql:`` or ``mariadb:`` patch also adds ``<block>.<key>``
+    for each key it writes, because it merges key by key (:func:`block_key_at`).
     """
     given = {
         "type": patch.type is not None,
@@ -465,6 +466,7 @@ def _patched_keys(patch: TargetPatch) -> tuple[str, ...]:
         "oracle": patch.oracle is not None,
         "postgres": patch.postgres is not None,
         "mysql": patch.mysql is not None,
+        "mariadb": patch.mariadb is not None,
         "labels": bool(patch.labels),
         "safety": patch.safety is not None,
     }
@@ -472,9 +474,10 @@ def _patched_keys(patch: TargetPatch) -> tuple[str, ...]:
         given["postgres.database"] = patch.postgres.database is not None
         given["postgres.sslmode"] = patch.postgres.sslmode is not None
         given["postgres.sslrootcert"] = patch.postgres.sslrootcert is not None
-    if patch.mysql is not None:
-        given["mysql.ssl_mode"] = patch.mysql.ssl_mode is not None
-        given["mysql.ssl_ca"] = patch.mysql.ssl_ca is not None
+    for block, settings in (("mysql", patch.mysql), ("mariadb", patch.mariadb)):
+        if settings is not None:
+            given[f"{block}.ssl_mode"] = settings.ssl_mode is not None
+            given[f"{block}.ssl_ca"] = settings.ssl_ca is not None
     return tuple(sorted(key for key, written in given.items() if written))
 
 
@@ -533,6 +536,7 @@ def _patch_target(
         oracle=_patch_oracle(target.oracle, patch.oracle, variables, at=at.key("oracle")),
         postgres=_patch_postgres(target.postgres, patch.postgres, variables, at=at.key("postgres")),
         mysql=_patch_mysql(target.mysql, patch.mysql, variables, at=at.key("mysql")),
+        mariadb=_patch_mysql(target.mariadb, patch.mariadb, variables, at=at.key("mariadb")),
         labels=_patch_labels(target.labels, patch.labels, variables, at=at.key("labels")),
         safety=_patch_safety(target.safety, patch.safety, variables, at=at.key("safety")),
     )

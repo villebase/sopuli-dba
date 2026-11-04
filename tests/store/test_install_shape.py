@@ -26,10 +26,13 @@ import sys
 from pathlib import Path
 
 #: The clients the extras install, as ADR-006 names them: ``httpx``, the OCI SDK,
-#: ``python-oracledb``, ``psycopg``, PyMySQL, ``pysequoia`` and 1Password's SDK. Kept here as a
-#: literal rather than derived from ``BACKENDS`` on purpose: this test is the check *on*
-#: that table, and a check that reads its expectation out of the thing it is
-#: checking would pass an empty table.
+#: ``python-oracledb``, ``psycopg``, PyMySQL, PyNaCl, ``pysequoia`` and 1Password's SDK. Kept
+#: here as a literal rather than derived from ``BACKENDS`` on purpose: this test is the check
+#: *on* that table, and a check that reads its expectation out of the thing it is checking
+#: would pass an empty table. The CI install-shape job's base cell lists the same names
+#: and ``nacl``. ``nacl`` is not blocked here, because ``sopuli.driver.mariadb.password``
+#: imports PyNaCl at module scope, which is reached only through the driver's session, and
+#: this walk exempts only the session module itself (#1296).
 CLIENTS = ("httpx", "oci", "onepassword", "oracledb", "psycopg", "pymysql", "pysequoia")
 
 #: A store the tool cannot reach from this interpreter, declared anyway. §3a's

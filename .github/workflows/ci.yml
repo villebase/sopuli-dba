@@ -354,7 +354,7 @@ jobs:
       matrix:
         # base first, because it is the cell that can actually fail: the others
         # prove an extra resolves, and base proves the boundary held.
-        shape: ["", "[oracle]", "[postgres]", "[mysql]", "[hashicorp]", "[oci]", "[notify]", "[yopass]", "[onepassword]", "[all]"]
+        shape: ["", "[oracle]", "[postgres]", "[mysql]", "[mariadb]", "[hashicorp]", "[oci]", "[notify]", "[yopass]", "[onepassword]", "[all]"]
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -391,11 +391,34 @@ jobs:
           import importlib.util
           import sys
 
-          present = [name for name in ("httpx", "oci", "oracledb", "psycopg", "pymysql", "pysequoia")
-                     if importlib.util.find_spec(name) is not None]
+          # CLIENTS in tests/store/test_install_shape.py, and nacl, which that
+          # test cannot block yet (#1296).
+          clients = ("httpx", "nacl", "oci", "onepassword", "oracledb", "psycopg", "pymysql", "pysequoia")
+          present = [name for name in clients if importlib.util.find_spec(name) is not None]
           if present:
               sys.exit(f"base install pulled in a backend client: {', '.join(present)}")
           print("base carries no backend client")
+          PY
+
+      # The `mariadb` extra exists for PyNaCl as much as for PyMySQL: an
+      # `ed25519` login needs it (#1267, decision 5). The registry's own check
+      # says whether the driver's clients are installed, and importing the
+      # module that computes the ed25519 value loads PyNaCl's binding, so a
+      # wheel whose libsodium does not load fails here, not at a login.
+      - name: the mariadb extra brings what the driver uses
+        if: matrix.shape == '[mariadb]'
+        run: |
+          python - <<'PY'
+          import sys
+
+          from sopuli.driver.registry import DRIVERS
+          from sopuli.extras import installed
+
+          entry = DRIVERS["mariadb"]
+          if not installed(entry.provides):
+              sys.exit(f"the mariadb extra did not install all of {sorted(entry.provides)}")
+          import sopuli.driver.mariadb.password  # noqa: F401 -- loads nacl.bindings
+          print("the mariadb extra brings", ", ".join(sorted(entry.provides)))
           PY
 
   # Tier 1 (04-testing.md §4): the UC-1 happy path and the store's real-backend

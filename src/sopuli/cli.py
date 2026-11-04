@@ -2685,14 +2685,21 @@ def _refuse_a_bare_mysql_name(account: str, reached: Sequence[ExpandedTarget]) -
     if not hosted or (split is not None and not quoted_or_padded(split)):
         return
     product = product_name(hosted[0].target.type)
+    # Every product reached whose accounts are user@host, in a stable order.
+    products = " and ".join(
+        product_name(kind)
+        for kind in USER_AT_HOST_TYPES
+        if any(target.target.type == kind for target in hosted)
+    )
     user = typed_user(account, default="jdoe")
     hint = (
         f"name the host after the last `@`, without quotes, as `{user}@%` or `{user}@10.%`: "
-        f"{product} keeps one account per host, each with its own password"
+        f"{products} keep{'s' if ' and ' not in products else ''} one account per host, "
+        "each with its own password"
     )
     if len(hosted) < len(reached):
         hint += (
-            f". For the other targets, leave the {product} ones out with `--target`, "
+            f". For the other targets, leave the {products} ones out with `--target`, "
             "`--group` or `--select`, and run once for each spelling"
         )
     raise ConfigError(
@@ -2718,6 +2725,7 @@ def _refuse_mandatory_roles(session: Any, config: Config, target: ExpandedTarget
     target's `ERROR` row, exit 4, as every refusal there is: an earlier target
     may already have been reset, and its row must still be reported.
     """
+    # MySQL only: MariaDB has no `mandatory_roles`.
     if target.target.type != MYSQL:
         return
     for rule in rules_for(config, target.name):
@@ -4007,6 +4015,8 @@ def account_list_command(
         rows.extend(found)
         errors += failed
         unanswered += sum(1 for row in found if row.target_failed)
+        # MySQL only. What `account list` says of a lock and a block on MariaDB,
+        # which it cannot read at all, is #1272's (#1267, decision 2).
         if target.target.type == MYSQL and any(
             row.state is not None and not row.state.locked for row in found
         ):

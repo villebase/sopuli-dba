@@ -1784,8 +1784,8 @@ way.
 
 The driver is #1268. Until it is built, a MariaDB target loads, validates and
 shows in `config show`, and a command that connects to it is refused with
-`SOPULI-20006`. [`02-mariadb-privileges.md`](02-mariadb-privileges.md) will have
-the tool account's grants.
+`SOPULI-20006`. The tool account's grants are #1268's too, in a privileges
+document of their own.
 
 **Each product's keys stay on its own targets.** These are refused, each
 naming the target and the key:
@@ -3659,10 +3659,10 @@ match instead:
 | an `auth:` block carries only the keys its own `method:` takes | §3a |
 | `admin.auth: external` requires a TNS-alias `dsn` and no `username` | yes |
 | `oracle:` only on an Oracle target, `postgres:` only on a PostgreSQL target, `mysql:` only on a MySQL target, and `mariadb:` only on a MariaDB target | yes |
-| a PostgreSQL or MySQL target has a `host:port` `dsn` and no `admin.auth: external` | yes |
+| a PostgreSQL, MySQL or MariaDB target has a `host:port` `dsn` and no `admin.auth: external` | yes |
 | `postgres.sslrootcert` only with `sslmode: verify-ca` or `verify-full` | yes |
-| `mysql.ssl_ca` only with `ssl_mode: VERIFY_CA` or `VERIFY_IDENTITY` | yes |
-| an application's `oracle: container_clause` may not bind to a PostgreSQL or MySQL target | yes |
+| `mysql.ssl_ca` and `mariadb.ssl_ca` only with `ssl_mode: VERIFY_CA` or `VERIFY_IDENTITY` | yes |
+| an application's `oracle: container_clause` may not bind to a PostgreSQL, MySQL or MariaDB target | yes |
 | two accounts may not resolve to one secret ref | yes |
 | `require:` may not exceed `length:`, or ask for specials a charset lacks | yes |
 | `allow:` belongs to `charset: custom` | §8 |

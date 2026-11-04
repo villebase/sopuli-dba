@@ -689,14 +689,18 @@ def _target_postgres() -> Schema:
     )
 
 
-def _target_mysql(product: str = "MySQL", type_: str = "mysql") -> Schema:
+def _target_mysql(
+    product: str = "MySQL",
+    type_: str = "mysql",
+    mode: str = "MySQL's --ssl-mode. Default `VERIFY_IDENTITY`.",
+) -> Schema:
     """``mysql:``, or ``mariadb:``, which takes the same keys."""
     return _object(
         keys=targets.MYSQL_KEYS,
         types={
             "ssl_mode": {
                 **_enum(targets.MYSQL_SSL_MODES),
-                "description": "MySQL's --ssl-mode values. Default `VERIFY_IDENTITY`.",
+                "description": mode,
             },
             "ssl_ca": {
                 **STRING,
@@ -1336,7 +1340,12 @@ def build_schema() -> Schema:
             "target_oracle": _target_oracle(),
             "target_postgres": _target_postgres(),
             "target_mysql": _target_mysql(),
-            "target_mariadb": _target_mysql("MariaDB", "mariadb"),
+            "target_mariadb": _target_mysql(
+                "MariaDB",
+                "mariadb",
+                "How the tool's connection uses TLS, with the values of MySQL's --ssl-mode, "
+                "which the MariaDB client does not have. Default `VERIFY_IDENTITY`.",
+            ),
             "target_set": _target_set(),
             "target_patch": _target_patch(),
             "for_each": _for_each(),

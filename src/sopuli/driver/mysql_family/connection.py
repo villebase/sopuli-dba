@@ -27,6 +27,7 @@ from typing import Any
 
 from sopuli.config.errors import ConfigError
 from sopuli.config.model import ExpandedTarget
+from sopuli.config.targets import MARIADB
 from sopuli.driver.address import host_and_port
 from sopuli.driver.login import require_login, session_label
 from sopuli.driver.protocol import Credential, Timeouts
@@ -63,7 +64,9 @@ def tls_arguments(target: ExpandedTarget) -> dict[str, Any]:
     costs far less than the connection it is for, and a context shared across
     connections would be shared mutable state.
     """
-    block = target.target.mysql_settings
+    # The block is named after the product: `mysql:` or `mariadb:`.
+    key = target.target.type
+    block = target.target.mariadb_settings if key == MARIADB else target.target.mysql_settings
     if block.ssl_mode == "DISABLED":
         return {"ssl_disabled": True}
     if block.ssl_mode == "PREFERRED":
@@ -75,9 +78,9 @@ def tls_arguments(target: ExpandedTarget) -> dict[str, Any]:
     except OSError as error:
         # `ssl.SSLError` is an `OSError` too: a file that is not PEM.
         raise ConfigError(
-            f"target {target.name!r}: `mysql.ssl_ca` could not be loaded: {error}",
+            f"target {target.name!r}: `{key}.ssl_ca` could not be loaded: {error}",
             hint=(
-                "point `mysql.ssl_ca` at the PEM file of the CA that issued the server certificate"
+                f"point `{key}.ssl_ca` at the PEM file of the CA that issued the server certificate"
             ),
         ) from error
     context.verify_flags &= ~ssl.VERIFY_X509_STRICT
@@ -101,8 +104,10 @@ def connect_arguments(
 ) -> dict[str, Any]:
     """The keyword arguments for one connection to ``target`` as ``credential``.
 
-    The settings are :attr:`~sopuli.config.model.Target.mysql_settings`: the
-    ``mysql:`` block, or its defaults where the file wrote none. PyMySQL reads
+    The settings are the target's own block, ``mysql:`` or ``mariadb:``
+    (:attr:`~sopuli.config.model.Target.mysql_settings`,
+    :attr:`~sopuli.config.model.Target.mariadb_settings`), or its defaults where
+    the file wrote none. PyMySQL reads
     no option file unless asked to, so nothing on the machine fills a gap.
 
     **A query budget is a socket timeout, and a timed-out call's outcome is

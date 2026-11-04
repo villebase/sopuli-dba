@@ -75,6 +75,35 @@ def test_a_bare_name_is_refused_on_a_mariadb_target_by_its_product(
     assert "MariaDB keeps one account per host" in error["hint"]
 
 
+def test_the_hint_names_every_user_at_host_product_reached(write_config: WriteConfig) -> None:
+    """With MySQL and MariaDB targets and an Oracle one, leaving out only the
+    first product's targets would be refused again on the second's."""
+    both = CONFIG.replace(
+        "personal_accounts:",
+        "  - name: mariadb-dev\n"
+        "    type: mariadb\n"
+        "    environment: dev\n"
+        "    dsn: mariadb-dev.example.com:3306\n"
+        '    admin: { username: "sopuli_svc@%", auth: { method: env } }\n'
+        "  - name: appdb-dev\n"
+        "    type: oracle\n"
+        "    environment: dev\n"
+        "    dsn: db-dev.example.com:1521/alpha.pdb.example.com\n"
+        "    admin: { username: SOPULI_SVC, auth: { method: env } }\n"
+        "personal_accounts:",
+    )
+    result = CliRunner().invoke(
+        cli,
+        ["--config", str(write_config(both)), "account", "suspend", "--account", "jdoe"]
+        + ["--dry-run", "--output", "json"],
+    )
+
+    assert exit_of(result) == ExitCode.CONFIG_INVALID, result.output
+    hint = json.loads(result.output)["error"]["hint"]
+    assert "MySQL and MariaDB keep one account per host" in hint
+    assert "leave the MySQL and MariaDB ones out" in hint
+
+
 @pytest.mark.parametrize(
     ("typed", "example"), [("'acme_ops'@'%'", "acme_ops@%"), ("acme_ops", "acme_ops@%")]
 )

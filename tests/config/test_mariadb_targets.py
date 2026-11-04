@@ -197,6 +197,8 @@ def test_the_driver_is_not_written_yet() -> None:
 
     assert DRIVERS["mariadb"].commands == frozenset()
     assert DRIVERS["mariadb"].extra == "mariadb"
+    # PyMySQL's `ed25519` extra brings PyNaCl; without it the extra is not installed.
+    assert DRIVERS["mariadb"].provides == frozenset({"pymysql", "nacl"})
     require_command(target, "doctor")
     with pytest.raises(DriverNotImplementedError) as caught:
         require_command(target, "creds.check")

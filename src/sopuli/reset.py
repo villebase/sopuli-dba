@@ -197,6 +197,8 @@ def refuse_kept_window_on_mysql(targets: Iterable[ExpandedTarget], *, keep_rollo
     if not keep_rollover:
         return
     for expanded in targets:
+        # MySQL only. A MariaDB rollover cannot be read back either (#1267,
+        # decision 3); #1272 extends this when it writes the reset there.
         if expanded.target.type == MYSQL:
             raise UnsupportedCapabilityError(
                 KEEP_ROLLOVER, target=expanded.name, hint=KEPT_WINDOW_UNREADABLE

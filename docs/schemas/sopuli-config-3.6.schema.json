@@ -645,7 +645,7 @@
             "VERIFY_CA",
             "VERIFY_IDENTITY"
           ],
-          "description": "MySQL's --ssl-mode values. Default `VERIFY_IDENTITY`."
+          "description": "MySQL's --ssl-mode. Default `VERIFY_IDENTITY`."
         },
         "ssl_ca": {
           "type": "string",
@@ -669,7 +669,7 @@
             "VERIFY_CA",
             "VERIFY_IDENTITY"
           ],
-          "description": "MySQL's --ssl-mode values. Default `VERIFY_IDENTITY`."
+          "description": "How the tool's connection uses TLS, with the values of MySQL's --ssl-mode, which the MariaDB client does not have. Default `VERIFY_IDENTITY`."
         },
         "ssl_ca": {
           "type": "string",

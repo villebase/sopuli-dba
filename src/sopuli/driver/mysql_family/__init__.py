@@ -10,7 +10,9 @@ and the two share what this package holds (#1267, decision D7):
   compares and names one;
 - ``errors``: the error numbers both servers send, and PyMySQL's own, with
   their categories and hints;
-- ``password``: the passwords both refuse, before a value is computed.
+- ``password``: the passwords both refuse, before a value is computed;
+- ``grant_tables``: guardrail 9's reads of the ``mysql`` grant tables both
+  servers have, and the walk over role edges.
 
 What the products do differently stays in each driver: on MySQL, the
 ``caching_sha2_password`` hash, ``RETAIN`` and ``DISCARD``, ``SYSTEM_USER``,

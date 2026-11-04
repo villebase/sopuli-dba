@@ -692,9 +692,10 @@ full.
   CREATE USER`: the `mysql.user` view has no `account_locked`. An expiry reads
   back as the view's `password_expired = 'Y'`, and `SELECT 1` then answers
   `1820`. A `max_password_errors` block answers `4150`, neither
-  `mysql.global_priv` nor `SHOW CREATE USER` shows it (no other place was
-  read), and `ACCOUNT UNLOCK` ends it. An account with only `CREATE USER` does
-  all of these. `sql/mariadb/04_lock_expiry_probe.py` measures it.
+  `mysql.global_priv` nor `SHOW CREATE USER` shows it, and `ACCOUNT UNLOCK`
+  ends it. On 11.8 and 12.3, `information_schema.USERS` shows it
+  (`mariadb-readable-state`). An account with only `CREATE USER` does all of
+  these. `sql/mariadb/04_lock_expiry_probe.py` measures it.
 - `verified` `mariadb-tool-grants` (#1220) — **What is one account, and what
   keeps `CREATE USER` off root?**
   An account is a user name and a host, as on MySQL: user names are
@@ -730,6 +731,18 @@ full.
   over TLS too on 11.4, 11.8 and 12.3, which the image starts with TLS on.
   10.11 starts with it off, and PyMySQL, given a context, refuses with `2026`.
   `sql/mariadb/06_pymysql_login_probe.py` measures it.
+- `verified` `mariadb-readable-state` (#1267) — **What does the tool account
+  read of another account without the hash?**
+  The plugin and `password_expired`, from a column grant on the `mysql.user`
+  view, and nothing else. The view has no column for when a password changed,
+  for a lifetime or for a lock. A password change, a rollover and a lock leave
+  everything it reads as it was. 11.8 and 12.3 add `information_schema.USERS`,
+  whose `PASSWORD_ERRORS` shows a `max_password_errors` block and whose
+  `PASSWORD_EXPIRATION_TIME` moves with each change and each rollover when the
+  account has a lifetime. It shows the tool account only its own row, unless
+  it holds `SELECT` on `mysql.*`, which also reads the hashes in
+  `mysql.global_priv`.
+  `sql/mariadb/07_readable_state_probe.py` measures it.
 
 ### Vault
 

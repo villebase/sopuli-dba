@@ -26,6 +26,7 @@ from __future__ import annotations
 
 from sopuli.driver.mysql import accounts, admin
 from sopuli.driver.mysql_family.accounts import Principal, split
+from sopuli.driver.mysql_family.grant_tables import follow
 from sopuli.driver.protocol import Cursor, DriverError
 from sopuli.exit_codes import ExitCode
 
@@ -73,14 +74,14 @@ def resolve(cursor: Cursor, role: str, *, target: str) -> str | None:
 
 def _refuse_mandatory(cursor: Cursor, role: Principal, *, target: str) -> None:
     for mandatory in admin.read_mandatory_roles(cursor):
-        if role.key() in admin.follow(cursor, [mandatory], admin.ROLE_EDGES):
+        if role.key() in follow(cursor, [mandatory], admin.ROLE_EDGES):
             raise MandatoryRoleError(str(role), through=str(mandatory), target=target)
 
 
 def granted(cursor: Cursor, account: Principal) -> tuple[str, ...]:
     """Every role ``account`` holds by a grant, ``user@host`` in the server's
     spelling, sorted. Mandatory roles are not followed (module docstring)."""
-    reached = admin.follow(cursor, [account], admin.ROLE_EDGES)
+    reached = follow(cursor, [account], admin.ROLE_EDGES)
     reached.pop(account.key(), None)
     return tuple(str(role) for role in sorted(reached.values()))
 
@@ -97,6 +98,6 @@ def members_of(cursor: Cursor, role: str) -> tuple[str, ...]:
     """
     user, host = split(role)
     start = Principal(user, host)
-    reached = admin.follow(cursor, [start], MEMBERS)
+    reached = follow(cursor, [start], MEMBERS)
     reached.pop(start.key(), None)
     return tuple(str(member) for member in sorted(reached.values()))

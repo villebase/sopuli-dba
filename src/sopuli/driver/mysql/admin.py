@@ -38,30 +38,7 @@ from __future__ import annotations
 
 from sopuli.driver.mysql.grants import top_level, unquote
 from sopuli.driver.mysql_family.accounts import Principal, text
-
-# Shared with MariaDB's check 9, and re-exported: the MySQL driver's modules
-# and tests read them from here.
-from sopuli.driver.mysql_family.accounts import (
-    text as text,
-)
-from sopuli.driver.mysql_family.grant_tables import (
-    COLUMN_GRANTS as COLUMN_GRANTS,
-)
-from sopuli.driver.mysql_family.grant_tables import (
-    PROXIES as PROXIES,
-)
-from sopuli.driver.mysql_family.grant_tables import (
-    ROUTINE_GRANTS as ROUTINE_GRANTS,
-)
-from sopuli.driver.mysql_family.grant_tables import (
-    TABLE_GRANTS as TABLE_GRANTS,
-)
-from sopuli.driver.mysql_family.grant_tables import (
-    follow as follow,
-)
-from sopuli.driver.mysql_family.grant_tables import (
-    object_grants,
-)
+from sopuli.driver.mysql_family.grant_tables import follow, object_grants
 from sopuli.driver.protocol import Cursor
 
 #: Each ``*_priv`` column of ``mysql.user`` and ``mysql.db``, and the

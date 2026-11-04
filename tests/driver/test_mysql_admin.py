@@ -9,23 +9,25 @@ from typing import Any
 import pytest
 
 from sopuli.driver.mysql.admin import (
-    COLUMN_GRANTS,
     DB_PRIV_COLUMNS,
     DYNAMIC,
     GLOBAL_ROW,
     MANDATORY_ROLES,
     PARTIAL_REVOKES,
     PRIV_COLUMNS,
-    PROXIES,
     ROLE_EDGES,
-    ROUTINE_GRANTS,
     SCHEMA,
     SCHEMA_LITERAL,
-    TABLE_GRANTS,
     global_privileges,
     mandatory_roles,
 )
 from sopuli.driver.mysql_family.accounts import Principal
+from sopuli.driver.mysql_family.grant_tables import (
+    COLUMN_GRANTS,
+    PROXIES,
+    ROUTINE_GRANTS,
+    TABLE_GRANTS,
+)
 
 APP = Principal("acme_app", "10.%")
 

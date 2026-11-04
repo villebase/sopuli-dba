@@ -12,8 +12,8 @@ with the PyMySQL in the repo's .venv, from the host over TCP:
   PL2  the same two logins with TLS, given a context that checks neither the
        certificate nor the host name, and @@have_ssl. Where TLS is used, the
        session's Ssl_cipher is not empty
-  PL3  the ed25519 login of PL1 with PyNaCl hidden from PyMySQL, as for an
-       install without it
+  PL3  the ed25519 login of PL1 in a child interpreter in which importing
+       PyNaCl fails, as in an install without it
 
 A login answers `ok`, or the error's number, or for an error PyMySQL raises
 itself, its class and the start of its message.
@@ -67,11 +67,11 @@ from __future__ import annotations
 import importlib.util
 import os
 import ssl
+import subprocess
 import sys
 from pathlib import Path
 
 import pymysql
-import pymysql._auth
 
 # 02's name starts with a digit, so it is loaded by its path.
 _SPEC = importlib.util.spec_from_file_location(
@@ -102,7 +102,10 @@ def answer(exc: BaseException) -> str:
 
 
 def py_login(service: str, password: str, *, tls: bool) -> tuple[str, str]:
-    """`ok` and the session's Ssl_cipher, or the refusal and ``."""
+    """The login's answer, and the session's Ssl_cipher, empty without a session.
+
+    A failure after the login is a failed step, not a result.
+    """
     context = None
     if tls:
         context = ssl.create_default_context()
@@ -115,6 +118,8 @@ def py_login(service: str, password: str, *, tls: bool) -> tuple[str, str]:
             user=ch.ACCOUNT,
             password=password,
             ssl=context,
+            # Not redundant: with ssl=None alone, PyMySQL 1.2.3 still uses TLS
+            # when the server offers it.
             ssl_disabled=not tls,
             connect_timeout=10,
         )
@@ -125,24 +130,40 @@ def py_login(service: str, password: str, *, tls: bool) -> tuple[str, str]:
             cursor.execute("SHOW SESSION STATUS LIKE 'Ssl_cipher'")
             row = cursor.fetchone()
         return ch.OK, (row[1] if row else "")
+    except pymysql.err.MySQLError as exc:
+        raise ch.StepError(f"{service}: after the login: {exc}") from exc
     finally:
         connection.close()
 
 
+#: The PL1 login in a child interpreter in which `import nacl` fails, as in an
+#: install without PyNaCl. The password comes through the environment.
+_WITHOUT_NACL = """
+import os, sys
+sys.modules["nacl"] = None
+import pymysql
+try:
+    pymysql.connect(host="127.0.0.1", port=int(sys.argv[1]), user=sys.argv[2],
+                    password=os.environ["SOPULI_PROBE_PASSWORD"], ssl_disabled=True,
+                    connect_timeout=10).close()
+    print("ok")
+except Exception as exc:
+    print(f"{type(exc).__name__}: {str(exc)[:70]}")
+"""
+
+
 def without_nacl(service: str, password: str) -> str:
-    """The PL1 login with PyNaCl hidden from PyMySQL."""
-    saved_module = sys.modules.get("nacl")
-    saved_bindings = pymysql._auth._nacl_bindings
-    sys.modules["nacl"] = None  # type: ignore[assignment]  # import now fails
-    pymysql._auth._nacl_bindings = False
-    try:
-        return py_login(service, password, tls=False)[0]
-    finally:
-        pymysql._auth._nacl_bindings = saved_bindings
-        if saved_module is None:
-            del sys.modules["nacl"]
-        else:
-            sys.modules["nacl"] = saved_module
+    """The PL1 login with PyNaCl missing."""
+    done = subprocess.run(
+        [sys.executable, "-I", "-c", _WITHOUT_NACL, str(PORTS[service]), ch.ACCOUNT],
+        env={**os.environ, "SOPULI_PROBE_PASSWORD": password},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if done.returncode != 0:
+        raise ch.StepError(f"{service}: the child interpreter: {done.stderr[-200:]}")
+    return done.stdout.strip()
 
 
 def probe(service: str) -> None:
@@ -151,21 +172,25 @@ def probe(service: str) -> None:
         "SELECT GROUP_CONCAT(plugin_name) FROM information_schema.plugins "
         "WHERE plugin_name IN ('ed25519', 'parsec')",
     )
+    # The accounts are dropped before the plugins they use are uninstalled.
     ch.cleaned(
         service,
         lambda: cases(service),
+        lambda: ch.base.teardown(service),
         lambda: ch.uninstall_plugins(service, keep=had if had != "NULL" else ""),
     )
 
 
 def cases(service: str) -> None:
     release = ch.base.setup(service, "Acme-Login-pw0")
-    ch.install_plugins(service)
+    parsec_install = ch.install_plugins(service)
     have = ch.plugins(service).split(",")
     have_ssl = ch.root(service, "SELECT @@have_ssl")
-    print(f"plugins: {','.join(have)}; have_ssl: {have_ssl}")
+    print(f"plugins: {','.join(have)}; installing parsec: {parsec_install}; have_ssl: {have_ssl}")
     tls_offered = have_ssl == "YES"
     has_parsec = release.startswith(("11.8.", "12.3."))
+    # As 02's CH4 records: the 10.11 and 11.4 images have no parsec library.
+    ch.check("parsec install", parsec_install, ch.OK if has_parsec else "1126 (HY000)")
 
     for plugin in have:
         password = f"Acme-Login-{plugin[:6]}"

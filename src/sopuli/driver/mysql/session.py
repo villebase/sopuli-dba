@@ -143,7 +143,7 @@ class PlainLoginError(DriverError):
     'is_auth_switch_request'``, not a MySQL error: its
     ``caching_sha2_password_auth`` returns nothing after the RSA round trip.
     The same login over TLS succeeds. ``connectivity``, with ``2000``
-    (``CR_UNKNOWN_ERROR``), the number :mod:`~sopuli.driver.mysql.errors` gives
+    (``CR_UNKNOWN_ERROR``), the number :mod:`~sopuli.driver.mysql_family.errors` gives
     every client failure that carries none, in the same category. When PyMySQL
     is fixed, the tier-1 test that pins this fails, and this goes.
     """

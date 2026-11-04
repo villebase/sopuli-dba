@@ -2,10 +2,11 @@
 
 Each driver classifies its vendor's failures into a ``Diagnosis`` of its own:
 ``sopuli.driver.oracle.errors``, ``sopuli.driver.postgres.errors`` and
-``sopuli.driver.mysql.errors``. They differ in the fields they read off the
-exception and in how the vendor code is written in front of the message. What a
-diagnosis becomes when a caller raises it is the same for all of them, and is
-here: :meth:`Diagnosis.as_error` and :class:`MappedError`.
+``sopuli.driver.mysql_family.errors``, which the MySQL driver uses. They differ
+in the fields they read off the exception and in how the vendor code is
+written in front of the message. What a diagnosis becomes when a caller
+raises it is the same for all of them, and is here:
+:meth:`Diagnosis.as_error` and :class:`MappedError`.
 """
 
 from __future__ import annotations

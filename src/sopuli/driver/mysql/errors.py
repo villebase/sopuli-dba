@@ -6,21 +6,11 @@ category and a hint. The message is the server's, with the number and the
 SQLSTATE put in front of it, as the mysql client prints them. Nothing here
 raises; the caller decides.
 
-The numbers MariaDB sends too, PyMySQL's own, and the classification itself
-are in :mod:`sopuli.driver.mysql_family.errors`. This module adds MySQL's own
-numbers, and the hints that name MySQL's config keys or its plugin, and binds
-:func:`classify` and :func:`from_error` to the whole set.
-
-PyMySQL raises a server error, and most failures of its own to reach the
-server, as an exception whose ``args`` are ``(number, message)`` and whose
-``sqlstate`` is the server's where the reply carried one (PyMySQL 1.2.3,
-``err.raise_mysql_exception``). Numbers from 2000 to 2999 are the client's
-own, such as 2003 for a server it could not reach; the server's run below 2000
-and from 3000 up. Some of its own errors carry no number:
-a closed connection is ``(0, "")``, and a broken handshake or packet stream is
-a message alone, such as ``Packet sequence number wrong``. Each of those is a
-connection failure (:func:`from_error`), as a PostgreSQL failure with no
-SQLSTATE is.
+The numbers MariaDB sends too, PyMySQL's own, and how a PyMySQL exception is
+classified are in :mod:`sopuli.driver.mysql_family.errors`. This module adds
+MySQL's own numbers, gives some shared numbers hints that name MySQL's config
+keys or its plugin, and binds :func:`classify` and :func:`from_error` to the
+whole set.
 
 Which rows were measured: `3118`, `1820`, `3955`, `1227`, `1142`, `1044`,
 `1827` and `3894` on 8.0.46, 8.4.13 and 9.7.4 with the mysql client (#1202,

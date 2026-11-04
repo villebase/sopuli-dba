@@ -1,11 +1,21 @@
-"""The error numbers MySQL and MariaDB both send, and PyMySQL's own. Tier 0.
+"""The error numbers MySQL and MariaDB both send, PyMySQL's own, and how a
+PyMySQL exception is classified. Tier 0.
 
-The shared half of :mod:`sopuli.driver.mysql.errors`, which holds how it all
-fits together and adds MySQL's own numbers. A number is here when
-``sql/mariadb/`` measured MariaDB sending it as ``sql/mysql/`` measured MySQL
-sending it, or when PyMySQL raises it, whichever server is behind it. Its hint
-must also hold on both: a hint that names MySQL's config keys or its plugin
-stays with MySQL, even where the number is shared.
+A number is here when ``sql/mariadb/`` measured MariaDB sending it as
+``sql/mysql/`` measured MySQL sending it, or when PyMySQL raises it, whichever
+server is behind it. Each row's hint holds on both servers. A driver adds its
+own numbers, and may give a shared number a hint that names its own config
+keys or plugin, as :mod:`sopuli.driver.mysql.errors` does.
+
+PyMySQL raises a server error, and most failures of its own to reach the
+server, as an exception whose ``args`` are ``(number, message)`` and whose
+``sqlstate`` is the server's where the reply carried one (PyMySQL 1.2.3,
+``err.raise_mysql_exception``). Numbers from 2000 to 2999 are the client's
+own, such as 2003 for a server it could not reach; the server's run below 2000
+and from 3000 up. Some of its own errors carry no number: a closed connection
+is ``(0, "")``, and a broken handshake or packet stream is a message alone,
+such as ``Packet sequence number wrong``. Each of those is a connection
+failure (:func:`from_error`), as a PostgreSQL failure with no SQLSTATE is.
 
 Nothing here raises; the caller decides.
 """
@@ -113,10 +123,22 @@ RULES: dict[int, Rule] = {
     CANNOT_USER: Rule(
         "database", hint="the server refused the change: usually, the account does not exist"
     ),
+    AUTH_PLUGIN_CANNOT_LOAD: Rule(
+        AUTHENTICATION,
+        exit_code=ExitCode.AUTH_FAILURE,
+        hint="the account is on an authentication plugin PyMySQL cannot speak",
+    ),
     AUTH_PLUGIN_ERROR: Rule(
         AUTHENTICATION,
         exit_code=ExitCode.AUTH_FAILURE,
         hint="the authentication plugin failed in the client; the message says why",
+    ),
+    TLS_CONNECTION_ERROR: Rule(
+        "connectivity",
+        hint=(
+            "the target's `ssl_mode` requires TLS and the server offers none. Turn TLS on "
+            "at the server; lowering the mode sends the password in clear"
+        ),
     ),
 }
 

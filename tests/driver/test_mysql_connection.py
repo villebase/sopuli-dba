@@ -9,7 +9,7 @@ import pytest
 
 from sopuli.config.errors import ConfigError
 from sopuli.config.model import ExpandedTarget, Target, TargetMysql
-from sopuli.driver.mysql.connection import connect_arguments, tls_arguments
+from sopuli.driver.mysql_family.connection import connect_arguments, tls_arguments
 from sopuli.driver.protocol import Credential, Timeouts
 from sopuli.secrets import Secret
 

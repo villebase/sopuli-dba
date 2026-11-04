@@ -18,9 +18,10 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from sopuli.driver.mysql.admin import PRIV_COLUMNS, TABLES_READ, Principal
+from sopuli.driver.mysql.admin import PRIV_COLUMNS, TABLES_READ
 from sopuli.driver.mysql.grants import ALL_PRIVILEGES, GLOBAL, Grant, Grants
 from sopuli.driver.mysql.grants import read as read_grants
+from sopuli.driver.mysql_family.accounts import Principal
 from sopuli.driver.protocol import Cursor, PrivilegeAudit
 
 DOCUMENT = "02-mysql-privileges.md"

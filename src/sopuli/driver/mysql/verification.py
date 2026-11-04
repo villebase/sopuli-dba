@@ -40,15 +40,14 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from sopuli.driver.mysql.accounts import Account, same_host
+from sopuli.driver.mysql.accounts import Account
 from sopuli.driver.mysql.errors import (
-    ACCESS_DENIED,
     ACCOUNT_BLOCKED,
     ACCOUNT_LOCKED,
-    MUST_CHANGE_PASSWORD,
     MUST_CHANGE_PASSWORD_LOGIN,
-    Diagnosis,
 )
+from sopuli.driver.mysql_family.accounts import same_host
+from sopuli.driver.mysql_family.errors import ACCESS_DENIED, MUST_CHANGE_PASSWORD, Diagnosis
 from sopuli.driver.protocol import FAIL, PASS, UNAVAILABLE
 
 #: The host of the one kind of account a login can only reach: any host.

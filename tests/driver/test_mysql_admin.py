@@ -22,10 +22,10 @@ from sopuli.driver.mysql.admin import (
     SCHEMA,
     SCHEMA_LITERAL,
     TABLE_GRANTS,
-    Principal,
     global_privileges,
     mandatory_roles,
 )
+from sopuli.driver.mysql_family.accounts import Principal
 
 APP = Principal("acme_app", "10.%")
 

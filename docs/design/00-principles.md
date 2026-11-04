@@ -221,7 +221,12 @@ bare ORA error.
 Intended order after Oracle: PostgreSQL, MySQL, MariaDB, SQL Server
 ([#1202](../decisions/log.md#1202)). MariaDB gets a driver of its own, not a
 variant of MySQL's, because the two differ in how they store and change a
-password. Nothing in the config
+password. What they share is in `sopuli/driver/mysql_family/`: the arguments
+of a PyMySQL connection, TLS included; an account as a user name and a host,
+and how the server compares two of them; and the error numbers both servers
+send, with PyMySQL's own. `sopuli/driver/mysql/` keeps what is MySQL's alone,
+such as the `caching_sha2_password` hash, `RETAIN CURRENT PASSWORD`,
+`SYSTEM_USER`, and every read of a `mysql.user` column. Nothing in the config
 schema, CLI grammar, or vault layout may be Oracle-specific at the top level.
 Vendor-specific settings live in a namespaced block:
 

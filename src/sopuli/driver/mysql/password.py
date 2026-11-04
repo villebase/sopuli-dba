@@ -28,7 +28,7 @@ would itself have stored.
 refused at login, ``1045``, on every release measured (CH6).
 
 The account is named as ``mysql.user`` spells it, each part between
-backquotes (:meth:`~sopuli.driver.mysql.admin.Principal.sql`): ``ALTER USER``
+backquotes (:meth:`~sopuli.driver.mysql_family.accounts.Principal.sql`): ``ALTER USER``
 takes no bind parameters.
 """
 
@@ -42,8 +42,8 @@ import secrets as csprng
 
 from sopuli.config import charsets
 from sopuli.driver.mysql.accounts import SUPPORTED_PLUGIN as PLUGIN
-from sopuli.driver.mysql.admin import Principal
 from sopuli.driver.mysql.limits import LIMIT
+from sopuli.driver.mysql_family.accounts import Principal
 from sopuli.driver.protocol import DriverError
 from sopuli.secrets import Secret
 

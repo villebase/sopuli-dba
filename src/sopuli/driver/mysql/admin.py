@@ -37,9 +37,9 @@ role gives it.
 from __future__ import annotations
 
 from collections.abc import Iterable
-from dataclasses import dataclass
 
 from sopuli.driver.mysql.grants import top_level, unquote
+from sopuli.driver.mysql_family.accounts import Principal
 from sopuli.driver.protocol import Cursor
 
 #: Each ``*_priv`` column of ``mysql.user`` and ``mysql.db``, and the
@@ -146,37 +146,6 @@ TABLES_READ = (
     "mysql.proxies_priv",
     "mysql.role_edges",
 )
-
-
-@dataclass(frozen=True, order=True)
-class Principal:
-    """An account or a role: both are a user name and a host."""
-
-    user: str
-    host: str
-
-    def __str__(self) -> str:
-        return f"{self.user}@{self.host}"
-
-    def key(self) -> tuple[str, str]:
-        """The server's identity of it: the host without case (ID3), folding
-        only ASCII letters, as ``ascii_general_ci`` does."""
-        return (self.user, self.host.translate(_ASCII_LOWER))
-
-    def sql(self) -> str:
-        """The account as a statement names it, each part between backquotes.
-        A backquoted name escapes only a doubled backquote, so it names the
-        same account under every ``sql_mode``. A string literal does not:
-        ``NO_BACKSLASH_ESCAPES`` changes what a backslash in it means, and
-        ``ANSI_QUOTES`` makes a double-quoted one an identifier."""
-        return f"{_backquote(self.user)}@{_backquote(self.host)}"
-
-
-def _backquote(name: str) -> str:
-    return "`" + name.replace("`", "``") + "`"
-
-
-_ASCII_LOWER = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
 
 
 def mandatory_roles(setting: str | None) -> tuple[Principal, ...]:

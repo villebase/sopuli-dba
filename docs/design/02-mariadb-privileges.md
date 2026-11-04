@@ -232,8 +232,9 @@ any of these:
   columns or routines;
 - any `PROXY` grant.
 
-`sopuli.driver.mariadb.admin` reads them, and the refusal applies once the
-driver describes an account before it changes it (open: #1270). Each finding
+`sopuli.driver.mariadb.admin` reads them, and the driver reads them whenever it
+describes an account. The refusal applies once a verb that changes a password
+runs on MariaDB (open: #1270). Each finding
 names the privilege and its object, and the role it comes through, such as
 `PROCESS ON *.* through PUBLIC`.
 

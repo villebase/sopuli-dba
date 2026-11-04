@@ -1,7 +1,11 @@
 """Reading the grant tables MySQL and MariaDB share. Tier 0.
 
-Guardrail 9 reads the ``mysql`` schema's grant tables on both products, and
-both return their columns in the same shapes. Nothing here imports PyMySQL.
+Guardrail 9 reads the ``mysql`` schema's grant tables on both products.
+``tables_priv``, ``columns_priv``, ``procs_priv`` and ``proxies_priv`` have
+the same columns on both, and their privilege columns are ``SET`` columns,
+whose members differ only in spelling (:func:`set_members`). :func:`follow`
+walks role edges, which each product keeps in its own table. Nothing here
+imports PyMySQL.
 """
 
 from __future__ import annotations
@@ -85,5 +89,10 @@ def set_members(value: object) -> Iterable[str]:
     else:
         members = text(value).split(",") if value else []
     names = (member.strip().upper() for member in members if member.strip())
-    # The SET member is `Grant`; GRANT and REVOKE spell it GRANT OPTION.
-    return sorted("GRANT OPTION" if name == "GRANT" else name for name in names)
+    return sorted(_SPELLED.get(name, name) for name in names)
+
+
+#: A ``SET`` member that ``GRANT`` and ``REVOKE`` spell another way. MariaDB's
+#: ``tables_priv`` names ``DELETE HISTORY`` ``Delete versioning rows``
+#: (measured on 11.8.9).
+_SPELLED = {"GRANT": "GRANT OPTION", "DELETE VERSIONING ROWS": "DELETE HISTORY"}

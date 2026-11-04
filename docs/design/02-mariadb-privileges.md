@@ -223,12 +223,17 @@ account to another plugin.
 ## 5. Guardrail 9: a managed account with a global privilege
 
 The tool refuses to manage an account that holds, or can get through a role,
-any of these (open: #1269):
+any of these:
 
 - any global privilege but `USAGE`;
 - any privilege on the `mysql` schema, one of its tables, or one of their
-  columns;
+  columns or routines;
 - any `PROXY` grant.
+
+`sopuli.driver.mariadb.admin` reads them, and the refusal applies once the
+driver describes an account before it changes it (open: #1270). Each finding
+names the privilege and its object, and the role it comes through, such as
+`PROCESS ON *.* through PUBLIC`.
 
 No flag waives it. Nothing protects root on MariaDB (§1), so the tool account
 can set the password of any administrative account, and the tool would then
@@ -239,11 +244,12 @@ know it. The rule is the one MySQL's check 9 applies
 | Where | What it shows |
 |---|---|
 | the `*_priv` columns of the `mysql.user` view | static global privileges. `Repl_client_priv` is set by `BINLOG MONITOR`, which is `REPLICATION CLIENT` renamed (SP2) |
-| `mysql.db` | privileges on a schema |
+| `mysql.db` | privileges on a schema. A grant on a pattern that matches `mysql`, such as `mysq%`, counts. The columns differ between releases, so the tool reads every `*_priv` column there is |
 | `mysql.tables_priv`, `mysql.columns_priv` | privileges on a table or column of `mysql` |
 | `mysql.procs_priv` | privileges on a stored routine in `mysql` |
 | `mysql.proxies_priv` | `PROXY` grants |
-| `mysql.roles_mapping` | the roles an account holds, followed to the end. A role is a row of the view, with `is_role = 'Y'`, so its global privileges read as an account's do (TG7) |
+| `mysql.roles_mapping` | the roles an account holds, followed to the end, active or not. A role is a row of the view at host `''`, with `is_role = 'Y'`, so its global privileges read as an account's do (TG7, `10_role_reads_probe.py`, RR1) |
+| the `PUBLIC` role | read for every account. Every account holds `PUBLIC`, always active: what it holds, and what a role granted to it holds, any account uses with no `SET ROLE` (RR3). So a grant to `PUBLIC` that check 9 counts refuses every managed account |
 
 **What it cannot see.** `SHOW PRIVILEGES` lists ten privileges whose context is
 `Server`. Only `BINLOG MONITOR` sets a column of the view. The other nine set

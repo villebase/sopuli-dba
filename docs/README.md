@@ -71,7 +71,7 @@ on which Oracle release, and what it showed.
 | `../sql/oracle/02_password_leak_probe.sql` | Release gate 2: a canary probe for password text kept anywhere queryable. Findings in `design/02-oracle-privileges.md` §4; what is still open in `design/04-testing.md` §6 gate 2 |
 | `../sql/oracle/04_password_leak_extensions.sql` | Gate 2's other three checks: self-rotation, `IDENTIFIED BY VALUES`, and a 10046-traced session. Run it after the probe and **before** the probe's section 8, which turns the audit policies off |
 | `../sql/oracle/99_uninstall.sql` | Remove the account; keeps the audit policies by default |
-| `../test/compose.yaml` | The test stack, by profile. `tier0`: Vault (KV v1 and v2) and PostgreSQL. `tier1`: adds Oracle Free. `tier2`: adds 21c, 18c and 11g XE. `nne`: an Oracle Free that requires NNE. `oracle19c`, `oracle19c-ru` and `oracle12c`: 19.3, 19.19 and 12.2 EE, maintainer-only. `emulators`: lowkey-vault. `postgres-matrix`: PostgreSQL 13 to 18, for the probes in `sql/postgres/`. `mysql-matrix`: MySQL 8.0, 8.4 and 9, for the probes in `sql/mysql/`. `mariadb-matrix`: MariaDB 10.11 and 12.3, for the probes in `sql/mariadb/` |
+| `../test/compose.yaml` | The test stack, by profile. `tier0`: Vault (KV v1 and v2) and PostgreSQL. `tier1`: adds Oracle Free. `tier2`: adds 21c, 18c and 11g XE. `nne`: an Oracle Free that requires NNE. `oracle19c`, `oracle19c-ru` and `oracle12c`: 19.3, 19.19 and 12.2 EE, maintainer-only. `emulators`: lowkey-vault. `postgres-matrix`: PostgreSQL 13 to 18, for the probes in `sql/postgres/`. `mysql-matrix`: MySQL 8.0, 8.4 and 9, for the probes in `sql/mysql/`. `mariadb-matrix`: MariaDB 10.11, 11.4, 11.8 and 12.3, for the probes in `sql/mariadb/` |
 | `../test/capabilities.py` | Sketch of capability probing and the pytest skip markers |
 | `../test/k8s_eso_probe.py` | Applies [scenarios/kubernetes-eso.md](scenarios/kubernetes-eso.md)'s own manifests to a throwaway Kubernetes cluster, and checks that ESO reads what sopuli wrote. Needs a cluster, not compose |
 
@@ -649,7 +649,7 @@ probes are in `sql/mysql/`, and the matrix of 8.0, 8.4 and 9 is the
 These entries are measured before the MySQL driver is built, so that its
 capabilities assume nothing MariaDB breaks (#1220). MariaDB gets a driver of
 its own after MySQL (decision 2 of #1202). The probes are in `sql/mariadb/`,
-and the matrix of 10.11 and 12.3 is the `mariadb-matrix` profile of
+and the matrix of 10.11, 11.4, 11.8 and 12.3 is the `mariadb-matrix` profile of
 `test/compose.yaml`. [measurements.md](measurements.md) names each release in
 full.
 
@@ -672,7 +672,7 @@ full.
   USER` sets them with `IDENTIFIED VIA … USING`, and the password logs in. A
   malformed value is refused with the plain `1396`. Only
   `mysql_native_password` is loaded by default: `ed25519` must be installed,
-  and `parsec` too, on 12.3 only. `caching_sha2_password` does not exist.
+  and `parsec` too, on 11.8 and 12.3 only. `caching_sha2_password` does not exist.
   Whether PyMySQL logs in on `ed25519` and `parsec` was not measured.
   `sql/mariadb/02_client_hash_probe.py` measures it.
 - `verified` `mariadb-dual-password` (#1220) — **Does MariaDB have a rollover

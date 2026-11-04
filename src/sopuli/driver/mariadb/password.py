@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import re
 
 # PyNaCl comes with the `mariadb` extra, for PyMySQL's own ed25519 login and for
 # this value (#1267, decision 5). Imported at the top, not when a value is
@@ -44,6 +45,8 @@ import hashlib
 # `registry.resolve` turns into `DriverNotInstalledError`, because the driver's
 # `provides` lists `nacl`. A later import would fail in the middle of a run.
 from nacl.bindings import crypto_scalarmult_ed25519_base_noclamp
+
+from sopuli.driver.mysql_family.accounts import Principal
 
 # Re-exported: the driver's callers and tests catch it from here.
 from sopuli.driver.mysql_family.password import (
@@ -92,3 +95,34 @@ def ed25519_value(secret: Secret) -> Secret:
 
 #: Each plugin's value, by the server's name for the plugin.
 VALUES = {NATIVE: native_value, ED25519: ed25519_value}
+
+#: The shape of each plugin's value. A value is checked against it before it
+#: goes between quotes, so nothing but these characters is ever sent there.
+SHAPES = {
+    NATIVE: re.compile(r"\*[0-9A-F]{40}"),
+    ED25519: re.compile(r"[A-Za-z0-9+/]{43}"),
+}
+
+
+def alter_user(user: str, host: str, plugin: str, secret: Secret) -> str:
+    """The statement that sets ``secret``, by its value for ``plugin``:
+    ``ALTER USER … IDENTIFIED VIA <plugin> USING '<value>'`` (§6). The plugin
+    is the account's own, so the tool never changes it."""
+    value = VALUES[plugin](secret).reveal()
+    if not SHAPES[plugin].fullmatch(value):
+        raise ValueError(f"the {plugin} value has the wrong shape")
+    return f"ALTER USER {Principal(user, host).sql()} IDENTIFIED VIA {plugin} USING '{value}'"
+
+
+_QUOTED = re.compile(r"USING\s+'[^']*'", re.IGNORECASE)
+_NATIVE = re.compile(r"\*[0-9A-Fa-f]{40}")
+_ED25519 = re.compile(r"(?<![A-Za-z0-9+/])[A-Za-z0-9+/]{43}(?![A-Za-z0-9+/=])")
+
+
+def scrub(message: str) -> str:
+    """The server's message about :func:`alter_user`'s statement, with the
+    value written as ``***``. The server may quote part of the statement, and
+    the value is worth an offline guess (§6)."""
+    message = _QUOTED.sub("USING '***'", message)
+    message = _NATIVE.sub("***", message)
+    return _ED25519.sub("***", message)

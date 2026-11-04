@@ -12,7 +12,8 @@ scope: ``server``, whether it takes writes, and its encryption. For ``doctor
 --check-privileges`` it audits the tool account's grants
 (:mod:`~sopuli.driver.mariadb.privileges`) and surveys the declared accounts
 (:mod:`~sopuli.driver.mariadb.accounts`). It describes a declared account,
-with the privileges guardrail 9 checks (#1270). Every other method refuses with
+with the privileges guardrail 9 checks, and sets its password by the value its
+plugin stores (#1270). Every other method refuses with
 ``SOPULI-20006``, and the registry lists no command but `doctor`: the rest of
 UC-1 is #1270 and UC-2 #1272.
 
@@ -33,15 +34,19 @@ import pymysql
 
 from sopuli.config.model import ExpandedTarget, Runtime
 from sopuli.driver.mariadb import accounts as accounts_module
+from sopuli.driver.mariadb import password as password_module
 from sopuli.driver.mariadb.errors import from_error
 from sopuli.driver.mariadb.privileges import audit as privilege_audit
-from sopuli.driver.mariadb.scope import observe
+from sopuli.driver.mariadb.scope import observe, require_read_write
 from sopuli.driver.mysql_family.accounts import current_user
 from sopuli.driver.mysql_family.client import client_lines
 from sopuli.driver.mysql_family.connection import connect_arguments, require_tls
 from sopuli.driver.mysql_family.encryption import read_encryption
 from sopuli.driver.mysql_family.errors import COLUMN_ACCESS_DENIED, TABLE_ACCESS_DENIED
 from sopuli.driver.protocol import (
+    OLD_DISCARD,
+    OLD_PASSWORD_MODES,
+    ChangeResult,
     ClosesConnection,
     Credential,
     DriverContext,
@@ -54,6 +59,7 @@ from sopuli.driver.protocol import (
 )
 from sopuli.driver.registry import NotWrittenError
 from sopuli.output.debug import logger
+from sopuli.secrets import Secret
 
 LOG = logger("mariadb")
 
@@ -201,8 +207,54 @@ class MariadbSession(ClosesConnection):
     def byte_limit(self) -> NoReturn:
         self._not_written("say how long a password may be")
 
-    def set_password(self, *args: Any, **kwargs: Any) -> NoReturn:
-        self._not_written("set a password")
+    def set_password(
+        self, account: str, secret: Secret, *, old_password: str = OLD_DISCARD
+    ) -> ChangeResult:
+        """``ALTER USER … IDENTIFIED VIA <plugin> USING '<value>'``, with the
+        value for the account's own plugin computed here (invariant 15,
+        :mod:`~sopuli.driver.mariadb.password`).
+
+        Only ``discard``: a single value ends a second password an ``OR`` kept
+        beside it (``03_dual_password_probe.py``, DP3), so only the vault's
+        password logs in. ``retain`` and ``keep`` are a rollover, which is #1271.
+
+        As on the other drivers, ``changed`` is ``True`` whenever the statement
+        succeeded: the command decides first whether the account already had
+        this password.
+
+        Refused before anything is sent, with ``password_sent`` left ``False``:
+        a password the target cannot take, a read-only session, an account that
+        does not exist, and one on another plugin. Once the statement is handed
+        to the server, a failure has ``password_sent`` set. What crossed is the
+        value, which still allows an offline guess.
+        """
+        if old_password not in OLD_PASSWORD_MODES:
+            raise ValueError(f"not an old-password mode: {old_password!r}")
+        if old_password != OLD_DISCARD:
+            self._not_written("keep a rollover window")
+        password_module.admit(secret)
+        require_read_write(self.scope(), target=self.target.name)
+        found = self._read_grants(
+            lambda cursor: accounts_module.read_one(cursor, account, target=self.target.name)
+        )
+        if found is None:
+            raise DriverError(
+                f'account "{account}" does not exist on target "{self.target.name}"',
+                hint=(
+                    "the tool does not create accounts (Q8); `creds check` reports this "
+                    "as ACCOUNT_MISSING rather than failing"
+                ),
+            )
+        statement = password_module.alter_user(found.user, found.host, found.plugin, secret)
+        try:
+            # The read above found the session open, so a failure here is the
+            # server's answer to the statement.
+            self._read(lambda cursor: cursor.execute(statement), scrub=password_module.scrub)
+        except DriverError as failure:
+            failure.password_sent = True
+            raise
+        LOG.debug("password set for %s on %s", found.name, self.target.name)
+        return ChangeResult(changed=True, detail="password set", discarded=True)
 
     def suspend_account(self, account: str) -> NoReturn:
         self._not_written("suspend an account")
@@ -240,10 +292,15 @@ class MariadbSession(ClosesConnection):
     def finish_rollover(self, account: str) -> NoReturn:
         self._not_written("finish a rollover")
 
-    def _read(self, reader: Callable[[Any], T]) -> T:
+    def _read(self, reader: Callable[[Any], T], *, scrub: Callable[[str], str] | None = None) -> T:
         """Run ``reader`` on a cursor of this session. A closed session is a
         fault in sopuli, and a MariaDB error is classified by
-        :mod:`~sopuli.driver.mariadb.errors`."""
+        :mod:`~sopuli.driver.mariadb.errors`.
+
+        With ``scrub``, the message passes through it, and the error is raised
+        without PyMySQL's as its cause: that one keeps the message as the
+        server sent it, and a traceback or a log with ``exc_info`` would print
+        it."""
         if self.connection is None:
             raise DriverError(
                 f'the session to target "{self.target.name}" is closed',
@@ -253,7 +310,9 @@ class MariadbSession(ClosesConnection):
             with self.connection.cursor() as cursor:
                 return reader(cursor)
         except pymysql.err.MySQLError as error:
-            raise from_error(error).as_error() from error
+            if scrub is None:
+                raise from_error(error).as_error() from error
+            raise from_error(error, scrub=scrub).as_error() from None
 
 
 @dataclass(frozen=True)

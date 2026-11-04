@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from sopuli.driver import protocol
 from sopuli.driver.mysql import grants
-from sopuli.driver.mysql_family.encryption import read_encryption, unencrypted_hint
+from sopuli.driver.mysql_family.encryption import read_encryption
 from sopuli.driver.protocol import (
     ADMIN_REFUSED,
     SERVER,
@@ -53,8 +53,6 @@ READ_ONLY_SETTINGS = (
 #: ``VERSION()`` names them. MariaDB gets a driver of its own (#1202, decision
 #: 2). TiDB's version names it, as `8.0.11-TiDB-v7.5.0`, and it is not measured.
 OTHER_PRODUCTS = {"mariadb": "MariaDB", "tidb": "TiDB"}
-
-UNENCRYPTED_HINT = unencrypted_hint("mysql")
 
 
 class NotMysqlError(DriverError):

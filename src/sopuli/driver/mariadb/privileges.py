@@ -18,7 +18,9 @@ that those privileges were not checked.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable
+from contextlib import suppress
 from dataclasses import dataclass
 
 from sopuli.driver.mysql_family.accounts import Principal, split, text
@@ -184,7 +186,7 @@ def classify(
         if grantable:
             over.add(f"GRANT OPTION ON {schema}.*")
         over.add(f"{privilege} ON {schema}.*")
-        broad = broad or (schema == "mysql" and privilege == "SELECT")
+        broad = broad or (_covers_mysql(schema) and privilege == "SELECT")
     if broad:
         held.update(_column(name) for name in COLUMNS)
         held.update(_table(table) for table in TABLES_READ)
@@ -193,8 +195,11 @@ def classify(
             over.add(f"GRANT OPTION ON {table}")
         if table in TABLES_READ and privilege == "SELECT":
             held.add(_table(table))
-        else:
-            over.add(f"{privilege} ON {table}")
+            continue
+        if table == USER_TABLE and privilege == "SELECT":
+            # The whole view: every §2.1 column, and the stored values too.
+            held.update(_column(name) for name in COLUMNS)
+        over.add(f"{privilege} ON {table}")
     for table, column, privilege, grantable in grants.column:
         if grantable:
             over.add(f"GRANT OPTION ON {table}")
@@ -237,6 +242,27 @@ def _hint(user: str, *, create_user: bool, columns: list[str], tables: list[str]
         statements.append(f"GRANT SELECT ({', '.join(columns)}) ON {USER_TABLE} TO {account};")
     statements += [f"GRANT SELECT ON {table} TO {account};" for table in tables]
     return f"{hint}: {' '.join(statements)}" if statements else hint
+
+
+def _covers_mysql(schema: str) -> bool:
+    """Whether a database-level grant's name, which may be a ``LIKE`` pattern
+    such as ``%`` or ``m_sql``, covers the ``mysql`` schema. ``\\_`` and
+    ``\\%`` are the literal characters."""
+    pattern = ""
+    escaped = False
+    for character in schema:
+        if escaped:
+            pattern += re.escape(character)
+            escaped = False
+        elif character == "\\":
+            escaped = True
+        elif character == "%":
+            pattern += ".*"
+        elif character == "_":
+            pattern += "."
+        else:
+            pattern += re.escape(character)
+    return re.fullmatch(pattern, "mysql") is not None
 
 
 def _needed_column(column: str) -> str | None:
@@ -290,38 +316,50 @@ def audit(cursor: Cursor) -> PrivilegeAudit:
 #: ones too. MariaDB has no ``SET ROLE DEFAULT`` (``1064`` on 11.8.9), so the
 #: session's role is read first and set back, or ``NONE`` where it had none.
 SET_ROLE = "set role {role}"
+#: ``ER_INVALID_ROLE``: the role cannot be set alone, as one the account holds
+#: only through another.
+INVALID_ROLE = 1959
 CURRENT_ROLE = "select current_role()"
 NO_ROLE = "set role none"
 
 
 def allowed_reads(cursor: Cursor, roles: Iterable[str] = ()) -> tuple[str, ...]:
-    """The :data:`HASH_READS` the server allows, with the session's own roles,
-    then with each of ``roles`` active in turn. Each read returns no row.
+    """The :data:`HASH_READS` the server allows: first with no role active, so a
+    bare entry is a direct grant, ``PUBLIC`` or a broader grant, then with each
+    of ``roles`` active in turn. Each read returns no row.
 
     A role that is not a default role is not active, so a read through it is
     refused until the account sets it, which it can do at any time. So each
-    role is set and the reads tried again, and the defaults are restored
-    afterwards, also after a failure. A role that cannot be set alone is
-    skipped. A refusal is ``1142`` or ``1143``; any other error is raised.
+    role is set and the reads tried again, and the session's role is set back
+    afterwards. A role the account holds only through another is refused
+    alone with ``1959`` and skipped: the role that holds it activates it. Any
+    other failure is raised, and a failure to set the role back never hides
+    it. A read's refusal is ``1142`` or ``1143``.
     """
-    allowed = dict.fromkeys(_reads(cursor))
     roles = tuple(roles)
     if not roles:
-        return tuple(allowed)
+        return tuple(_reads(cursor))
     cursor.execute(CURRENT_ROLE)
     current = cursor.fetchone()[0]
+    restore = NO_ROLE if current is None else SET_ROLE.format(role=_backquote(text(current)))
     try:
+        cursor.execute(NO_ROLE)
+        allowed = dict.fromkeys(_reads(cursor))
         for role in roles:
             try:
                 cursor.execute(SET_ROLE.format(role=_backquote(role)))
-            except Exception:  # noqa: BLE001 -- such as 1959, a role held only through another
-                continue
-            allowed.update(
-                dict.fromkeys(f"{read} (through role {role})" for read in _reads(cursor))
-            )
-    finally:
-        restore = NO_ROLE if current is None else SET_ROLE.format(role=_backquote(text(current)))
-        cursor.execute(restore)
+            except Exception as error:  # noqa: BLE001 -- PyMySQL's, which this module does not import
+                if error.args and error.args[0] == INVALID_ROLE:
+                    continue
+                raise
+            for read in _reads(cursor):
+                if read not in allowed:
+                    allowed[f"{read} (through role {role})"] = None
+    except BaseException:
+        with suppress(Exception):
+            cursor.execute(restore)
+        raise
+    cursor.execute(restore)
     return tuple(allowed)
 
 

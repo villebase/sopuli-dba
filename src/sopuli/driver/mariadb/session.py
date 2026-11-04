@@ -38,6 +38,7 @@ from sopuli.driver.mariadb.scope import observe
 from sopuli.driver.mysql_family.client import client_lines
 from sopuli.driver.mysql_family.connection import connect_arguments, require_tls
 from sopuli.driver.mysql_family.encryption import read_encryption
+from sopuli.driver.mysql_family.errors import COLUMN_ACCESS_DENIED, TABLE_ACCESS_DENIED
 from sopuli.driver.protocol import (
     ClosesConnection,
     Credential,
@@ -52,6 +53,9 @@ from sopuli.driver.registry import NotWrittenError
 from sopuli.output.debug import logger
 
 LOG = logger("mariadb")
+
+#: The server refused a read of a table (``1142``) or a column (``1143``).
+REFUSED_READ = frozenset({str(TABLE_ACCESS_DENIED), str(COLUMN_ACCESS_DENIED)})
 
 T = TypeVar("T")
 
@@ -101,6 +105,10 @@ class MariadbSession(ClosesConnection):
         try:
             lines = self._read(lambda cursor: accounts_module.survey(cursor, accounts))
         except DriverError as error:
+            # Only a refused read, the missing column grant: a config fault
+            # or a fault in sopuli is not a missing privilege.
+            if error.code not in REFUSED_READ:
+                raise
             return replace(
                 audit,
                 unreadable=(*audit.unreadable, "mysql.user"),

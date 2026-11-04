@@ -79,7 +79,7 @@ def observe(cursor: Cursor, *, target: str, encryption: Encryption | None = None
     already read it; otherwise it is read here.
     """
     cursor.execute(VERSION)
-    version = str(cursor.fetchone()[0])
+    version = text(cursor.fetchone()[0])
     if MARIADB not in version.lower():
         raise NotMariadbError(
             f'target "{target}" declares type "mariadb", and the server is not MariaDB ({version})',

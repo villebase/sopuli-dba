@@ -45,8 +45,6 @@ from sopuli.driver.mysql.privileges import audit as privilege_audit
 from sopuli.driver.mysql.scope import observe, require_read_write
 from sopuli.driver.mysql_family.accounts import Principal, split
 from sopuli.driver.mysql_family.client import client_lines
-from sopuli.driver.mysql_family.connection import TLS_REQUIRED_MODES as TLS_REQUIRED_MODES
-from sopuli.driver.mysql_family.connection import UnencryptedSessionError as UnencryptedSessionError
 from sopuli.driver.mysql_family.connection import connect_arguments, require_tls
 from sopuli.driver.mysql_family.encryption import read_encryption
 from sopuli.driver.mysql_family.errors import (

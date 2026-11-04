@@ -270,6 +270,32 @@ def test_a_failure_that_is_not_a_refusal_is_raised() -> None:
         privileges.allowed_reads(FakeCursor(reads))
 
 
+@pytest.mark.parametrize("schema", ["%", "m_sql", "my%"])
+def test_a_schema_pattern_that_covers_mysql_is_broad(schema: str) -> None:
+    grants = privileges.Grants(schema=((schema, "SELECT", False),))
+
+    audit = privileges.classify(user="sopuli_admin@%", grants=grants, roles=())
+
+    assert audit.missing == ("CREATE USER",)
+
+
+def test_a_schema_pattern_that_misses_mysql_is_not_broad() -> None:
+    grants = privileges.Grants(schema=(("acme\\_%", "SELECT", False),))
+
+    audit = privileges.classify(user="sopuli_admin@%", grants=grants, roles=())
+
+    assert "SELECT ON mysql.roles_mapping" in audit.missing
+
+
+def test_select_on_the_whole_view_holds_its_columns_and_is_over_granted() -> None:
+    grants = privileges.Grants(table=((privileges.USER_TABLE, "SELECT", False),))
+
+    audit = privileges.classify(user="sopuli_admin@%", grants=grants, roles=())
+
+    assert not any(missing.startswith("SELECT (") for missing in audit.missing)
+    assert "SELECT ON mysql.user" in audit.over_granted
+
+
 def test_a_broad_select_holds_what_it_covers_and_is_over_granted() -> None:
     """`SELECT ON mysql.*` reads everything §2.1 grants, so nothing is missing
     but `CREATE USER`, and the grant is over-granted (#1287)."""

@@ -26,7 +26,7 @@ import ssl
 from typing import Any
 
 from sopuli.config.errors import ConfigError
-from sopuli.config.model import ExpandedTarget
+from sopuli.config.model import ExpandedTarget, TargetMysql
 from sopuli.config.targets import MARIADB
 from sopuli.driver.address import host_and_port
 from sopuli.driver.login import require_login, session_label
@@ -46,6 +46,14 @@ TLS_REQUIRED_MODES = ("REQUIRED", "VERIFY_CA", "VERIFY_IDENTITY")
 
 #: Sent once at login: every TIMESTAMP the session reads is then in UTC.
 UTC_SESSION = "SET time_zone = '+00:00'"
+
+
+def settings_of(target: ExpandedTarget) -> TargetMysql:
+    """The target's own block, ``mariadb:`` on a MariaDB target and ``mysql:``
+    otherwise, with its defaults: the one place the choice is made."""
+    if target.target.type == MARIADB:
+        return target.target.mariadb_settings
+    return target.target.mysql_settings
 
 
 def tls_arguments(target: ExpandedTarget) -> dict[str, Any]:
@@ -74,7 +82,7 @@ def tls_arguments(target: ExpandedTarget) -> dict[str, Any]:
     """
     # The block is named after the product: `mysql:` or `mariadb:`.
     key = target.target.type
-    block = target.target.mariadb_settings if key == MARIADB else target.target.mysql_settings
+    block = settings_of(target)
     if block.ssl_mode == "DISABLED":
         return {"ssl_disabled": True}
     if block.ssl_mode == "PREFERRED":
@@ -180,12 +188,7 @@ def require_tls(encryption: Encryption, target: ExpandedTarget) -> None:
     refused too, with its own words: a mode that requires TLS needs it
     confirmed.
     """
-    settings = (
-        target.target.mariadb_settings
-        if target.target.type == MARIADB
-        else target.target.mysql_settings
-    )
-    mode = settings.ssl_mode
+    mode = settings_of(target).ssl_mode
     if mode not in TLS_REQUIRED_MODES or encryption.method == ENCRYPTION_TLS:
         return
     if encryption.method == UNKNOWN:

@@ -168,7 +168,8 @@ def _normalised(name: str) -> str:
 _IMPORT_NAMES: dict[str, tuple[str, ...]] = {
     "onepassword_sdk": ("onepassword",),
     "pyyaml": ("yaml",),
-    "pywin32": ("pywintypes", "pythoncom", "win32api", "win32con", "win32security"),
+    # The pywin32 modules src/ and tests/ import.
+    "pywin32": ("ntsecuritycon", "pywintypes", "win32security"),
 }
 
 

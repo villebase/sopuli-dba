@@ -813,6 +813,19 @@ def test_a_mark_that_cannot_be_read_is_spent_everywhere(mark: Any) -> None:
     assert apply.reach_spent(source, "mariadb-dev")
 
 
+@pytest.mark.parametrize("root", [["mariadb-dev"], "mariadb-dev"], ids=["list", "string"])
+def test_a_shared_document_s_mark_of_the_wrong_shape_is_spent_everywhere(root: Any) -> None:
+    """In a shared document the mark is keyed by account. A root of another
+    shape is unreadable, not absent."""
+    document = _document(None)
+    document[REACHED] = root
+    source = apply.source_for(document, _ref())
+
+    assert source is not None
+    assert source.reached is None
+    assert apply.reach_spent(source, "mariadb-dev")
+
+
 def test_only_a_pending_has_a_reaching_login_to_spend() -> None:
     source = apply.source_for(_document(None), _ref(), stage=CURRENT)
 

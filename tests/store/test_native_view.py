@@ -187,27 +187,47 @@ def test_a_reaching_login_mark_is_kept_in_the_attributes_beside_its_pending(
     assert "reached" not in still.data
 
 
-@pytest.mark.parametrize("next_write", ["stage", "promote"])
-def test_a_new_pending_or_a_promotion_drops_the_mark(
-    view: NativeStagedStore, next_write: str
+@pytest.mark.parametrize("next_write", ["stage", "promote", "clear"])
+def test_every_write_that_ends_the_pending_drops_the_mark(
+    view: NativeStagedStore, inner: MemoryStore, next_write: str
 ) -> None:
-    """Both carry no mark in what they write, as `generate` and the promotion
-    patch send none."""
+    """The view drops it itself, so a caller that sends no `reached: null`
+    cannot carry one pending's mark to the next. The patches here send none."""
     seeded(view)
     apply_patch(view, PATH, stage_patch("b"), cas=token(view))
     apply_patch(view, PATH, LAYOUT.patch(REACHED, ["mariadb-dev"]), cas=token(view))
 
-    patch = (
-        merge(stage_patch("c"), LAYOUT.patch(REACHED, REMOVE))
-        if next_write == "stage"
-        else merge(promotion("b", "a"), LAYOUT.patch(REACHED, REMOVE))
-    )
+    patch = {
+        "stage": stage_patch("c"),
+        "promote": promotion("b", "a"),
+        "clear": merge(LAYOUT.patch(PENDING, REMOVE), LAYOUT.patch(ORIGIN, REMOVE)),
+    }[next_write]
     apply_patch(view, PATH, patch, cas=token(view))
 
     after = view.read(PATH)
     assert after is not None
     assert "reached" not in after.data
     assert "reached" not in after.attributes
+    stored = inner.read(PATH)
+    assert stored is not None
+    assert "reached" not in stored.attributes, "no orphan mark is left in the metadata"
+
+
+def test_a_mark_in_the_content_is_not_carried_into_a_new_version(
+    view: NativeStagedStore, inner: MemoryStore
+) -> None:
+    """A `reached` in CURRENT's content is from when the secret held several
+    accounts. Copied forward, it would read as a mark on every later pending."""
+    inner.write(PATH, {"password": "a", "reached": {}}, cas=0)
+
+    apply_patch(view, PATH, stage_patch("b"), cas=token(view))
+
+    staged = inner.read_stage(PATH, "pending")
+    assert staged is not None
+    assert "reached" not in staged.data
+    after = view.read(PATH)
+    assert after is not None
+    assert "reached" not in after.data
 
 
 def test_a_pending_that_is_not_the_recorded_one_is_not_a_pending(

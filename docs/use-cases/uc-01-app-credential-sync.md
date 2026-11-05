@@ -135,8 +135,10 @@ split by when they become true (decision 3 in
 [`../decisions/log.md`](../decisions/log.md#1158)). The content holds the
 password, `origin`, `rollover`, `generated_at` and `generated_by`. `rotated_at`,
 `rotated_by`, `policy` and `targets` go in the secret's metadata, written in the
-same call that moves CURRENT. So does `reached` (below), which becomes true after
-the pending version was made. The metadata also records `pending_version`, the
+same call that moves CURRENT. `reached` (below) goes in the metadata too, because
+it becomes true after the pending version was made. It is written by a metadata
+update that keeps CURRENT and the live pending, and every other write drops it.
+The metadata also records `pending_version`, the
 number of the version that is the live pending. A PENDING version with another
 number is not a pending for any verb, because OCI cannot drop a stage without
 promoting it.

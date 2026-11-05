@@ -296,18 +296,30 @@ def source_for(document: Any, ref: SecretRef, *, stage: str | None = None) -> So
         replaces=current if promotes(chosen) else None,
         pending_staged=staged is not None,
         rollover=chosen == PENDING and layout.read(document, ROLLOVER) == RETAINING,
-        reached=_targets(layout.read(document, REACHED)) if chosen == PENDING else (),
+        reached=_reached(document, layout) if chosen == PENDING else (),
     )
 
 
-def _targets(found: Any) -> tuple[str, ...] | None:
-    """The target names in a :data:`~sopuli.payload.REACHED` mark: empty where
-    there is none, ``None`` where it is not a list of strings."""
-    if found is None:
+def _reached(document: Any, layout: StageLayout) -> tuple[str, ...] | None:
+    """The target names in ``layout``'s :data:`~sopuli.payload.REACHED` mark:
+    empty where there is none, ``None`` where it is there and is not a list of
+    strings.
+
+    Walked here rather than read with :meth:`StageLayout.read`, which answers
+    ``None`` both for no mark and for a root of the wrong shape in a shared
+    document. The second must count as spent, not as unspent."""
+    node: Any = document
+    for segment in layout.location(REACHED):
+        if not isinstance(node, Mapping):
+            return None
+        if segment not in node:
+            return ()
+        node = node[segment]
+    if node is None:
         return ()
-    if not isinstance(found, list) or not all(isinstance(name, str) for name in found):
+    if not isinstance(node, list) or not all(isinstance(name, str) for name in node):
         return None
-    return tuple(found)
+    return tuple(node)
 
 
 def reach_spent(source: Source, target: str) -> bool:
@@ -750,14 +762,15 @@ class Promotable:
 def promotion_patch(entries: Sequence[Promotable], *, at: datetime, by: str) -> dict[str, Any]:
     """One merge patch promoting every account in ``entries`` (UC-1 §5, invariant 7).
 
-    Five changes per account, and **one write**: ``current`` takes what
-    ``pending`` held, ``previous`` takes what ``current`` held, ``pending`` and
-    the ``origin`` describing it are removed, and the stamps are refreshed.
-    ``targets`` is written where targets confirmed the value. Where none did and
-    a ``current`` is replaced, it is cleared: it named the targets that confirmed
-    the old value. :func:`sopuli.payload.merge` exists for exactly this -- five writes would be
-    five versions, four of which describe a state that was never true, and any of
-    which can be the one that fails.
+    Several changes per account, and **one write**: ``current`` takes what
+    ``pending`` held, ``previous`` takes what ``current`` held, ``pending`` is
+    removed with the three keys that describe it (``origin``, the rollover mark
+    and the reaching-login mark), and the stamps are refreshed. ``targets`` is
+    written where targets confirmed the value. Where none did and a
+    ``current`` is replaced, it is cleared: it named the targets that confirmed
+    the old value. :func:`sopuli.payload.merge` exists for exactly this --
+    separate writes would be versions describing states that were never true,
+    and any of them can be the one that fails.
 
     Every key is written through the account's own
     :class:`~sopuli.payload.StageLayout`, so siblings in a shared document are

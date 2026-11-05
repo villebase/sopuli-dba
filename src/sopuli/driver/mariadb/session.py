@@ -181,7 +181,8 @@ class MariadbSession(ClosesConnection):
             what=what,
             hint=(
                 "the MariaDB driver connects, reports the server for `doctor`, "
-                "describes an account and sets its password, and the rest of it is "
+                "describes an account, sets its password and verifies it by login, and "
+                "the rest of it is "
                 "not written yet (#1270, #1271, #1272)"
             ),
         )

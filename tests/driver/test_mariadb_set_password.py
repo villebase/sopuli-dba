@@ -23,6 +23,7 @@ from sopuli.driver.protocol import (
     OLD_RETAIN,
     PASS,
     UNAVAILABLE,
+    VERIFY_BOTH,
     VERIFY_HASH,
     Credential,
     DriverError,
@@ -220,13 +221,40 @@ def test_a_missing_account_is_unavailable_without_a_login(session: Any) -> None:
     assert "no account" in (result.detail or "")
 
 
-def test_a_check_by_the_stored_value_is_refused_by_capability(
+def test_another_account_of_the_user_makes_a_refusal_unavailable(
     live_mariadb: Any, session: Any, user: str
 ) -> None:
+    """The user also exists at a host the tool does not connect from. A login
+    still reaches `user@%`, and passes where `CURRENT_USER()` names it
+    (decision 8). A refusal says nothing: another account could have sent it.
+    The other account's own password reaches `user@%` and is refused, which
+    says nothing about the other account either."""
+    other = "192.0.2.%"
+    password, theirs = f"Acme-{uuid.uuid4().hex[:12]}", f"Acme-{uuid.uuid4().hex[:12]}"
+    _root(live_mariadb, "create user %s@'%%' identified by %s", (user, password))
+    _root(live_mariadb, "create user %s@%s identified by %s", (user, other, theirs))
+    try:
+        right = session.verify_password(f"{user}@%", Secret(password))
+        wrong = session.verify_password(f"{user}@%", Secret("Acme-wrong-password-1"))
+        elsewhere = session.verify_password(f"{user}@{other}", Secret(theirs))
+    finally:
+        _root(live_mariadb, "drop user if exists %s@%s", (user, other))
+
+    assert right.result == PASS
+    assert wrong.result == UNAVAILABLE
+    assert f"{user}@{other}" in (wrong.detail or "")
+    assert elsewhere.result == UNAVAILABLE
+
+
+@pytest.mark.parametrize("method", [VERIFY_HASH, VERIFY_BOTH])
+def test_a_check_by_the_stored_value_is_refused_by_capability(
+    live_mariadb: Any, session: Any, user: str, method: str
+) -> None:
+    # The account exists, so the refusal cannot be for a missing one.
     _create(live_mariadb, user, "mysql_native_password")
 
     with pytest.raises(UnsupportedCapabilityError):
-        session.verify_password(f"{user}@%", Secret("Acme-not-sent-1"), method=VERIFY_HASH)
+        session.verify_password(f"{user}@%", Secret("Acme-not-sent-1"), method=method)
 
 
 def test_a_check_of_another_plugin_is_refused(live_mariadb: Any, session: Any, user: str) -> None:

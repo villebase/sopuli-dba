@@ -62,10 +62,11 @@ cosmetic:
 
 1. **A vendor client is imported inside its backend module, never at package
    import time.** The registry maps `type:` to a module path and imports on
-   first use. For the MariaDB driver, the backend module is its whole package:
-   any module in `sopuli.driver.mariadb` may import the clients the `mariadb` extra
-   provides, because only the driver's session reaches that package. It may not
-   import another driver's client (#1296).
+   first use. For the MariaDB driver, a module in `sopuli.driver.mariadb` that
+   only the driver's session imports may import the clients the `mariadb` extra
+   provides at module scope. A module the base CLI imports, such as `roles.py`,
+   may not, and no module of the package may import another driver's client
+   (#1296).
 2. **A missing backend is a diagnosable condition, not a traceback.** An
    `ImportError` at registry resolution becomes a structured error naming the
    extra that supplies it, with `error.category: "config"` and exit 9.

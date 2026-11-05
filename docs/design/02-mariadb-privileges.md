@@ -231,11 +231,27 @@ PyMySQL 1.2.3 has no client for `parsec` (`06_pymysql_login_probe.py`, PL1), so
 a `parsec` password could be changed and never checked. The tool never moves an
 account to another plugin: the change names the account's own plugin (§6).
 
-**An account with a second method is not seen.** An account can log in by two
-methods joined by `OR`, such as `mysql_native_password` and `unix_socket`. On
-11.8.9 the view shows `mysql_native_password` for it in either order, so the
-plugin check admits it. A change sends one method, which ends the other
-(open: #1301).
+**An account with a second method is not seen, and the gap is accepted**
+(#1301). An account can log in by two methods joined by `OR`, such as
+`mysql_native_password` and `unix_socket`. The view shows one of them, the
+same one as the top-level `plugin` in `mysql.global_priv`, and gives no sign
+of the other. Only `auth_or` in `mysql.global_priv` and `SHOW CREATE USER`
+show it, and the tool account reads neither (§2.2, §3). Measured by hand on
+11.8.9, creating each account as root (#1301):
+
+| Account | The view's `plugin` |
+|---|---|
+| `mysql_native_password OR ed25519` | `mysql_native_password` |
+| `ed25519 OR mysql_native_password` | `mysql_native_password` |
+| `unix_socket OR mysql_native_password` | `mysql_native_password` |
+| `mysql_native_password OR unix_socket` | `mysql_native_password` |
+| `unix_socket OR ed25519` | `ed25519` |
+
+So the plugin check admits such an account. A password change sends one
+method, which ends the other: a login by `unix_socket` stops working. No grant
+closes the gap without reading every stored value. `doctor --check-privileges`
+says so for any target with declared accounts, and the DBA checks `SHOW CREATE
+USER` for the accounts the tool manages.
 
 **A user name at an undeclared host is reported** by `doctor` (§2.3).
 

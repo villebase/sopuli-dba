@@ -129,6 +129,8 @@ def test_doctor_surveys_the_declared_accounts(
     shown = " ".join(result.output.split())
     assert "check 9 cannot see BINLOG ADMIN," in shown
     assert "SET USER or SLAVE MONITOR: they set no column of the mysql.user view" in shown
+    # The second login method the view does not show (section 4, #1301).
+    assert "second login method, joined by OR" in shown
 
 
 def test_without_declared_accounts_doctor_says_nothing_of_check_9(
@@ -144,6 +146,7 @@ def test_without_declared_accounts_doctor_says_nothing_of_check_9(
     # The audit ran: its always-present PUBLIC line is there.
     assert "privileges granted to PUBLIC" in " ".join(result.output.split())
     assert "check 9" not in result.output
+    assert "second login method" not in result.output
 
 
 def test_a_role_the_tool_account_holds_is_reported(live_mariadb: Any, tmp_path: Path) -> None:

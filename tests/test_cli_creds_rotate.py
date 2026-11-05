@@ -1479,6 +1479,35 @@ def test_a_rollover_s_caveat_is_warned_in_the_plan_and_the_row(
         assert all(detail.endswith(f"; {caveat}") for detail in set_details)
 
 
+@pytest.mark.parametrize("dry_run", [False, True], ids=["run", "dry-run"])
+def test_no_caveat_is_warned_for_a_window_the_run_closes(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+    dry_run: bool,
+) -> None:
+    """#1271: under `--finish-rollover` the run closes each window it opened,
+    so `SOPULI-W064` would describe a window that is gone."""
+    monkeypatch.setattr(FakeSession, "caveat", "a PyMySQL client cannot log in")
+    estate(capabilities=frozenset({PASSWORD_ROLLOVER}))
+    flags = ["--dry-run"] if dry_run else []
+    result = run(
+        runner,
+        write_config(CONFIG),
+        "--strategy",
+        "rollover",
+        "--finish-rollover",
+        *flags,
+        "--output",
+        "json",
+    )
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    codes = [one.get("code") for one in document(result).get("diagnostics", [])]
+    assert ROLLOVER_CAVEAT not in codes
+
+
 @pytest.mark.parametrize(("strategy", "mark"), [("rollover", "retaining"), ("staged", None)])
 def test_a_held_rollover_leaves_its_pending_marked(
     runner: CliRunner,

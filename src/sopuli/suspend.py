@@ -30,8 +30,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from sopuli.config.model import Config
-from sopuli.config.targets import MARIADB
-from sopuli.driver.guardrails import Review, review
+from sopuli.driver.guardrails import Review, every_verb, review
 from sopuli.driver.protocol import UserState
 from sopuli.personal import bound_by_application, declared_on
 
@@ -42,13 +41,6 @@ from sopuli.personal import bound_by_application, declared_on
 LOCKED = "LOCKED"
 ACCOUNT_MISSING = "ACCOUNT_MISSING"
 SKIPPED = "SKIPPED"
-
-#: The target types where guardrail 9 runs for these verbs too. On MariaDB a
-#: `role:` rule admits the account that created the role, often root or the
-#: tool account, and nothing else marks root as the database's own. So an
-#: administrator is refused whatever the verb, even one declared by name
-#: (#1272, option B, decided by the maintainer on 2026-11-05).
-GUARDED_TYPES = frozenset({MARIADB})
 
 
 @dataclass(frozen=True)
@@ -95,8 +87,9 @@ def decide(
     invariant 5's own sentence: ``--force`` overrides other guardrails, never the
     whitelist. It does not waive checks 6 and 8 either: a superuser and a role the
     server reserves. Check 9 does not run here, because neither verb sets a
-    password (#1222), except where ``target_type`` is in
-    :data:`GUARDED_TYPES`: on MariaDB a `role:` rule admits the role's creator,
+    password (#1222), except where
+    :func:`~sopuli.driver.guardrails.every_verb` says so of ``target_type``:
+    on MariaDB a `role:` rule admits the role's creator,
     so an administrator is refused whatever the verb, the session's own
     account included (#1272). It runs where ``target_type`` is ``None`` too,
     so a caller that leaves it out refuses more, never less. That is enforced by
@@ -133,14 +126,13 @@ def decide(
     # every other verb produces.
     # Neither verb sets a password, so check 9 does not run: locking an account
     # with a global privilege takes power away rather than handing it over
-    # (#1222). On MariaDB it runs anyway (GUARDED_TYPES).
+    # (#1222). On MariaDB it runs anyway (`guardrails.every_verb`).
     found = review(
         state,
         declared=[state.name] if rule is not None else [],
         force=force,
         sets_password=False,
-        # No type is the safe side: a caller that forgets it refuses more.
-        every_account=target_type is None or target_type in GUARDED_TYPES,
+        every_account=every_verb(target_type),
     )
 
     if not found.permitted:

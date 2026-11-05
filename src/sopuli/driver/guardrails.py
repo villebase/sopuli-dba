@@ -109,6 +109,7 @@ from __future__ import annotations
 from collections.abc import Collection
 from dataclasses import dataclass
 
+from sopuli.config.targets import MARIADB
 from sopuli.driver.protocol import UserState
 
 #: §4 check 1. Never waived (:data:`NEVER_WAIVED`).
@@ -140,6 +141,24 @@ GLOBAL_PRIVILEGE = "global_privilege"
 
 #: The checks no flag waives.
 NEVER_WAIVED = frozenset({DECLARED, SUPERUSER, RESERVED, GLOBAL_PRIVILEGE})
+
+#: The target types where check 9 refuses every verb, `account suspend` and
+#: `account expire-password` too, and the session's own account for those two.
+#: On MariaDB a `role:` rule admits the account that created the role, often
+#: root or the tool account, and nothing else marks root as the database's own.
+#: So an administrator is refused whatever the verb, even one declared by name
+#: (#1272, option B).
+GUARDED_TYPES = frozenset({MARIADB})
+
+
+def every_verb(target_type: str | None) -> bool:
+    """Whether check 9 refuses every verb on ``target_type``: the
+    ``every_account`` that :func:`review` takes, for a verb that sets no
+    password. ``None`` answers yes, the safe side: a caller that leaves the
+    type out refuses more, never less. The verbs and `account list` both ask
+    it, so the listing says what the verbs refuse."""
+    return target_type is None or target_type in GUARDED_TYPES
+
 
 #: The checks no flag waives that refuse a declared account: whatever is granted
 #: to the tool, no run changes such an account. :func:`server_refusal` and
@@ -351,7 +370,7 @@ def review(
     sets, which hands over nothing; locking it hands over nothing either, but
     takes the account away. On MariaDB `account suspend` and `account
     expire-password` pass it, because a `role:` rule there admits the role's
-    creator, root or the tool account (:data:`sopuli.suspend.GUARDED_TYPES`,
+    creator, root or the tool account (:func:`every_verb`,
     #1272).
 
     **A check with no input is neither**, and that is the third answer:

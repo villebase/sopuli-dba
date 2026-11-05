@@ -200,7 +200,9 @@ def test_a_global_privilege_is_named_as_refusing_only_a_password_change() -> Non
     """Check 9 refuses the verbs that set a password, and `account suspend`
     may still lock the account, so the notice does not say no verb acts (#1222)."""
     held = frozenset({"SELECT ON *.*"})
-    message = guardrail_refusal(user("dba_jane@%", global_privileges=held), admitted=True)
+    message = guardrail_refusal(
+        user("dba_jane@%", global_privileges=held), admitted=True, target_type="mysql"
+    )
 
     assert message == (
         "a mutating verb refuses this account at plan time: check 9 (the account holds "
@@ -208,19 +210,37 @@ def test_a_global_privilege_is_named_as_refusing_only_a_password_change() -> Non
     )
 
 
-def test_on_mariadb_a_global_privilege_is_named_as_refusing_every_verb() -> None:
-    """There check 9 refuses `account suspend` and `account expire-password`
-    too, because a `role:` rule admits the role's creator (#1272)."""
+@pytest.mark.parametrize("target_type", ["mariadb", None])
+def test_where_check_9_refuses_every_verb_the_listing_says_so(target_type: str | None) -> None:
+    """On MariaDB check 9 refuses `account suspend` and `account
+    expire-password` too, because a `role:` rule admits the role's creator
+    (#1272). No type is the safe side."""
     held = frozenset({"SELECT ON *.*"})
     message = guardrail_refusal(
-        user("root@localhost", global_privileges=held), admitted=True, target_type="mariadb"
+        user("root@localhost", global_privileges=held), admitted=True, target_type=target_type
     )
 
     assert message is not None
-    assert message.endswith(
-        "no flag overrides check 9, and on MariaDB it refuses every verb, "
-        "`account suspend` included"
+    assert message.endswith("no flag overrides check 9, so no verb will act on this account")
+
+
+def test_on_mariadb_the_tool_s_own_account_is_refused_as_the_verbs_refuse_it() -> None:
+    """The tool account may have created the role. `account suspend` refuses
+    it by check 9 there, which `--force` does not waive, so the listing must
+    not say `--force` is enough (#1272)."""
+    message = guardrail_refusal(
+        user(
+            "sopuli_admin@%",
+            global_privileges=frozenset({"SELECT ON mysql.*"}),
+            session_account=True,
+        ),
+        admitted=True,
+        target_type="mariadb",
     )
+
+    assert message is not None
+    assert "check 9 (the account holds SELECT ON mysql.*)" in message
+    assert "`--force` overrides" not in message
 
 
 def test_a_global_privilege_beside_a_waivable_check_says_what_force_does() -> None:
@@ -233,6 +253,7 @@ def test_a_global_privilege_beside_a_waivable_check_says_what_force_does() -> No
             global_privileges=frozenset({"SELECT ON *.*"}),
         ),
         admitted=True,
+        target_type="oracle",
     )
 
     assert message is not None

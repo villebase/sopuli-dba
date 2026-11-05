@@ -353,7 +353,7 @@ the account is locked by `account suspend` or blocked after failed logins
 ## 7. Checking a password by login
 
 The tool verifies a password by logging in as the account, over the target's
-own TLS settings (open: #1270). PyMySQL logs in on `mysql_native_password`,
+own TLS settings. PyMySQL logs in on `mysql_native_password`,
 and on `ed25519` with PyNaCl, which the `mariadb` extra installs
 (`06_pymysql_login_probe.py`, PL1 and PL3). The driver reports no
 `offline_verify`: the stored value is in a column the tool account does not

@@ -35,17 +35,23 @@ import pymysql
 from sopuli.config.model import ExpandedTarget, Runtime
 from sopuli.driver.mariadb import accounts as accounts_module
 from sopuli.driver.mariadb import password as password_module
+from sopuli.driver.mariadb import verification
 from sopuli.driver.mariadb.errors import from_error
 from sopuli.driver.mariadb.privileges import audit as privilege_audit
 from sopuli.driver.mariadb.scope import observe, require_read_write
-from sopuli.driver.mysql_family.accounts import current_user
+from sopuli.driver.mysql_family.accounts import current_user, split
 from sopuli.driver.mysql_family.client import client_lines
 from sopuli.driver.mysql_family.connection import connect_arguments, require_tls
 from sopuli.driver.mysql_family.encryption import read_encryption
 from sopuli.driver.mysql_family.errors import COLUMN_ACCESS_DENIED, TABLE_ACCESS_DENIED
 from sopuli.driver.protocol import (
+    OFFLINE_VERIFY,
     OLD_DISCARD,
     OLD_PASSWORD_MODES,
+    UNAVAILABLE,
+    VERIFY_BOTH,
+    VERIFY_HASH,
+    VERIFY_LOGIN,
     ChangeResult,
     ClosesConnection,
     Credential,
@@ -55,7 +61,10 @@ from sopuli.driver.protocol import (
     PrivilegeAudit,
     Scope,
     Timeouts,
+    UnsupportedCapabilityError,
     UserState,
+    VerifyResult,
+    require_capability,
 )
 from sopuli.driver.registry import NotWrittenError
 from sopuli.output.debug import logger
@@ -286,11 +295,78 @@ class MariadbSession(ClosesConnection):
     def accounts_matching(self, *args: Any, **kwargs: Any) -> NoReturn:
         self._not_written("list accounts")
 
-    def verify_password(self, *args: Any, **kwargs: Any) -> NoReturn:
-        self._not_written("verify a password")
+    def verify_password(
+        self,
+        account: str,
+        secret: Secret,
+        *,
+        method: str = VERIFY_LOGIN,
+        lockout_margin: int = 2,
+        attempts: int = 1,
+    ) -> VerifyResult:
+        """Log in once as ``account`` with ``secret``, and say what that showed
+        (:mod:`~sopuli.driver.mariadb.verification`).
 
-    def require_verifier(self, *args: Any, **kwargs: Any) -> NoReturn:
-        self._not_written("check a password by its stored value")
+        ``login`` only: ``hash`` and ``both`` need ``offline_verify``, which
+        this driver never reports, because the value is in
+        ``mysql.global_priv``, which the tool account does not read.
+        :meth:`require_verifier` refuses them at plan time, and this refuses
+        them again.
+
+        A login passes only where ``CURRENT_USER()`` is the declared account
+        (#1267, decision 8). An answer that comes before it can be read counts
+        only where no other account can answer the login
+        (:func:`~sopuli.driver.mariadb.verification.competitor`). An account
+        that does not exist is :data:`~sopuli.driver.protocol.UNAVAILABLE`
+        without a login. The tool cannot read MariaDB's count of failed logins,
+        so ``lockout_margin`` and ``attempts`` have nothing to guard, and the
+        detail says so.
+        """
+        if method in (VERIFY_HASH, VERIFY_BOTH):
+            self.require_verifier(account, secret)
+        if method != VERIFY_LOGIN:
+            raise UnsupportedCapabilityError(
+                f"verification method {method!r}",
+                target=self.target.name,
+                hint="this driver verifies by `login` only",
+            )
+        user, host = split(account)
+        # One read: the user's accounts at every host, and the anonymous ones,
+        # which compete for the same login.
+        found = self._read_grants(lambda cursor: accounts_module.read(cursor, [user, ""]))
+        declared = accounts_module.find(found[user], host)
+        if declared is None:
+            return VerifyResult(
+                method=VERIFY_LOGIN,
+                result=UNAVAILABLE,
+                detail=f'there is no account "{account}" on this target',
+            )
+        if declared.plugin not in accounts_module.SUPPORTED_PLUGINS:
+            # As `describe_user` refuses it: the tool manages no other plugin.
+            raise accounts_module.OtherPluginError(
+                declared.name, declared.plugin, target=self.target.name
+            )
+        return verification.login(
+            self.target,
+            declared,
+            secret,
+            competing=verification.competitor(declared, found[user], found[""]),
+            correlation_id=self.correlation_id,
+            timeouts=self.timeouts,
+        )
+
+    def require_verifier(self, account: str, secret: Secret) -> None:
+        """Refuse ``hash`` and ``both`` at plan time (invariant 4): this driver
+        never reports ``offline_verify``."""
+        require_capability(
+            self.scope(),
+            OFFLINE_VERIFY,
+            target=self.target.name,
+            hint=(
+                "the value is in mysql.global_priv, which the tool account does not read; "
+                "use --method login, the default"
+            ),
+        )
 
     def require_rollover(self, account: str) -> NoReturn:
         self._not_written("keep a rollover window")

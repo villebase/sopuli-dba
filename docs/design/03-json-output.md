@@ -564,7 +564,10 @@ the target, and `config.targets[].personal_accounts` whether a
 `personal_accounts:` entry selects it.** A target where both are false is one
 nothing manages, and the text view lists it as "managed by nothing". A CDB root
 that only personal accounts reach has `managed: false` and
-`personal_accounts: true`. `personal_accounts` is from run schema 1.78.
+`personal_accounts: true`. A `profile:` or `role:` entry with the default
+`targets:` selects every target, so it marks every one, whether or not an
+account there matches: which accounts match is a fact about a database, and
+`config show` describes the file. `personal_accounts` is from run schema 1.78.
 
 A binding's `secret` is the ref **as written**, a string that round-trips
 (`01-configuration.md` §7), so it matches the config file by eye. The structured

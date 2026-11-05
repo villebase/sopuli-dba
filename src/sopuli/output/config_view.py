@@ -29,7 +29,7 @@ from typing import Any
 from sopuli.config import Binding, Config, ExpandedTarget, as_dict
 from sopuli.config.locking import LOCK_REQUIRED
 from sopuli.config.model import Pairs, Safety, Target, Vault
-from sopuli.config.selection import matches, select
+from sopuli.config.selection import matches
 from sopuli.config.sharing import SharedSecret, shared_secrets
 from sopuli.config.targets import MARIADB, MYSQL, POSTGRESQL
 from sopuli.config.vaults import OCI_KEYS
@@ -37,6 +37,7 @@ from sopuli.output.document import Option
 from sopuli.output.explain_view import section as explain_section
 from sopuli.output.palette import Role, paint
 from sopuli.output.table import Cell, Column, render_table
+from sopuli.personal import rules_for
 from sopuli.settings import Contribution, Layer, Resolved, render_value, resolve_all
 from sopuli.settings.sources import safety_block, target_safety
 
@@ -1021,13 +1022,14 @@ def _bound_targets(config: Config) -> frozenset[str]:
 def _personal_targets(config: Config) -> frozenset[str]:
     """Every target some ``personal_accounts:`` entry selects (UC-2).
 
-    A rule selects targets the way an application does, so the set comes from
-    the same :func:`~sopuli.config.selection.select`.
+    Asked through :func:`~sopuli.personal.rules_for`, the question the UC-2
+    verbs ask, so this view and the verbs cannot disagree. A ``profile:`` or
+    ``role:`` entry with the default ``targets:`` selects every target, whether
+    or not an account there matches: which accounts match is a fact about a
+    database, and this command describes the file.
     """
     return frozenset(
-        expanded.name
-        for rule in config.personal_accounts
-        for expanded in select(config, rule.targets)
+        expanded.name for expanded in config.expanded_targets if rules_for(config, expanded.name)
     )
 
 

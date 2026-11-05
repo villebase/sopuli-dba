@@ -546,11 +546,11 @@
               },
               "managed": {
                 "type": "boolean",
-                "description": "Whether any application binds an account here. A declared target that nothing manages is legitimate, not an error."
+                "description": "Whether any application binds an account here. A target a `personal_accounts:` entry selects can be false here and still be managed: see `personal_accounts`."
               },
               "personal_accounts": {
                 "type": "boolean",
-                "description": "Whether any `personal_accounts:` entry selects this target. A target where this and `managed` are both false is one nothing manages. Additive in 1.78 (#1326)."
+                "description": "Whether any `personal_accounts:` entry's `targets:` selects this target. A `profile:` or `role:` entry with the default `targets:` selects every target, whether or not an account there matches. A target where this and `managed` are both false is one nothing manages, which is legitimate, not an error. Additive in 1.78 (#1326)."
               }
             }
           }

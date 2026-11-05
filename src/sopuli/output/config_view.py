@@ -29,7 +29,7 @@ from typing import Any
 from sopuli.config import Binding, Config, ExpandedTarget, as_dict
 from sopuli.config.locking import LOCK_REQUIRED
 from sopuli.config.model import Pairs, Safety, Target, Vault
-from sopuli.config.selection import matches
+from sopuli.config.selection import matches, select
 from sopuli.config.sharing import SharedSecret, shared_secrets
 from sopuli.config.targets import MARIADB, MYSQL, POSTGRESQL
 from sopuli.config.vaults import OCI_KEYS
@@ -243,8 +243,10 @@ def build_section(
     # Built once. A set per target would be one pass over every binding for
     # every target, and §2's estate is already 22 x 126 of them.
     bound = _bound_targets(config)
+    personal = _personal_targets(config)
     section["targets"] = [
-        _target_json(expanded, bound=bound) for expanded in config.expanded_targets
+        _target_json(expanded, bound=bound, personal=personal)
+        for expanded in config.expanded_targets
     ]
     section["bindings"] = [_binding_json(binding) for binding in config.bindings]
     # Omitted rather than emitted empty, the same way `diagnostics` is: a config
@@ -824,14 +826,15 @@ def _estate_summary(config: Config) -> str:
 
 
 def _unmanaged(config: Config) -> list[str]:
-    """Targets no application binds.
+    """Targets that no application binds and no ``personal_accounts:`` entry
+    selects.
 
-    Shown rather than warned about: §2's estate declares a CDB root for a use
-    case that is not designed yet, and a declared-but-unmanaged target is the
-    honest state until it is. Invisible is the one thing it must not be.
+    Shown rather than warned about: a target may be declared before anything
+    manages it, and that is a legitimate state. Invisible is the one thing it
+    must not be.
     """
-    bound = _bound_targets(config)
-    return [expanded.name for expanded in config.expanded_targets if expanded.name not in bound]
+    managed = _bound_targets(config) | _personal_targets(config)
+    return [expanded.name for expanded in config.expanded_targets if expanded.name not in managed]
 
 
 def _binding_sections(config: Config) -> list[tuple[str, list[str]]]:
@@ -881,7 +884,9 @@ def _binding_rows(bindings: Sequence[Binding]) -> list[str]:
 # ------------------------------------------------------------------ json ---
 
 
-def _target_json(expanded: ExpandedTarget, *, bound: frozenset[str]) -> dict[str, Any]:
+def _target_json(
+    expanded: ExpandedTarget, *, bound: frozenset[str], personal: frozenset[str]
+) -> dict[str, Any]:
     target = expanded.target
     return {
         "name": target.name,
@@ -899,6 +904,7 @@ def _target_json(expanded: ExpandedTarget, *, bound: frozenset[str]) -> dict[str
         "target_set": expanded.target_set,
         "overridden": expanded.overridden,
         "managed": target.name in bound,
+        "personal_accounts": target.name in personal,
     }
 
 
@@ -1010,6 +1016,19 @@ def _bound_targets(config: Config) -> frozenset[str]:
     targets and 126 bindings, and both views ask this question per target.
     """
     return frozenset(binding.target for binding in config.bindings)
+
+
+def _personal_targets(config: Config) -> frozenset[str]:
+    """Every target some ``personal_accounts:`` entry selects (UC-2).
+
+    A rule selects targets the way an application does, so the set comes from
+    the same :func:`~sopuli.config.selection.select`.
+    """
+    return frozenset(
+        expanded.name
+        for rule in config.personal_accounts
+        for expanded in select(config, rule.targets)
+    )
 
 
 def _or_dash(value: str | None) -> Cell | str:

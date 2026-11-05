@@ -6,7 +6,7 @@ for text output that keep it consistent with both.
 `sopuli/output/` produces them, and CI validates the output against the
 published schemas.
 
-Schemas: [`../schemas/sopuli-run-1.77.schema.json`](../schemas/sopuli-run-1.77.schema.json),
+Schemas: [`../schemas/sopuli-run-1.78.schema.json`](../schemas/sopuli-run-1.78.schema.json),
 [`../schemas/sopuli-event-1.21.schema.json`](../schemas/sopuli-event-1.21.schema.json)
 Examples, each from a real run:
 [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json),
@@ -558,6 +558,13 @@ From run schema 1.72.
 **`config.targets[].mariadb` is how the run connects to a MariaDB target**: the
 same keys as `mysql`, filled in and resolved the same way. It is null on every
 other type. From run schema 1.77.
+
+**`config.targets[].managed` says whether an application binds an account on
+the target, and `config.targets[].personal_accounts` whether a
+`personal_accounts:` entry selects it.** A target where both are false is one
+nothing manages, and the text view lists it as "managed by nothing". A CDB root
+that only personal accounts reach has `managed: false` and
+`personal_accounts: true`. `personal_accounts` is from run schema 1.78.
 
 A binding's `secret` is the ref **as written**, a string that round-trips
 (`01-configuration.md` §7), so it matches the config file by eye. The structured

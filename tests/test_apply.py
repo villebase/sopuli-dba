@@ -20,7 +20,7 @@ import pytest
 from sopuli import apply, check
 from sopuli.config.loading import build_config
 from sopuli.config.model import Binding, Config
-from sopuli.config.secret_refs import parse_secret_ref
+from sopuli.config.secret_refs import SecretRef, parse_secret_ref
 from sopuli.driver.protocol import (
     FAIL,
     PASS,
@@ -33,7 +33,16 @@ from sopuli.driver.protocol import (
     VerifyResult,
 )
 from sopuli.exit_codes import ExitCode
-from sopuli.payload import CURRENT, GENERATED, ORIGIN, PENDING, PREVIOUS, REMOVE, SUPPLIED
+from sopuli.payload import (
+    CURRENT,
+    GENERATED,
+    ORIGIN,
+    PENDING,
+    PREVIOUS,
+    REACHED,
+    REMOVE,
+    SUPPLIED,
+)
 from sopuli.secrets import Secret
 
 NOW = datetime(2026, 8, 29, 9, 30, tzinfo=UTC)
@@ -757,6 +766,71 @@ def test_the_origin_is_cleared_with_the_pending_it_described() -> None:
 
     assert patch[ORIGIN]["acme_web_user"] is REMOVE
     assert patch[PENDING]["acme_web_user"] is REMOVE
+    # As is the reaching-login mark, which describes `pending` too (#1316).
+    assert patch[REACHED]["acme_web_user"] is REMOVE
+
+
+def _ref() -> SecretRef:
+    secret = binding().secret
+    assert secret is not None
+    return secret
+
+
+def _document(reached: Any) -> dict[str, Any]:
+    return {
+        "DB_CREDENTIALS": {"acme_web_user": "live"},
+        PENDING: {"acme_web_user": "staged"},
+        REACHED: {"acme_web_user": reached},
+    }
+
+
+def test_a_pending_s_reaching_login_is_spent_only_where_its_mark_says() -> None:
+    """#1316: per target. Unspent on a target the mark does not name."""
+    source = apply.source_for(_document(["mariadb-dev"]), _ref())
+
+    assert source is not None
+    assert source.reached == ("mariadb-dev",)
+    assert apply.reach_spent(source, "mariadb-dev")
+    assert not apply.reach_spent(source, "mariadb-prod")
+
+
+def test_a_pending_with_no_mark_has_its_reaching_login_everywhere() -> None:
+    document = _document(None)
+    del document[REACHED]
+    source = apply.source_for(document, _ref())
+
+    assert source is not None
+    assert not apply.reach_spent(source, "mariadb-dev")
+
+
+@pytest.mark.parametrize("mark", ["mariadb-dev", {"t": 1}, [1]], ids=["string", "object", "number"])
+def test_a_mark_that_cannot_be_read_is_spent_everywhere(mark: Any) -> None:
+    """The safe side: no login that may reach an undeclared account."""
+    source = apply.source_for(_document(mark), _ref())
+
+    assert source is not None
+    assert source.reached is None
+    assert apply.reach_spent(source, "mariadb-dev")
+
+
+@pytest.mark.parametrize("root", [["mariadb-dev"], "mariadb-dev"], ids=["list", "string"])
+def test_a_shared_document_s_mark_of_the_wrong_shape_is_spent_everywhere(root: Any) -> None:
+    """In a shared document the mark is keyed by account. A root of another
+    shape is unreadable, not absent."""
+    document = _document(None)
+    document[REACHED] = root
+    source = apply.source_for(document, _ref())
+
+    assert source is not None
+    assert source.reached is None
+    assert apply.reach_spent(source, "mariadb-dev")
+
+
+def test_only_a_pending_has_a_reaching_login_to_spend() -> None:
+    source = apply.source_for(_document(None), _ref(), stage=CURRENT)
+
+    assert source is not None
+    assert apply.reach_spent(source, "mariadb-dev")
 
 
 def test_the_patch_never_reveals_a_password() -> None:

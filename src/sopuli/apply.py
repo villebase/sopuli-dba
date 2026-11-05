@@ -101,6 +101,7 @@ from sopuli.payload import (
     ORIGIN,
     PENDING,
     PREVIOUS,
+    REACHED,
     REMOVE,
     RETAINING,
     ROLLOVER,
@@ -176,6 +177,7 @@ __all__ = [
     "may_redraw",
     "promotes",
     "promotion_patch",
+    "reach_spent",
     "settled_before_acting",
     "source_for",
     "summarise_document",
@@ -227,6 +229,10 @@ class Source:
     #: a rollover rotation staged it and retained the old password on MySQL,
     #: so setting it again must not end that window (#1224).
     rollover: bool = False
+    #: The targets where the ``pending`` read has spent its reaching login, from
+    #: :data:`~sopuli.payload.REACHED` (#1316), or ``None`` where the mark is
+    #: there and unreadable. Empty for any other stage. Ask :func:`reach_spent`.
+    reached: tuple[str, ...] | None = ()
 
 
 #: The stages a run can be asked to apply from, in the order UC-1 §5 lists them.
@@ -290,7 +296,43 @@ def source_for(document: Any, ref: SecretRef, *, stage: str | None = None) -> So
         replaces=current if promotes(chosen) else None,
         pending_staged=staged is not None,
         rollover=chosen == PENDING and layout.read(document, ROLLOVER) == RETAINING,
+        reached=_reached(document, layout) if chosen == PENDING else (),
     )
+
+
+def _reached(document: Any, layout: StageLayout) -> tuple[str, ...] | None:
+    """The target names in ``layout``'s :data:`~sopuli.payload.REACHED` mark:
+    empty where there is none, ``None`` where it is there and is not a list of
+    strings.
+
+    Walked here rather than read with :meth:`StageLayout.read`, which answers
+    ``None`` both for no mark and for a root of the wrong shape in a shared
+    document. The second must count as spent, not as unspent."""
+    node: Any = document
+    for segment in layout.location(REACHED):
+        if not isinstance(node, Mapping):
+            return None
+        if segment not in node:
+            return ()
+        node = node[segment]
+    if node is None:
+        return ()
+    if not isinstance(node, list) or not all(isinstance(name, str) for name in node):
+        return None
+    return tuple(node)
+
+
+def reach_spent(source: Source, target: str) -> bool:
+    """Whether ``source``'s reaching login is spent on ``target`` (#1316).
+
+    Only a ``pending`` has one to spend. A mark the tool cannot read counts as
+    spent everywhere: the safe side is no login on an account the config may
+    not declare, and the cost is a ``pending`` left unconfirmed until a new one
+    is staged.
+    """
+    if source.stage != PENDING or source.reached is None:
+        return True
+    return target in source.reached
 
 
 def attributes_for(config: Config, binding: Binding) -> AccountAttributes:
@@ -720,14 +762,15 @@ class Promotable:
 def promotion_patch(entries: Sequence[Promotable], *, at: datetime, by: str) -> dict[str, Any]:
     """One merge patch promoting every account in ``entries`` (UC-1 §5, invariant 7).
 
-    Five changes per account, and **one write**: ``current`` takes what
-    ``pending`` held, ``previous`` takes what ``current`` held, ``pending`` and
-    the ``origin`` describing it are removed, and the stamps are refreshed.
-    ``targets`` is written where targets confirmed the value. Where none did and
-    a ``current`` is replaced, it is cleared: it named the targets that confirmed
-    the old value. :func:`sopuli.payload.merge` exists for exactly this -- five writes would be
-    five versions, four of which describe a state that was never true, and any of
-    which can be the one that fails.
+    Several changes per account, and **one write**: ``current`` takes what
+    ``pending`` held, ``previous`` takes what ``current`` held, ``pending`` is
+    removed with the three keys that describe it (``origin``, the rollover mark
+    and the reaching-login mark), and the stamps are refreshed. ``targets`` is
+    written where targets confirmed the value. Where none did and a
+    ``current`` is replaced, it is cleared: it named the targets that confirmed
+    the old value. :func:`sopuli.payload.merge` exists for exactly this --
+    separate writes would be versions describing states that were never true,
+    and any of them can be the one that fails.
 
     Every key is written through the account's own
     :class:`~sopuli.payload.StageLayout`, so siblings in a shared document are
@@ -756,8 +799,10 @@ def promotion_patch(entries: Sequence[Promotable], *, at: datetime, by: str) -> 
         # rather than removing the key, exactly as `pending` above does.
         # `tests/test_payload.py` pins that and says why it stays.
         patches.append(layout.patch(ORIGIN, REMOVE))
-        # The rollover mark describes `pending` too (#1224).
+        # The rollover mark describes `pending` too (#1224), and so does the
+        # reaching-login mark (#1316).
         patches.append(layout.patch(ROLLOVER, REMOVE))
+        patches.append(layout.patch(REACHED, REMOVE))
         patches.append(layout.patch("rotated_at", stamp))
         patches.append(layout.patch("rotated_by", by))
         if entry.policy is not None:

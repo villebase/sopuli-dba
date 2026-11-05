@@ -47,6 +47,7 @@ from sopuli.payload import (
     ORIGIN,
     PENDING,
     PREVIOUS,
+    REACHED,
     ROLLOVER,
     STAMPS,
     StageLayout,
@@ -82,6 +83,15 @@ PREVIOUS_VERSION = "previous_version"
 #: (decision 3). Not part of the secret's own keys, so neither shown nor
 #: carried from one version to the next.
 OWN_KEYS = frozenset({ORIGIN, ROLLOVER, GENERATED_AT, GENERATED_BY})
+
+#: What the tool keeps in the secret's attributes, beside ``pending_version``:
+#: the stamps, which become true at promotion, and the reaching-login mark of
+#: #1316, which becomes true after the PENDING version was made. A version's
+#: content cannot change, so neither can live there. The mark describes the
+#: live pending, so only a write that keeps that pending keeps it
+#: (:meth:`NativeStagedStore._promote` with ``pending``); every other write
+#: drops it, whatever the document asked.
+ATTRIBUTE_KEYS = (*STAMPS, REACHED)
 
 
 class StagingStore(SecretStore, NativeStaging, Protocol):
@@ -136,13 +146,16 @@ class _View:
         as a ``username`` beside the ``password``, or another account in a
         document of several.
 
-        Stamps in the content are left out too. Under native staging they live
-        in the attributes, so stamps in the content are from when the secret
-        held several accounts, and copying them into each new version would
-        keep them for good."""
+        What the attributes hold is left out too (:data:`ATTRIBUTE_KEYS`).
+        Under native staging the stamps and the reaching-login mark live in
+        the attributes, so any in the content are from when the secret held
+        several accounts, and copying them into each new version would keep
+        them for good."""
         data = self.current.data if isinstance(self.current.data, Mapping) else {}
         return {
-            key: value for key, value in data.items() if key not in OWN_KEYS and key not in STAMPS
+            key: value
+            for key, value in data.items()
+            if key not in OWN_KEYS and key not in ATTRIBUTE_KEYS
         }
 
     def keys(self) -> dict[str, Any]:
@@ -156,6 +169,8 @@ class _View:
         }
         for stamp in STAMPS:
             found[stamp] = self.attributes.get(stamp)
+        # Only beside a live pending, which is all it describes.
+        found[REACHED] = None if self.pending is None else self.attributes.get(REACHED)
         return found
 
     def numbers(self) -> Mapping[str, Any]:
@@ -374,7 +389,7 @@ class NativeStagedStore:
             return token
         new = {
             key: layout.read(data, key)
-            for key in (CURRENT, PENDING, PREVIOUS, ORIGIN, ROLLOVER, *STAMPS)
+            for key in (CURRENT, PENDING, PREVIOUS, ORIGIN, ROLLOVER, *ATTRIBUTE_KEYS)
         }
         seen = self._seen.pop(path, None)
         view = (
@@ -431,7 +446,9 @@ class NativeStagedStore:
             or new[ROLLOVER] != old[ROLLOVER]
         ):
             return self._stage(path, view, new, cas=cas)
-        if any(new[stamp] != old[stamp] for stamp in STAMPS):
+        if any(new[key] != old[key] for key in ATTRIBUTE_KEYS):
+            # The stamps alone, or the reaching-login mark (#1316): the
+            # attributes change, and the live pending stays.
             return self._promote(path, view.current, new, pending=view.pending is not None, cas=cas)
         # Nothing to change; the compare-and-set still has to hold.
         if cas is not None and cas != view.current.version:
@@ -479,11 +496,14 @@ class NativeStagedStore:
         """``target`` CURRENT, with the stamps ``new`` holds as the attributes.
 
         ``pending`` keeps the live pending's record, for a promotion that only
-        changes the stamps.
+        changes the stamps or the reaching-login mark. Only then is the mark
+        kept: it describes that pending, and every other write leaves it none.
         """
         attributes = _stamps(new)
         if pending:
             attributes[PENDING_VERSION] = target.attributes[PENDING_VERSION]
+            if new.get(REACHED) is not None:
+                attributes[REACHED] = new[REACHED]
         assert target.generation is not None
         token = self.inner.promote(path, target.generation, attributes=attributes, cas=cas)
         self._wrote(path, target)

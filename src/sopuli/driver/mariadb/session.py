@@ -152,7 +152,7 @@ class MariadbSession(ClosesConnection):
             )
             # `role_lookup` always: a role is a row of the view, and its grants
             # are in mysql.roles_mapping, and §2.1 grants the tool account both.
-            self._scope = replace(observed, capabilities=frozenset({ROLE_LOOKUP}))
+            self._scope = replace(observed, capabilities=observed.capabilities | {ROLE_LOOKUP})
             if LOG.isEnabledFor(logging.DEBUG):
                 LOG.debug(
                     "%s is a server, %s %s, encryption %s",

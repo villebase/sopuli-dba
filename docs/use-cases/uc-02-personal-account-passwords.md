@@ -541,10 +541,12 @@ dev_role` makes a role with an empty host, so the rule is `role: dev_role`, and
 the name is compared exactly, as a user name is (TG7). A `role:` written with a
 host is refused when the file loads, with exit 9. A `role:` rule admits
 every account the role is granted to, directly or through another role, and
-the account that created the role, which holds it with `ADMIN OPTION`. A role
-in the chain is followed and not admitted: it cannot log in. A rule that names
-a role `PUBLIC` reaches is refused with exit 9, by `account list` and by every
-verb: every account holds `PUBLIC`. A `profile:` rule is refused by the absent
+the account that created the role, which holds it with `ADMIN OPTION`. Whether
+that account counts is not decided (open: #1272). A role in the chain is
+followed and not admitted: it cannot log in. A rule that names a role `PUBLIC`
+reaches is refused by `account list` and by every verb, as a mandatory role is
+on MySQL: at plan time with exit 9, and in the run as the target's `ERROR`
+row. Every account holds `PUBLIC`. A `profile:` rule is refused by the absent
 `profile_management` capability, exit 5. `account suspend` sends `ACCOUNT LOCK`
 on every run and reports `changed: true`, because the lock cannot be read
 ([#1267](../decisions/log.md#1267), decision 2). For the same reason a

@@ -561,14 +561,21 @@ def typed_user(name: str, *, default: str) -> str:
 
 
 def refuse_a_mariadb_role_with_a_host(expanded: ExpandedTarget, role: str, *, at: KeyPath) -> None:
-    """Refuse a MariaDB ``role:`` written as ``user@host``, as a MySQL role is
-    written. A MariaDB role has no host (TG7), so the rule would match nothing."""
-    if mysql_account(role) is None:
-        return
+    """Refuse a MariaDB ``role:`` written with an ``@``, as a MySQL role is
+    written, or between SQL's quotes or with a space at an end. A MariaDB role
+    has no host (TG7), and the tool quotes the name itself, so either rule would
+    match nothing. A role whose own name holds an ``@`` cannot be declared:
+    it reads as a MySQL role, and refusing it is the safer direction."""
     name = typed_user(role, default="dev_role")
+    if "@" in role:
+        problem = "with a host, and a MariaDB role has none"
+    elif role != role.strip("'\"` \t"):
+        problem = "with SQL's quotes or a space at an end"
+    else:
+        return
     raise ConfigError(
         f"a personal account rule's `role:` declares {role!r} on MariaDB target "
-        f"{expanded.name!r} with a host, and a MariaDB role has none",
+        f"{expanded.name!r} {problem}",
         at=at,
         hint=f"write the role alone, as `{name}`: CREATE ROLE {name} makes a role with no host",
     )

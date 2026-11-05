@@ -30,12 +30,21 @@ def _config(role: str) -> Any:
     return build_config({"version": 1, "targets": [TARGET], "personal_accounts": [{"role": role}]})
 
 
-def test_a_role_written_with_a_host_is_refused_when_the_file_loads() -> None:
+@pytest.mark.parametrize("role", ["dev_role@%", "dev_role@", "dev_role@localhost"])
+def test_a_role_written_with_a_host_is_refused_when_the_file_loads(role: str) -> None:
     with pytest.raises(ConfigError) as caught:
-        _config("dev_role@%")
+        _config(role)
 
     assert "a MariaDB role has none" in str(caught.value)
     assert "`dev_role`" in (caught.value.hint or "")
+
+
+@pytest.mark.parametrize("role", ["'dev_role'", "`dev_role`", "dev_role "])
+def test_a_quoted_or_padded_role_is_refused_when_the_file_loads(role: str) -> None:
+    with pytest.raises(ConfigError) as caught:
+        _config(role)
+
+    assert "quotes or a space" in str(caught.value)
 
 
 class PublicReachSession:

@@ -6387,7 +6387,11 @@ def creds_generate(
     # share its ref is one password (`sopuli.generate`'s docstring).
     # Every product the one supplied password is staged for, so a driver that
     # refuses it on any of them is not waived for the others (#1327).
-    products = frozenset(target.target.type for target in _targets_of(config, bindings))
+    staged_on = _targets_of(config, bindings)
+    products = frozenset(target.target.type for target in staged_on)
+    readings = (
+        limits.readings if supplied is None else _with_fixed_limits(limits.readings, staged_on)
+    )
     candidates = staging.draw_once(
         bindings,
         lambda binding: _candidate(
@@ -6396,7 +6400,7 @@ def creds_generate(
             name=policy_name,
             supplied=supplied,
             enforce=not no_policy_check,
-            readings=limits.readings,
+            readings=readings,
             products=products,
         ),
     )
@@ -6615,6 +6619,27 @@ def _candidate(
         enforce=enforce,
         products=products,
     )
+
+
+def _with_fixed_limits(
+    readings: Sequence[tuple[str, ByteLimit]], targets: Sequence[ExpandedTarget]
+) -> tuple[tuple[str, ByteLimit], ...]:
+    """``readings``, and the product's fixed limit for each target that gave none.
+
+    For a **supplied** password only (#1335). On PostgreSQL, MySQL and MariaDB the
+    limit is a fact about the product, so `--offline` or an unreachable target
+    still knows it, and a password over it is one every `creds apply` there
+    refuses. A drawn password keeps the readings alone: it is ASCII, and the
+    policy's length governs it where no target answered.
+    """
+    answered = {target for target, _ in readings}
+    fixed = [
+        (target.name, limit)
+        for target in targets
+        if target.name not in answered
+        and (limit := DRIVERS[target.target.type].fixed_limit) is not None
+    ]
+    return (*readings, *fixed)
 
 
 def _constraints_for(

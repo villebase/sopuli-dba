@@ -15,6 +15,7 @@ from collections.abc import Callable
 
 import pytest
 
+from sopuli.config.model import PasswordPolicy
 from sopuli.driver.protocol import DriverError
 from sopuli.driver.registry import DRIVERS, refused_password_rules
 from sopuli.passwords import (
@@ -27,6 +28,7 @@ from sopuli.passwords import (
     LENGTH,
     REQUIRE,
     ByteLimit,
+    check,
 )
 from sopuli.secrets import Secret
 
@@ -69,14 +71,18 @@ def _mariadb() -> tuple[Callable[[Secret], None], dict[str, str]]:
 
 ADMISSION = {"oracle": _oracle, "postgresql": _postgresql, "mysql": _mysql, "mariadb": _mariadb}
 
+#: Under :data:`POLICY`, each of these breaks its own rule (checked below), so a
+#: driver that started refusing one would be caught.
 COMMON = {
     CONTROL: "Abcdefgh1\x01",
     FORBIDDEN: 'Abcdefgh1"',
-    CHARSET: "Abcdefgh1",
-    FIRST_CHAR: "Abcdefgh1",
-    REQUIRE: "Abcdefgh1",
-    LENGTH: "Abcdefgh1",
+    CHARSET: "Abcdefgh1~",
+    FIRST_CHAR: "1Abcdefgh",
+    REQUIRE: "Abcdefghij",
+    LENGTH: "Ab1",
 }
+
+POLICY = PasswordPolicy(length=8, charset="alnum", first_char="alpha", require=(("digit", 1),))
 
 
 def _refused(admit: Callable[[Secret], None], text: str) -> bool:
@@ -98,8 +104,24 @@ def test_every_product_has_an_admission_check_here() -> None:
 def test_refuses_lists_exactly_what_the_driver_refuses(product: str, rule: str) -> None:
     admit, samples = ADMISSION[product]()
     text = {**COMMON, **samples}[rule]
+    limit = ORACLE_LIMIT if product == "oracle" else DRIVERS[product].fixed_limit
 
+    assert rule in {one.rule for one in check(Secret(text), POLICY, limit=limit)}
     assert _refused(admit, text) is (rule in DRIVERS[product].refuses)
+
+
+@pytest.mark.parametrize("product", ["postgresql", "mysql", "mariadb"])
+def test_a_fixed_limit_is_the_driver_s_own(product: str) -> None:
+    from importlib import import_module
+
+    module = {"postgresql": "postgres"}.get(product, product)
+    limits = import_module(f"sopuli.driver.{module}.limits")
+
+    assert DRIVERS[product].fixed_limit is limits.LIMIT
+
+
+def test_no_products_is_read_as_every_product() -> None:
+    assert refused_password_rules([]) == refused_password_rules(DRIVERS)
 
 
 def test_the_rules_of_several_products_are_their_union() -> None:

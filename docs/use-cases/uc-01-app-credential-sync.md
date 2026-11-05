@@ -453,11 +453,12 @@ read does not change the argument.
   would be staged and then refused by every `creds apply` there (#1327, #1335).
   Every driver refuses a control character, a password longer than the
   target's byte limit, and one its character set cannot hold. The Oracle
-  driver also refuses `"` (invariant 11). The two limit rules apply only where
-  the target answered its limit, so `--offline` leaves them to `creds apply`.
-  These are refused with or without the flag, before anything is written. A password that ends in a
-  line break is told a pipe may have added one. An empty stdin is refused
-  before any check. It reads `length:` as a minimum, not an exact figure,
+  driver also refuses `"` (invariant 11). On PostgreSQL, MySQL and MariaDB
+  the limit is the product's, so it is checked with `--offline` too. An Oracle
+  target's limit is checked only where the target answered, so `--offline`
+  leaves it to `creds apply`. These are refused with or without the flag,
+  before anything is written. A password that ends in a line break is told a
+  pipe may have added one. An empty stdin is refused before any check. It reads `length:` as a minimum, not an exact figure,
   because a dictated password is not weaker for being longer. It reads a pipe
   or a redirect, and refuses a stdin that is a terminal before anything else,
   with exit 2: a typed password would show on the screen. On Windows, mintty

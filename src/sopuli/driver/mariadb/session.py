@@ -133,6 +133,10 @@ OR_GAP = (
     "section 4)"
 )
 
+#: What ``doctor --check-privileges`` says last for a target with declared
+#: accounts, whether or not the survey's read succeeded.
+ACCOUNT_GAPS = (CHECK_9_GAP, OR_GAP)
+
 T = TypeVar("T")
 
 
@@ -200,11 +204,10 @@ class MariadbSession(ClosesConnection):
                 remedies=(
                     *audit.remedies,
                     f"the declared accounts were not read: {error}",
-                    CHECK_9_GAP,
-                    OR_GAP,
+                    *ACCOUNT_GAPS,
                 ),
             )
-        return replace(audit, remedies=(*audit.remedies, *lines, CHECK_9_GAP, OR_GAP))
+        return replace(audit, remedies=(*audit.remedies, *lines, *ACCOUNT_GAPS))
 
     def _not_written(self, what: str) -> NoReturn:
         raise NotWrittenError(
@@ -280,8 +283,9 @@ class MariadbSession(ClosesConnection):
         in. It also ends a second method of another kind, such as
         ``unix_socket``, which the view does not show. That gap is accepted
         (``02-mariadb-privileges.md`` §4, #1301), and ``doctor`` says so
-        (:data:`OR_GAP`). ``retain`` and ``keep`` are a rollover, which is
-        #1271.
+        (:data:`OR_GAP`). No verb that calls this is registered yet.
+        TODO(#1270): register the UC-1 verbs. ``retain`` and ``keep`` are a
+        rollover, which is #1271.
 
         As on the other drivers, ``changed`` is ``True`` whenever the statement
         succeeded: the command decides first whether the account already had

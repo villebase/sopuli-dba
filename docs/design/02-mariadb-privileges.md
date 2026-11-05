@@ -166,7 +166,10 @@ MariaDB has no `server_uuid`. It warns, and never fails
   that MariaDB split from `SUPER`, so it cannot fully check the managed
   accounts, and the line names the nine
   ([#1267](../decisions/log.md#1267), decision 4). Check 9 itself refuses
-  once the driver changes passwords (open: #1270).
+  once the driver changes passwords (open: #1270);
+- the second login method that §4 describes, on the same condition: the view
+  shows one method of an account that has two, and a password change ends the
+  other (#1301).
 
 ---
 

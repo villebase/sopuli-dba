@@ -3640,6 +3640,30 @@ def test_direct_does_not_close_a_window_it_could_not_confirm(
     assert result.exit_code != ExitCode.SUCCESS
 
 
+@pytest.mark.parametrize(
+    ("capabilities", "changed"),
+    [(frozenset({EXPIRE_PASSWORD}), True), (frozenset(), False)],
+)
+def test_an_expired_account_is_changed_only_where_the_scope_reports_expire_password(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    capabilities: frozenset[str],
+    changed: bool,
+) -> None:
+    """The scope's `expire_password` reaches `settled_before_acting` as
+    `expiry_cleared` (#1322). MariaDB and MySQL report it, so an expired
+    account is changed there. PostgreSQL does not, so it is `EXPIRED`."""
+    harness = estate(
+        users={"ACME_WEB_USER": user(status="EXPIRED", expired=True)},
+        capabilities=capabilities,
+    )
+    result = run(runner, write_config(CONFIG), "--select", "tenant=alpha")
+
+    assert bool(applying(harness).changed) is changed
+    assert ("does not end the expiry" in result.output) is not changed
+
+
 def test_direct_against_a_plain_profile_closes_nothing(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:

@@ -220,14 +220,26 @@ DRIVERS: dict[str, DatabaseDriver] = {
     # PyMySQL reaches MariaDB too, and its `ed25519` extra brings PyNaCl for that
     # plugin (#1267, decisions 1 and 5), so the extra provides `nacl` as well as
     # `pymysql`: with only the `mysql` extra installed, `mariadb` is not. The
-    # session connects and serves `doctor` (#1268); no other command is written
-    # for it yet (UC-1 is #1270, UC-2 #1272).
+    # session connects and serves `doctor` (#1268). UC-2 (#1272): `account
+    # list`, where a `role:` rule names a role alone and one `PUBLIC` reaches is
+    # refused; `account reset-password`, which sets the value with `PASSWORD
+    # EXPIRE` in one statement, never unlocks, and refuses `--keep-rollover` by
+    # capability; `account suspend`, by `ACCOUNT LOCK` on every run; and
+    # `account expire-password`, by `PASSWORD EXPIRE` alone. Guardrail 9 runs
+    # for all four. UC-1 is #1270.
     "mariadb": DatabaseDriver(
         module="sopuli.driver.mariadb.session",
         extra="mariadb",
         provides=frozenset({"pymysql", "nacl"}),
         password_limit="1024",
-        commands=frozenset(),
+        commands=frozenset(
+            {
+                "account.list",
+                "account.reset-password",
+                "account.suspend",
+                "account.expire-password",
+            }
+        ),
     ),
 }
 

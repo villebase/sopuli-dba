@@ -46,6 +46,7 @@ from sopuli.config.products import same_name
 from sopuli.driver import guardrails
 from sopuli.driver.protocol import UserState
 from sopuli.personal import declared_on, rules_for
+from sopuli.suspend import GUARDED_TYPES
 
 #: What `account list` reports where a column has no value. The dash is the
 #: honest answer rather than a gap, and `SOPULI-W021`'s rule applies to every one
@@ -223,7 +224,9 @@ def cross_declared(
     return None
 
 
-def guardrail_refusal(state: UserState, *, admitted: bool) -> str | None:
+def guardrail_refusal(
+    state: UserState, *, admitted: bool, target_type: str | None = None
+) -> str | None:
     """Why a mutating verb would refuse this listed account, or ``None`` (#1207).
 
     A predicate can admit an account that a guardrail refuses: a member of
@@ -244,6 +247,10 @@ def guardrail_refusal(state: UserState, *, admitted: bool) -> str | None:
     An account the database owns can carry this and ``SOPULI-W041`` both:
     Oracle's ``SYSTEM`` holds ``DBA``. The two codes name different checks,
     and each needs its own fix.
+
+    On a ``target_type`` in :data:`sopuli.suspend.GUARDED_TYPES`, MariaDB,
+    check 9 refuses every verb, so the remedy says no verb acts on the account
+    (#1272).
     """
     declared = (state.name,) if admitted else ()
     found = guardrails.review(state, declared=declared).refusals
@@ -252,7 +259,16 @@ def guardrail_refusal(state: UserState, *, admitted: bool) -> str | None:
         return None
     checks = ", ".join(f"check {guardrails.NUMBERS[one.check]} ({one.reason})" for one in refusals)
     fixed = next((one for one in refusals if not one.overridable), None)
-    if fixed is not None and fixed.check == guardrails.GLOBAL_PRIVILEGE:
+    if (
+        fixed is not None
+        and fixed.check == guardrails.GLOBAL_PRIVILEGE
+        and target_type in (GUARDED_TYPES)
+    ):
+        remedy = (
+            "no flag overrides check 9, and on MariaDB it refuses every verb, "
+            "`account suspend` included"
+        )
+    elif fixed is not None and fixed.check == guardrails.GLOBAL_PRIVILEGE:
         # Check 9 refuses only the verbs that set a password (#1222). It is last
         # in §4's order, so it is `fixed` only when no other unwaivable check
         # is, and any other refusal here is one `--force` waives.

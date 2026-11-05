@@ -208,6 +208,21 @@ def test_a_global_privilege_is_named_as_refusing_only_a_password_change() -> Non
     )
 
 
+def test_on_mariadb_a_global_privilege_is_named_as_refusing_every_verb() -> None:
+    """There check 9 refuses `account suspend` and `account expire-password`
+    too, because a `role:` rule admits the role's creator (#1272)."""
+    held = frozenset({"SELECT ON *.*"})
+    message = guardrail_refusal(
+        user("root@localhost", global_privileges=held), admitted=True, target_type="mariadb"
+    )
+
+    assert message is not None
+    assert message.endswith(
+        "no flag overrides check 9, and on MariaDB it refuses every verb, "
+        "`account suspend` included"
+    )
+
+
 def test_a_global_privilege_beside_a_waivable_check_says_what_force_does() -> None:
     """Check 4 still refuses `account suspend` unless `--force` waives it, so
     the notice must not suggest suspend works as it is (#1222)."""

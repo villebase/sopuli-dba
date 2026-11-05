@@ -161,6 +161,17 @@ def test_the_reset_refuses_to_keep_a_rollover_before_anything_is_read() -> None:
     assert "joined by OR" in str(caught.value.hint)
 
 
+def test_apply_finds_the_hook_it_looks_up_by_name() -> None:
+    """`creds apply` reads it with getattr, outside the protocol, and a missing
+    `verifies_before_change` means a login before the change, which #1270
+    decision 4 refuses. A rename must fail here. There is no `confirm_change`:
+    MariaDB keeps no change time the tool can read."""
+    session_module = pytest.importorskip("sopuli.driver.mariadb.session")
+
+    assert getattr(session_module.MariadbSession, "verifies_before_change", True) is False
+    assert not hasattr(session_module.MariadbSession, "confirm_change")
+
+
 @pytest.mark.parametrize(
     ("plugin", "password", "stored"),
     [vector for vector in SERVER_VALUES if vector[1] == "Acme-Vector-1"],

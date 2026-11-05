@@ -387,3 +387,43 @@ def test_the_survey_reads_no_role_and_no_stored_value() -> None:
     assert "is_role = 'N'" in accounts.ROWS_FOR_USERS
     for column in ("authentication_string", "Password", "global_priv"):
         assert column not in accounts.ROWS_FOR_USERS
+
+
+# ------------------------------------------------------------- doctor gaps ---
+
+
+@pytest.mark.parametrize("survey_refused", [False, True])
+def test_doctor_names_both_gaps_whether_or_not_the_survey_read(
+    monkeypatch: pytest.MonkeyPatch, survey_refused: bool
+) -> None:
+    """Check 9's gap and the unseen second method (#1301), after the survey's
+    lines or after the line that says it was refused."""
+    session_module = pytest.importorskip("sopuli.driver.mariadb.session")
+    from sopuli.config.model import ExpandedTarget, Target
+    from sopuli.driver.protocol import DriverError, PrivilegeAudit, Timeouts
+
+    answers: list[Any] = [
+        PrivilegeAudit(),
+        DriverError("refused", code="1143") if survey_refused else ("a survey line",),
+    ]
+
+    def read(reader: Any, **_: Any) -> Any:
+        answer = answers.pop(0)
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    session = session_module.MariadbSession(
+        connection=None,
+        target=ExpandedTarget(
+            target=Target(name="mariadb-dev", type="mariadb", dsn="mariadb-dev.example.com:3306")
+        ),
+        correlation_id="tier0",
+        timeouts=Timeouts(),
+    )
+    monkeypatch.setattr(session, "_read", read)
+
+    remedies = session.privileges(accounts=("acme_app@%",)).remedies
+
+    assert remedies[-2:] == session_module.ACCOUNT_GAPS
+    assert ("the declared accounts were not read" in remedies[0]) is survey_refused

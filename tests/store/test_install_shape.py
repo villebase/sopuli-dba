@@ -10,7 +10,9 @@ install none of the clients the backends reach with is importable. Rather than
 depending on how this machine happens to be installed, the clients are **blocked
 at the import system** and every sopuli module outside a backend is imported
 against that. The result is the same statement and it holds in either
-environment.
+environment. The MariaDB driver's package is the one exception: its modules
+are imported last, with that driver's own clients allowed (ADR-006 rule 1,
+#1296).
 
 The standard library's ``urllib`` and ``http.client`` are deliberately not
 blocked. They are importable in every Python and no packaging rule changes that,
@@ -20,20 +22,35 @@ reach the network, whatever it would reach it with.
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 #: The clients the extras install, as ADR-006 names them: ``httpx``, the OCI SDK,
 #: ``python-oracledb``, ``psycopg``, PyMySQL, PyNaCl, ``pysequoia`` and 1Password's SDK. Kept
 #: here as a literal rather than derived from ``BACKENDS`` on purpose: this test is the check
 #: *on* that table, and a check that reads its expectation out of the thing it is checking
-#: would pass an empty table. The CI install-shape job's base cell lists the same names
-#: and ``nacl``. ``nacl`` is not blocked here, because ``sopuli.driver.mariadb.password``
-#: imports PyNaCl at module scope, which is reached only through the driver's session, and
-#: this walk exempts only the session module itself (#1296).
-CLIENTS = ("httpx", "oci", "onepassword", "oracledb", "psycopg", "pymysql", "pysequoia")
+#: would pass an empty table. The CI install-shape job's base cell lists the same names.
+CLIENTS = (
+    "httpx",
+    "nacl",
+    "oci",
+    "onepassword",
+    "oracledb",
+    "psycopg",
+    "pymysql",
+    "pysequoia",
+)
+
+#: The driver packages exempt as a whole, for their own `provides` only. The
+#: maintainer chose this for MariaDB, whose `password.py` imports PyNaCl at
+#: module scope (#1296, option A). A literal, so another driver's package is
+#: not exempted by being registered.
+PACKAGE_EXEMPT = ("sopuli.driver.mariadb",)
 
 #: A store the tool cannot reach from this interpreter, declared anyway. §3a's
 #: promise in four lines: the file means the same thing on a machine that has the
@@ -55,13 +72,17 @@ import pkgutil
 import sys
 
 BLOCKED = {blocked!r}
+#: The clients the module being imported may reach: a driver package's own
+#: `provides`, while the second pass imports it, and nothing otherwise.
+ALLOWED = set()
 
 
 class Blocker:
     """Refuse the vendor clients the way a base install refuses them."""
 
     def find_spec(self, fullname, path=None, target=None):
-        if fullname.split(".")[0] in BLOCKED:
+        top = fullname.split(".")[0]
+        if top in BLOCKED and top not in ALLOWED:
             raise ModuleNotFoundError(f"blocked by the install-shape test: {{fullname}}",
                                       name=fullname)
         return None
@@ -82,8 +103,43 @@ backends = (
     + tuple(driver.module for driver in DRIVERS.values())
     + tuple(notifier.module for notifier in NOTIFIERS.values())
 )
+
+# The tests' own modules, planted into a sopuli package's path to show the
+# walk refuses what it should. Empty for every other run.
+for package, directory in {planted!r}.items():
+    importlib.import_module(package).__path__.append(directory)
+
+#: A driver package whose modules may import the clients its own extra
+#: installs, and the clients. A module of it that the first pass reaches
+#: through another module, as `sopuli.cli` reaches `roles`, has already
+#: imported with every client blocked. It may not import another driver's
+#: client (#1296). Every other driver's modules outside its session import
+#: with all clients blocked.
+packages = {{
+    driver.module.rsplit(".", 1)[0]: frozenset(driver.provides)
+    for driver in DRIVERS.values()
+    if driver.module.rsplit(".", 1)[0] in {package_exempt!r}
+}}
+
+
+def _package(name):
+    for package in packages:
+        if name == package or name.startswith(package + "."):
+            return package
+    return None
+
+
 imported = []
-for found in pkgutil.walk_packages(sopuli.__path__, "sopuli."):
+in_packages = []
+def _unwalkable(name):
+    # `walk_packages` swallows a package that fails to import, and then lists
+    # none of its modules. A backend package may fail: its client is blocked.
+    if any(name == module or name.startswith(module + ".") for module in backends):
+        return
+    raise
+
+
+for found in pkgutil.walk_packages(sopuli.__path__, "sopuli.", onerror=_unwalkable):
     # Rule 1 puts the client import *inside* the backend module, so a backend is
     # the one place importing a client is correct. Everything else must not.
     # Drivers are backends for this purpose: `sopuli.driver.oracle` is
@@ -94,8 +150,59 @@ for found in pkgutil.walk_packages(sopuli.__path__, "sopuli."):
     # it is added.
     if any(found.name == module or found.name.startswith(module + ".") for module in backends):
         continue
+    if _package(found.name) is not None and found.name not in packages:
+        in_packages.append(found.name)
+        continue
     importlib.import_module(found.name)
     imported.append(found.name)
+
+# The second pass, after every other module has imported with all clients
+# blocked: so a module outside a driver package that imports one of its
+# modules has already failed the first pass.
+before = set(sys.modules)
+for name in in_packages:
+    package = _package(name)
+    ALLOWED.update(packages[package])
+    loaded = set(sys.modules)
+    try:
+        importlib.import_module(name)
+    except ModuleNotFoundError as error:
+        # The driver's own client is not installed here, so the rest of the
+        # module was not run, is not counted, and is not checked: its imports
+        # after that line are checked only where the extra is installed, as
+        # in CI's `[all]` test job.
+        if (error.name or "").split(".")[0] not in ALLOWED:
+            raise
+        continue
+    finally:
+        ALLOWED.clear()
+    # The allowance is for the package's own modules. A sopuli module outside
+    # it that loaded here, such as another driver's session, loaded with it.
+    outside = sorted(
+        new for new in set(sys.modules) - loaded
+        if new.startswith("sopuli.") and _package(new) != package
+    )
+    if outside:
+        raise AssertionError(
+            f"{{name}} loaded {{', '.join(outside)}} with {{package}}'s clients allowed"
+        )
+    imported.append(name)
+# Unload what the second pass loaded, the clients with it, so the command
+# below imports each one again with every client blocked.
+for name in set(sys.modules) - before:
+    del sys.modules[name]
+    # And from its package, which the first pass loaded: `from package
+    # import name` takes the attribute before it looks in sys.modules.
+    parent, _, child = name.rpartition(".")
+    if parent in sys.modules:
+        vars(sys.modules[parent]).pop(child, None)
+for name in list(sys.modules):
+    if name.split(".")[0] in BLOCKED:
+        del sys.modules[name]
+
+if {walk_only!r}:
+    print(json.dumps({{"modules": len(imported)}}))
+    sys.exit(0)
 
 # What the *walk* pulled in, before the command runs. `walk_packages` imports a
 # package in order to enumerate it, so a backend whose client import survives the
@@ -122,25 +229,88 @@ print(json.dumps({{
 '''
 
 
-def _probe(tmp_path: Path, config: str) -> dict[str, object]:
+def _run(
+    tmp_path: Path, config: str, planted: dict[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
+    """The probe, with ``planted`` modules. With any, it stops after the
+    walk, which is all a planted module tests."""
     path = tmp_path / "sopuli.yaml"
     path.write_text(config, encoding="utf-8")
     if sys.platform != "win32":
         path.chmod(0o600)
 
-    script = PROBE.format(blocked=set(CLIENTS), config=str(path))
-    finished = subprocess.run(
+    script = PROBE.format(
+        blocked=set(CLIENTS),
+        package_exempt=set(PACKAGE_EXEMPT),
+        planted=planted or {},
+        walk_only=bool(planted),
+        config=str(path),
+    )
+    return subprocess.run(
         [sys.executable, "-c", script],
         capture_output=True,
         text=True,
         check=False,
     )
+
+
+def _probe(tmp_path: Path, config: str) -> dict[str, object]:
+    finished = _run(tmp_path, config)
     assert finished.returncode == 0, finished.stderr
     return dict(json.loads(finished.stdout.strip().splitlines()[-1]))
 
 
+def _plant(tmp_path: Path, package: str, name: str, source: str) -> dict[str, str]:
+    """A module ``package.name`` holding ``source``, for the walk to find."""
+    directory = tmp_path / "planted"
+    directory.mkdir()
+    (directory / f"{name}.py").write_text(source, encoding="utf-8")
+    return {package: str(directory)}
+
+
+@pytest.mark.parametrize(
+    ("package", "name", "source", "refusal"),
+    [
+        # A shared module may import no client, not even MariaDB's.
+        ("sopuli.driver.mysql_family", "zz_planted", "import nacl\n", "blocked by"),
+        # The package's allowance is its own clients only.
+        ("sopuli.driver.mariadb", "zz_planted", "import oracledb\n", "blocked by"),
+        # Nor does it reach another driver's session, which has its own client.
+        # Without PyMySQL the session stops at its import, and nothing loads.
+        pytest.param(
+            "sopuli.driver.mariadb",
+            "zz_planted",
+            "import sopuli.driver.mysql.session\n",
+            "loaded sopuli.driver.mysql.session",
+            marks=pytest.mark.skipif(
+                importlib.util.find_spec("pymysql") is None, reason="PyMySQL is not installed"
+            ),
+        ),
+        # A name that only starts with the package's is not in it.
+        ("sopuli.driver", "mariadbzz", "import nacl\n", "blocked by"),
+    ],
+)
+def test_the_walk_refuses_a_client_outside_its_allowance(
+    tmp_path: Path, package: str, name: str, source: str, refusal: str
+) -> None:
+    finished = _run(tmp_path, "version: 1\n", _plant(tmp_path, package, name, source))
+
+    assert finished.returncode != 0
+    assert refusal in finished.stderr
+
+
+def test_a_mariadb_module_may_import_its_own_clients(tmp_path: Path) -> None:
+    """Option A of #1296: the walk imports it, with PyNaCl, and passes."""
+    planted = _plant(tmp_path, "sopuli.driver.mariadb", "zz_planted", "import nacl\n")
+
+    finished = _run(tmp_path, "version: 1\n", planted)
+
+    assert finished.returncode == 0, finished.stderr
+
+
 def test_base_imports_none_of_the_backend_clients(tmp_path: Path) -> None:
-    """Every sopuli module outside a backend imports with the clients blocked.
+    """Every sopuli module outside a backend imports with the clients blocked,
+    except the MariaDB package's, which may use that driver's own.
 
     A module-level ``import httpx`` anywhere else fails this with the name of
     the module that did it, which is the diagnosis as well as the failure.

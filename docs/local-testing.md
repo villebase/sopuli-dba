@@ -944,10 +944,11 @@ when it holds exactly those grants. Declare accounts under `applications:`, and 
 names one that does not exist, one on a plugin other than
 `mysql_native_password` and `ed25519`, and the same user name at a host the
 config does not declare. With any declared account, it also says what
-guardrail 9 cannot see:
+guardrail 9 cannot see, and that a second login method is not seen:
 
 ```
   mariadb-dev: check 9 cannot see BINLOG ADMIN, BINLOG REPLAY, CONNECTION ADMIN, FEDERATED ADMIN, READ_ONLY ADMIN, REPLICATION MASTER ADMIN, REPLICATION SLAVE ADMIN, SET USER or SLAVE MONITOR: they set no column of the mysql.user view, so it does not refuse a declared account that holds one. Revoke them from accounts the tool manages (02-mariadb-privileges.md section 5)
+  mariadb-dev: a declared account with a second login method, joined by OR, shows one of them: the mysql.user view does not show the other. A password change sends one method and ends the other, so a login by unix_socket, for example, stops working. Check SHOW CREATE USER for accounts the tool manages (02-mariadb-privileges.md section 4)
 ```
 
 Two targets on one MariaDB server are not caught yet (#1286).

@@ -410,7 +410,8 @@ def test_the_no_vendor_client_property_lives_in_the_install_shape_test() -> None
 
     ``tests/store/test_install_shape.py`` is the real form and is strictly
     stronger: a subprocess with every client blocked at the import system, then
-    every sopuli module outside a driver or a backend imported. What is left
+    every sopuli module outside a driver or a backend imported, with only the
+    MariaDB package's modules allowed that driver's own clients. What is left
     here is the pointer, because deleting the test outright would leave the
     property looking untested from this file.
     """

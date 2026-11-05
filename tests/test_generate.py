@@ -22,7 +22,16 @@ from sopuli.config.loading import build_config
 from sopuli.config.model import Binding, Config, PasswordPolicy
 from sopuli.config.secret_refs import parse_secret_ref
 from sopuli.passwords import ByteLimit, PasswordPolicyError
-from sopuli.payload import CURRENT, GENERATED, ORIGIN, PENDING, RETAINING, ROLLOVER, SUPPLIED
+from sopuli.payload import (
+    CURRENT,
+    GENERATED,
+    ORIGIN,
+    PENDING,
+    REACHED,
+    RETAINING,
+    ROLLOVER,
+    SUPPLIED,
+)
 from sopuli.secrets import Secret
 
 VAULTS: dict[str, Any] = {"vault-dev": {"type": "hashicorp"}}
@@ -336,9 +345,11 @@ def test_one_patch_carries_every_account_and_nothing_else() -> None:
 
     patch = writes[0].patch(stage=PENDING)
 
-    assert set(patch) == {PENDING, ORIGIN, ROLLOVER}
+    assert set(patch) == {PENDING, ORIGIN, ROLLOVER, REACHED}
     assert set(patch[PENDING]) == {"acme_web_user", "acme_batch_user"}
     assert set(patch[ORIGIN]) == {"acme_web_user", "acme_batch_user"}
+    # A new `pending` has spent no reaching login anywhere (#1316).
+    assert patch[REACHED] == {"acme_web_user": None, "acme_batch_user": None}
     assert patch[ROLLOVER] == {"acme_web_user": None, "acme_batch_user": None}
 
 
@@ -509,6 +520,7 @@ def test_one_account_per_document_at_the_root_is_still_fine() -> None:
         PENDING: writes[0].candidates[0].value,
         ORIGIN: GENERATED,
         ROLLOVER: None,
+        REACHED: None,
     }
 
 

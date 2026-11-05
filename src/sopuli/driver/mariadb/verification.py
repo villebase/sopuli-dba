@@ -57,9 +57,8 @@ from sopuli.config.model import ExpandedTarget
 from sopuli.config.products import same_mysql_account
 from sopuli.driver.mariadb.accounts import Account
 from sopuli.driver.mariadb.errors import ACCOUNT_BLOCKED, ACCOUNT_LOCKED, from_error
-from sopuli.driver.mariadb.privileges import SELF as CURRENT_USER
 from sopuli.driver.mysql.errors import MUST_CHANGE_PASSWORD_LOGIN
-from sopuli.driver.mysql_family.accounts import text
+from sopuli.driver.mysql_family.accounts import current_user
 from sopuli.driver.mysql_family.connection import (
     TLS_REQUIRED_MODES,
     connect_arguments,
@@ -202,8 +201,7 @@ def login(
         with connection.cursor() as cursor:
             # The tool's own session's TLS rule, before anything else is read.
             require_tls(read_encryption(cursor), target)
-            cursor.execute(CURRENT_USER)
-            (answered,) = cursor.fetchone()
+            reached = current_user(cursor)
     except pymysql.err.MySQLError as error:
         return _ended(
             declared, error, competing, started, tls=tls, connecting=False, latency=latency
@@ -213,7 +211,6 @@ def login(
         # change the answer.
         with suppress(pymysql.err.MySQLError):
             connection.close()
-    reached = text(answered)
     if not same_mysql_account(reached, declared.name):
         return VerifyResult(
             method=VERIFY_LOGIN,

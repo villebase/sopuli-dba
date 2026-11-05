@@ -64,7 +64,14 @@ from sopuli.config.references import dangling
 from sopuli.config.secret_refs import SecretRef
 from sopuli.config.sharing import STAGE_COLLISION_HINT, colliding_stages
 from sopuli.lock.keys import LockKey
-from sopuli.passwords import ByteLimit, PasswordPolicyError, Violation, check
+from sopuli.passwords import (
+    UNWAIVABLE,
+    ByteLimit,
+    PasswordPolicyError,
+    Violation,
+    check,
+    ends_in_line_break,
+)
 from sopuli.passwords import generate as draw_password
 from sopuli.payload import (
     GENERATED,
@@ -524,6 +531,9 @@ def candidate_for(
         )
 
     violations = _every_violation(supplied, policy, readings)
+    unusable = tuple(one for one in violations if one.rule in UNWAIVABLE)
+    if unusable:
+        raise _unusable(binding, unusable, line_break=ends_in_line_break(supplied))
     if violations and enforce:
         raise _refused(binding, name, violations)
     return Candidate(
@@ -549,6 +559,31 @@ def _no_policy(binding: Binding) -> ConfigError:
             "name one on the application entry's `policy:` or set `defaults.policy:` -- "
             "there is no built-in length for the tool to fall back on (§8)"
         ),
+    )
+
+
+def _unusable(
+    binding: Binding, violations: Sequence[Violation], *, line_break: bool
+) -> PasswordPolicyError:
+    """Why a supplied password was refused whatever ``--no-policy-check`` says.
+
+    No driver accepts it, so staging it would write a ``pending`` that every
+    ``creds apply`` refuses (#1327). Rule names and counts only, as in
+    :func:`_refused`. A trailing line break gets its usual cause in the hint,
+    because a pipe that adds one is the common way to get there.
+    """
+    described = "; ".join(f"{one.rule} ({one.detail})" for one in violations)
+    if line_break:
+        hint = (
+            "the password ends in a line break; a pipe may have added one. The tool "
+            "strips one line break. In PowerShell, `Get-Content` without `-Raw` sends "
+            "one, and `-Raw` sends the file's own as well"
+        )
+    else:
+        hint = "no target accepts such a password; `--no-policy-check` cannot waive it"
+    return PasswordPolicyError(
+        f"the supplied password for {binding.account!r} cannot be used on any target: {described}",
+        hint=hint,
     )
 
 

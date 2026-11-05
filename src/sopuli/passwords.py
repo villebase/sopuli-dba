@@ -64,6 +64,14 @@ LENGTH = "length"
 BYTE_LENGTH = "byte_length"
 ENCODING = "encoding"
 
+#: The rules ``--no-policy-check`` cannot waive (#1327). They are not policy:
+#: no driver accepts a password that breaks them, so a password staged past them
+#: is one ``creds apply`` refuses on every target. The other rules are what the
+#: config's policy asks for, and an external system may dictate a password that
+#: breaks them and that the database still accepts. An empty password is refused
+#: before any rule runs, where stdin is read.
+UNWAIVABLE = frozenset({FORBIDDEN, CONTROL})
+
 
 class PasswordPolicyError(ConfigError):
     """This policy cannot produce a password.
@@ -243,6 +251,16 @@ def check(
 
     found.extend(_byte_violations(text, limit, target))
     return tuple(found)
+
+
+def ends_in_line_break(candidate: Secret) -> bool:
+    """Whether ``candidate`` ends in ``\\r`` or ``\\n``.
+
+    A refusal may say this, because it names a class of problem and its usual
+    cause, not a character of the password: a pipe that added a second line
+    break, which :func:`sopuli.material.strip_one_newline` does not remove.
+    """
+    return candidate.reveal().endswith(("\r", "\n"))
 
 
 def _starts_with_a_letter(text: str) -> bool:

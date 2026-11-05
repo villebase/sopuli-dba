@@ -448,7 +448,12 @@ read does not change the argument.
 - `--from-stdin` is for migration, and for cases where an external system
   dictates the password. It checks the password against the policy and refuses
   on a violation, unless `--no-policy-check` is passed. The audit event records
-  that flag. It reads `length:` as a minimum, not an exact figure, because a
+  that flag and the violations it accepted. The flag cannot waive a control
+  character or `"` (invariant 11): no driver accepts either, so the password
+  would be staged and then refused by every `creds apply` (#1327). Both are
+  refused with or without the flag, before anything is written, and a password
+  that ends in a line break is told a pipe may have added one. An empty stdin
+  is refused before any check. It reads `length:` as a minimum, not an exact figure, because a
   dictated password is not weaker for being longer. It reads a pipe or a
   redirect, and refuses a stdin that is a terminal before anything else, with
   exit 2: a typed password would show on the screen. On Windows, mintty without

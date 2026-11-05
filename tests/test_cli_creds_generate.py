@@ -697,6 +697,29 @@ def test_no_policy_check_accepts_it_and_records_what_it_accepted(
     assert {one["code"] for one in accepted} == {POLICY_VIOLATION_ACCEPTED}
 
 
+@pytest.mark.parametrize("flags", [(), ("--no-policy-check",)], ids=["checked", "waived"])
+def test_a_second_line_break_from_the_pipe_is_refused_and_nothing_is_written(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    store: MemoryStore,
+    flags: tuple[str, ...],
+) -> None:
+    """What PowerShell sends for `Get-Content -Raw` of a file that ends in a
+    line break (#1327). One `\\r\\n` is stripped and the other stays, and no
+    driver accepts a password with one in it."""
+    result = run(
+        runner,
+        write_config(CONFIG),
+        "--from-stdin",
+        *flags,
+        stdin="SuppliedPassword2026abcd\r\n\r\n",
+    )
+
+    assert isinstance(result.exception, ConfigError), result.exception
+    assert "cannot be used on any target" in result.exception.message
+    assert store.read(PATH) is None
+
+
 def test_an_empty_stdin_is_refused(
     runner: CliRunner, write_config: Callable[[str], Path], store: MemoryStore
 ) -> None:

@@ -286,6 +286,49 @@ def test_no_policy_check_accepts_and_records_what_it_accepted() -> None:
     assert [one.rule for one in candidate.accepted_violations]
 
 
+@pytest.mark.parametrize("enforce", [True, False])
+@pytest.mark.parametrize(
+    ("supplied", "rule"),
+    [
+        ("SuppliedPassword2026abcd\r\n", "control"),
+        ("SuppliedPassword2026\x00abcd", "control"),
+        ('SuppliedPassword2026"abcd', "forbidden"),
+    ],
+)
+def test_a_password_no_driver_accepts_is_refused_even_under_no_policy_check(
+    supplied: str, rule: str, enforce: bool
+) -> None:
+    """A control character or `"` would stage a `pending` that every
+    `creds apply` refuses (#1327), so the flag cannot waive them."""
+    config = estate()
+    name, policy = generate.policy_for(config, config.bindings[0])
+
+    with pytest.raises(PasswordPolicyError) as raised:
+        generate.candidate_for(
+            config.bindings[0], policy, name=name, supplied=Secret(supplied), enforce=enforce
+        )
+
+    assert "cannot be used on any target" in raised.value.message
+    assert rule in raised.value.message
+    assert "abcd" not in str(raised.value)
+
+
+def test_a_trailing_line_break_is_blamed_on_the_pipe() -> None:
+    config = estate()
+    name, policy = generate.policy_for(config, config.bindings[0])
+
+    with pytest.raises(PasswordPolicyError) as raised:
+        generate.candidate_for(
+            config.bindings[0],
+            policy,
+            name=name,
+            supplied=Secret("SuppliedPassword2026abcd\r\n"),
+            enforce=False,
+        )
+
+    assert "ends in a line break; a pipe may have added one" in (raised.value.hint or "")
+
+
 def test_no_policy_check_does_not_loosen_a_generated_password() -> None:
     """There is nothing to override when the tool drew the value itself, and a
     flag that silently changed the generator would be a different feature."""

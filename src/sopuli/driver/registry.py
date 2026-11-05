@@ -94,7 +94,8 @@ class DatabaseDriver:
     #: importable.
     provides: frozenset[str] = frozenset()
     #: The product's password byte limit in words, for `policy sample
-    #: --max-bytes`'s help. A literal, because the help is built when the CLI is
+    #: --max-bytes`'s help. Read from :attr:`fixed_limit` where the product has
+    #: one, and a literal on Oracle, because the help is built when the CLI is
     #: imported and must not import a driver; a tier-0 test pins it to the
     #: driver's own rule.
     password_limit: str | None = None
@@ -178,7 +179,7 @@ DRIVERS: dict[str, DatabaseDriver] = {
         module="sopuli.driver.postgres.session",
         extra="postgres",
         provides=frozenset({"psycopg"}),
-        password_limit="1024",
+        password_limit=str(POSTGRES_LIMIT.max_bytes),
         refuses=frozenset({CONTROL, ENCODING, BYTE_LENGTH}),
         fixed_limit=POSTGRES_LIMIT,
         # UC-1: `creds check`, by login (#1067); `creds apply`, which sets a
@@ -224,7 +225,7 @@ DRIVERS: dict[str, DatabaseDriver] = {
         module="sopuli.driver.mysql.session",
         extra="mysql",
         provides=frozenset({"pymysql"}),
-        password_limit="256",
+        password_limit=str(MYSQL_LIMIT.max_bytes),
         refuses=frozenset({CONTROL, ENCODING, BYTE_LENGTH}),
         fixed_limit=MYSQL_LIMIT,
         commands=frozenset(
@@ -265,7 +266,7 @@ DRIVERS: dict[str, DatabaseDriver] = {
         module="sopuli.driver.mariadb.session",
         extra="mariadb",
         provides=frozenset({"pymysql", "nacl"}),
-        password_limit="1024",
+        password_limit=str(MARIADB_LIMIT.max_bytes),
         refuses=frozenset({CONTROL, ENCODING, BYTE_LENGTH}),
         fixed_limit=MARIADB_LIMIT,
         commands=frozenset(

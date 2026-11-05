@@ -458,12 +458,13 @@ read does not change the argument.
   target's limit is checked only where the target answered, so `--offline`
   leaves it to `creds apply`. These are refused with or without the flag,
   before anything is written. A password that ends in a line break is told a
-  pipe may have added one. An empty stdin is refused before any check. It reads `length:` as a minimum, not an exact figure,
-  because a dictated password is not weaker for being longer. It reads a pipe
-  or a redirect, and refuses a stdin that is a terminal before anything else,
-  with exit 2: a typed password would show on the screen. On Windows, mintty
-  without `winpty` gives the program a pipe, which cannot be told from any
-  other pipe, so the refusal needs a console there.
+  pipe may have added one. An empty stdin is refused before any check. It
+  reads `length:` as a minimum, not an exact figure, because a dictated
+  password is not weaker for being longer. It reads a pipe or a redirect, and
+  refuses a stdin that is a terminal before anything else, with exit 2: a typed
+  password would show on the screen. On Windows, mintty without `winpty` gives
+  the program a pipe, which cannot be told from any other pipe, so the refusal
+  needs a console there.
 - **A staged `pending` is not discarded unless you ask** (decided in #769).
   Where a selected account already has one, the run refuses on exit 8, naming
   the accounts, and points to `creds apply`, which applies and promotes what is

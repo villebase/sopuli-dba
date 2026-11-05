@@ -108,12 +108,13 @@ detail.
    twice. One database user on one target is bound to one place, in one
    spelling: two application entries that bind it to different places, or spell
    it two ways, are refused, with names compared by `upper()`. One exception
-   is accepted, on MariaDB: the one login after a password change may reach
-   another account of the same user, one the config need not declare, which
-   the server matches from the tool's host. It passes only when
-   `CURRENT_USER()` is the declared account. If it fails, the failure counts
-   toward `max_password_errors` on the account it reached, declared or not.
-   `creds check` never logs in where another account could answer. Reasons:
+   is accepted, on MariaDB: after `creds rotate` sets the password it drew,
+   its one login may reach another account of the same user, one the config
+   need not declare, which the server matches from the tool's host. It passes
+   only when `CURRENT_USER()` is the declared account. If it fails, the failure
+   counts toward `max_password_errors` on the account it reached, declared or
+   not. `creds check`, and `creds apply` setting a `pending` again, never log
+   in where another account could answer. Reasons:
    [H1](docs/decisions/log.md#h1),
    [#874](docs/decisions/log.md#874),
    [#1270](docs/decisions/log.md#1270).

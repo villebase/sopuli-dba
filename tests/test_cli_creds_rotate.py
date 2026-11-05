@@ -46,6 +46,7 @@ from sopuli.driver.protocol import (
     FAIL,
     PASS,
     PASSWORD_ROLLOVER,
+    UNAVAILABLE,
     ChangeResult,
     Credential,
     Encryption,
@@ -465,6 +466,42 @@ def test_a_rotation_generates_applies_and_promotes(
     issued = changed(harness)
     assert len(issued) == 1
     assert body["DB_CREDENTIALS"]["acme_web_user"] == issued[0][1]
+
+
+def _unreached(self: FakeSession, account: str, secret: Secret, **_: Any) -> VerifyResult:
+    """MariaDB's answer where another account could answer the login."""
+    self.attempts.append((account.upper(), secret.reveal()))
+    return VerifyResult("login", UNAVAILABLE, detail="another account could answer")
+
+
+def test_a_rotation_s_one_login_may_reach_further_where_the_driver_allows(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """MariaDB (#1270, decision 5): `verify_password` gives up where another
+    account could answer, and the run that drew the password asks
+    `verify_after_change` once, which may log in anyway."""
+    reached: list[str] = []
+
+    def verify_after_change(self: FakeSession, account: str, secret: Secret) -> VerifyResult:
+        reached.append(account.upper())
+        ok = self.database.accepts(account.upper(), secret.reveal())
+        return VerifyResult("login", PASS if ok else FAIL)
+
+    monkeypatch.setattr(FakeSession, "verifies_before_change", False, raising=False)
+    monkeypatch.setattr(FakeSession, "verify_password", _unreached)
+    monkeypatch.setattr(FakeSession, "verify_after_change", verify_after_change, raising=False)
+    harness = estate()
+    result = run(runner, write_config(CONFIG), "--select", "tenant=alpha", "--output", "json")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert reached == ["ACME_WEB_USER"]
+    # The staging row comes first; the apply row says how the change went.
+    rows = [row for row in document(result)["results"] if row["state"] != "PENDING_APPLY"]
+    assert [(row["state"], row["secret"]["stage"]) for row in rows] == [("IN_SYNC", "current")]
+    assert len(changed(harness)) == 1
 
 
 def test_a_rotation_over_a_connection_in_clear_warns_once_per_target(

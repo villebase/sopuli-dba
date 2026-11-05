@@ -259,30 +259,31 @@ def test_a_check_where_another_account_could_answer_logs_in_nowhere(
     assert f"{user}@{OTHER_HOST}" in (wrong.detail or "")
 
 
-def test_the_one_login_after_a_change_may_reach_another_account(
+def test_the_login_after_a_rotation_may_reach_another_account(
     session: Any, user: str, two_accounts: tuple[str, str]
 ) -> None:
-    """After the change, one login is made. It reaches `user@%` and passes
-    where `CURRENT_USER()` names it (#1267, decision 8). A second
-    verification is a check again, and logs in nowhere."""
+    """`verify_after_change`, which only `creds rotate`'s change asks, logs in
+    where `verify_password` does not. It reaches `user@%` and passes where
+    `CURRENT_USER()` names it (#1267, decision 8). After a change,
+    `verify_password` is still a check, and logs in nowhere."""
     password = f"Acme-{uuid.uuid4().hex[:12]}"
     session.set_password(f"{user}@%", Secret(password))
 
-    after = session.verify_password(f"{user}@%", Secret(password))
-    again = session.verify_password(f"{user}@%", Secret(password))
+    checked = session.verify_password(f"{user}@%", Secret(password))
+    after = session.verify_after_change(f"{user}@%", Secret(password))
 
+    assert checked.result == UNAVAILABLE
+    assert "no login was attempted" in (checked.detail or "")
     assert after.result == PASS
-    assert again.result == UNAVAILABLE
-    assert "no login was attempted" in (again.detail or "")
 
 
-def test_a_refusal_after_a_change_says_nothing_where_another_account_could_answer(
+def test_a_refusal_after_a_rotation_says_nothing_where_another_account_could_answer(
     session: Any, user: str, two_accounts: tuple[str, str]
 ) -> None:
     """Another account could have sent the refusal, so it is no fail."""
     session.set_password(f"{user}@%", Secret(f"Acme-{uuid.uuid4().hex[:12]}"))
 
-    wrong = session.verify_password(f"{user}@%", Secret("Acme-wrong-password-1"))
+    wrong = session.verify_after_change(f"{user}@%", Secret("Acme-wrong-password-1"))
 
     assert wrong.result == UNAVAILABLE
     assert f"{user}@{OTHER_HOST}" in (wrong.detail or "")

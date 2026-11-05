@@ -653,14 +653,17 @@ These rules decide what `apply` does with each account:
   changed. Its login after the change answers `4151`, which only the right
   password gets.
 - **On MariaDB, `creds check` logs in only where no other account can answer
-  the login, and the one login after a change may reach an account the config
-  does not declare** ([#1270](../decisions/log.md#1270), decision 3). A check
-  logs in only to a `user@%` account that is the user's only one, with no
-  anonymous account at a named host, as on MySQL. Any other account is
-  `unavailable` without a login, because a failed login counts toward
-  `max_password_errors` on the account it reaches, and checks repeat. The one
-  login after a change logs in wherever a login may reach, and verifies only
-  when `CURRENT_USER()` is the declared account
+  the login, and only the login after `creds rotate`'s change may reach an
+  account the config does not declare** ([#1270](../decisions/log.md#1270),
+  decisions 3 and 5). A check logs in only to a `user@%` account that is the
+  user's only one, with no anonymous account at a named host, as on MySQL.
+  Any other account is `unavailable` without a login, because a failed login
+  counts toward `max_password_errors` on the account it reaches, and checks
+  repeat. `creds apply` setting a held `pending` again follows the same rule,
+  because a scheduled `apply` repeats too: its row is `unavailable`, and the
+  `pending` stays. Once per drawn password, the login after `creds rotate`'s
+  change logs in wherever a login may reach, and verifies only when
+  `CURRENT_USER()` is the declared account
   ([#1267](../decisions/log.md#1267), decision 8). A login reaches the account
   the server matches from the tool's host, which may be another one. A session
   whose `CURRENT_USER()` names another account says nothing, and its `pending`

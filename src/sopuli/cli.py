@@ -9147,8 +9147,10 @@ def _verify_before_change(
 
     MySQL says so (#1223): a wrong login during a rotation can block an account
     with ``FAILED_LOGIN_ATTEMPTS 1`` for days, a new password does not clear the
-    block, and the tool cannot read the setting. Without the login there is no
-    answer, so a `pending` is set, and a `current` is left alone
+    block, and the tool cannot read the setting. MariaDB says so too (#1270,
+    decision 4): a failure counts toward ``max_password_errors``, which the
+    tool cannot read either. Without the login there is no answer, so a
+    `pending` is set, and a `current` is left alone
     (:data:`NOT_CHECKED_WITHOUT_LOGIN`).
     """
     if not getattr(session, "verifies_before_change", True):
@@ -9522,6 +9524,14 @@ def _apply_one(
         after = session.verify_password(
             after_user.name, source.value, method=VERIFY_LOGIN, lockout_margin=margin, attempts=2
         )
+        reach = getattr(session, "verify_after_change", None)
+        if after.result == UNAVAILABLE and rotating and reach is not None:
+            # MariaDB, for an account another account could answer for
+            # (#1270, decision 5): the run that drew the password logs in once
+            # wherever the login reaches, and trusts it only for the declared
+            # account. A held `pending` set again never does, so a scheduled
+            # `apply` cannot repeat a login that may reach an undeclared account.
+            after = reach(after_user.name, source.value)
         if after.result == UNAVAILABLE:
             # MySQL, for an account no login can reach (#1223): the server's
             # record of the change stands in for the login, as `stored`. A

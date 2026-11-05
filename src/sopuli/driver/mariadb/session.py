@@ -136,8 +136,8 @@ class MariadbSession(ClosesConnection):
     #: on MySQL (#1270, decision 4). During a rotation that login fails once,
     #: and a failure counts toward ``max_password_errors``, which the tool
     #: cannot read. Whether a new password clears the block it sets (``4150``)
-    #: is not measured. So the one login after a change is the only one a
-    #: change makes. Not on the protocol: a driver without it logs in.
+    #: is not measured. So the login after a change is the only one a change
+    #: makes. Not on the protocol: a driver without it logs in.
     verifies_before_change: ClassVar[bool] = False
 
     connection: Any
@@ -152,11 +152,6 @@ class MariadbSession(ClosesConnection):
     #: ``CURRENT_USER()``, read on the first :meth:`describe_user`. It does
     #: not change for the life of a connection.
     _session_user: str | None = field(default=None, init=False, repr=False)
-    #: The accounts :meth:`set_password` changed whose next
-    #: :meth:`verify_password` has not run yet, as the caller spelled them.
-    #: `creds apply` passes both calls the name `describe_user` returned. That
-    #: one login may reach another account (#1270, decision 3).
-    _changed: set[str] = field(default_factory=set, init=False, repr=False)
 
     def scope(self) -> Scope:
         """What this session is: a server, read-write or not, and its
@@ -318,7 +313,6 @@ class MariadbSession(ClosesConnection):
         except DriverError as failure:
             failure.password_sent = True
             raise
-        self._changed.add(account)
         LOG.debug("password set for %s on %s", found.name, self.target.name)
         return ChangeResult(changed=True, detail="password set", discarded=True)
 
@@ -428,14 +422,8 @@ class MariadbSession(ClosesConnection):
         Any other account is :data:`~sopuli.driver.protocol.UNAVAILABLE`
         without a login, as is one that does not exist: a failed login counts
         toward ``max_password_errors`` on the account it reaches, and `creds
-        check` repeats (#1270, decision 3).
-
-        One login is the exception: the first one after this session's
-        :meth:`set_password` changed the account. It logs in wherever a login
-        may reach, and passes only where ``CURRENT_USER()`` is the declared
-        account (#1267, decision 8). Then a refusal says nothing, because
-        another account may have sent it. That login is an exception to
-        invariant 5, as CLAUDE.md records.
+        check` and `creds apply` repeat (#1270, decisions 3 and 5).
+        :meth:`verify_after_change` is the one login that reaches further.
 
         The tool cannot read MariaDB's count of failed logins, so
         ``lockout_margin`` and ``attempts`` have nothing to guard, and the
@@ -449,10 +437,24 @@ class MariadbSession(ClosesConnection):
                 target=self.target.name,
                 hint="this driver verifies by `login` only",
             )
-        # Taken first, whatever follows: only the first verification after the
-        # change has decision 8's reach, even where that one fails.
-        after_change = account in self._changed
-        self._changed.discard(account)
+        return self._verify(account, secret, reach=False)
+
+    def verify_after_change(self, account: str, secret: Secret) -> VerifyResult:
+        """The login after `creds rotate` set a fresh password, where
+        :meth:`verify_password` found that another account could answer it.
+        Not on the protocol: `creds apply` asks it of a driver that has it,
+        only for the run that drew the password (#1270, decision 5).
+
+        It logs in wherever a login may reach, and passes only where
+        ``CURRENT_USER()`` is the declared account (#1267, decision 8). A
+        refusal then says nothing, because another account may have sent it.
+        It runs once per drawn password: setting a held ``pending`` again,
+        `creds apply` never asks it. That login is an exception to invariant
+        5, as CLAUDE.md records.
+        """
+        return self._verify(account, secret, reach=True)
+
+    def _verify(self, account: str, secret: Secret, *, reach: bool) -> VerifyResult:
         user, host = split(account)
         # One read: the user's accounts at every host, and the anonymous ones,
         # which compete for the same login.
@@ -470,11 +472,11 @@ class MariadbSession(ClosesConnection):
                 declared.name, declared.plugin, target=self.target.name
             )
         competing = verification.competitor(declared, found[user], found[""])
-        if competing is not None and not after_change:
+        if competing is not None and not reach:
             return VerifyResult(
                 method=VERIFY_LOGIN,
                 result=UNAVAILABLE,
-                detail=f"no login was attempted: {competing}",
+                detail=f"{competing}; no login was attempted",
             )
         return verification.login(
             self.target,

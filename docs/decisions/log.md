@@ -4399,7 +4399,7 @@ the register.
   never reads the lock ([#1267](#1267), decision 2)? And may a verification
   login reach an account the config does not declare, as decision 8 of #1267
   allows? And do `creds apply` and `rotate` log in before a change, to see
-  whether one is needed?
+  whether one is needed? Which login after a change may reach further?
 - **Decision:**
   1. A password is at most 1024 bytes, counted in UTF-8. A longer one is
      refused before anything is sent.
@@ -4415,6 +4415,11 @@ the register.
      alone. While a promotion is held, the staged `pending` is set again on
      each run, which extends invariant 9's MySQL exception to MariaDB.
      Decided later the same day, while the commands were registered.
+  5. Only the login after `creds rotate`'s change has decision 8's reach,
+     once per drawn password. When `creds apply` sets a held `pending` again,
+     its login follows decision 3's rule, so where another account could
+     answer, the row is `unavailable` and the `pending` stays. Decided the
+     same day, from the second review of #1312.
 - **Why:**
   1. The server sees only the value the driver computes, so it sets and logs
      in a password of up to 1 MiB (PW1). An application's client was not
@@ -4434,6 +4439,11 @@ the register.
      `max_password_errors`. Nobody has measured whether a new password or a
      good login clears the block it sets. With `max_password_errors = 1`, one
      such login would block the account.
+  5. With decision 4, every `creds apply` while a promotion is held sets the
+     `pending` again and logs in again. Where that login reaches an
+     undeclared account, a scheduled `apply` would count a failure on that
+     account each run, until the server blocks it. `creds rotate` draws a
+     fresh password each time, so its login cannot repeat.
 - **Rejected:**
   1. 256 bytes, as on MySQL, tighter than anything MariaDB needs; and 1 MiB,
      which trusts every application client to handle what PyMySQL does.
@@ -4445,10 +4455,15 @@ the register.
      never promoted.
   4. Logging in before a change, as on Oracle and PostgreSQL; and measuring
      the block first, which would hold the registration for a probe.
+  5. No reach at all, which manages only a sole `user@%` account; and keeping
+     the reach on every `apply`, documented.
 - **Accepted cost:** an application whose client takes more than 1024 bytes
   cannot be given a longer password. An operator who wants a locked account
   unlocked does it by hand. `creds check` reports an account it cannot reach
-  alone as not checked. The login after a change can still count one failure
-  toward an undeclared account. `creds apply` reports `changed: true` on each
-  run while a promotion is held, and it never changes an account to the
-  vault's `current` (`creds rotate` does).
+  alone as not checked. The login after `creds rotate`'s change can still
+  count one failure toward an undeclared account. `creds apply` reports
+  `changed: true` on each run while a promotion is held, and it never changes
+  an account to the vault's `current` (`creds rotate` does). A named-host
+  account whose rotation was not confirmed stays `pending` until the operator
+  acts: by rotating from a host whose login reaches the account, or by fixing
+  the competing account.

@@ -957,6 +957,35 @@ def test_without_a_login_first_a_current_is_left_alone(
     assert "creds rotate" in row["actions"][0]["detail"]
 
 
+def test_apply_never_asks_for_the_login_that_reaches_further(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """MariaDB (#1270, decision 5): only the `creds rotate` run that drew the
+    password may log in wherever the login reaches. `apply` setting a
+    `pending` again on each scheduled run must not, or it would repeat a
+    failed login on an undeclared account until the server blocks it."""
+    reached: list[str] = []
+    monkeypatch.setattr(FakeSession, "verifies_before_change", False, raising=False)
+    monkeypatch.setattr(
+        FakeSession,
+        "verify_after_change",
+        lambda self, account, secret: reached.append(account),
+        raising=False,
+    )
+    unavailable = VerifyResult(VERIFY_LOGIN, UNAVAILABLE, detail="another account could answer")
+    harness = estate(answers={"ACME_WEB_USER": [unavailable]})
+    result = run(runner, write_config(CONFIG), "--select", "tenant=alpha", "--output", "json")
+
+    assert reached == []
+    assert harness["sessions"][0].changed == [("ACME_WEB_USER", STAGED)]
+    row = document(result)["results"][0]
+    assert row["state"] == "UNVERIFIABLE"
+    assert row["secret"]["stage"] != "current"
+
+
 def test_without_confirm_change_an_unavailable_login_stays_unverifiable(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:

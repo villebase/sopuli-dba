@@ -910,6 +910,9 @@ class ChangeResult:
     #: one (:data:`OLD_DISCARD`, MySQL), so none is open now (#1254). ``False``
     #: where the driver sent nothing for it.
     discarded: bool = False
+    #: What the old password this call kept will not do, for the row to say:
+    #: :meth:`Session.require_rollover`'s caveat. ``None`` everywhere else.
+    caveat: str | None = None
 
 
 @dataclass(frozen=True)
@@ -1479,8 +1482,13 @@ class Session(Protocol):
         """
         ...
 
-    def require_rollover(self, account: str) -> None:
-        """Refuse ``--strategy rollover`` for ``account`` here, or say nothing.
+    def require_rollover(self, account: str) -> str | None:
+        """Refuse ``--strategy rollover`` for ``account`` here, or allow it.
+
+        Allowed, it returns ``None``, or a caveat: one sentence about what the
+        window will not do for this account, which the run reports as
+        `SOPULI-W064`. MariaDB returns one for an ``ed25519`` account, where a
+        PyMySQL client can use only the new password (#1271).
 
         Two conditions, failing differently, which is why this is one call rather
         than a capability check somebody has to remember to pair with a profile

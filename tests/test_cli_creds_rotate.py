@@ -40,7 +40,7 @@ from sopuli.cli import _reach, cli
 from sopuli.clock import to_rfc3339, utc_now
 from sopuli.config.model import Vault
 from sopuli.config.targets import EXTERNAL
-from sopuli.diagnostics import ROLLOVER_LEFT_OPEN, ROTATION_UNCONFIRMED
+from sopuli.diagnostics import ROLLOVER_CAVEAT, ROLLOVER_LEFT_OPEN, ROTATION_UNCONFIRMED
 from sopuli.driver.protocol import (
     EXPIRE_PASSWORD,
     FAIL,
@@ -249,9 +249,14 @@ class FakeSession:
         self._called("describe_user")
         return self.database.user(account.upper())
 
-    def require_rollover(self, account: str) -> None:
+    #: What a rollover will not do, as MariaDB's driver says for an `ed25519`
+    #: account (#1271). A test sets it on the class.
+    caveat: str | None = None
+
+    def require_rollover(self, account: str) -> str | None:
         if self.database.user(account.upper()) is None:
             raise RuntimeError(f'account "{account}" does not exist on this target')
+        return self.caveat
 
     def finish_rollover(self, account: str, *, current: Secret | None = None) -> ChangeResult:
         closed = self.database.finish_rollover(account.upper())
@@ -298,7 +303,7 @@ class FakeSession:
         self.previous.append(None if previous is None else previous.reveal())
         if old_password == "retain":
             self._called("set_password")
-            return ChangeResult(changed=True, retained=True)
+            return ChangeResult(changed=True, retained=True, caveat=self.caveat)
         self._called("set_password")
         return ChangeResult(changed=True)
 
@@ -1428,6 +1433,50 @@ def test_a_rollover_with_no_profile_window_retains_the_old_password(
     applied = [row for row in body["results"] if row["state"] != "PENDING_APPLY"]
     assert [row["state"] for row in applied] == ["ROLLOVER_ACTIVE", "ROLLOVER_ACTIVE"]
     assert all(row["rollover"]["active"] is True for row in applied)
+
+
+@pytest.mark.parametrize("dry_run", [False, True], ids=["run", "dry-run"])
+def test_a_rollover_s_caveat_is_warned_in_the_plan_and_the_row(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    validator: Draft202012Validator,
+    monkeypatch: pytest.MonkeyPatch,
+    dry_run: bool,
+) -> None:
+    """#1271, decision 4: a driver that allows a rollover with a caveat, as
+    MariaDB does on `ed25519`, gets `SOPULI-W064` per account from the
+    pre-flight, `--dry-run` included, in the JSON and under the text. The
+    changed row says it too."""
+    caveat = "a PyMySQL client cannot log in with the old password"
+    monkeypatch.setattr(FakeSession, "caveat", caveat)
+    estate(capabilities=frozenset({PASSWORD_ROLLOVER}))
+    config = write_config(CONFIG)
+
+    # The text of a plan, which changes nothing, before the run under test.
+    text = run(runner, config, "--strategy", "rollover", "--dry-run")
+    flags = ["--dry-run"] if dry_run else []
+    result = run(runner, config, "--strategy", "rollover", *flags, "--output", "json")
+
+    assert text.exit_code == ExitCode.SUCCESS, text.output
+    assert f"appdb-beta: acme_web_user: {caveat}" in text.output
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    body = document(result)
+    assert not list(validator.iter_errors(body))
+    warned = [one for one in body["diagnostics"] if one.get("code") == ROLLOVER_CAVEAT]
+    assert len(warned) == 2
+    assert all(one["account"] and one["target"] and caveat in one["message"] for one in warned)
+    if not dry_run:
+        applied = [row for row in body["results"] if row["state"] == "ROLLOVER_ACTIVE"]
+        assert len(applied) == 2
+        set_details = [
+            action["detail"]
+            for row in applied
+            for action in row["actions"]
+            if action["kind"] == "password_set"
+        ]
+        assert len(set_details) == 2
+        assert all(detail.endswith(f"; {caveat}") for detail in set_details)
 
 
 @pytest.mark.parametrize(("strategy", "mark"), [("rollover", "retaining"), ("staged", None)])

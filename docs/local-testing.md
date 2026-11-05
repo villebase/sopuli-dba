@@ -1109,7 +1109,12 @@ acme_app@%  mariadb-dev  ROLLOVER_ACTIVE  changed and verified by login; the pre
 ...
 ```
 
-On an `ed25519` account, a PyMySQL client can use only the new password.
+On an `ed25519` account a PyMySQL client can use only the new password, and
+the plan, `--dry-run` included, and the row say so:
+
+```
+  mariadb-dev: acme_app@%: the account uses ed25519, so a PyMySQL client cannot log in with the old password while the rollover is open; other clients can
+```
 
 `creds finish-rollover` sends the current password alone, which ends the old
 one. The tool cannot read whether an old password is kept, so the window is

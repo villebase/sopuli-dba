@@ -169,6 +169,7 @@ from sopuli.diagnostics import (
     reset_journal_unread,
     reset_record_unwritten,
     rollback_reuse,
+    rollover_caveat,
     unaddressable_lock_paths,
     unlistable_for_orphans,
     unlistable_stores,
@@ -9719,6 +9720,10 @@ def _apply_one(
             # The driver ended any retained password and cannot read the
             # window, so the row says none is open (#1254).
             after_user = replace(after_user, rollover_active=False)
+        if set_result.caveat:
+            # What the kept password will not do (#1271, `SOPULI-W064`'s
+            # sentence): on MariaDB, PyMySQL on an `ed25519` account.
+            outcome = replace(outcome, detail=f"{outcome.detail}; {set_result.caveat}")
 
         if strategies.closes_window(regime, after_user) and apply_states.is_confirmed(
             outcome.state
@@ -10483,6 +10488,7 @@ def _preflight(
                     target=name,
                     config=config,
                     rotating=rotating,
+                    warn=run.document.warn_in_text,
                 )
             if full:
                 findings.extend(
@@ -10797,8 +10803,12 @@ def _check_strategy(
     target: str,
     config: Config,
     rotating: bool = False,
+    warn: Callable[[Diagnostic], None] | None = None,
 ) -> None:
     """Every account in one target, against one requested regime.
+
+    ``warn`` takes the driver's caveat about a rollover it allows, as
+    `SOPULI-W064` (#1271).
 
     Rollover goes through the driver's own ``require_rollover``, which owns both of
     its refusals and carries the exact ``ALTER PROFILE`` for the second. The other
@@ -10860,8 +10870,12 @@ def _check_strategy(
             )
 
         if strategy == strategies.ROLLOVER:
-            session.require_rollover(binding.account)
+            caveat = session.require_rollover(binding.account)
             _refuse_tool_window(strategy, user, target=target, rotating=rotating)
+            if caveat and warn is not None:
+                # `SOPULI-W064` (#1271): allowed, with what the window will not
+                # do here. From the pre-flight, so `--dry-run` says it too.
+                warn(rollover_caveat(target, binding.account, caveat))
             continue
         refusal = strategies.unhonourable(strategy, session.scope(), user)
         if refusal is None:

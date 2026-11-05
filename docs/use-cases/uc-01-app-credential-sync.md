@@ -1599,6 +1599,9 @@ account keeps, so the tool keeps the old password by sending its value again.
   `OR`** (`11_rollover_expiry_probe.py`, RE5). A PyMySQL client still on the
   old password cannot log in during the window, so for it the window gives
   no grace. Other clients, and PyMySQL on `mysql_native_password`, use both.
+  The rollover is allowed, and the run warns: `SOPULI-W064` per account,
+  from the pre-flight, so `--dry-run` says it too, and the changed row ends
+  with the same sentence.
 - `check` cannot see the second method: it is in `mysql.global_priv`, which
   the tool account never reads ([#1267](../decisions/log.md#1267), decision
   3).

@@ -227,7 +227,7 @@ hash.
 | Never read | What the tool does instead |
 |---|---|
 | the lock, `account_locked` (LK2) | `account list` says the lock cannot be read. `account suspend` always sends `ACCOUNT LOCK` and reports `changed: true` ([#1267](../decisions/log.md#1267), decision 2) |
-| an open rollover, `auth_or` (`03_dual_password_probe.py`, DP4) | `creds finish-rollover` always sends the current value alone and reports `changed: true` (decision 3, #1271) |
+| an open rollover, `auth_or` (`03_dual_password_probe.py`, DP4) | `creds finish-rollover` always sends the current value alone and reports `changed: true` ([#1271](../decisions/log.md#1271), decision 2) |
 | when the password changed, and its lifetime (RD1) | a change is verified by login (§7), not by its time (decision 8) |
 | a block after failed logins, `max_password_errors` (LK4, RD6) | `ACCOUNT UNLOCK` ends it. A reset never sends it, and a DBA unlocks by hand after checking for a suspension ([#1272](../decisions/log.md#1272), decision 1) |
 

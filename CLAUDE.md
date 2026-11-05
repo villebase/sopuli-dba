@@ -142,14 +142,15 @@ detail.
    before a change, so while a rotation's promotion is held it sets the staged
    `pending` again on each run, until the rotation completes. On MariaDB a
    target whose one reaching login did not pass holds it until a new `pending`
-   is staged (#1316). On MySQL, `creds
-   finish-rollover` cannot read whether a password is retained, so it sends
-   `DISCARD OLD PASSWORD` and reports `changed: true` on every run. On
+   is staged (#1316). On MySQL and MariaDB, `creds finish-rollover` cannot
+   read whether an old password is kept, so it ends one on every run and
+   reports `changed: true`: MySQL sends `DISCARD OLD PASSWORD`, and MariaDB
+   sends the current password's value alone. On
    MariaDB, `account suspend` cannot read the lock, so it sends `ACCOUNT LOCK`
    and reports `changed: true` on every run. Reasons:
    [H7](docs/decisions/log.md#h7), [#1223](docs/decisions/log.md#1223),
    [#1224](docs/decisions/log.md#1224), [#1267](docs/decisions/log.md#1267),
-   [#1270](docs/decisions/log.md#1270).
+   [#1270](docs/decisions/log.md#1270), [#1271](docs/decisions/log.md#1271).
 
 10. **Safety settings only ratchet toward safe.** `readonly`, `--dry-run`,
     `max_targets`, `confirm_environments`, `safety.delivery.allowed_methods`

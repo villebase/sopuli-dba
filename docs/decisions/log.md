@@ -4550,3 +4550,55 @@ the register.
   unlocks the account by hand. An `OR` added by hand survives an expiry. An
   administrator declared by name on MariaDB, a departed DBA among them, cannot
   be suspended or expired by the tool, and is locked by hand.
+
+## #1271
+
+- **Decided:** 2026-11-05, #1271
+- **Question:** A rollover on MariaDB. MariaDB has no `RETAIN CURRENT
+  PASSWORD` and no `DISCARD OLD PASSWORD`, and the tool does not read
+  `mysql.global_priv` ([#1267](#1267), decision 3). How does it keep the old
+  password, and how does it end a rollover? Which of the two values comes
+  first? And on an `ed25519` account, where PyMySQL tries only the first
+  method of an `OR`, is a rollover allowed at all?
+- **Decision:**
+  1. A rollover sends `ALTER USER … IDENTIFIED VIA <plugin> USING '<new>' OR
+     <plugin> USING '<old>'`, the new value first. The old value is the
+     vault's `current` as the run read it. Without one, the driver refuses
+     before it sends anything.
+  2. `creds finish-rollover` sends the vault's `current` alone, on every run,
+     and reports `changed: true`. This extends invariant 9's MySQL exception
+     to MariaDB.
+  3. While a rollover's promotion is held, `creds apply` sends the same `OR`
+     again on each run, as decision 4 of [#1270](#1270) does for a single
+     value.
+  4. A rollover is allowed on an `ed25519` account. The plan and the row warn
+     that a PyMySQL client cannot log in with the old password while the
+     rollover is open.
+- **Why:**
+  1. A statement names every method the account has, and replaces the ones
+     it had (`03_dual_password_probe.py`, DP3), so the old password is kept
+     only by being sent again. PyMySQL uses only the first method of an
+     `ed25519` `OR` (`11_rollover_expiry_probe.py`, RE5). With the new value
+     first, the tool's own login after the change works. An account that
+     has drifted from the vault keeps the vault's password, which is the one
+     the tool can stand behind.
+  2. The value sent alone ends the second method, and an expiry with it
+     (RE4). `PASSWORD EXPIRE` does not end it (RE2). The tool cannot read
+     whether a second method is there, so it cannot tell a run that ended a
+     rollover from one that had nothing to end.
+  3. The tool cannot read whether the first `apply` opened the rollover, so
+     a later one sends the same statement. Sending the new value alone would
+     end the rollover early.
+  4. Other clients, and PyMySQL on `mysql_native_password`, use both
+     methods. Refusing `ed25519` would refuse those too.
+- **Rejected:**
+  1. The old value first, which the tool's own PyMySQL login could not use
+     on `ed25519`; and the account's stored value, which the tool cannot
+     read.
+  2. `PASSWORD EXPIRE`, which leaves the old password working; and reading
+     `mysql.global_priv`, which [#1267](#1267) decision 3 refused.
+  3. Refusing `apply` while a rollover's promotion is held.
+  4. Refusing a rollover on `ed25519`.
+- **Accepted cost:** `creds finish-rollover` reports a change on every run.
+  On `ed25519`, a PyMySQL client still on the old password cannot log in
+  during the rollover, so for it the rollover gives no grace.

@@ -356,3 +356,15 @@ def test_an_unread_close_says_what_it_did_and_what_it_did_not_verify() -> None:
     assert by_login.detail == "any retained password discarded"
     assert "was not verified by login" in unverified.detail
     assert by_login.state == unverified.state == check.IN_SYNC
+
+
+def test_an_unread_close_is_worded_by_the_driver() -> None:
+    """#1271: MariaDB sends the current value alone, not `DISCARD OLD
+    PASSWORD`, so the row says what its driver sent."""
+    sent = "any second password ended; the current password was sent alone"
+    by_login = windows.closed(unread(), attempt(PASS), unknown_window=True, sent=sent)
+    unverified = windows.closed(unread(), attempt(UNAVAILABLE), unknown_window=True, sent=sent)
+
+    assert by_login.detail == sent
+    assert unverified.detail.startswith(f"{sent}; ")
+    assert "was not verified by login" in unverified.detail

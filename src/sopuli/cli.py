@@ -12221,7 +12221,7 @@ def _finish_one(
                 user=user,
                 duration_ms=_elapsed(started),
             )
-        outcome = windows.closed(user, verified, unknown_window=unknown)
+        outcome = windows.closed(user, verified, unknown_window=unknown, sent=result.detail)
     except LockError:
         # Ahead of the catch-all on purpose -- see the docstring. The run ends;
         # it does not report a takeover as one account's bad luck.

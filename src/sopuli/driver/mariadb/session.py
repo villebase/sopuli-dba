@@ -722,10 +722,7 @@ class MariadbSession(ClosesConnection):
         LOG.debug("rollover finished for %s on %s", found.name, self.target.name)
         return ChangeResult(
             changed=True,
-            detail=(
-                "sent the current password alone; whether a rollover was open cannot be "
-                "read on MariaDB"
-            ),
+            detail="any second password ended; the current password was sent alone",
         )
 
     def _not_passed(self, which: str, account: str) -> DriverError:

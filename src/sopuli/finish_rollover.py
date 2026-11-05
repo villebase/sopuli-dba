@@ -243,6 +243,7 @@ def closed(
     *,
     now: datetime | None = None,
     unknown_window: bool = False,
+    sent: str | None = None,
 ) -> Outcome:
     """The outcome for a window this run ended.
 
@@ -251,17 +252,20 @@ def closed(
     window closed with four minutes left is a tidy-up, and one closed with
     fifty-five is a decision somebody made about an application's grace period.
 
-    With ``unknown_window`` (:func:`window_unknown`, MySQL), the detail says
-    what was sent instead: any retained password was discarded, and whether
-    ``current`` was verified.
+    With ``unknown_window`` (:func:`window_unknown`, MySQL and MariaDB), the
+    detail says what was sent instead, and whether ``current`` was verified.
+    ``sent`` is the driver's own account of the statement
+    (``ChangeResult.detail``): ``DISCARD OLD PASSWORD`` on MySQL, and the
+    current value alone on MariaDB (#1271).
     """
     if unknown_window:
+        what = sent or "any retained password discarded"
         if verification.result == PASS:
-            return Outcome(IN_SYNC, "any retained password discarded", verification)
+            return Outcome(IN_SYNC, what, verification)
         return Outcome(
             IN_SYNC,
-            "any retained password discarded; the vault's `current` was not verified by "
-            "login, because no login can reach this account",
+            f"{what}; the vault's `current` was not verified by login, because no login "
+            f"can reach this account",
             verification,
         )
     left = remaining(user, now=now)

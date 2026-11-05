@@ -191,6 +191,16 @@ A managed account is one the config declares on a MariaDB target, as
 `user@host`: `acme_app@10.%`. A bare name is a config error, as on MySQL. A
 `role:` rule names a role without a host: a MariaDB role has none (TG7).
 
+**Who a `role:` rule admits** (open: #1272). The accounts that hold the role,
+granted to them or to a role they hold, followed to the end through
+`mysql.roles_mapping`, whether it is active or not (`10_role_reads_probe.py`,
+RR2). A role in the chain is not admitted: a role cannot log in. `CREATE ROLE`
+grants the role to the account that created it, with `ADMIN OPTION`, so that
+account holds it too. A role that `PUBLIC` holds, directly or through another
+role, is refused with exit 9: every account holds it (RR3), and a rule that
+admits every account is not a whitelist. MySQL refuses a mandatory role for
+the same reason. `sopuli/driver/mariadb/roles.py` holds the rule.
+
 **What the tool reads.** The `mysql.user` view gives the tool account the
 plugin and the expiry of another account, and nothing else about its password
 (`07_readable_state_probe.py`, RD1). A change of password, a rollover and a
@@ -366,6 +376,22 @@ What the server answers at a login, measured with the `mariadb` client:
 | expired | logs in, then `1820` to a statement (LK3) | `1045` |
 | locked | `4151` (LK1) | `1045` |
 | blocked after failed logins | `4150` (LK4) | `1045` |
+
+With PyMySQL 1.2.3 on 11.8.9, an expired account's first statement after login
+gets `1820`, which is the tool's TLS read. With `disconnect_on_expired_password
+= ON`, the right password gets `1862` at connect instead. An account with
+`REQUIRE SSL` answers its right password with `1045` over a session without
+TLS.
+
+`1820`, `1862` and `4151` come only to the right password, but before the tool
+can read `CURRENT_USER()`. `1045` does not say which account refused. So each
+counts only where no other account can answer the login: the declared account
+is `user@%`, it is the user's only account, and no anonymous account sits at a
+named host. The MySQL driver logs in only there
+([#1223](../decisions/log.md#1223)). Elsewhere the result is `unavailable`, and
+the detail names the other account. `1045` is a `fail` only where the target's
+`ssl_mode` requires TLS. `4150` answers any password, so it is `unavailable`
+everywhere. `sopuli/driver/mariadb/verification.py` holds the rule.
 
 A failed verification login counts toward `max_password_errors` on the account
 it reaches. That is an accepted cost of decision 8.

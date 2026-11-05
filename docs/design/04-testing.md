@@ -378,8 +378,10 @@ stack is `test/compose.yaml`, and the harness starts nothing itself
   import breaks it, and nothing else notices, because developers install
   `sopuli-dba[all]`. Two checks hold it, because neither is enough alone:
   - `tests/store/test_install_shape.py` blocks the clients at the import system
-    and imports every sopuli module outside a backend. It runs in any
-    environment, and it names the module that broke the rule.
+    and imports every sopuli module outside a backend. A module of the MariaDB
+    driver's package is imported last, with that driver's own clients allowed
+    (ADR-006 rule 1). It runs in any environment, and it names the module that
+    broke the rule.
   - CI's `install-shape` job installs the base package for real and asserts that
     the clients are absent. Only this check can see a mistake in
     `pyproject.toml` itself.

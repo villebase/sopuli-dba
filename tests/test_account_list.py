@@ -188,7 +188,9 @@ def test_the_row_gives_each_notice_its_own_code() -> None:
 def test_a_member_of_an_administrative_role_gets_a_notice_force_overrides() -> None:
     """On Oracle a `role:` predicate can admit a member of `DBA`. Check 4
     refuses it in a verb, and `--force` overrides that."""
-    message = guardrail_refusal(user("JDOE", admin_roles=frozenset({"DBA"})), admitted=True)
+    message = guardrail_refusal(
+        user("JDOE", admin_roles=frozenset({"DBA"})), admitted=True, target_type="oracle"
+    )
 
     assert message == (
         "a mutating verb refuses this account at plan time: check 4 (the account holds DBA). "
@@ -200,11 +202,48 @@ def test_a_global_privilege_is_named_as_refusing_only_a_password_change() -> Non
     """Check 9 refuses the verbs that set a password, and `account suspend`
     may still lock the account, so the notice does not say no verb acts (#1222)."""
     held = frozenset({"SELECT ON *.*"})
-    message = guardrail_refusal(user("dba_jane@%", global_privileges=held), admitted=True)
+    message = guardrail_refusal(
+        user("dba_jane@%", global_privileges=held), admitted=True, target_type="mysql"
+    )
 
     assert message == (
         "a mutating verb refuses this account at plan time: check 9 (the account holds "
         "SELECT ON *.*). no flag overrides check 9, so no verb will set this account's password"
+    )
+
+
+def test_on_mariadb_check_9_refuses_every_verb_and_the_listing_says_so() -> None:
+    """On MariaDB check 9 refuses `account suspend` and `account
+    expire-password` too, because a `role:` rule admits the role's creator
+    (#1272)."""
+    held = frozenset({"SELECT ON *.*"})
+    message = guardrail_refusal(
+        user("root@localhost", global_privileges=held), admitted=True, target_type="mariadb"
+    )
+
+    assert message is not None
+    assert message.endswith("no flag overrides check 9, so no verb will act on this account")
+
+
+def test_on_mariadb_the_tool_s_own_account_is_refused_as_the_verbs_refuse_it() -> None:
+    """The tool account may have created the role. `account suspend` and
+    `account expire-password` refuse it by check 9 there, which `--force` does
+    not waive; a reset is refused only by check 7, which it does (#1272)."""
+    message = guardrail_refusal(
+        user(
+            "sopuli_admin@%",
+            global_privileges=frozenset({"SELECT ON mysql.*"}),
+            session_account=True,
+        ),
+        admitted=True,
+        target_type="mariadb",
+    )
+
+    assert message is not None
+    assert "check 9 (the account holds SELECT ON mysql.*)" in message
+    assert message.endswith(
+        "no flag overrides check 9 for `account suspend` and `account expire-password`; "
+        "`account reset-password` needs `--force` for check 7, and the override is recorded"
     )
 
 
@@ -218,6 +257,7 @@ def test_a_global_privilege_beside_a_waivable_check_says_what_force_does() -> No
             global_privileges=frozenset({"SELECT ON *.*"}),
         ),
         admitted=True,
+        target_type="oracle",
     )
 
     assert message is not None
@@ -232,7 +272,9 @@ def test_a_superuser_is_named_with_the_check_no_flag_overrides() -> None:
     """Check 6 is never waived, so the notice must not send the reader to
     `--force`, even beside a check that `--force` does override. Nor to the
     config: a predicate's member is not written there."""
-    message = guardrail_refusal(user("ADMIN", superuser=True, session_account=True), admitted=True)
+    message = guardrail_refusal(
+        user("ADMIN", superuser=True, session_account=True), admitted=True, target_type="postgres"
+    )
 
     assert message is not None
     assert "check 6 (the account is a superuser), check 7 (this is the account" in message
@@ -244,7 +286,7 @@ def test_a_superuser_is_named_with_the_check_no_flag_overrides() -> None:
 def test_an_account_no_rule_admits_names_check_1() -> None:
     """The verbs review the account as undeclared when no rule admits it as
     the database describes it, so the listing must too (#1207)."""
-    message = guardrail_refusal(user("JDOE"), admitted=False)
+    message = guardrail_refusal(user("JDOE"), admitted=False, target_type="oracle")
 
     assert message is not None
     assert message.startswith("a mutating verb refuses this account at plan time: check 1 (")
@@ -253,7 +295,9 @@ def test_an_account_no_rule_admits_names_check_1() -> None:
 
 def test_two_checks_force_overrides_are_them() -> None:
     message = guardrail_refusal(
-        user("SYSTEM", admin_roles=frozenset({"DBA"}), session_account=True), admitted=True
+        user("SYSTEM", admin_roles=frozenset({"DBA"}), session_account=True),
+        admitted=True,
+        target_type="oracle",
     )
 
     assert message is not None
@@ -284,8 +328,19 @@ def test_every_check_the_review_returns_has_a_number() -> None:
 def test_guardrail_2_alone_and_an_unread_check_get_no_such_notice() -> None:
     """Guardrail 2 has `SOPULI-W041`. An unread password file is a caveat in a
     verb and refuses nothing, so it is not a refusal here either."""
-    assert guardrail_refusal(user("ACME_OWNED", vendor_maintained=True), admitted=True) is None
-    assert guardrail_refusal(user("JDOE", password_file_member=None), admitted=True) is None
+    oracle = "oracle"
+    assert (
+        guardrail_refusal(
+            user("ACME_OWNED", vendor_maintained=True), admitted=True, target_type=oracle
+        )
+        is None
+    )
+    assert (
+        guardrail_refusal(
+            user("JDOE", password_file_member=None), admitted=True, target_type=oracle
+        )
+        is None
+    )
 
 
 def test_oracle_system_carries_both_codes() -> None:

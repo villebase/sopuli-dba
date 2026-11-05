@@ -261,9 +261,8 @@ connects to a target, as for PostgreSQL. The config accepts `type: mariadb`
 too, and PyMySQL with PyNaCl comes with `sopuli-dba[mariadb]`. `doctor`
 connects to a MariaDB server and reports the scope, `server` (#1268). The
 MariaDB entry lists UC-1's `creds generate`, `apply`, `check`, `rotate` and
-`status` (#1270). Every other command, `finish-rollover` (#1271) and the
-`account` commands (#1272) among them, refuses a MariaDB target with
-`SOPULI-20006`. What
+`status` (#1270), and UC-2's commands (#1272). `finish-rollover` (#1271)
+refuses a MariaDB target with `SOPULI-20006`. What
 PostgreSQL lacks, such as a rollover window, a profile, or a forced password
 change at next login, is refused at plan time by capability, not by product. A libpq older than 16 is a property of the client,
 not of the target, and is refused per account during the run: the one accepted
@@ -513,7 +512,13 @@ rules make that real:
 
 1. **A vendor client is imported inside its backend module, never at package
    import time.** The registry maps `type:` to a module path and imports on
-   first use.
+   first use. For the MariaDB driver, a module in `sopuli.driver.mariadb` may
+   import the clients the `mariadb` extra provides at module scope, and only the
+   driver's own modules may then import it. A module the base CLI imports, such
+   as `roles.py`, may not import them, and no module of the package may import
+   another driver's client (#1296). `tests/store/test_install_shape.py` catches
+   a module-scope import that breaks this. An import inside a function, outside
+   the driver, is the author's to keep out.
 2. **A missing backend is a diagnosable condition, not a traceback.** An
    `ImportError` at registry resolution becomes a structured error naming the
    extra that supplies it — `error.category: "config"`, exit 9, and a run

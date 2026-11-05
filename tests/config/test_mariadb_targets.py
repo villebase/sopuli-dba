@@ -199,16 +199,26 @@ def test_a_role_names_no_host_on_mariadb() -> None:
 # ------------------------------------------------------------- the driver ---
 
 
-def test_the_driver_serves_exactly_doctor_and_uc1_but_finish_rollover() -> None:
-    """`doctor` connects (#1268), and UC-1's commands run (#1270). The exact
-    set is pinned, so a merge cannot add a command whose session methods
-    still refuse during the run. Which commands are refused is
-    `tests/driver/test_driver_registry.py`'s."""
+def test_the_driver_serves_exactly_doctor_uc1_and_uc2_but_finish_rollover() -> None:
+    """`doctor` connects (#1268), and UC-1's (#1270) and UC-2's (#1272)
+    commands run. The exact set is pinned, so a merge cannot add a command
+    whose session methods still refuse during the run. Which commands are
+    refused is `tests/driver/test_driver_registry.py`'s."""
     target = loaded(targets=[SERVER]).expanded_targets[0].target
 
-    # TODO(#1271): `creds.finish-rollover`. TODO(#1272): the `account` commands.
+    # TODO(#1271): `creds.finish-rollover`.
     assert DRIVERS["mariadb"].commands == frozenset(
-        {"creds.check", "creds.apply", "creds.rotate", "creds.generate", "creds.status"}
+        {
+            "account.list",
+            "account.reset-password",
+            "account.suspend",
+            "account.expire-password",
+            "creds.check",
+            "creds.apply",
+            "creds.rotate",
+            "creds.generate",
+            "creds.status",
+        }
     )
     assert DRIVERS["mariadb"].extra == "mariadb"
     # PyMySQL's `ed25519` extra brings PyNaCl; without it the extra is not installed.

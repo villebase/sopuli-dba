@@ -11,7 +11,7 @@ lists the method that is not built yet. §9 lists the open questions. On
 PostgreSQL, `account list`, the unseen `account reset-password` (§4.1) and
 `account suspend` are built. The seen reset and `account expire-password` are
 refused there with exit 5, because a role cannot be made to change its password
-at its next login. On MySQL every verb is built.
+at its next login. On MySQL and MariaDB every verb is built.
 
 **These commands are experimental in the alpha.** They are the newest part of
 the tool, so they may change more than the application-credential commands.
@@ -336,7 +336,10 @@ refused exactly as rotating it would be. `--force` waives checks 2 to 5 and 7, a
 checks 1, 6 and 8: the whitelist, a superuser, and a role the server reserves.
 Check 9, a global privilege, refuses `account reset-password` and does not apply
 to `suspend` or `expire-password`, which set no password: they may lock a
-departed DBA's account ([#1222](../decisions/log.md#1222)). A refusal exits **0**: `SKIPPED` means the guardrails worked, and
+departed DBA's account ([#1222](../decisions/log.md#1222)). On MariaDB check 9
+refuses those two as well. A `role:` rule there admits the account that
+created the role, often root, and nothing else marks root as the database's
+own (#1272). A refusal exits **0**: `SKIPPED` means the guardrails worked, and
 only an unreachable target sets exit 4. The action kind is `account_lock`. The
 run document carries `results[].account_status`, the state the database was in
 *before* anything was issued, because `state: LOCKED` with `changed: false`
@@ -541,8 +544,11 @@ dev_role` makes a role with an empty host, so the rule is `role: dev_role`, and
 the name is compared exactly, as a user name is (TG7). A `role:` written with a
 host is refused when the file loads, with exit 9. A `role:` rule admits
 every account the role is granted to, directly or through another role, and
-the account that created the role, which holds it with `ADMIN OPTION`. Whether
-that account counts is not decided (open: #1272). A role in the chain is
+the account that created the role, which holds it with `ADMIN OPTION`. That
+account is admitted, and guardrail 9 refuses it for every verb when it holds a
+global privilege, as root does (§3, #1272). The tool's own account is refused
+for `suspend` and `expire-password`; a reset of it is refused by guardrail 7
+unless `--force`, as on MySQL. A role in the chain is
 followed and not admitted: it cannot log in. A rule that names a role `PUBLIC`
 reaches is refused by `account list` and by every verb, as a mandatory role is
 on MySQL: at plan time with exit 9, and in the run as the target's `ERROR`
@@ -551,8 +557,16 @@ row. Every account holds `PUBLIC`. A `profile:` rule is refused by the absent
 on every run and reports `changed: true`, because the lock cannot be read
 ([#1267](../decisions/log.md#1267), decision 2). For the same reason a
 MariaDB account's `status` is `OPEN` or `EXPIRED` from the view, and never
-says whether it is locked; the detail says so. These verbs are not yet
-registered for MariaDB (open: #1272).
+says whether it is locked; the detail says so. `account reset-password` never
+sends `ACCOUNT UNLOCK`: it cannot tell a suspension from a block after failed
+logins, so a locked or blocked account keeps its new password and stays
+locked, and a DBA unlocks it by hand after checking for a suspension
+([#1272](../decisions/log.md#1272), decision 1). The new value replaces every
+login method, so a second one joined by `OR` stops working, a `unix_socket`
+login the view does not show included (#1301). `account
+expire-password` sends `PASSWORD EXPIRE` alone and reads nothing from the
+vault. A second method someone added with `OR` survives it, and both
+passwords then log in, expired, only to set a new one (decision 2).
 
 ---
 

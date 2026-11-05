@@ -137,6 +137,30 @@ def test_the_session_says_the_limit_and_no_other_constraint() -> None:
     assert session.password_constraints("acme_app_user@%") is None
 
 
+def test_the_reset_refuses_to_keep_a_rollover_before_anything_is_read() -> None:
+    """The driver's own line for `--keep-rollover` (#1272): a session with no
+    connection refuses it, so nothing was read or sent."""
+    from sopuli.driver.protocol import KEEP_ROLLOVER, UnsupportedCapabilityError
+
+    session_module = pytest.importorskip("sopuli.driver.mariadb.session")
+    session = session_module.MariadbSession(
+        connection=None,
+        target=ExpandedTarget(
+            target=Target(name="mariadb-dev", type="mariadb", dsn="mariadb-dev.example.com:3306")
+        ),
+        correlation_id="tier0",
+        timeouts=Timeouts(),
+    )
+
+    with pytest.raises(UnsupportedCapabilityError) as caught:
+        session.reset_password(
+            "acme_app@%", Secret("Acme-Vector-1"), expire=True, keep_rollover=True
+        )
+
+    assert caught.value.capability == KEEP_ROLLOVER
+    assert "joined by OR" in str(caught.value.hint)
+
+
 def test_apply_finds_the_hook_it_looks_up_by_name() -> None:
     """`creds apply` reads it with getattr, outside the protocol, and a missing
     `verifies_before_change` means a login before the change, which #1270
@@ -159,6 +183,16 @@ def test_the_statement_carries_the_value_for_the_account_s_plugin(
 
     assert statement == f"ALTER USER `acme_app`@`10.%` IDENTIFIED VIA {plugin} USING '{stored}'"
     assert password not in statement
+
+
+def test_a_reset_sets_and_expires_by_one_statement() -> None:
+    """`account reset-password` (#1272): a failure leaves neither done."""
+    statement = alter_user("acme_app", "%", NATIVE, Secret("Acme-Vector-1"), expire=True)
+
+    assert statement.startswith(f"ALTER USER `acme_app`@`%` IDENTIFIED VIA {NATIVE} USING '*")
+    assert statement.endswith("' PASSWORD EXPIRE")
+    assert "PASSWORD EXPIRE" in scrub(statement)
+    assert "USING '***'" in scrub(statement)
 
 
 def test_the_account_is_backquoted_whatever_its_name() -> None:

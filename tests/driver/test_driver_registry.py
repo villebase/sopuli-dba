@@ -253,28 +253,29 @@ def test_the_uc2_commands_are_let_through_on_mysql(command: str) -> None:
 
 
 @pytest.mark.parametrize(
-    "command", ["creds.check", "creds.apply", "creds.rotate", "creds.generate", "creds.status"]
-)
-def test_the_uc1_commands_are_let_through_on_mariadb(command: str) -> None:
-    """#1270."""
-    require_command(target("mariadb-dev", "mariadb"), command)
-
-
-@pytest.mark.parametrize(
     "command",
     [
-        "creds.finish-rollover",
+        "creds.check",
+        "creds.apply",
+        "creds.rotate",
+        "creds.generate",
+        "creds.status",
         "account.list",
         "account.reset-password",
         "account.suspend",
         "account.expire-password",
     ],
 )
-def test_what_mariadb_cannot_do_yet_is_refused(command: str) -> None:
-    """The rollover and the UC-2 verbs are not written for MariaDB."""
-    # TODO(#1271): the rollover. TODO(#1272): the UC-2 verbs.
+def test_the_uc1_and_uc2_commands_are_let_through_on_mariadb(command: str) -> None:
+    """#1270 and #1272."""
+    require_command(target("mariadb-dev", "mariadb"), command)
+
+
+def test_mariadb_s_rollover_is_refused() -> None:
+    """The rollover is not written for MariaDB."""
+    # TODO(#1271): the rollover.
     with pytest.raises(DriverNotImplementedError) as refused:
-        require_command(target("mariadb-dev", "mariadb"), command)
+        require_command(target("mariadb-dev", "mariadb"), "creds.finish-rollover")
 
     assert refused.value.code == DRIVER_NOT_IMPLEMENTED
 

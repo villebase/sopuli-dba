@@ -4476,3 +4476,77 @@ the register.
   an account to the vault's `current` (`creds rotate` does). A named-host
   account whose reaching login did not confirm it stays `pending` until a new
   `pending` is staged, from a host whose login reaches it.
+
+## #1301
+
+- **Decided:** 2026-11-05, #1301
+- **Question:** A MariaDB account can log in by two methods joined by `OR`,
+  and the `mysql.user` view shows only one of them. A password change sends one
+  method and ends the other. What does the tool do about a second method it
+  cannot see?
+- **Decision:** Accept the gap. `02-mariadb-privileges.md` §4 documents it, and
+  `doctor --check-privileges` says it for every target with declared accounts.
+  No grant is added.
+- **Why:** The second method is only in `auth_or` in `mysql.global_priv` and in
+  `SHOW CREATE USER`, and reading either reads every stored value, which
+  [#1267](#1267) decision 3 refused. An account with a socket or other second
+  method is rare among the accounts the tool manages. Measured by hand on
+  11.8.9: the view shows one method, the same as `global_priv`'s top-level
+  `plugin`, and `mysql_native_password` on whichever side it is.
+- **Rejected:** Granting `SELECT (User, Host, Priv)` on `mysql.global_priv` to
+  read `auth_or`, which reads every stored value. Refusing an account whose
+  stored value is empty where its plugin needs one, which does not detect the
+  case.
+- **Accepted cost:** a password change on an account with a second method,
+  such as `unix_socket`, ends that login without a word from the tool, beyond
+  `doctor`'s line.
+
+## #1272
+
+- **Decided:** 2026-11-05, #1272
+- **Question:** UC-2 on MariaDB. The lock is not read ([#1267](#1267), decision
+  2), so a reset cannot tell a suspension from a block: what does it do about
+  either? `PASSWORD EXPIRE` does not end an `OR` rollover: does
+  `account expire-password` read the vault's value to end one first? And a
+  `role:` rule admits the account that created the role, often root: how is
+  it kept from being locked?
+- **Decision:**
+  1. `account reset-password` never sends `ACCOUNT UNLOCK` on MariaDB, and no
+     `--unlock` flag is added. Its row says the lock cannot be read and that a
+     reset does not unlock; the DBA checks for a suspension and unlocks by
+     hand. This replaces [#1267](#1267) decision 9's `--unlock`, and the first
+     form of this decision, "refuse `--unlock` at plan time", both of which
+     assumed a flag the verb does not have.
+  2. `account expire-password` sends `PASSWORD EXPIRE` alone and reads nothing
+     from the vault. UC-2 says an `OR` added by hand survives it, with both
+     passwords expired.
+  3. Option B: guardrail 9 runs for `account suspend` and `account
+     expire-password` on MariaDB too, so an administrator is refused whatever
+     the verb. Who a role admits does not change. For those two verbs check 9
+     also covers the session's own account, whose exemption
+     ([#1222](#1222)) is for a password the tool sets.
+- **Why:**
+  1. `ACCOUNT UNLOCK` ends a suspension and a block alike, and a reset must
+     not undo a suspension (H4). A flag nothing accepts would be interface
+     with no effect: on MySQL the reset unlocks anyway, and Oracle refuses a
+     locked account.
+  2. The tool makes no rollover on a personal account, because a name cannot
+     be declared twice, so only an `OR` added by hand is in one. Reading the
+     vault would make the verb need a store it does not use today.
+  3. Nothing else marks root as the database's own on MariaDB, as guardrail 2
+     does for `SYSTEM` on Oracle. The creator's `ADMIN OPTION` row cannot be
+     told from a deliberate admin grant. Locking the tool account hands over
+     nothing but takes the account away, so the exemption's reason does not
+     hold.
+- **Rejected:**
+  1. Adding `--unlock` and refusing it on MariaDB; and refusing `--unlock`
+     unless the operator confirms there is no suspension.
+  2. Sending the current value alone before `PASSWORD EXPIRE`, which needs the
+     vault's password; and refusing an account that may be in a rollover,
+     which the tool cannot see.
+  3. A: leaving out every member whose only grant has `ADMIN OPTION`, which
+     also leaves out deliberate admin grants. C: both.
+- **Accepted cost:** a blocked owner stays blocked after a reset until a DBA
+  unlocks the account by hand. An `OR` added by hand survives an expiry. An
+  administrator declared by name on MariaDB, a departed DBA among them, cannot
+  be suspended or expired by the tool, and is locked by hand.

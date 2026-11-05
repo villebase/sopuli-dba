@@ -166,7 +166,10 @@ MariaDB has no `server_uuid`. It warns, and never fails
   that MariaDB split from `SUPER`, so it cannot fully check the managed
   accounts, and the line names the nine
   ([#1267](../decisions/log.md#1267), decision 4). Check 9 itself refuses
-  once the driver changes passwords (open: #1270).
+  once the driver changes passwords (open: #1270);
+- the second login method that §4 describes, on the same condition: the view
+  shows one method of an account that has two, and a password change ends the
+  other ([#1301](../decisions/log.md#1301)).
 
 ---
 
@@ -191,13 +194,18 @@ A managed account is one the config declares on a MariaDB target, as
 `user@host`: `acme_app@10.%`. A bare name is a config error, as on MySQL. A
 `role:` rule names a role without a host: a MariaDB role has none (TG7).
 
-**Who a `role:` rule admits** (open: #1272). The accounts that hold the role,
-granted to them or to a role they hold, followed to the end through
-`mysql.roles_mapping`, whether it is active or not (`10_role_reads_probe.py`,
-RR2). A role in the chain is not admitted: a role cannot log in. `CREATE ROLE`
-grants the role to the account that created it, with `ADMIN OPTION`, so that
-account holds it too. A role that `PUBLIC` holds, directly or through another
-role, is refused with exit 9: every account holds it (RR3), and a rule that
+**Who a `role:` rule admits.** The accounts that hold the role, granted to
+them or to a role they hold, followed to the end through `mysql.roles_mapping`,
+whether it is active or not (`10_role_reads_probe.py`, RR2). A role in the
+chain is not admitted: a role cannot log in. `CREATE ROLE` grants the role to
+the account that created it, with `ADMIN OPTION`, so that account holds it
+too: usually root or the tool account. Where it holds a privilege §5 counts,
+guardrail 9 refuses it for every UC-2 verb, `account suspend` and `account
+expire-password` included (§5, #1272). For those two it refuses the session's
+own account too. A reset still exempts it, as on MySQL: setting the tool's own
+password hands over nothing, and guardrail 7 refuses it unless `--force`. A
+role that `PUBLIC` holds, directly or through another role, is refused with
+exit 9: every account holds it (RR3), and a rule that
 admits every account is not a whitelist. MySQL refuses a mandatory role for
 the same reason. `sopuli/driver/mariadb/roles.py` holds the rule.
 
@@ -218,10 +226,10 @@ hash.
 
 | Never read | What the tool does instead |
 |---|---|
-| the lock, `account_locked` (LK2) | `account list` says the lock cannot be read. `account suspend` always sends `ACCOUNT LOCK` and reports `changed: true` ([#1267](../decisions/log.md#1267), decision 2; open: #1272) |
+| the lock, `account_locked` (LK2) | `account list` says the lock cannot be read. `account suspend` always sends `ACCOUNT LOCK` and reports `changed: true` ([#1267](../decisions/log.md#1267), decision 2) |
 | an open rollover, `auth_or` (`03_dual_password_probe.py`, DP4) | `creds finish-rollover` always sends the new value alone and reports `changed: true` (decision 3; open: #1271) |
 | when the password changed, and its lifetime (RD1) | a change is verified by login (§7), not by its time (decision 8) |
-| a block after failed logins, `max_password_errors` (LK4, RD6) | `ACCOUNT UNLOCK` ends it, and a reset sends it only with `--unlock` (decision 9; open: #1272) |
+| a block after failed logins, `max_password_errors` (LK4, RD6) | `ACCOUNT UNLOCK` ends it. A reset never sends it, and a DBA unlocks by hand after checking for a suspension ([#1272](../decisions/log.md#1272), decision 1) |
 
 **The tool changes only `mysql_native_password` and `ed25519` accounts**
 (decision 1). `doctor --check-privileges` names an account on `parsec`, or on
@@ -231,11 +239,27 @@ PyMySQL 1.2.3 has no client for `parsec` (`06_pymysql_login_probe.py`, PL1), so
 a `parsec` password could be changed and never checked. The tool never moves an
 account to another plugin: the change names the account's own plugin (§6).
 
-**An account with a second method is not seen.** An account can log in by two
-methods joined by `OR`, such as `mysql_native_password` and `unix_socket`. On
-11.8.9 the view shows `mysql_native_password` for it in either order, so the
-plugin check admits it. A change sends one method, which ends the other
-(open: #1301).
+**An account with a second method is not seen, and the gap is accepted**
+([#1301](../decisions/log.md#1301)). An account can log in by two methods joined by `OR`, such as
+`mysql_native_password` and `unix_socket`. The view shows one of them, the
+same one as the top-level `plugin` in `mysql.global_priv`, and gives no sign
+of the other. Only `auth_or` in `mysql.global_priv` and `SHOW CREATE USER`
+show it, and the tool account reads neither (§2.2, §3). Measured by hand on
+11.8.9, creating each account as root (#1301):
+
+| Account | The view's `plugin` |
+|---|---|
+| `mysql_native_password OR ed25519` | `mysql_native_password` |
+| `ed25519 OR mysql_native_password` | `mysql_native_password` |
+| `unix_socket OR mysql_native_password` | `mysql_native_password` |
+| `mysql_native_password OR unix_socket` | `mysql_native_password` |
+| `unix_socket OR ed25519` | `ed25519` |
+
+So the plugin check admits such an account. A password change sends one
+method, which ends the other: a login by `unix_socket` stops working. No grant
+closes the gap without reading every stored value. `doctor --check-privileges`
+says so for any target with declared accounts, and the DBA checks `SHOW CREATE
+USER` for the accounts the tool manages.
 
 **A user name at an undeclared host is reported** by `doctor` (§2.3).
 
@@ -253,7 +277,12 @@ any of these:
 
 `sopuli.driver.mariadb.admin` reads them, and the driver reads them whenever it
 describes an account. The refusal applies once a verb that changes a password
-runs on MariaDB (open: #1270). Each finding
+runs on MariaDB (open: #1270). Unlike on MySQL, it also applies to `account
+suspend` and `account expire-password`, which set no password, and to the
+session's own account for those two: a `role:` rule admits a role's creator
+(§4), and this is what stops one locking root or the tool account. It also
+refuses an administrator declared by name; such an account is locked by hand
+(#1272). Each finding
 names the privilege and its object, and the role it comes through, such as
 `PROCESS ON *.* through PUBLIC`.
 
@@ -348,10 +377,13 @@ value alone ends it (DP2, DP3, DP5). The tool computes both values from the
 **The other statements carry no password.** `ACCOUNT LOCK`, `ACCOUNT UNLOCK`
 and `PASSWORD EXPIRE` need only `CREATE USER` (LK1 to LK4). A locked account
 answers its password with `4151`, and a blocked one with `4150`. `account
-reset-password` sends `ACCOUNT UNLOCK` only with `--unlock`
-([#1267](../decisions/log.md#1267), decision 9), because it cannot read whether
+reset-password` never sends `ACCOUNT UNLOCK`, because it cannot read whether
 the account is locked by `account suspend` or blocked after failed logins
-(open: #1272).
+([#1272](../decisions/log.md#1272), decision 1). It sets the value with
+`PASSWORD EXPIRE` in the same statement, so a failure leaves neither. `account
+expire-password` sends `PASSWORD EXPIRE` alone, which does not end a second
+method joined by `OR`: both passwords keep logging in, expired
+(`11_rollover_expiry_probe.py`; decision 2).
 
 ---
 

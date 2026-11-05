@@ -46,6 +46,7 @@ def decide(
     config: Config,
     account: str,
     target: str,
+    target_type: str | None = None,
     force: bool = False,
 ) -> Decision:
     """May this run expire ``account``'s password on ``target``?
@@ -54,13 +55,14 @@ def decide(
     docstring is the specification: a missing account is a finding rather than
     an error, and ``--force`` waives guardrails 2 to 5 and 7 and never 1, 6 or
     8: the whitelist, a superuser, or a role the server reserves. Guardrail 9
-    does not run, because expiring sets no password.
+    does not run, because expiring sets no password, except on MariaDB (#1272).
     """
     return _decide(
         state,
         config=config,
         account=account,
         target=target,
+        target_type=target_type,
         force=force,
         proceeding_as=EXPIRED,
     )

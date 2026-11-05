@@ -219,12 +219,21 @@ DRIVERS: dict[str, DatabaseDriver] = {
     ),
     # PyMySQL reaches MariaDB too, and its `ed25519` extra brings PyNaCl for that
     # plugin (#1267, decisions 1 and 5), so the extra provides `nacl` as well as
-    # `pymysql`: with only the `mysql` extra installed, `mariadb` is not. UC-1
-    # (#1270): `creds check`, by login only where no other account can answer;
-    # `creds apply` and `rotate`, but `--strategy rollover`, which set the value
-    # the account's plugin stores, computed on the client, and never log in
-    # first, so with only `current` an account is skipped; `creds generate` and
-    # `status`. A rollover is #1271, and the `account` commands #1272.
+    # `pymysql`: with only the `mysql` extra installed, `mariadb` is not. The
+    # session connects and serves `doctor` (#1268). UC-1 (#1270): `creds check`,
+    # by login only where no other account can answer; `creds apply` and
+    # `rotate`, but `--strategy rollover`, which set the value the account's
+    # plugin stores, computed on the client, and never log in first, so with only
+    # `current` an account is skipped; `creds generate` and `status`. A rollover,
+    # and with it `finish-rollover`, is #1271. UC-2 (#1272): `account
+    # list`, where a `role:` rule names a role alone and one `PUBLIC` reaches is
+    # refused; `account reset-password`, which sets the value with `PASSWORD
+    # EXPIRE` in one statement, never unlocks, and refuses `--keep-rollover` by
+    # capability; `account suspend`, by `ACCOUNT LOCK` on every run; and
+    # `account expire-password`, by `PASSWORD EXPIRE` alone. Guardrail 9
+    # refuses an administrator in all three that change an account, except a
+    # reset of the tool's own account, which guardrail 7 refuses unless
+    # `--force`; `account list` says which (`guardrails.every_verb`).
     "mariadb": DatabaseDriver(
         module="sopuli.driver.mariadb.session",
         extra="mariadb",
@@ -232,6 +241,10 @@ DRIVERS: dict[str, DatabaseDriver] = {
         password_limit="1024",
         commands=frozenset(
             {
+                "account.list",
+                "account.reset-password",
+                "account.suspend",
+                "account.expire-password",
                 "creds.check",
                 "creds.apply",
                 "creds.rotate",

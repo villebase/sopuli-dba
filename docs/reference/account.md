@@ -13,7 +13,7 @@ sopuli account expire-password [OPTIONS]
 Make a person change their password at next logon, without setting one.
 
 The command issues `ALTER USER ... PASSWORD EXPIRE` for an account that
-`personal_accounts:` declares. It works on Oracle and MySQL targets.
+`personal_accounts:` declares. It works on Oracle, MySQL and MariaDB targets.
 PostgreSQL cannot make a role change its password at its next login, so a
 PostgreSQL target refuses the run with exit 5 before any account is
 touched. It draws, sends and shows no password, so there is nothing to
@@ -27,20 +27,25 @@ can be used to set the next one. After this command, someone who knows
 only the old password needs a reset. On MySQL it sends `DISCARD OLD
 PASSWORD` first, because a password kept with `RETAIN CURRENT PASSWORD`
 still works after the expiry, and the tool cannot see whether one is kept.
+On MariaDB it sends `PASSWORD EXPIRE` alone: a second login method someone
+added with `OR` survives it, and both passwords then log in only to set a
+new one.
 
 `--account` names one account, and a profile or role rule in
 `personal_accounts:` never widens it, as for `account suspend`. The command
 uses the same account guardrails as every mutating verb. `--force` waives
 guardrails 2 to 5 and 7, never 1, 6 or 8. Guardrail 9 does not apply,
-because expiring sets no password.
+because expiring sets no password, except on MariaDB: there a `role:` rule
+declares the account that created the role. So on MariaDB it refuses every
+account with a global privilege, one declared by name too.
 
 An account that is already expired, with no window open, reports no
 change, and the command issues nothing. `EXPIRED(GRACE)` does not count as
 expired, because the password still works until this command runs. On
 MySQL, already expired means `password_expired` is `Y`, and such an account
 is left alone, retained password and all. A password past its lifetime has
-`N`, so the command expires it. The command leaves a lock of either kind
-alone.
+`N`, so the command expires it. On MariaDB, already expired also means
+`password_expired` is `Y`. The command leaves a lock of either kind alone.
 
 It writes no reset record and takes no advisory lock, because it delivers
 nothing.
@@ -52,7 +57,7 @@ Options:
 - `--target` `NAME` (repeatable): Keep only this target. Repeat to add more.
 - `--group` `NAME` (repeatable): Keep only targets in this group. Repeat to add more.
 - `--confirm`: Proceed without asking. Required where `safety.confirm_environments` applies.
-- `--force`: Waive guardrails 2 to 5 and 7. Nothing waives guardrails 1, 6 and 8: an account the config does not declare, a superuser, and a role the server reserves. Guardrail 9, a global privilege, does not apply: this verb sets no password.
+- `--force`: Waive guardrails 2 to 5 and 7. Nothing waives guardrails 1, 6 and 8: an account the config does not declare, a superuser, and a role the server reserves. Guardrail 9, a global privilege, applies only on MariaDB, to every account, because a `role:` rule there admits the role's creator; elsewhere this verb sets no password, so it does not apply.
 
 It also takes the [global options](README.md#global-options).
 
@@ -104,8 +109,10 @@ Give a person's account a new password, and hand it over.
 This is for someone who cannot get into their own account, usually because
 the password expired and they no longer know it. The command draws a new
 password, sets it, and delivers it by the method `delivery:` names. It
-works on Oracle and MySQL targets, and on PostgreSQL by an unseen method
-only.
+works on Oracle, MySQL and MariaDB targets, and on PostgreSQL by an unseen
+method only. On MariaDB a reset never unlocks the account, because the tool
+cannot tell a suspension from a block after failed logins: a DBA unlocks it
+by hand after checking for a suspension.
 
 The configuration chooses one of two paths. The unseen path, the default,
 puts the password where only the owner can fetch it, and shows it to
@@ -131,8 +138,8 @@ reset where the person still knows the old password. Do not use it after a
 suspected disclosure, because someone else knows the old password too. The
 tool refuses `--keep-rollover` with `manual`, because there the closed
 window is what makes the expiry end your knowledge of the password. It
-refuses it on a MySQL target too: a reset there always discards the old
-password, because a kept one cannot be read back.
+refuses it on a MySQL or MariaDB target too: a reset there always ends the
+old password, because a kept one cannot be read back.
 
 `--account` names one account. The target selectors choose where it is
 reset, not which account; each target holds a separate account with a
@@ -167,7 +174,9 @@ causes: `LOCKED(TIMED)` ends by itself after `PASSWORD_LOCK_TIME`, and
 `LOCKED` lasts until someone unlocks the account. On PostgreSQL it issues
 `ALTER ROLE ... NOLOGIN`, which blocks every way of logging in. On MySQL it
 issues `ALTER USER ... ACCOUNT LOCK`; a block after failed logins does not
-count as a lock there, because the tool cannot see it.
+count as a lock there, because the tool cannot see it. On MariaDB it issues
+`ALTER USER ... ACCOUNT LOCK` on every run and reports a change, because
+the lock cannot be read there.
 
 `--account` is required and takes one name, because an offboarding is one
 person leaving, and a mutating verb must name its account instead of
@@ -182,11 +191,15 @@ turn one named account into several.
 The command uses the same account guardrails as every mutating verb, so
 suspending DBSNMP is refused just as rotating it would be. `--force`
 waives guardrails 2 to 5 and 7, never 1, 6 or 8. Guardrail 9 does not
-apply, because suspending sets no password.
+apply, because suspending sets no password, except on MariaDB: there a
+`role:` rule declares the account that created the role, and nothing else
+stops it locking root. So on MariaDB it refuses every account with a
+global privilege, one declared by name too.
 
 An account that is already locked reports no change, and the command
-issues nothing. The driver reads the state first, because Oracle and
-PostgreSQL both accept the statement silently for a locked account.
+issues nothing, except on MariaDB. The driver reads the state first,
+because Oracle and PostgreSQL both accept the statement silently for a
+locked account.
 
 The command changes no password and writes to no store, so it takes no
 advisory lock and cannot reveal a secret.
@@ -198,6 +211,6 @@ Options:
 - `--target` `NAME` (repeatable): Keep only this target. Repeat to add more.
 - `--group` `NAME` (repeatable): Keep only targets in this group. Repeat to add more.
 - `--confirm`: Proceed without asking. Required where `safety.confirm_environments` applies.
-- `--force`: Waive guardrails 2 to 5 and 7. Nothing waives guardrails 1, 6 and 8: an account the config does not declare, a superuser, and a role the server reserves. Guardrail 9, a global privilege, does not apply: this verb sets no password.
+- `--force`: Waive guardrails 2 to 5 and 7. Nothing waives guardrails 1, 6 and 8: an account the config does not declare, a superuser, and a role the server reserves. Guardrail 9, a global privilege, applies only on MariaDB, to every account, because a `role:` rule there admits the role's creator; elsewhere this verb sets no password, so it does not apply.
 
 It also takes the [global options](README.md#global-options).

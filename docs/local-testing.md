@@ -908,8 +908,8 @@ The stack also runs MariaDB 11.8 at `127.0.0.1:3307`. Its init creates the
 tool account `sopuli_admin`, password `sopuli-test-admin`, with the grants
 that [`design/02-mariadb-privileges.md`](design/02-mariadb-privileges.md) lists
 for it. `doctor` runs against it, and so do the UC-1 commands `creds
-generate`, `apply`, `check`, `rotate` and `status`. `finish-rollover` and the
-`account` commands do not run yet.
+generate`, `apply`, `check`, `rotate` and `status`, and the personal-account
+commands of §9. `finish-rollover` does not run yet.
 
 Save this as `mariadb.yaml`, and export `SOPULI_DB_ADMIN_PASSWORD=sopuli-test-admin`:
 
@@ -946,10 +946,11 @@ when it holds exactly those grants. Declare accounts under `applications:`, and 
 names one that does not exist, one on a plugin other than
 `mysql_native_password` and `ed25519`, and the same user name at a host the
 config does not declare. With any declared account, it also says what
-guardrail 9 cannot see:
+guardrail 9 cannot see, and that a second login method is not seen:
 
 ```
   mariadb-dev: check 9 cannot see BINLOG ADMIN, BINLOG REPLAY, CONNECTION ADMIN, FEDERATED ADMIN, READ_ONLY ADMIN, REPLICATION MASTER ADMIN, REPLICATION SLAVE ADMIN, SET USER or SLAVE MONITOR: they set no column of the mysql.user view, so it does not refuse a declared account that holds one. Revoke them from accounts the tool manages (02-mariadb-privileges.md section 5)
+  mariadb-dev: a declared account with a second login method, joined by OR, shows one of them: the mysql.user view does not show the other. A password change sends one method and ends the other, so a login by unix_socket, for example, stops working. Check SHOW CREATE USER for accounts the tool manages (02-mariadb-privileges.md section 4)
 ```
 
 To manage passwords, create two accounts as root, one at any host and one at a
@@ -2037,6 +2038,99 @@ suspended acme_dev_bob@localhost on 1 of 1 targets
 A second run reports `the account is already locked (ACCOUNT LOCK)`, and
 `account reset-password` now skips `acme_dev_bob@localhost`. Run `ALTER USER
 'acme_dev_bob'@'localhost' ACCOUNT UNLOCK` to undo the suspension.
+
+### Personal accounts on MariaDB
+
+On the server of §7, as root, make a role and two accounts that hold it:
+
+```
+mariadb> CREATE ROLE acme_dev_team;
+mariadb> CREATE USER 'acme_dev_alice'@'%' IDENTIFIED BY '…';
+mariadb> CREATE USER 'acme_dev_bob'@'localhost' IDENTIFIED BY '…';
+mariadb> GRANT acme_dev_team TO 'acme_dev_alice'@'%', 'acme_dev_bob'@'localhost';
+```
+
+A MariaDB role has no host, so the rule names it alone. Add the `vaults:`,
+`defaults.vault`, `delivery:` and `reset_records:` blocks of §5 to
+`mariadb.yaml`, and:
+
+```yaml
+policies:
+  personal-standard:
+    password: { length: 20 }
+personal_accounts:
+  - role: acme_dev_team
+    policy: personal-standard
+```
+
+`CREATE ROLE` grants the role to the account that created it, so the rule
+admits root too, and on MariaDB check 9 refuses root for every verb:
+
+```
+$ sopuli --config mariadb.yaml account list
+ACCOUNT                 TARGET       DECLARED BY           STATUS  DB_PW_CHANGED  RESET_AT
+acme_dev_alice@%        mariadb-dev  role 'acme_dev_team'  OPEN    -              -
+acme_dev_bob@localhost  mariadb-dev  role 'acme_dev_team'  OPEN    -              -
+root@localhost          mariadb-dev  role 'acme_dev_team'  OPEN    -              -
+
+3 declared accounts, 3 on the selected targets
+
+2 notes:
+  root@localhost on mariadb-dev: a mutating verb refuses this account at plan time: check 9 (the account holds ALTER ON *.*, ALTER ROUTINE ON *.*, BINLOG MONITOR ON *.*, CREATE ON *.*, CREATE ROUTINE ON *.* and 26 more grants). no flag overrides check 9, so no verb will act on this account
+  mariadb-dev: DB_PW_CHANGED is empty for 3 accounts: MariaDB keeps the time of a password change beside the stored value, which the tool does not read
+...
+```
+
+`account suspend --account 'root@localhost'` reports `SKIPPED` with the same
+reason. A reset sets the value for the account's own plugin:
+
+```
+$ sopuli --config mariadb.yaml account reset-password --account 'acme_dev_alice@%'
+Plan: 1 account x 1 target = 1 account   [dev]
+
+ACCOUNT           TARGET       INTENT        SECRET
+acme_dev_alice@%  mariadb-dev  password_set  -
+
+ACCOUNT           TARGET       STATE  WAS   DETAIL
+acme_dev_alice@%  mariadb-dev  RESET  OPEN  declared by role 'acme_dev_team'
+
+reset acme_dev_alice@% on 1 of 1 targets
+
+hand this to acme_dev_alice@% for mariadb-dev; it unwraps once:
+
+    <TOKEN>
+...
+```
+
+The password in the token logs in. A reset never sends `ACCOUNT UNLOCK`,
+because the tool cannot tell a suspension from a block after failed logins:
+a locked account keeps its new password and still answers `4151`, and the
+JSON row's `actions[].detail` says the lock cannot be read. Unlock by hand,
+after checking that nobody suspended the account. `--keep-rollover` is refused
+with exit 5.
+
+`expire-password` sends `PASSWORD EXPIRE` alone, and a second run changes
+nothing:
+
+```
+$ sopuli --config mariadb.yaml account expire-password --account 'acme_dev_alice@%' --confirm
+...
+ACCOUNT           TARGET       STATE    STATUS  DETAIL
+acme_dev_alice@%  mariadb-dev  EXPIRED  OPEN    password expired
+
+expired acme_dev_alice@%'s password on 1 of 1 targets
+```
+
+`suspend` sends `ACCOUNT LOCK` on every run, because the lock cannot be read:
+
+```
+$ sopuli --config mariadb.yaml account suspend --account 'acme_dev_bob@localhost' --confirm
+...
+ACCOUNT                 TARGET       STATE   STATUS  DETAIL
+acme_dev_bob@localhost  mariadb-dev  LOCKED  OPEN    sent ACCOUNT LOCK; whether the account was already locked cannot be read on MariaDB
+
+suspended acme_dev_bob@localhost on 1 of 1 targets
+```
 
 ---
 

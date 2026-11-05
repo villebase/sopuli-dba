@@ -42,6 +42,16 @@ import secrets as csprng
 
 from sopuli.driver.mysql.accounts import SUPPORTED_PLUGIN as PLUGIN
 from sopuli.driver.mysql.limits import LIMIT
+
+# Shared with MariaDB, and re-exported: the MySQL session sends them as
+# `password_module.lock`, `.expire` and `.unlock`. On MySQL a locked account's
+# password answers 3118 (LE2); `account expire-password` sends the expiry after
+# `discard_old` (LE9); a reset unlocks first, because a block after failed
+# logins is not in mysql.user and a new password does not end it (LE4 to LE6,
+# decided on #1225).
+from sopuli.driver.mysql_family.account_statements import expire as expire
+from sopuli.driver.mysql_family.account_statements import lock as lock
+from sopuli.driver.mysql_family.account_statements import unlock as unlock
 from sopuli.driver.mysql_family.accounts import Principal
 
 # Re-exported: the driver's callers and tests catch it from here.
@@ -176,25 +186,6 @@ def alter_user(
     account = Principal(user, host).sql()
     clause = RETAIN if retain else EXPIRE if expire else ""
     return f"ALTER USER {account} IDENTIFIED WITH {PLUGIN} AS 0x{stored.hex()}{clause}"
-
-
-def lock(user: str, host: str) -> str:
-    """``ACCOUNT LOCK``, which `account suspend` sends. The password then
-    answers ``3118`` (LE2)."""
-    return f"ALTER USER {Principal(user, host).sql()} ACCOUNT LOCK"
-
-
-def expire(user: str, host: str) -> str:
-    """``PASSWORD EXPIRE`` alone, which `account expire-password` sends after
-    :func:`discard_old` (LE9)."""
-    return f"ALTER USER {Principal(user, host).sql()} PASSWORD EXPIRE"
-
-
-def unlock(user: str, host: str) -> str:
-    """``ACCOUNT UNLOCK``, which a reset sends first. It ends a block after
-    failed logins, which nothing in ``mysql.user`` shows and a new password does
-    not end (LE4 to LE6). Decided on #1225."""
-    return f"ALTER USER {Principal(user, host).sql()} ACCOUNT UNLOCK"
 
 
 def discard_old(user: str, host: str) -> str:

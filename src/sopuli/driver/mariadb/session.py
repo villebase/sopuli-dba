@@ -162,7 +162,10 @@ class MariadbSession(ClosesConnection):
             # are in mysql.roles_mapping, and §2.1 grants the tool account both.
             # `expire_password` always: an account with only CREATE USER
             # expires another on every supported release (10.11.19 to 12.3.3,
-            # `04_lock_expiry_probe.py`, LK3).
+            # `04_lock_expiry_probe.py`, LK3), and a new value sent alone ends
+            # an expiry (`11_rollover_expiry_probe.py`). The capability also
+            # tells `creds apply` it may set a password on an expired account,
+            # as on MySQL (`apply.py`, `expiry_cleared`).
             self._scope = replace(
                 observed, capabilities=observed.capabilities | {ROLE_LOOKUP, EXPIRE_PASSWORD}
             )
@@ -297,17 +300,13 @@ class MariadbSession(ClosesConnection):
             self._not_written("keep a rollover window")
         password_module.admit(secret)
         require_read_write(self.scope(), target=self.target.name)
-        found = self._read_grants(
-            lambda cursor: accounts_module.read_one(cursor, account, target=self.target.name)
+        found = self._existing(
+            account,
+            hint=(
+                "the tool does not create accounts (Q8); `creds check` reports this "
+                "as ACCOUNT_MISSING rather than failing"
+            ),
         )
-        if found is None:
-            raise DriverError(
-                f'account "{account}" does not exist on target "{self.target.name}"',
-                hint=(
-                    "the tool does not create accounts (Q8); `creds check` reports this "
-                    "as ACCOUNT_MISSING rather than failing"
-                ),
-            )
         statement = password_module.alter_user(found.user, found.host, found.plugin, secret)
         try:
             # The read above found the session open, so a failure here is the
@@ -345,17 +344,20 @@ class MariadbSession(ClosesConnection):
             ),
         )
 
-    def _existing(self, account: str, *, what: str) -> accounts_module.Account:
+    def _existing(
+        self, account: str, *, what: str = "changed", hint: str | None = None
+    ) -> accounts_module.Account:
         """The account's row in the view, refused before anything is sent where
         it does not exist or uses another plugin. ``what`` is the verb's
-        participle for the hint."""
+        participle for the hint, and ``hint`` replaces the hint whole."""
         found = self._read_grants(
             lambda cursor: accounts_module.read_one(cursor, account, target=self.target.name)
         )
         if found is None:
             raise DriverError(
                 f'account "{account}" does not exist on target "{self.target.name}"',
-                hint=(
+                hint=hint
+                or (
                     f"the tool does not create accounts (Q8); nothing is {what}, and the "
                     "account name is worth checking against the server"
                 ),
@@ -372,10 +374,12 @@ class MariadbSession(ClosesConnection):
         The value names one method, which replaces every method the account
         had (``03_dual_password_probe.py``, DP3), and ends an expiry
         (``11_rollover_expiry_probe.py``). So no second password logs in
-        afterwards, whether a rollover's or one added by hand with ``OR``
-        (``02-mariadb-privileges.md`` §4).
+        afterwards, whether a rollover's or one added by hand with ``OR``. A
+        second method the view does not show, such as ``unix_socket``, stops
+        working too: that gap is accepted (``02-mariadb-privileges.md`` §4,
+        #1301), and ``doctor --check-privileges`` says so.
 
-        **The lock is left as it is** (#1267, decision 9). It is not read, so
+        **The lock is left as it is** (#1272, decision 1). It is not read, so
         the reset cannot tell a suspension from a block after failed logins,
         and an ``ACCOUNT UNLOCK`` could end a suspension (H4). A locked or
         blocked account keeps its new password and stays locked; the row says
@@ -411,9 +415,9 @@ class MariadbSession(ClosesConnection):
                 changed=True,
                 status=status,
                 detail=(
-                    f"{'password set, expired' if expire else 'password set'}; it replaces "
-                    "every login method, so no second password logs in. Whether the account "
-                    "is locked cannot be read on MariaDB, and a reset does not unlock it"
+                    f"{'password set, expired' if expire else 'password set'}, as the only "
+                    "login method. Whether the account is locked cannot be read on MariaDB, "
+                    "and a reset does not unlock it"
                 ),
             ),
         )
@@ -453,10 +457,7 @@ class MariadbSession(ClosesConnection):
                 PASSWORD_EXPIRE,
                 changed=True,
                 status=status,
-                detail=(
-                    "password expired; a second login method added by hand with OR, which "
-                    "the tool cannot see, is expired too and still logs in to set a password"
-                ),
+                detail="password expired",
             ),
         )
 

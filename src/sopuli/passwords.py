@@ -32,6 +32,7 @@ one (UC-1 §4 step 2).
 from __future__ import annotations
 
 import secrets as csprng  # the standard library's, not `sopuli.secrets` beside it
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 from sopuli.config import charsets
@@ -77,9 +78,14 @@ _EVERY_DRIVER_REFUSES = frozenset({CONTROL})
 _ORACLE_REFUSES = frozenset({CONTROL, FORBIDDEN})
 
 
-def unwaivable(product: str) -> frozenset[str]:
-    """The rules ``--no-policy-check`` cannot waive on a ``product`` target."""
-    return _ORACLE_REFUSES if product == ORACLE else _EVERY_DRIVER_REFUSES
+def unwaivable(products: Iterable[str]) -> frozenset[str]:
+    """The rules ``--no-policy-check`` cannot waive for a password staged for
+    targets of ``products``: every rule one of their drivers refuses."""
+    found = _EVERY_DRIVER_REFUSES
+    for product in products:
+        if product == ORACLE:
+            found = found | _ORACLE_REFUSES
+    return found
 
 
 class PasswordPolicyError(ConfigError):

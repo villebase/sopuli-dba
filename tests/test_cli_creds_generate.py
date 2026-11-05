@@ -720,6 +720,46 @@ def test_a_second_line_break_from_the_pipe_is_refused_and_nothing_is_written(
     assert store.read(PATH) is None
 
 
+@pytest.mark.parametrize(
+    ("targets", "staged_ok"),
+    [("[appdb-pg]", True), ("[appdb-pg, appdb-alpha]", False)],
+    ids=["postgresql only", "shared with oracle"],
+)
+def test_a_quote_is_waivable_unless_an_oracle_target_shares_the_password(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    store: MemoryStore,
+    targets: str,
+    staged_ok: bool,
+) -> None:
+    """The CLI passes every product the password is staged for (#1327)."""
+    config = CONFIG.replace("targets: [appdb-alpha]", f"targets: {targets}").replace(
+        "applications:",
+        "  - name: appdb-pg\n"
+        "    type: postgresql\n"
+        "    dsn: pg.example.com:5432\n"
+        "    environment: dev\n"
+        "    postgres: { database: acme }\n"
+        "    vault: vault-prod\n"
+        "applications:",
+    )
+    result = run(
+        runner,
+        write_config(config),
+        "--from-stdin",
+        "--no-policy-check",
+        "--offline",
+        stdin='SuppliedPassword2026"abcd\n',
+    )
+
+    if staged_ok:
+        assert result.exit_code == 0, result.output
+        assert staged(store)["acme_web_user"] == 'SuppliedPassword2026"abcd'
+    else:
+        assert isinstance(result.exception, ConfigError), result.exception
+        assert store.read(PATH) is None
+
+
 def test_an_empty_stdin_is_refused(
     runner: CliRunner, write_config: Callable[[str], Path], store: MemoryStore
 ) -> None:

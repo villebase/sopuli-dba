@@ -53,7 +53,7 @@ one won, and the run announced eleven draws for one stored password.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Collection, Iterable, Sequence
 from dataclasses import dataclass, replace
 from typing import Any
 
@@ -485,7 +485,7 @@ def candidate_for(
     readings: Sequence[tuple[str, ByteLimit]] = (),
     supplied: Secret | None = None,
     enforce: bool = True,
-    product: str = ORACLE,
+    products: Collection[str] = (ORACLE,),
 ) -> Candidate:
     """Draw a password for one account, or validate one that was supplied.
 
@@ -508,10 +508,12 @@ def candidate_for(
     It has no effect on a generated password -- there is nothing to override when
     the tool drew the value itself, and a flag that silently changed the
     generator would be a different feature wearing this one's name. It cannot
-    waive what the driver of the binding's ``product`` refuses
+    waive what a driver of ``products`` refuses
     (:func:`~sopuli.passwords.unwaivable`): that password would stage a
-    ``pending`` that every ``creds apply`` refuses (#1327). The default is
-    Oracle, the product whose driver refuses the most.
+    ``pending`` that every ``creds apply`` there refuses (#1327). ``products``
+    is every product the password is staged for, not only this binding's,
+    because :func:`draw_once` gives the other bindings of the password this
+    candidate unchecked. The default is Oracle, whose driver refuses the most.
 
     ``readings`` is every answered target's limit, paired with the target so a
     refusal can name it, and the two paths use it differently for a reason
@@ -537,7 +539,7 @@ def candidate_for(
         )
 
     violations = _every_violation(supplied, policy, readings)
-    refused = unwaivable(product)
+    refused = unwaivable(products)
     unusable = tuple(one for one in violations if one.rule in refused)
     if violations and (enforce or unusable):
         raise _refused(
@@ -602,7 +604,7 @@ def _refused(
     else:
         rules = ", ".join(dict.fromkeys(one.rule for one in unusable))
         hint = (
-            f"{described} -- fix the password: the driver for {binding.target!r} refuses "
+            f"{described} -- fix the password: a driver of the targets it is for refuses "
             f"{rules}, and `--no-policy-check` cannot waive that"
         )
         if line_break:

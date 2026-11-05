@@ -326,10 +326,27 @@ def test_a_quote_stays_waivable_where_the_driver_accepts_it(product: str) -> Non
         name=name,
         supplied=Secret('SuppliedPassword2026"abcd'),
         enforce=False,
-        product=product,
+        products=(product,),
     )
 
     assert "forbidden" in [one.rule for one in candidate.accepted_violations]
+
+
+def test_a_quote_shared_with_an_oracle_target_is_refused() -> None:
+    """One password staged for a PostgreSQL and an Oracle target: Oracle's
+    driver refuses `"`, so the flag cannot waive it for either (#1327)."""
+    config = estate()
+    name, policy = generate.policy_for(config, config.bindings[0])
+
+    with pytest.raises(PasswordPolicyError):
+        generate.candidate_for(
+            config.bindings[0],
+            policy,
+            name=name,
+            supplied=Secret('SuppliedPassword2026"abcd'),
+            enforce=False,
+            products=("postgresql", "oracle"),
+        )
 
 
 @pytest.mark.parametrize("product", ["postgresql", "mysql", "mariadb"])
@@ -344,7 +361,7 @@ def test_a_control_character_is_refused_on_every_product(product: str) -> None:
             name=name,
             supplied=Secret("SuppliedPassword2026abcd\r\n"),
             enforce=False,
-            product=product,
+            products=(product,),
         )
 
 

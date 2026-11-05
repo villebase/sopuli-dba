@@ -1099,9 +1099,11 @@ the policy check with `--no-policy-check`. Nothing waives the statement layer's
 refusal. A rule that can be turned off and a rule that cannot are two rules,
 even where they reject the same character. Merging them would let
 `--no-policy-check` turn off invariant 11. `creds generate` also refuses a
-supplied password that breaks the statement layer's rules, with or without the
-flag, so that it never stages a password every `creds apply` would refuse
-(#1327). The statement layer still checks on its own.
+supplied password that contains `"` or a control character, with or without
+the flag, so that it does not stage a password every `creds apply` would
+refuse for that (#1327). The flag still waives a byte-limit or encoding
+violation, which the statement layer also refuses; whether it should is open
+in #1327. The statement layer still checks on its own.
 
 ### Where the password text can surface
 

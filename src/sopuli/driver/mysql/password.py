@@ -58,7 +58,7 @@ from sopuli.driver.mysql_family.accounts import Principal
 from sopuli.driver.mysql_family.password import (
     PasswordNotAdmissibleError as PasswordNotAdmissibleError,
 )
-from sopuli.driver.mysql_family.password import refuse_unusable
+from sopuli.driver.mysql_family.password import refuse_longer, refuse_unusable
 from sopuli.secrets import Secret
 
 #: The rounds variable, which any account reads (CH5).
@@ -83,15 +83,15 @@ def admit(secret: Secret) -> None:
     """
     text = secret.reveal()
     refuse_unusable(text)
-    width = LIMIT.width(text)
-    if width > LIMIT.max_bytes:
-        raise PasswordNotAdmissibleError(
-            f"the password is {width} bytes, and a MySQL target takes at most {LIMIT.max_bytes}",
-            hint=(
-                "the server stores a longer one and then refuses it at login; lower the "
-                "policy's `length`, or use a charset of one-byte characters"
-            ),
-        )
+    refuse_longer(
+        text,
+        LIMIT,
+        product="a MySQL target",
+        hint=(
+            "the server stores a longer one and then refuses it at login; lower the "
+            "policy's `length`, or use a charset of one-byte characters"
+        ),
+    )
 
 
 def _b64(b2: int, b1: int, b0: int, n: int) -> str:

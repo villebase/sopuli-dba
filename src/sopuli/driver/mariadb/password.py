@@ -54,7 +54,7 @@ from sopuli.driver.mysql_family.accounts import Principal
 from sopuli.driver.mysql_family.password import (
     PasswordNotAdmissibleError as PasswordNotAdmissibleError,
 )
-from sopuli.driver.mysql_family.password import refuse_unusable
+from sopuli.driver.mysql_family.password import refuse_longer, refuse_unusable
 from sopuli.secrets import Secret
 
 #: The plugins this module computes a value for, by the server's name.
@@ -70,15 +70,15 @@ def admit(secret: Secret) -> None:
     """
     text = secret.reveal()
     refuse_unusable(text)
-    width = LIMIT.width(text)
-    if width > LIMIT.max_bytes:
-        raise PasswordNotAdmissibleError(
-            f"the password is {width} bytes, and a MariaDB target takes at most {LIMIT.max_bytes}",
-            hint=(
-                "an application's client may not log in with a longer one; lower the "
-                "policy's `length`, or use a charset of one-byte characters"
-            ),
-        )
+    refuse_longer(
+        text,
+        LIMIT,
+        product="a MariaDB target",
+        hint=(
+            "an application's client may not log in with a longer one; lower the "
+            "policy's `length`, or use a charset of one-byte characters"
+        ),
+    )
 
 
 def _utf8(secret: Secret) -> bytes:

@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import pytest
 
+from sopuli.config.model import ExpandedTarget, Target
+from sopuli.driver.protocol import Timeouts
 from sopuli.secrets import Secret
 
 # Before the module, which imports PyNaCl: it comes with the `mariadb` extra.
@@ -115,6 +117,24 @@ def test_a_password_over_1024_bytes_is_refused(password: str) -> None:
 
     assert "at most 1024" in str(caught.value)
     assert caught.value.category == "policy"
+
+
+def test_the_session_says_the_limit_and_no_other_constraint() -> None:
+    """Neither reads the server, so a session with no connection answers."""
+    session_module = pytest.importorskip("sopuli.driver.mariadb.session")
+    session = session_module.MariadbSession(
+        connection=None,
+        target=ExpandedTarget(
+            target=Target(name="mariadb-dev", type="mariadb", dsn="mariadb-dev.example.com:3306")
+        ),
+        correlation_id="tier0",
+        timeouts=Timeouts(),
+    )
+
+    limit = session.byte_limit()
+
+    assert (limit.max_bytes, limit.encoding) == (1024, "utf-8")
+    assert session.password_constraints("acme_app_user@%") is None
 
 
 @pytest.mark.parametrize(

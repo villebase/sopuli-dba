@@ -246,6 +246,14 @@ class MariadbSession(ClosesConnection):
         (:mod:`~sopuli.driver.mariadb.limits`)."""
         return LIMIT
 
+    def password_constraints(self, account: str) -> None:
+        """Nothing beyond the length, read without a round trip. Not on the
+        protocol: ``creds generate`` asks it of a driver that has it.
+
+        MariaDB has no profiles, and an account's reuse history is not read.
+        Whether a password check plugin refuses the value the driver sends is
+        not measured yet (#1310)."""
+
     def set_password(
         self, account: str, secret: Secret, *, old_password: str = OLD_DISCARD
     ) -> ChangeResult:

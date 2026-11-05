@@ -1080,11 +1080,12 @@ rotation: staged 1 document, promoted 1 document
 reaches the account. A new `pending` brings a new reaching login.
 
 An expired account is changed too, because the new password ends the expiry.
-Stage a password with `creds generate`, expire the account as root with
-`ALTER USER 'acme_app'@'%' PASSWORD EXPIRE`, and run `creds apply`:
+`acme_batch@192.0.2.%` still has its `pending`, so name the other account.
+Stage a password with `creds generate --account 'acme_app@%'`, expire the
+account as root with `ALTER USER 'acme_app'@'%' PASSWORD EXPIRE`, and apply:
 
 ```
-$ sopuli --config mariadb.yaml creds apply
+$ sopuli --config mariadb.yaml creds apply --account 'acme_app@%'
 ...
 ACCOUNT     TARGET       STATE    DETAIL
 acme_app@%  mariadb-dev  IN_SYNC  changed and verified by login

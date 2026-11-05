@@ -185,8 +185,9 @@ def test_creds_apply_changes_an_expired_account_and_the_login_passes(
 ) -> None:
     """Why `creds apply` changes an expired MariaDB account instead of
     reporting `EXPIRED` (#1322): the scope reports `expire_password`, and a
-    new value sent alone ends the expiry (`11_rollover_expiry_probe.py`, RE4).
-    The login after the change then logs in without `1820`."""
+    new value sent alone ends the expiry. `11_rollover_expiry_probe.py`, RE4,
+    measured it on an account in a rollover; this measures a plain expired
+    one. The login after the change then logs in without `1820`."""
     _root(live_mariadb, "alter user %s@'%%' password expire", (user,))
     state = session.describe_user(f"{user}@%")
     assert state is not None
@@ -204,6 +205,7 @@ def test_creds_apply_changes_an_expired_account_and_the_login_passes(
     assert verified.result == PASS
     assert "1820" not in str(verified.detail)
     assert _expired(live_mariadb, user) == "N"
+    assert _login(live_mariadb, user, NEW) is None
     assert _login(live_mariadb, user, OLD) == ACCESS_DENIED
 
 

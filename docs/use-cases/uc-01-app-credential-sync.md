@@ -676,9 +676,11 @@ These rules decide what `apply` does with each account:
   reports `changed: true`. The lock is not read
   ([#1267](../decisions/log.md#1267), decision 2), so a locked account is
   changed. Where the login after the change is made, it answers `4151`, which
-  only the right password gets. An expired account is changed as on MySQL: the
-  new value sent alone ends the expiry, and the login after the change logs in
-  (`11_rollover_expiry_probe.py`, RE4).
+  only the right password gets. An expired account is changed too, because the
+  new value sent alone ends the expiry. Probe 11 measured this on an account
+  that was also in a rollover (`11_rollover_expiry_probe.py`, RE4), and a
+  tier-1 test measures it on a plain expired account. Where the login after the
+  change is made, it then logs in without `1820`.
 - **On MariaDB, the tool logs in only where no other account can answer the
   login** ([#1270](../decisions/log.md#1270), decision 3). That is a `user@%`
   account that is the user's only one, with no anonymous account at a named

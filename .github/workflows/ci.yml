@@ -391,8 +391,7 @@ jobs:
           import importlib.util
           import sys
 
-          # CLIENTS in tests/store/test_install_shape.py, and nacl, which that
-          # test cannot block yet (#1296).
+          # CLIENTS in tests/store/test_install_shape.py.
           clients = ("httpx", "nacl", "oci", "onepassword", "oracledb", "psycopg", "pymysql", "pysequoia")
           present = [name for name in clients if importlib.util.find_spec(name) is not None]
           if present:

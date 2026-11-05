@@ -199,9 +199,8 @@ def login(
 
     ``competing`` is :func:`competitor`'s answer for ``declared``. A failure
     that says nothing about the password is raised as the driver's error."""
-    # Imported here: only the session module may import a vendor client at
-    # module scope (tests/store/test_install_shape.py), and it has already
-    # imported PyMySQL by the time a login is made.
+    # Imported here, so the tier-0 tests import this module without PyMySQL.
+    # The session has already imported it by the time a login is made.
     import pymysql
 
     arguments = connect_arguments(

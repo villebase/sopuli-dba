@@ -29,11 +29,23 @@ from pathlib import Path
 #: ``python-oracledb``, ``psycopg``, PyMySQL, PyNaCl, ``pysequoia`` and 1Password's SDK. Kept
 #: here as a literal rather than derived from ``BACKENDS`` on purpose: this test is the check
 #: *on* that table, and a check that reads its expectation out of the thing it is checking
-#: would pass an empty table. The CI install-shape job's base cell lists the same names
-#: and ``nacl``. ``nacl`` is not blocked here, because ``sopuli.driver.mariadb.password``
-#: imports PyNaCl at module scope, which is reached only through the driver's session, and
-#: this walk exempts only the session module itself (#1296).
-CLIENTS = ("httpx", "oci", "onepassword", "oracledb", "psycopg", "pymysql", "pysequoia")
+#: would pass an empty table. The CI install-shape job's base cell lists the same names.
+CLIENTS = (
+    "httpx",
+    "nacl",
+    "oci",
+    "onepassword",
+    "oracledb",
+    "psycopg",
+    "pymysql",
+    "pysequoia",
+)
+
+#: The driver packages exempt as a whole, for their own `provides` only. The
+#: maintainer chose this for MariaDB, whose `password.py` imports PyNaCl at
+#: module scope (#1296, option A). A literal, so another driver's package is
+#: not exempted by being registered.
+PACKAGE_EXEMPT = ("sopuli.driver.mariadb",)
 
 #: A store the tool cannot reach from this interpreter, declared anyway. §3a's
 #: promise in four lines: the file means the same thing on a machine that has the
@@ -55,13 +67,17 @@ import pkgutil
 import sys
 
 BLOCKED = {blocked!r}
+#: The clients the module being imported may reach: a driver package's own
+#: `provides`, while the second pass imports it, and nothing otherwise.
+ALLOWED = set()
 
 
 class Blocker:
     """Refuse the vendor clients the way a base install refuses them."""
 
     def find_spec(self, fullname, path=None, target=None):
-        if fullname.split(".")[0] in BLOCKED:
+        top = fullname.split(".")[0]
+        if top in BLOCKED and top not in ALLOWED:
             raise ModuleNotFoundError(f"blocked by the install-shape test: {{fullname}}",
                                       name=fullname)
         return None
@@ -82,7 +98,26 @@ backends = (
     + tuple(driver.module for driver in DRIVERS.values())
     + tuple(notifier.module for notifier in NOTIFIERS.values())
 )
+#: A driver package whose every module may import the clients its own extra
+#: installs, because only the driver's session reaches it, and the clients.
+#: It may not import another driver's client (#1296). Every other driver's
+#: modules outside its session import with all clients blocked.
+packages = {{
+    driver.module.rsplit(".", 1)[0]: frozenset(driver.provides)
+    for driver in DRIVERS.values()
+    if driver.module.rsplit(".", 1)[0] in {package_exempt!r}
+}}
+
+
+def _package(name):
+    for package in packages:
+        if name == package or name.startswith(package + "."):
+            return package
+    return None
+
+
 imported = []
+in_packages = []
 for found in pkgutil.walk_packages(sopuli.__path__, "sopuli."):
     # Rule 1 puts the client import *inside* the backend module, so a backend is
     # the one place importing a client is correct. Everything else must not.
@@ -94,8 +129,30 @@ for found in pkgutil.walk_packages(sopuli.__path__, "sopuli."):
     # it is added.
     if any(found.name == module or found.name.startswith(module + ".") for module in backends):
         continue
+    if _package(found.name) is not None and found.name not in packages:
+        in_packages.append(found.name)
+        continue
     importlib.import_module(found.name)
     imported.append(found.name)
+
+# The second pass, after every other module has imported with all clients
+# blocked: so a module outside a driver package that imports one of its
+# modules has already failed the first pass.
+for name in in_packages:
+    ALLOWED.update(packages[_package(name)])
+    try:
+        importlib.import_module(name)
+    except ModuleNotFoundError as error:
+        # The driver's own client is not installed here: that is the extra's
+        # business, not this rule's.
+        if (error.name or "").split(".")[0] not in ALLOWED:
+            raise
+    finally:
+        ALLOWED.clear()
+    imported.append(name)
+for name in list(sys.modules):
+    if name.split(".")[0] in BLOCKED:
+        del sys.modules[name]
 
 # What the *walk* pulled in, before the command runs. `walk_packages` imports a
 # package in order to enumerate it, so a backend whose client import survives the
@@ -128,7 +185,9 @@ def _probe(tmp_path: Path, config: str) -> dict[str, object]:
     if sys.platform != "win32":
         path.chmod(0o600)
 
-    script = PROBE.format(blocked=set(CLIENTS), config=str(path))
+    script = PROBE.format(
+        blocked=set(CLIENTS), package_exempt=set(PACKAGE_EXEMPT), config=str(path)
+    )
     finished = subprocess.run(
         [sys.executable, "-c", script],
         capture_output=True,

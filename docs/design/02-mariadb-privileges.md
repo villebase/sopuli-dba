@@ -366,9 +366,15 @@ change fails with the plain `1396`, the answer a weak password gets
 and neither plugin checks it (PC2, PC3). `cracklib_password_check` and other
 plugins were not measured. An account with only `CREATE USER` reads
 `@@strict_password_validation` and the loaded plugins from
-`information_schema.PLUGINS` (PC4). Until the driver reads them and refuses
-such a target at plan time, every change there fails during the run with that
-`1396`, which breaks invariant 4 (#1310).
+`information_schema.PLUGINS` (PC4), and the session reads them with its scope.
+Where an active plugin would refuse the value, the scope lacks
+`password_value`, and `creds apply`, `creds rotate`, `creds finish-rollover`
+and `account reset-password` refuse the target at plan time, exit 5, naming
+the capability and the setting ([#1310](../decisions/log.md#1310)). The
+driver asks again before it sends, and its refusal names the plugins. A DBA
+who wants the tool to manage passwords on such a server sets
+`strict_password_validation` to `OFF`. The plugin then still checks every
+password sent in clear, and no longer refuses a value it cannot check.
 
 **The value is sensitive.** A `mysql_native_password` value is an unsalted
 SHA-1 hash. It allows an offline guess, and with one captured login handshake

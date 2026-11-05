@@ -112,6 +112,31 @@ PROFILE_MANAGEMENT = "profile_management"
 #: and verify function. What makes UC-1 §4's bounded regeneration necessary.
 PASSWORD_REUSE_POLICY = "password_reuse_policy"
 
+#: The server takes the password value the driver computes on the client
+#: (invariant 15). Reported by the MariaDB driver only, and only where no
+#: password validation plugin refuses that value: while one is loaded and
+#: `strict_password_validation` is ON, MariaDB refuses every value with a
+#: plain 1396 (`sql/mariadb/12_password_check_probe.py`, #1310).
+PASSWORD_VALUE = "password_value"
+
+
+def password_value_hint(checks: tuple[str, ...] = ()) -> str:
+    """The hint for a target without :data:`PASSWORD_VALUE`, given at plan
+    time and by the driver alike (#1310). ``checks`` names the plugins where
+    the caller read them; the plan's scope does not carry them."""
+    named = (
+        ", ".join(checks)
+        if checks
+        else "a password validation plugin (information_schema.PLUGINS names it)"
+    )
+    return (
+        f"the server has {named} active and strict_password_validation ON, so it "
+        "refuses the password value the tool computes, which it cannot check. A DBA "
+        "can set strict_password_validation=OFF, which leaves the plugin checking "
+        "passwords sent in clear, or unload the plugin (02-mariadb-privileges.md §6)"
+    )
+
+
 #: Force expiry, or end a rollover window early.
 EXPIRE_PASSWORD = "expire_password"
 
@@ -174,6 +199,7 @@ CAPABILITIES = frozenset(
         EXPIRE_PASSWORD,
         ACCOUNT_LOCK_STATE,
         ROLE_LOOKUP,
+        PASSWORD_VALUE,
     }
 )
 

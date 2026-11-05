@@ -16,6 +16,7 @@ from sopuli.config.model import ExpandedTarget, Target
 from sopuli.driver.protocol import (
     ENCRYPTION_TLS,
     PASSWORD_EXPIRE,
+    PASSWORD_VALUE,
     DriverError,
     Encryption,
     Scope,
@@ -61,7 +62,8 @@ def _session(
     scope = Scope(
         type="server",
         read_write=read_write,
-        capabilities=session_module.CAPABILITIES,
+        # As `observe` reports a server with no password validation plugin.
+        capabilities=session_module.CAPABILITIES | {PASSWORD_VALUE},
         encryption=Encryption(method=ENCRYPTION_TLS),
     )
     monkeypatch.setattr(session, "scope", lambda: scope)

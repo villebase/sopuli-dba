@@ -197,6 +197,7 @@ from sopuli.driver.protocol import (
     PASSWORD_EXPIRE,
     PASSWORD_ROLLOVER,
     PASSWORD_SET,
+    PASSWORD_VALUE,
     PROFILE_MANAGEMENT,
     ROLLOVER_FINISH,
     STORED,
@@ -219,6 +220,8 @@ from sopuli.driver.protocol import (
     UnsupportedCapabilityError,
     UserState,
     VerifyResult,
+    password_value_hint,
+    require_capability,
 )
 from sopuli.driver.registry import (
     DRIVERS,
@@ -2361,6 +2364,7 @@ def account_reset_password(
     scopes: dict[str, Scope | None] = {}
     _require_encryption(reached, run, config, scopes=scopes)
     _require_seen_expiry(reached, run, config, delivery=delivery, scopes=scopes)
+    _require_password_value(reached, run, config, scopes=scopes)
     _refuse_mandatory_roles_at_plan(reached, run, config)
 
     # The question comes after the checks above, as in `account expire-password`
@@ -7674,11 +7678,12 @@ def creds_apply(
     )
     # Before the preview and before the lock (#857), so a refusal is the same for
     # both and holds no lock. Every target the plan names: one whose accounts have
-    # nothing staged is checked too, which can only refuse more. The two checks
+    # nothing staged is checked too, which can only refuse more. The checks
     # share one login per target.
     scopes: dict[str, Scope | None] = {}
     _require_encryption(_targets_of(config, bindings), run, config, scopes=scopes)
     _require_attribute_capabilities(bindings, run, config, scopes=scopes)
+    _require_password_value(_targets_of(config, bindings), run, config, scopes=scopes)
 
     # `--confirm` already means "proceed without asking" here -- it is what
     # `--source previous` requires -- so the flag answers both gates. Two flags
@@ -10243,6 +10248,40 @@ def _require_encryption(
             raise refusal
 
 
+#: The products whose driver reports whether the server takes the password
+#: value it computes (:data:`~sopuli.driver.protocol.PASSWORD_VALUE`, #1310).
+PASSWORD_VALUE_TYPES = frozenset({MARIADB})
+
+
+def _require_password_value(
+    targets: Iterable[ExpandedTarget],
+    run: Invocation,
+    config: Config,
+    *,
+    scopes: dict[str, Scope | None],
+) -> None:
+    """Refuse, at plan time, a MariaDB target whose password validation plugin
+    refuses every value the driver sends (#1310).
+
+    Invariant 4: while a plugin such as ``simple_password_check`` is active and
+    ``strict_password_validation`` is on, the server answers every change with
+    a plain ``1396`` (``12_password_check_probe.py``). Exit 5, naming
+    ``password_value``, the target and the setting, before any password is
+    drawn; the driver's own refusal, when it sends, names the plugins. One
+    connection per MariaDB target, shared through ``scopes``, and none for
+    another product. A target whose scope this cannot read is left
+    to the run, and the driver asks again before it sends.
+    """
+    for expanded in targets:
+        if expanded.target.type not in PASSWORD_VALUE_TYPES:
+            continue
+        scope = _plan_scope(expanded, run, config, scopes)
+        if scope is not None:
+            require_capability(
+                scope, PASSWORD_VALUE, target=expanded.name, hint=password_value_hint()
+            )
+
+
 def _require_seen_expiry(
     targets: Iterable[ExpandedTarget],
     run: Invocation,
@@ -12013,6 +12052,9 @@ def creds_finish_rollover(
     # reason -- to know whether a `pending` is staged, and to have something to
     # verify with -- and a read has never needed one.
     documents = _read_documents(keys, stores, run=run)
+    # MariaDB ends a window by sending the current value, which a password
+    # validation plugin refuses (#1310): said before the question.
+    _require_password_value(_targets_of(config, bindings), run, config, scopes={})
     if demand is not None:
         _ask_environments(plan, run, demand, action=action, noun="window")
         # Read again after the answer, as `creds generate` does: it can take
@@ -12496,11 +12538,12 @@ def creds_rotate(
 
     # Before the preview and before the lock (#857), so a refusal is the same for
     # both and holds no lock. Every target the plan names, due or not: a target
-    # with nothing due is checked too, which can only refuse more. The two
-    # checks share one login per target.
+    # with nothing due is checked too, which can only refuse more. The checks
+    # share one login per target.
     scopes: dict[str, Scope | None] = {}
     _require_encryption(_targets_of(config, bindings), run, config, scopes=scopes)
     _require_attribute_capabilities(bindings, run, config, scopes=scopes)
+    _require_password_value(_targets_of(config, bindings), run, config, scopes=scopes)
 
     if run.dry_run:
         # Invariant 8: the plan, the survey, and nothing written anywhere. The

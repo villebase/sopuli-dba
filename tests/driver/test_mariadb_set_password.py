@@ -23,6 +23,7 @@ from sopuli.driver.protocol import (
     OLD_KEEP,
     OLD_RETAIN,
     PASS,
+    PASSWORD_VALUE,
     UNAVAILABLE,
     VERIFY_BOTH,
     VERIFY_HASH,
@@ -69,6 +70,42 @@ def user(live_mariadb: Any) -> Iterator[str]:
     finally:
         with live_mariadb.connect() as admin, admin.cursor() as cursor, suppress(pymysql.Error):
             cursor.execute("drop user if exists %s@'%%'", (name,))
+
+
+def test_a_password_validation_plugin_takes_away_password_value(
+    live_mariadb: Any, user: str
+) -> None:
+    """#1310: with `simple_password_check` active and
+    `strict_password_validation` ON, the default, the server refuses every
+    value the driver sends (`12_password_check_probe.py`, PC1). The scope
+    says so, and `set_password` refuses before it sends, naming the plugin."""
+    _root(live_mariadb, "create user %s@'%%' identified by 'Acme-Check-Old-pw1'", (user,))
+    _root(live_mariadb, "install soname 'simple_password_check'")
+    try:
+        target = ExpandedTarget(
+            target=Target(
+                name="tier1-mariadb",
+                type="mariadb",
+                dsn=live_mariadb.dsn,
+                mariadb=TargetMysql(ssl_mode="REQUIRED"),
+            )
+        )
+        driver = session_module.MariadbDriver(correlation_id="tier1-check", timeouts=Timeouts())
+        checked = driver.connect(
+            target,
+            Credential(username=live_mariadb.tool_user, secret=Secret(live_mariadb.tool_password)),
+        )
+        try:
+            assert not checked.scope().supports(PASSWORD_VALUE)
+            with pytest.raises(UnsupportedCapabilityError) as caught:
+                checked.set_password(f"{user}@%", Secret("Acme-Check-New-pw2#"))
+        finally:
+            checked.close()
+    finally:
+        _root(live_mariadb, "uninstall soname 'simple_password_check'")
+
+    assert "simple_password_check" in str(caught.value.hint)
+    assert _login(live_mariadb, user, "Acme-Check-Old-pw1"), "nothing was sent"
 
 
 #: The statement consumers the invariant-15 test turns on.

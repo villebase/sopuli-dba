@@ -4612,3 +4612,28 @@ the register.
   ends an expiry without verifying the vault's `current`.
   On `ed25519`, a PyMySQL client still on the old password cannot log in
   during the rollover, so for it the rollover gives no grace.
+
+## #1310
+
+- **Decided:** 2026-11-05, #1310
+- **Question:** On MariaDB, while `simple_password_check` or
+  `password_reuse_check` is active and `strict_password_validation` is `ON`,
+  its default, the server refuses every password value the driver sends, with
+  a plain `1396` (`12_password_check_probe.py`). What does the tool do?
+- **Decision:** A: refuse at plan time by capability. The MariaDB scope reads
+  the setting and the active validation plugins, and reports `password_value`
+  only where none would refuse the value. `creds apply`, `creds rotate`,
+  `creds finish-rollover` and `account reset-password` refuse a MariaDB target
+  without it, exit 5, and the driver asks again before it sends.
+- **Why:** Invariant 4. Without it, every account in a run fails one by one
+  with an error that does not say why, the same `1396` a missing account or a
+  weak password gets. The tool account reads both conditions with the grants
+  it has (PC4).
+- **Rejected:** B: no plan-time refusal, and a clearer error per account at
+  run time. Turning `strict_password_validation` off for the tool's own
+  statements, which needs a privilege the tool account does not hold and
+  would bypass the DBA's policy.
+- **Accepted cost:** such a server is managed only once a DBA sets
+  `strict_password_validation` to `OFF`. The plugin then no longer checks the
+  passwords the tool sets, which the tool's own policy governs instead.
+  `cracklib_password_check` was not measured, and is treated as the others.

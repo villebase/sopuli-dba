@@ -43,7 +43,7 @@ from sopuli.driver.mariadb import roles, verification
 from sopuli.driver.mariadb.errors import from_error
 from sopuli.driver.mariadb.limits import LIMIT
 from sopuli.driver.mariadb.privileges import audit as privilege_audit
-from sopuli.driver.mariadb.scope import observe, require_read_write
+from sopuli.driver.mariadb.scope import observe, read_password_checks, require_read_write
 from sopuli.driver.mysql_family import account_statements
 from sopuli.driver.mysql_family.accounts import Principal, current_user, split
 from sopuli.driver.mysql_family.client import client_lines
@@ -62,6 +62,7 @@ from sopuli.driver.protocol import (
     PASSWORD_EXPIRE,
     PASSWORD_ROLLOVER,
     PASSWORD_SET,
+    PASSWORD_VALUE,
     PROFILE_MANAGEMENT,
     ROLE_LOOKUP,
     UNAVAILABLE,
@@ -82,6 +83,7 @@ from sopuli.driver.protocol import (
     UnsupportedCapabilityError,
     UserState,
     VerifyResult,
+    password_value_hint,
     require_capability,
 )
 from sopuli.driver.registry import NotWrittenError
@@ -320,8 +322,10 @@ class MariadbSession(ClosesConnection):
         protocol: ``creds generate`` asks it of a driver that has it.
 
         MariaDB has no profiles, and an account's reuse history is not read.
-        Whether a password check plugin refuses the value the driver sends is
-        not measured yet (#1310)."""
+        A password validation plugin does not shape the draw either: it sees no
+        password, only the value, and under strict validation it refuses the
+        value whatever the password, which the scope reports as a missing
+        ``password_value`` (#1310)."""
 
     def set_password(
         self,
@@ -378,6 +382,7 @@ class MariadbSession(ClosesConnection):
         if keeps_old and previous is not None:
             password_module.admit(previous)
         require_read_write(self.scope(), target=self.target.name)
+        self._require_password_value()
         found = self._existing(
             account,
             hint=(
@@ -408,6 +413,17 @@ class MariadbSession(ClosesConnection):
             )
         LOG.debug("password set for %s on %s", found.name, self.target.name)
         return ChangeResult(changed=True, detail="password set", discarded=True)
+
+    def _require_password_value(self) -> None:
+        """Refuse before a value is sent where a password validation plugin
+        would refuse it (#1310). The command refuses the target at plan time;
+        this is the driver's own line, on the connection that sends."""
+        if self.scope().supports(PASSWORD_VALUE):
+            return
+        checks = self._read(read_password_checks)
+        require_capability(
+            self.scope(), PASSWORD_VALUE, target=self.target.name, hint=password_value_hint(checks)
+        )
 
     def suspend_account(self, account: str) -> AccountChange:
         """``ALTER USER … ACCOUNT LOCK``, sent every time (#1267, decision 2).
@@ -482,6 +498,7 @@ class MariadbSession(ClosesConnection):
             )
         password_module.admit(secret)
         require_read_write(self.scope(), target=self.target.name)
+        self._require_password_value()
         found = self._existing(account, hint=_nothing("reset"))
         status = accounts_module.state_of(found).status
         statement = password_module.alter_user(
@@ -733,6 +750,7 @@ class MariadbSession(ClosesConnection):
             raise self._not_passed("current", account)
         password_module.admit(current)
         require_read_write(self.scope(), target=self.target.name)
+        self._require_password_value()
         found = self._existing(account, hint=_nothing("changed"))
         statement = password_module.alter_user(found.user, found.host, found.plugin, current)
         try:

@@ -9,17 +9,19 @@ import pytest
 
 from sopuli.driver.mariadb import accounts, privileges
 from sopuli.driver.mariadb.scope import (
+    PASSWORD_CHECKS,
     READ_ONLY,
     READ_ONLY_SETTINGS,
     READ_WRITE,
     VERSION,
     NotMariadbError,
     observe,
+    refusing_checks,
     writable,
 )
 from sopuli.driver.mysql_family.accounts import CURRENT_USER
 from sopuli.driver.mysql_family.encryption import TLS_VERSION
-from sopuli.driver.protocol import ENCRYPTION_NONE, ENCRYPTION_TLS, SERVER
+from sopuli.driver.protocol import ENCRYPTION_NONE, ENCRYPTION_TLS, PASSWORD_VALUE, SERVER
 from sopuli.exit_codes import ExitCode
 
 
@@ -50,11 +52,17 @@ class FakeCursor:
 # ------------------------------------------------------------------ scope ---
 
 
-def scope_cursor(version: str, read_only: object = 0, tls: str = "TLSv1.3") -> FakeCursor:
+def scope_cursor(
+    version: str,
+    read_only: object = 0,
+    tls: str = "TLSv1.3",
+    checks: tuple[object, object] = (1, None),
+) -> FakeCursor:
     return FakeCursor(
         {
             VERSION: (version,),
             READ_ONLY_SETTINGS: (read_only, 0),
+            PASSWORD_CHECKS: checks,
             TLS_VERSION: ("Ssl_version", tls),
         }
     )
@@ -67,7 +75,32 @@ def test_a_mariadb_server_is_a_server_with_its_version() -> None:
     assert scope.db_version == "11.8.9"
     assert scope.open_mode == READ_WRITE
     assert scope.encryption.method == ENCRYPTION_TLS
-    assert scope.capabilities == frozenset()
+    assert scope.capabilities == frozenset({PASSWORD_VALUE})
+
+
+@pytest.mark.parametrize(
+    ("strict", "plugins", "takes_value"),
+    [
+        (1, None, True),
+        (1, "simple_password_check", False),
+        ("ON", "password_reuse_check,simple_password_check", False),
+        (0, "simple_password_check", True),
+        ("OFF", "simple_password_check", True),
+        (b"weird", "simple_password_check", False),
+    ],
+)
+def test_a_validation_plugin_under_strict_validation_takes_away_password_value(
+    strict: object, plugins: object, takes_value: bool
+) -> None:
+    """#1310: an active plugin refuses every value while
+    `strict_password_validation` is on (`12_password_check_probe.py`, PC1,
+    PC3), and none while it is off (PC2). An unknown setting counts as on."""
+    scope = observe(scope_cursor("11.8.9-MariaDB", checks=(strict, plugins)), target="m")
+
+    assert scope.supports(PASSWORD_VALUE) is takes_value
+    assert refusing_checks(strict, plugins) == (
+        () if takes_value else tuple(str(plugins).split(","))
+    )
 
 
 def test_a_plain_session_names_the_mariadb_block() -> None:

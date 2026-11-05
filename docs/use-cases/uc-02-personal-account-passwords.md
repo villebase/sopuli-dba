@@ -536,6 +536,24 @@ keeps a block after failed logins (error 3955) outside `mysql.user`, so an
 account shown as `OPEN` may be blocked. Reasons:
 [#1225](../decisions/log.md#1225).
 
+**On MariaDB, a role has no host, so `role:` names it alone.** `CREATE ROLE
+dev_role` makes a role with an empty host, so the rule is `role: dev_role`, and
+the name is compared exactly, as a user name is (TG7). A `role:` written with a
+host is refused when the file loads, with exit 9. A `role:` rule admits
+every account the role is granted to, directly or through another role, and
+the account that created the role, which holds it with `ADMIN OPTION`. Whether
+that account counts is not decided (open: #1272). A role in the chain is
+followed and not admitted: it cannot log in. A rule that names a role `PUBLIC`
+reaches is refused by `account list` and by every verb, as a mandatory role is
+on MySQL: at plan time with exit 9, and in the run as the target's `ERROR`
+row. Every account holds `PUBLIC`. A `profile:` rule is refused by the absent
+`profile_management` capability, exit 5. `account suspend` sends `ACCOUNT LOCK`
+on every run and reports `changed: true`, because the lock cannot be read
+([#1267](../decisions/log.md#1267), decision 2). For the same reason a
+MariaDB account's `status` is `OPEN` or `EXPIRED` from the view, and never
+says whether it is locked; the detail says so. These verbs are not yet
+registered for MariaDB (open: #1272).
+
 ---
 
 ## 3. What is recorded

@@ -467,6 +467,21 @@ def account_matcher(product: str) -> Callable[[str, str], bool]:
     return same_mysql_account if product in USER_AT_HOST_TYPES else same_name
 
 
+def same_mariadb_role(left: str, right: str) -> bool:
+    """Two MariaDB role names are one role: compared exactly, as a user name
+    is. A MariaDB role has no host, so a `role:` rule names it alone
+    (``sql/mariadb/05_identity_grants_probe.py``, TG7)."""
+    return left == right
+
+
+def role_matcher(product: str) -> Callable[[str, str], bool]:
+    """How a `role:` rule's role is compared with a role an account holds on a
+    target of ``product``. On MySQL a role is an account, ``user@host``, so it
+    compares as one (#1225). On MariaDB it is a bare name
+    (:func:`same_mariadb_role`)."""
+    return same_mariadb_role if product == MARIADB else account_matcher(product)
+
+
 def account_key(product: str) -> Callable[[str], object]:
     """A key that is equal for two names :func:`account_matcher` takes as one
     account, so a caller can fold names in a dict rather than compare every
@@ -545,6 +560,27 @@ def typed_user(name: str, *, default: str) -> str:
     return (split[0] if split else name).strip("'\"` \t@") or default
 
 
+def refuse_a_mariadb_role_with_a_host(expanded: ExpandedTarget, role: str, *, at: KeyPath) -> None:
+    """Refuse a MariaDB ``role:`` written with an ``@``, as a MySQL role is
+    written, or between SQL's quotes or with a space at an end. A MariaDB role
+    has no host (TG7), and the tool quotes the name itself, so either rule would
+    match nothing. A role whose own name holds an ``@`` cannot be declared:
+    it reads as a MySQL role, and refusing it is the safer direction."""
+    name = typed_user(role, default="dev_role")
+    if "@" in role:
+        problem = "with a host, and a MariaDB role has none"
+    elif role != role.strip("'\"` \t"):
+        problem = "with SQL's quotes or a space at an end"
+    else:
+        return
+    raise ConfigError(
+        f"a personal account rule's `role:` declares {role!r} on MariaDB target "
+        f"{expanded.name!r} {problem}",
+        at=at,
+        hint=f"write the role alone, as `{name}`: CREATE ROLE {name} makes a role with no host",
+    )
+
+
 def check_personal_mysql_accounts(config: Config) -> None:
     """A `personal_accounts:` rule names its hosts on a MySQL or MariaDB target too.
 
@@ -553,14 +589,18 @@ def check_personal_mysql_accounts(config: Config) -> None:
     an account, and ``CREATE ROLE dev_role`` makes ``dev_role@%`` (decision 4 of
     #1225). A MariaDB role has no host: it is stored with an empty one, and
     ``mysql.roles_mapping`` names it without one
-    (``sql/mariadb/05_identity_grants_probe.py``, TG7). How a ``role:`` rule
-    matches on MariaDB is #1272's. A ``profile:`` names no account, and has
-    nothing to check. Run after references are resolved, so the rule's
+    (``sql/mariadb/05_identity_grants_probe.py``, TG7). So a MariaDB ``role:``
+    is the name alone, compared exactly (:func:`same_mariadb_role`), and one
+    written with a host is refused: it would match no role, and the run would
+    report only that there is no such role. A ``profile:`` names no account, and
+    has nothing to check. Run after references are resolved, so the rule's
     ``targets:`` names exist.
     """
     for index, rule in enumerate(config.personal_accounts):
         at = ROOT.key("personal_accounts").index(index)
         for expanded in select(config, rule.targets):
+            if rule.role is not None and expanded.target.type == MARIADB:
+                refuse_a_mariadb_role_with_a_host(expanded, rule.role, at=at.key("role"))
             if rule.role is not None and expanded.target.type == MYSQL:
                 refuse_a_bare_mysql_account(
                     expanded,

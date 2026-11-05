@@ -146,13 +146,14 @@ capability set, and commands degrade or refuse explicitly rather than silently.
 | `password_reuse_policy` | Server may reject a generated password | yes (`PASSWORD_REUSE_*`, verify function) |
 | `expire_password` | Force expiry / end rollover | yes |
 | `account_lock_state` | Read and set lock state | yes |
-| `role_lookup` | Which roles exist can be read, so a `role:` predicate naming no role is told apart from one matching nobody (UC-2 §2) | `SELECT ON SYS.DBA_ROLES`, in `02-oracle-privileges.md` §2's grant set. PostgreSQL: always, from `pg_roles`. MySQL: always, from `mysql.user` and `mysql.role_edges`, in `02-mysql-privileges.md` §2.1's grant set |
+| `role_lookup` | Which roles exist can be read, so a `role:` predicate naming no role is told apart from one matching nobody (UC-2 §2) | `SELECT ON SYS.DBA_ROLES`, in `02-oracle-privileges.md` §2's grant set. PostgreSQL: always, from `pg_roles`. MySQL: always, from `mysql.user` and `mysql.role_edges`, in `02-mysql-privileges.md` §2.1's grant set. MariaDB: always, from the `mysql.user` view and `mysql.roles_mapping`, in `02-mariadb-privileges.md` §2.1's grant set |
 
 A PostgreSQL session reports `role_lookup` and none of the others. A MySQL
 session reports `role_lookup`, and `password_rollover` and `expire_password`
 where the server has `caching_sha2_password_digest_rounds`, and none of the
 others. On MySQL the tool opens the window itself, with `RETAIN CURRENT
-PASSWORD` (UC-1 §6.3), and ends it with `DISCARD OLD PASSWORD`.
+PASSWORD` (UC-1 §6.3), and ends it with `DISCARD OLD PASSWORD`. A MariaDB
+session reports `role_lookup` and none of the others.
 
 A command that needs a capability the target lacks must fail with a distinct exit
 code and a message naming the capability and the target — never a generic error.

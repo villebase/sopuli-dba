@@ -6,8 +6,9 @@ the server's version (invariant 3); it is read to report it, and to tell
 MariaDB from MySQL, which answers the same protocol and has a driver of its own
 (#1202, decision 2).
 
-No capability is read here. The capabilities in P1's table name things this
-build of the MariaDB driver does not do yet (#1268), so the scope has none.
+No capability is read here. The session adds ``role_lookup``, which §2.1's
+grants always give it; the other capabilities in P1's table name things the
+MariaDB driver does not do.
 """
 
 from __future__ import annotations

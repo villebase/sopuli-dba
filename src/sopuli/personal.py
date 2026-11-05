@@ -35,7 +35,7 @@ from collections.abc import Callable, Collection
 
 from sopuli.config.errors import ROOT, ConfigError
 from sopuli.config.model import Config, PersonalAccountRule
-from sopuli.config.products import account_matcher, same_name
+from sopuli.config.products import account_matcher, role_matcher, same_name
 from sopuli.config.selection import select
 
 
@@ -59,6 +59,7 @@ def admits(
     profile: str | None = None,
     roles: Collection[str] = (),
     same: Callable[[str, str], bool] = same_name,
+    same_role: Callable[[str, str], bool] | None = None,
 ) -> bool:
     """Whether ``rule`` declares ``account``.
 
@@ -71,9 +72,12 @@ def admits(
     are case-sensitive: ``JDOE@%`` is another account than a declared
     ``jdoe@%``, and ``upper()`` would admit it (#1225).
 
-    A ``role:`` is compared by ``same`` too: on MySQL a role is an account,
-    ``user@host``, and ``DEV_ROLE@%`` is another role than ``dev_role@%``
-    (#1225). A ``profile:`` is compared by ``upper()``; only Oracle has
+    A ``role:`` is compared by ``same_role``, which is ``same`` where it is not
+    given: on MySQL a role is an account, ``user@host``, and ``DEV_ROLE@%`` is
+    another role than ``dev_role@%`` (#1225). On MariaDB a role has no host,
+    and :func:`rules_admitting` passes
+    :func:`~sopuli.config.products.same_mariadb_role`, which compares the name
+    exactly. A ``profile:`` is compared by ``upper()``; only Oracle has
     profiles. Each is how the drivers resolve one for `account list`, so a
     verb admits exactly the accounts the listing shows (#1208).
     """
@@ -87,7 +91,8 @@ def admits(
         return profile is not None and profile.upper() == rule.profile.upper()
 
     if rule.role is not None:
-        return any(same(held, rule.role) for held in roles)
+        matches = same_role or same
+        return any(matches(held, rule.role) for held in roles)
 
     # Unreachable through the config layer, which refuses an entry declaring
     # none of the three. Answered rather than asserted: a rule that says
@@ -109,11 +114,12 @@ def rules_admitting(
     and a profile predicate can both be true of one person, and both carry the
     same guarantee. What it costs is settled in :func:`declared_on`.
     """
-    same = account_matcher(_product(config, target))
+    product = _product(config, target)
+    same, same_role = account_matcher(product), role_matcher(product)
     return tuple(
         rule
         for rule in rules_for(config, target)
-        if admits(rule, account, profile=profile, roles=roles, same=same)
+        if admits(rule, account, profile=profile, roles=roles, same=same, same_role=same_role)
     )
 
 

@@ -2169,7 +2169,9 @@ The password in the token logs in. A reset never sends `ACCOUNT UNLOCK`,
 because the tool cannot tell a suspension from a block after failed logins:
 a locked account keeps its new password and still answers `4151`, and the
 JSON row's `actions[].detail` says the lock cannot be read. Unlock by hand,
-after checking that nobody suspended the account. `--keep-rollover` is refused
+after checking that nobody suspended the account. The same detail says that
+any other login method, such as `unix_socket`, stops working: the tool cannot
+see one. `--keep-rollover` is refused
 with exit 5.
 
 `expire-password` sends `PASSWORD EXPIRE` alone, and a second run changes

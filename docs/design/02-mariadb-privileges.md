@@ -226,10 +226,10 @@ hash.
 
 | Never read | What the tool does instead |
 |---|---|
-| the lock, `account_locked` (LK2) | `account list` says the lock cannot be read. `account suspend` always sends `ACCOUNT LOCK` and reports `changed: true` ([#1267](../decisions/log.md#1267), decision 2; open: #1272) |
+| the lock, `account_locked` (LK2) | `account list` says the lock cannot be read. `account suspend` always sends `ACCOUNT LOCK` and reports `changed: true` ([#1267](../decisions/log.md#1267), decision 2) |
 | an open rollover, `auth_or` (`03_dual_password_probe.py`, DP4) | `creds finish-rollover` always sends the new value alone and reports `changed: true` (decision 3; open: #1271) |
 | when the password changed, and its lifetime (RD1) | a change is verified by login (§7), not by its time (decision 8) |
-| a block after failed logins, `max_password_errors` (LK4, RD6) | `ACCOUNT UNLOCK` ends it, and a reset sends it only with `--unlock` (decision 9; open: #1272) |
+| a block after failed logins, `max_password_errors` (LK4, RD6) | `ACCOUNT UNLOCK` ends it. A reset never sends it, and a DBA unlocks by hand after checking for a suspension ([#1272](../decisions/log.md#1272), decision 1) |
 
 **The tool changes only `mysql_native_password` and `ed25519` accounts**
 (decision 1). `doctor --check-privileges` names an account on `parsec`, or on
@@ -377,10 +377,13 @@ value alone ends it (DP2, DP3, DP5). The tool computes both values from the
 **The other statements carry no password.** `ACCOUNT LOCK`, `ACCOUNT UNLOCK`
 and `PASSWORD EXPIRE` need only `CREATE USER` (LK1 to LK4). A locked account
 answers its password with `4151`, and a blocked one with `4150`. `account
-reset-password` sends `ACCOUNT UNLOCK` only with `--unlock`
-([#1267](../decisions/log.md#1267), decision 9), because it cannot read whether
+reset-password` never sends `ACCOUNT UNLOCK`, because it cannot read whether
 the account is locked by `account suspend` or blocked after failed logins
-(open: #1272).
+([#1272](../decisions/log.md#1272), decision 1). It sets the value with
+`PASSWORD EXPIRE` in the same statement, so a failure leaves neither. `account
+expire-password` sends `PASSWORD EXPIRE` alone, which does not end a second
+method joined by `OR`: both passwords keep logging in, expired
+(`11_rollover_expiry_probe.py`; decision 2).
 
 ---
 

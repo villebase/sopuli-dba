@@ -116,14 +116,17 @@ SHAPES = {
 }
 
 
-def alter_user(user: str, host: str, plugin: str, secret: Secret) -> str:
+def alter_user(user: str, host: str, plugin: str, secret: Secret, *, expire: bool = False) -> str:
     """The statement that sets ``secret``, by its value for ``plugin``:
     ``ALTER USER … IDENTIFIED VIA <plugin> USING '<value>'`` (§6). The plugin
-    is the account's own, so the tool never changes it."""
+    is the account's own, so the tool never changes it. With ``expire`` it
+    ends ``PASSWORD EXPIRE``, so the password is set and expired by one
+    statement, and a failure leaves neither."""
     value = VALUES[plugin](secret).reveal()
     if not SHAPES[plugin].fullmatch(value):
         raise ValueError(f"the {plugin} value has the wrong shape")
-    return f"ALTER USER {Principal(user, host).sql()} IDENTIFIED VIA {plugin} USING '{value}'"
+    statement = f"ALTER USER {Principal(user, host).sql()} IDENTIFIED VIA {plugin} USING '{value}'"
+    return f"{statement} PASSWORD EXPIRE" if expire else statement
 
 
 _QUOTED = re.compile(r"USING\s+'[^']*'", re.IGNORECASE)

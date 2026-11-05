@@ -871,6 +871,26 @@ def test_without_a_login_first_a_pending_is_set_and_verified_after(
     assert row["secret"]["stage"] == "current"
 
 
+@pytest.mark.parametrize("dry_run", [True, False])
+def test_a_target_that_refuses_the_value_is_refused_at_plan_time(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+    dry_run: bool,
+) -> None:
+    """#1310: a target whose product reports `password_value`, and whose scope
+    lacks it, is refused before anything is sent, exit 5. The fake is
+    Oracle-shaped, so Oracle is made such a product here."""
+    monkeypatch.setattr("sopuli.cli.PASSWORD_VALUE_TYPES", frozenset({"oracle"}))
+    harness = estate()
+    flags = ["--dry-run"] if dry_run else []
+    result = run(runner, write_config(CONFIG), "--select", "tenant=alpha", *flags)
+
+    assert getattr(result.exception, "exit_code", None) == ExitCode.UNSUPPORTED_CAPABILITY
+    assert all(session.changed == [] for session in harness["sessions"])
+
+
 @pytest.mark.parametrize(
     ("mark", "strategy", "expected"),
     [

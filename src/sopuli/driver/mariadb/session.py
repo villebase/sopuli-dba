@@ -217,15 +217,33 @@ class MariadbSession(ClosesConnection):
     #: ``CURRENT_USER()``, read on the first :meth:`describe_user`. It does
     #: not change for the life of a connection.
     _session_user: str | None = field(default=None, init=False, repr=False)
+    #: The password validation plugins that refuse the driver's value, read
+    #: with the scope (#1310); ``None`` where that read failed.
+    _password_checks: tuple[str, ...] | None = field(default=None, init=False, repr=False)
+    #: Why that read failed, for the refusal's hint.
+    _checks_unread: str | None = field(default=None, init=False, repr=False)
 
     def scope(self) -> Scope:
         """What this session is: a server, read-write or not, and its
-        encryption. Probed on the first call and cached (invariant 3)."""
+        encryption. Probed on the first call and cached (invariant 3).
+
+        ``password_value`` is added where :func:`read_password_checks` finds
+        no plugin that would refuse the value. That read is apart from the
+        rest: where it fails, the capability is absent, so only the verbs that
+        send a password are refused, and the others run (#1310)."""
         if self._scope is None:
             observed = self._read(
                 lambda cursor: observe(cursor, target=self.target.name, encryption=self.encryption)
             )
-            self._scope = replace(observed, capabilities=observed.capabilities | CAPABILITIES)
+            try:
+                self._password_checks = self._read(read_password_checks)
+            except DriverError as error:
+                self._checks_unread = str(error)
+            takes_value = self._password_checks == ()
+            capabilities = observed.capabilities | CAPABILITIES
+            if takes_value:
+                capabilities |= {PASSWORD_VALUE}
+            self._scope = replace(observed, capabilities=capabilities)
             if LOG.isEnabledFor(logging.DEBUG):
                 LOG.debug(
                     "%s is a server, %s %s, encryption %s",
@@ -418,12 +436,19 @@ class MariadbSession(ClosesConnection):
         """Refuse before a value is sent where a password validation plugin
         would refuse it (#1310). The command refuses the target at plan time;
         this is the driver's own line, on the connection that sends."""
-        if self.scope().supports(PASSWORD_VALUE):
+        scope = self.scope()
+        if scope.supports(PASSWORD_VALUE):
             return
-        checks = self._read(read_password_checks)
-        require_capability(
-            self.scope(), PASSWORD_VALUE, target=self.target.name, hint=password_value_hint(checks)
+        hint = (
+            password_value_hint(self._password_checks)
+            if self._password_checks is not None
+            else (
+                "strict_password_validation and the password validation plugins could not "
+                f"be read ({self._checks_unread}), so nothing says the server takes the "
+                "value the tool computes"
+            )
         )
+        require_capability(scope, PASSWORD_VALUE, target=self.target.name, hint=hint)
 
     def suspend_account(self, account: str) -> AccountChange:
         """``ALTER USER … ACCOUNT LOCK``, sent every time (#1267, decision 2).

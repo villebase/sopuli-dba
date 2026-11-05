@@ -16,12 +16,19 @@ from sopuli.driver.mariadb.scope import (
     VERSION,
     NotMariadbError,
     observe,
-    refusing_checks,
+    read_password_checks,
     writable,
 )
 from sopuli.driver.mysql_family.accounts import CURRENT_USER
 from sopuli.driver.mysql_family.encryption import TLS_VERSION
-from sopuli.driver.protocol import ENCRYPTION_NONE, ENCRYPTION_TLS, PASSWORD_VALUE, SERVER
+from sopuli.driver.protocol import (
+    ENCRYPTION_NONE,
+    ENCRYPTION_TLS,
+    PASSWORD_VALUE,
+    SERVER,
+    DriverError,
+    UnsupportedCapabilityError,
+)
 from sopuli.exit_codes import ExitCode
 
 
@@ -52,17 +59,11 @@ class FakeCursor:
 # ------------------------------------------------------------------ scope ---
 
 
-def scope_cursor(
-    version: str,
-    read_only: object = 0,
-    tls: str = "TLSv1.3",
-    checks: tuple[object, object] = (1, None),
-) -> FakeCursor:
+def scope_cursor(version: str, read_only: object = 0, tls: str = "TLSv1.3") -> FakeCursor:
     return FakeCursor(
         {
             VERSION: (version,),
             READ_ONLY_SETTINGS: (read_only, 0),
-            PASSWORD_CHECKS: checks,
             TLS_VERSION: ("Ssl_version", tls),
         }
     )
@@ -75,7 +76,7 @@ def test_a_mariadb_server_is_a_server_with_its_version() -> None:
     assert scope.db_version == "11.8.9"
     assert scope.open_mode == READ_WRITE
     assert scope.encryption.method == ENCRYPTION_TLS
-    assert scope.capabilities == frozenset({PASSWORD_VALUE})
+    assert scope.capabilities == frozenset()
 
 
 @pytest.mark.parametrize(
@@ -89,18 +90,70 @@ def test_a_mariadb_server_is_a_server_with_its_version() -> None:
         (b"weird", "simple_password_check", False),
     ],
 )
-def test_a_validation_plugin_under_strict_validation_takes_away_password_value(
+def test_a_validation_plugin_under_strict_validation_refuses_the_value(
     strict: object, plugins: object, takes_value: bool
 ) -> None:
     """#1310: an active plugin refuses every value while
     `strict_password_validation` is on (`12_password_check_probe.py`, PC1,
     PC3), and none while it is off (PC2). An unknown setting counts as on."""
-    scope = observe(scope_cursor("11.8.9-MariaDB", checks=(strict, plugins)), target="m")
+    cursor = FakeCursor({PASSWORD_CHECKS: (strict, plugins)})
 
-    assert scope.supports(PASSWORD_VALUE) is takes_value
-    assert refusing_checks(strict, plugins) == (
-        () if takes_value else tuple(str(plugins).split(","))
+    assert read_password_checks(cursor) == (() if takes_value else tuple(str(plugins).split(",")))
+
+
+def _session_over(answers: dict[str, Any]) -> Any:
+    """A MariaDB session whose reads go to a fake cursor."""
+    session_module = pytest.importorskip("sopuli.driver.mariadb.session")
+    from sopuli.config.model import ExpandedTarget, Target
+    from sopuli.driver.protocol import Encryption, Timeouts
+
+    session = session_module.MariadbSession(
+        connection=None,
+        target=ExpandedTarget(target=Target(name="m", type="mariadb", dsn="m.example.com:3306")),
+        correlation_id="tier0",
+        timeouts=Timeouts(),
+        encryption=Encryption(method=ENCRYPTION_TLS),
     )
+
+    def read(reader: Any, *, scrub: Any = None) -> Any:
+        return reader(FakeCursor(answers))
+
+    session._read = read
+    return session
+
+
+@pytest.mark.parametrize(
+    ("checks", "takes_value"), [((1, None), True), ((1, "simple_password_check"), False)]
+)
+def test_the_session_reports_password_value_from_the_checks(
+    checks: tuple[object, object], takes_value: bool
+) -> None:
+    answers: dict[str, Any] = {
+        VERSION: ("11.8.9-MariaDB",),
+        READ_ONLY_SETTINGS: (0, 0),
+        PASSWORD_CHECKS: checks,
+    }
+
+    assert _session_over(answers).scope().supports(PASSWORD_VALUE) is takes_value
+
+
+def test_a_failed_read_of_the_checks_refuses_only_the_value() -> None:
+    """A failed read leaves `password_value` out, so a verb that sends a
+    password is refused, and the scope still serves every other verb."""
+    answers: dict[str, Any] = {
+        VERSION: ("11.8.9-MariaDB",),
+        READ_ONLY_SETTINGS: (0, 0),
+        PASSWORD_CHECKS: DriverError("1142: SELECT command denied", code="1142"),
+    }
+    session = _session_over(answers)
+
+    scope = session.scope()
+
+    assert scope.read_write is True
+    assert not scope.supports(PASSWORD_VALUE)
+    with pytest.raises(UnsupportedCapabilityError, match="password_value") as caught:
+        session._require_password_value()
+    assert "could not be read" in str(caught.value.hint)
 
 
 def test_a_plain_session_names_the_mariadb_block() -> None:

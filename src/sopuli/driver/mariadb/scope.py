@@ -6,10 +6,10 @@ the server's version (invariant 3); it is read to report it, and to tell
 MariaDB from MySQL, which answers the same protocol and has a driver of its own
 (#1202, decision 2).
 
-One capability is read here: ``password_value``, absent while a password
-validation plugin is active and ``strict_password_validation`` is on, because
-the server then refuses every value the driver sends (#1310). The session adds
-the ones it always has (:data:`~sopuli.driver.mariadb.session.CAPABILITIES`).
+No capability is read in :func:`observe`. The session adds the ones it always
+has (:data:`~sopuli.driver.mariadb.session.CAPABILITIES`), and
+``password_value`` from :func:`read_password_checks`, read on its own so that
+a failed read refuses only the verbs that send a password (#1310).
 """
 
 from __future__ import annotations
@@ -17,14 +17,7 @@ from __future__ import annotations
 from sopuli.driver import protocol
 from sopuli.driver.mysql_family.accounts import text
 from sopuli.driver.mysql_family.encryption import read_encryption
-from sopuli.driver.protocol import (
-    PASSWORD_VALUE,
-    SERVER,
-    Cursor,
-    DriverError,
-    Encryption,
-    Scope,
-)
+from sopuli.driver.protocol import SERVER, Cursor, DriverError, Encryption, Scope
 from sopuli.exit_codes import ExitCode
 
 #: ``scope.open_mode``, in the words P1 uses for an Oracle database.
@@ -123,8 +116,6 @@ def observe(cursor: Cursor, *, target: str, encryption: Encryption | None = None
     read_only, tx_read_only = cursor.fetchone()
     can_write = writable(read_only, tx_read_only)
 
-    checks = read_password_checks(cursor)
-
     if encryption is None:
         encryption = read_encryption(cursor, block="mariadb")
 
@@ -134,7 +125,6 @@ def observe(cursor: Cursor, *, target: str, encryption: Encryption | None = None
         open_mode=READ_WRITE if can_write else READ_ONLY,
         read_write=can_write,
         encryption=encryption,
-        capabilities=frozenset() if checks else frozenset({PASSWORD_VALUE}),
     )
 
 

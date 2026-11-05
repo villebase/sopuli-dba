@@ -4637,3 +4637,8 @@ the register.
   `strict_password_validation` to `OFF`. The plugin then no longer checks the
   passwords the tool sets, which the tool's own policy governs instead.
   `cracklib_password_check` was not measured, and is treated as the others.
+  `creds finish-rollover` refuses the whole target too, including an account
+  whose staged `pending` would keep its window open and send nothing: no
+  window there can be closed until the setting changes. Where the plugins
+  cannot be read, `password_value` is absent and the same verbs are refused;
+  the other verbs run.

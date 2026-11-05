@@ -84,14 +84,17 @@ SKIPPED = "SKIPPED"
 
 
 def window_unknown(user: UserState, scope: Scope) -> bool:
-    """Whether a window may be open and the tool cannot read it: MySQL (#1224).
+    """Whether a window may be open and the tool cannot read it: MySQL (#1224)
+    and MariaDB (#1271).
 
-    The server keeps a retained password in ``mysql.user.User_attributes``,
-    which the tool account never reads (decision 6 of #1202), so the driver
-    reports ``rollover_active`` as ``None`` on a target that has rollover. The
-    close is then ``DISCARD OLD PASSWORD``, which the server accepts with
-    nothing retained, so it is sent every time. PostgreSQL also reports
-    ``None``, and has no rollover, so no window is open there.
+    MySQL keeps a retained password in ``mysql.user.User_attributes``, and
+    MariaDB a second method in ``mysql.global_priv``. The tool account reads
+    neither (decision 6 of #1202; decision 3 of #1267), so the driver reports
+    ``rollover_active`` as ``None`` on a target that has rollover. The close
+    is then ``DISCARD OLD PASSWORD`` on MySQL, and the current value alone on
+    MariaDB. Each server accepts it with nothing to end, so it is sent every
+    time. PostgreSQL also reports ``None``, and has no rollover, so no window
+    is open there.
     """
     return user.rollover_active is None and scope.supports(PASSWORD_ROLLOVER)
 

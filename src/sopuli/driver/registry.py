@@ -222,10 +222,12 @@ DRIVERS: dict[str, DatabaseDriver] = {
     # `pymysql`: with only the `mysql` extra installed, `mariadb` is not. The
     # session connects and serves `doctor` (#1268). UC-1 (#1270): `creds check`,
     # by login only where no other account can answer; `creds apply` and
-    # `rotate`, but `--strategy rollover`, which set the value the account's
-    # plugin stores, computed on the client, and never log in first, so with only
-    # `current` an account is skipped; `creds generate` and `status`. A rollover,
-    # and with it `finish-rollover`, is #1271. UC-2 (#1272): `account
+    # `rotate`, which set the value the account's plugin stores, computed on the
+    # client, and never log in first, so with only `current` an account is
+    # skipped; `creds generate` and `status`. A rollover sends the new and the
+    # old value joined by `OR`, and `finish-rollover` sends the current value
+    # alone on every run, because the tool cannot read whether one is open
+    # (#1271). UC-2 (#1272): `account
     # list`, where a `role:` rule names a role alone and one `PUBLIC` reaches is
     # refused; `account reset-password`, which sets the value with `PASSWORD
     # EXPIRE` in one statement, never unlocks, and refuses `--keep-rollover` by
@@ -250,6 +252,7 @@ DRIVERS: dict[str, DatabaseDriver] = {
                 "creds.rotate",
                 "creds.generate",
                 "creds.status",
+                "creds.finish-rollover",
             }
         ),
     ),

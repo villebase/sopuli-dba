@@ -116,17 +116,42 @@ SHAPES = {
 }
 
 
+def _value(plugin: str, secret: Secret) -> str:
+    """``secret``'s value for ``plugin``, checked against its shape before it
+    goes between quotes."""
+    value = VALUES[plugin](secret).reveal()
+    if not SHAPES[plugin].fullmatch(value):
+        raise ValueError(f"the {plugin} value has the wrong shape")
+    return value
+
+
 def alter_user(user: str, host: str, plugin: str, secret: Secret, *, expire: bool = False) -> str:
     """The statement that sets ``secret``, by its value for ``plugin``:
     ``ALTER USER … IDENTIFIED VIA <plugin> USING '<value>'`` (§6). The plugin
     is the account's own, so the tool never changes it. With ``expire`` it
     ends ``PASSWORD EXPIRE``, so the password is set and expired by one
     statement, and a failure leaves neither."""
-    value = VALUES[plugin](secret).reveal()
-    if not SHAPES[plugin].fullmatch(value):
-        raise ValueError(f"the {plugin} value has the wrong shape")
-    statement = f"ALTER USER {Principal(user, host).sql()} IDENTIFIED VIA {plugin} USING '{value}'"
+    statement = (
+        f"ALTER USER {Principal(user, host).sql()} IDENTIFIED VIA {plugin} "
+        f"USING '{_value(plugin, secret)}'"
+    )
     return f"{statement} PASSWORD EXPIRE" if expire else statement
+
+
+def alter_user_rollover(user: str, host: str, plugin: str, new: Secret, old: Secret) -> str:
+    """The statement that opens a rollover: ``ALTER USER … IDENTIFIED VIA
+    <plugin> USING '<new>' OR <plugin> USING '<old>'`` (#1271). Both passwords
+    log in until the new value is sent alone (``03_dual_password_probe.py``,
+    DP2; ``11_rollover_expiry_probe.py``, RE4).
+
+    **The new value comes first.** PyMySQL uses only the first method of an
+    ``ed25519`` ``OR``, so the new password is the one it logs in with, and
+    the tool's login after the change can confirm it (RE5). Both methods use
+    the account's own plugin."""
+    return (
+        f"ALTER USER {Principal(user, host).sql()} IDENTIFIED VIA {plugin} "
+        f"USING '{_value(plugin, new)}' OR {plugin} USING '{_value(plugin, old)}'"
+    )
 
 
 _QUOTED = re.compile(r"USING\s+'[^']*'", re.IGNORECASE)

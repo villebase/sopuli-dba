@@ -25,6 +25,7 @@ from sopuli.driver.mariadb.password import (  # noqa: E402
     PasswordNotAdmissibleError,
     admit,
     alter_user,
+    alter_user_rollover,
     ed25519_value,
     native_value,
     scrub,
@@ -161,6 +162,51 @@ def test_the_reset_refuses_to_keep_a_rollover_before_anything_is_read() -> None:
     assert "joined by OR" in str(caught.value.hint)
 
 
+@pytest.mark.parametrize("old_password", ["retain", "keep"])
+def test_keeping_the_old_password_without_it_is_refused_before_anything_is_read(
+    old_password: str,
+) -> None:
+    """#1271: the rollover sends the old value again, so the command must pass
+    it. A session with no connection refuses, so nothing was read or sent."""
+    from sopuli.driver.protocol import DriverError
+
+    session_module = pytest.importorskip("sopuli.driver.mariadb.session")
+    session = session_module.MariadbSession(
+        connection=None,
+        target=ExpandedTarget(
+            target=Target(name="mariadb-dev", type="mariadb", dsn="mariadb-dev.example.com:3306")
+        ),
+        correlation_id="tier0",
+        timeouts=Timeouts(),
+    )
+
+    with pytest.raises(DriverError) as caught:
+        session.set_password("acme_app@%", Secret("Acme-Vector-1"), old_password=old_password)
+
+    assert "fault in sopuli" in str(caught.value.hint)
+    assert caught.value.password_sent is False
+
+
+def test_finishing_a_rollover_without_the_current_password_is_refused_first() -> None:
+    from sopuli.driver.protocol import DriverError
+
+    session_module = pytest.importorskip("sopuli.driver.mariadb.session")
+    session = session_module.MariadbSession(
+        connection=None,
+        target=ExpandedTarget(
+            target=Target(name="mariadb-dev", type="mariadb", dsn="mariadb-dev.example.com:3306")
+        ),
+        correlation_id="tier0",
+        timeouts=Timeouts(),
+    )
+
+    with pytest.raises(DriverError) as caught:
+        session.finish_rollover("acme_app@%")
+
+    assert "fault in sopuli" in str(caught.value.hint)
+    assert caught.value.password_sent is False
+
+
 def test_apply_finds_the_hook_it_looks_up_by_name() -> None:
     """`creds apply` reads it with getattr, outside the protocol, and a missing
     `verifies_before_change` means a login before the change, which #1270
@@ -206,6 +252,62 @@ def test_a_value_of_the_wrong_shape_is_never_sent(monkeypatch: pytest.MonkeyPatc
 
     with pytest.raises(ValueError, match="wrong shape"):
         alter_user("acme_app", "%", NATIVE, Secret("Acme-Vector-1"))
+
+
+#: Each plugin's two vectors for a rollover: the new password and the old one.
+ROLLOVERS = [
+    (NATIVE, SERVER_VALUES[0][2], SERVER_VALUES[1][2]),
+    (ED25519, SERVER_VALUES[3][2], SERVER_VALUES[4][2]),
+]
+
+
+@pytest.mark.parametrize(("plugin", "new", "old"), ROLLOVERS)
+def test_a_rollover_sends_the_new_value_first_or_the_old(plugin: str, new: str, old: str) -> None:
+    """#1271: PyMySQL logs in only by the first method of an ed25519 `OR`, so
+    the new password comes first (`11_rollover_expiry_probe.py`, RE5)."""
+    statement = alter_user_rollover(
+        "acme_app", "10.%", plugin, Secret("Acme-Vector-1"), Secret("pässwörd-é")
+    )
+
+    assert statement == (
+        f"ALTER USER `acme_app`@`10.%` IDENTIFIED VIA {plugin} USING '{new}' "
+        f"OR {plugin} USING '{old}'"
+    )
+    assert "Acme-Vector-1" not in statement
+    assert "pässwörd-é" not in statement
+
+
+@pytest.mark.parametrize("which", ["new", "old"])
+def test_a_rollover_value_of_the_wrong_shape_is_never_sent(
+    monkeypatch: pytest.MonkeyPatch, which: str
+) -> None:
+    real = native_value
+    bad = Secret("Acme-Bad-1")
+    monkeypatch.setitem(
+        VALUES,
+        NATIVE,
+        lambda secret: Secret("*AB' OR 1=1") if secret is bad else real(secret),
+    )
+    good = Secret("Acme-Vector-1")
+
+    with pytest.raises(ValueError, match="wrong shape"):
+        alter_user_rollover(
+            "acme_app", "%", NATIVE, *((bad, good) if which == "new" else (good, bad))
+        )
+
+
+@pytest.mark.parametrize(("plugin", "new", "old"), ROLLOVERS)
+def test_the_scrub_hides_both_values_of_a_rollover(plugin: str, new: str, old: str) -> None:
+    statement = alter_user_rollover(
+        "acme_app", "%", plugin, Secret("Acme-Vector-1"), Secret("pässwörd-é")
+    )
+    quoted = f"Operation ALTER USER failed for {statement}"
+    bare = f"values {new} and {old} are malformed"
+
+    for message in (quoted, bare):
+        assert new not in scrub(message)
+        assert old not in scrub(message)
+    assert scrub(quoted).count("USING '***'") == 2
 
 
 @pytest.mark.parametrize(("plugin", "password", "stored"), SERVER_VALUES)

@@ -15,10 +15,11 @@ declared accounts (:mod:`~sopuli.driver.mariadb.accounts`). It describes a
 declared account, with the privileges guardrail 9 checks and the roles it
 holds, sets its password by the value its plugin stores and verifies it by
 login (#1270). It resolves a role and lists its members, suspends an account,
-resets its password and expires it (#1272). The registry lists `doctor`,
-UC-1's `creds generate`, `apply`, `check`, `rotate` and `status`, and UC-2's
-four verbs. Every other method refuses with ``SOPULI-20006``: a rollover is
-#1271.
+resets its password and expires it (#1272). It opens a rollover by sending
+the new and the old value joined by ``OR``, and finishes it by sending the
+current value alone (#1271). The registry lists `doctor`, UC-1's `creds
+generate`, `apply`, `check`, `rotate` and `status`, and UC-2's four verbs.
+Every other method refuses with ``SOPULI-20006``.
 
 The session claims no server identity: MariaDB has no ``server_uuid``, and
 11.8.9 shows no ``server_uid`` status either, so two targets on one server are
@@ -59,6 +60,7 @@ from sopuli.driver.protocol import (
     OLD_PASSWORD_MODES,
     OLD_RETAIN,
     PASSWORD_EXPIRE,
+    PASSWORD_ROLLOVER,
     PASSWORD_SET,
     PROFILE_MANAGEMENT,
     ROLE_LOOKUP,
@@ -89,12 +91,6 @@ from sopuli.secrets import Secret
 
 LOG = logger("mariadb")
 
-#: The hint for `--strategy rollover` on a MariaDB server.
-NO_ROLLOVER = (
-    "a rollover window is not written for MariaDB yet (#1271); use "
-    "`--strategy staged` or `--strategy direct`"
-)
-
 #: The hint for a `profile:` rule on a MariaDB server.
 NO_PROFILES = (
     "MariaDB has no profiles; declare these accounts by name with `accounts:`, "
@@ -117,8 +113,11 @@ MISSING_GRANT_HINT = (
 #:   on 10.11.19 to 12.3.3 (``04_lock_expiry_probe.py``, LK3), and a new value
 #:   sent alone ends an expiry (``11_rollover_expiry_probe.py``). It also tells
 #:   `creds apply` it may set a password on an expired account, as on MySQL
-#:   (:func:`sopuli.apply.settled_before_acting`'s ``expiry_cleared``).
-CAPABILITIES = frozenset({ROLE_LOOKUP, EXPIRE_PASSWORD})
+#:   (:func:`sopuli.apply.settled_before_acting`'s ``expiry_cleared``);
+#: - ``password_rollover``: two methods joined by ``OR`` both log in, on
+#:   10.11.19 to 12.3.3 (``03_dual_password_probe.py``, DP2). The tool opens
+#:   the window itself (#1271), and cannot read whether one is open.
+CAPABILITIES = frozenset({ROLE_LOOKUP, EXPIRE_PASSWORD, PASSWORD_ROLLOVER})
 
 #: The server refused a read of a table (``1142``) or a column (``1143``).
 REFUSED_READ = frozenset({str(TABLE_ACCESS_DENIED), str(COLUMN_ACCESS_DENIED)})
@@ -256,9 +255,8 @@ class MariadbSession(ClosesConnection):
             what=what,
             hint=hint
             or (
-                "the MariaDB driver runs `doctor`, the `creds` commands but "
-                "`finish-rollover`, and the `account` commands; a rollover is not "
-                "written yet (#1271)"
+                "the MariaDB driver runs `doctor`, the `creds` commands and the `account` "
+                "commands, and applies no account attributes"
             ),
         )
 
@@ -311,38 +309,60 @@ class MariadbSession(ClosesConnection):
         not measured yet (#1310)."""
 
     def set_password(
-        self, account: str, secret: Secret, *, old_password: str = OLD_DISCARD
+        self,
+        account: str,
+        secret: Secret,
+        *,
+        old_password: str = OLD_DISCARD,
+        previous: Secret | None = None,
     ) -> ChangeResult:
         """``ALTER USER … IDENTIFIED VIA <plugin> USING '<value>'``, with the
         value for the account's own plugin computed here (invariant 15,
         :mod:`~sopuli.driver.mariadb.password`).
 
-        ``discard``, and ``keep`` taken as ``discard``: the statement names one
-        method, which replaces every method the account had
-        (``03_dual_password_probe.py``, DP3). That ends a second password a
-        rollover kept, so only the vault's password logs in. It also ends a
-        second method of another kind, such as ``unix_socket``, which the view
-        does not show. That gap is accepted (``02-mariadb-privileges.md`` §4,
-        #1301), and ``doctor`` says so (:data:`OR_GAP`). ``keep`` reaches here
-        when a ``pending`` a MySQL rollover rotation marked, in a document a
-        MariaDB target shares, is set again: no window was opened on this
-        target, so there is none to keep. ``retain`` opens one, and that is
-        #1271.
+        ``old_password`` says what happens to the password the account had.
+        MariaDB keeps no second password beside a change: the statement
+        names its methods, and they replace every method the account had
+        (``03_dual_password_probe.py``, DP3). So the tool sends the old
+        password's value again where it is to keep working (#1271).
+        ``previous`` is that password, the one the vault's document says the
+        account had.
+
+        * ``discard``: the new value alone, so only the vault's password logs
+          in. It ends a second password a rollover kept, and also a second
+          method of another kind, such as ``unix_socket``, which the view does
+          not show. That gap is accepted (``02-mariadb-privileges.md`` §4,
+          #1301), and ``doctor`` says so (:data:`OR_GAP`).
+        * ``retain``: the new value ``OR`` ``previous``'s, new first
+          (:func:`~sopuli.driver.mariadb.password.alter_user_rollover`). Both
+          log in until :meth:`finish_rollover`.
+        * ``keep``: the same statement. A rollover's ``pending`` that `creds
+          apply` sets again while its promotion is held must keep the window
+          open, and nothing else keeps it.
 
         As on the other drivers, ``changed`` is ``True`` whenever the statement
         succeeded: the command decides first whether the account already had
         this password.
 
         Refused before anything is sent, with ``password_sent`` left ``False``:
-        a password the target cannot take, a read-only session, an account that
-        does not exist, and one on another plugin. Once the statement is handed
-        to the server, a failure has ``password_sent`` set. What crossed is the
-        value, which still allows an offline guess.
+        ``retain`` or ``keep`` without ``previous``, a password the target
+        cannot take, a read-only session, an account that does not exist, and
+        one on another plugin. Once the statement is handed to the server, a
+        failure has ``password_sent`` set. What crossed is the value, which
+        still allows an offline guess.
         """
         if old_password not in OLD_PASSWORD_MODES:
             raise ValueError(f"not an old-password mode: {old_password!r}")
-        if old_password == OLD_RETAIN:
-            self._not_written("keep a rollover window", hint=NO_ROLLOVER)
+        keeps_old = old_password != OLD_DISCARD
+        if keeps_old and previous is None:
+            raise DriverError(
+                f'no old password was given to keep for "{account}" on target '
+                f'"{self.target.name}"; nothing was sent',
+                hint=(
+                    "this is a fault in sopuli: a MariaDB rollover sends the old password's "
+                    "value again, so the command must pass it"
+                ),
+            )
         password_module.admit(secret)
         require_read_write(self.scope(), target=self.target.name)
         found = self._existing(
@@ -352,7 +372,12 @@ class MariadbSession(ClosesConnection):
                 "as ACCOUNT_MISSING rather than failing"
             ),
         )
-        statement = password_module.alter_user(found.user, found.host, found.plugin, secret)
+        if keeps_old and previous is not None:
+            statement = password_module.alter_user_rollover(
+                found.user, found.host, found.plugin, secret, previous
+            )
+        else:
+            statement = password_module.alter_user(found.user, found.host, found.plugin, secret)
         try:
             # The read above found the session open, so a failure here is the
             # server's answer to the statement.
@@ -360,6 +385,13 @@ class MariadbSession(ClosesConnection):
         except DriverError as failure:
             failure.password_sent = True
             raise
+        if keeps_old:
+            LOG.debug("password set for %s on %s, old password kept", found.name, self.target.name)
+            return ChangeResult(
+                changed=True,
+                detail="password set; the old password logs in too",
+                retained=old_password == OLD_RETAIN,
+            )
         LOG.debug("password set for %s on %s", found.name, self.target.name)
         return ChangeResult(changed=True, detail="password set", discarded=True)
 
@@ -653,11 +685,59 @@ class MariadbSession(ClosesConnection):
             ),
         )
 
-    def require_rollover(self, account: str) -> NoReturn:
-        self._not_written("keep a rollover window", hint=NO_ROLLOVER)
+    def require_rollover(self, account: str) -> None:
+        """Refuse ``--strategy rollover`` where the account does not exist or
+        uses another plugin, before anything is sent.
 
-    def finish_rollover(self, account: str) -> NoReturn:
-        self._not_written("finish a rollover")
+        Every supported release joins two methods with ``OR``
+        (``03_dual_password_probe.py``, DP2), so :data:`CAPABILITIES` reports
+        ``password_rollover``, and no profile decides it: the tool opens the
+        window itself (#1271)."""
+        require_capability(self.scope(), PASSWORD_ROLLOVER, target=self.target.name)
+        self._existing(account, hint=_nothing("rolled over"))
+
+    def finish_rollover(self, account: str, *, current: Secret | None = None) -> ChangeResult:
+        """The ``current`` password's value alone, always, and ``changed:
+        True`` (#1271).
+
+        The statement names one method, so it ends the old password a
+        rollover kept, and an expiry with it (``11_rollover_expiry_probe.py``,
+        RE4). ``PASSWORD EXPIRE`` would not end it (RE2), and MariaDB has no
+        ``DISCARD OLD PASSWORD``. Whether a second method is there is in
+        ``mysql.global_priv``, which the tool account does not read (#1267,
+        decision 3), so the value is sent on every run and every run reports a
+        change: the exception to invariant 9 this verb has on MariaDB.
+
+        Refused before anything is sent, with ``password_sent`` left ``False``:
+        no ``current``, a read-only session, an account that does not exist,
+        and one on another plugin. A failure of the statement has
+        ``password_sent`` set.
+        """
+        if current is None:
+            raise DriverError(
+                f'no current password was given to finish the rollover of "{account}" on '
+                f'target "{self.target.name}"; nothing was sent',
+                hint=(
+                    "this is a fault in sopuli: MariaDB ends a rollover by sending the current "
+                    "password's value alone, so the command must pass it"
+                ),
+            )
+        require_read_write(self.scope(), target=self.target.name)
+        found = self._existing(account, hint=_nothing("changed"))
+        statement = password_module.alter_user(found.user, found.host, found.plugin, current)
+        try:
+            self._read(lambda cursor: cursor.execute(statement), scrub=password_module.scrub)
+        except DriverError as failure:
+            failure.password_sent = True
+            raise
+        LOG.debug("rollover finished for %s on %s", found.name, self.target.name)
+        return ChangeResult(
+            changed=True,
+            detail=(
+                "sent the current password alone; whether a rollover was open cannot be "
+                "read on MariaDB"
+            ),
+        )
 
     def _read(self, reader: Callable[[Any], T], *, scrub: Callable[[str], str] | None = None) -> T:
         """Run ``reader`` on a cursor of this session. A closed session is a

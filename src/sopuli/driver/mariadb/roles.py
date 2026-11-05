@@ -106,6 +106,16 @@ def public_reach(cursor: Cursor) -> dict[str, str]:
     return reach
 
 
+def granted(cursor: Cursor, account: Principal) -> tuple[str, ...]:
+    """Every role ``account`` holds by a grant, directly or through another
+    role, by name alone, sorted: the roles a `role:` rule is compared with.
+    ``PUBLIC`` and what it reaches are not followed: :func:`resolve` refuses a
+    rule naming one of them."""
+    reached = follow(cursor, [account], ROLE_EDGES)
+    reached.pop(account.key(), None)
+    return tuple(sorted(role.user for role in reached.values()))
+
+
 def members_of(cursor: Cursor, role: str) -> tuple[str, ...]:
     """Every account that holds ``role``, directly or through another role,
     ``user@host`` in the server's spelling, sorted. ``role`` is the spelling

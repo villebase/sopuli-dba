@@ -127,6 +127,19 @@ def test_a_mysql_role_is_compared_as_an_account() -> None:
     assert declared_on(on_host, "jdoe@%", "mysql-dev", roles=("dev_role@localhost",)) is not None
 
 
+def test_a_mariadb_role_is_compared_by_its_name_alone() -> None:
+    """A MariaDB role has no host, so a `role:` rule names it alone, and the
+    name compares exactly (TG7, #1272)."""
+    target = {**MYSQL_TARGET, "name": "mariadb-dev", "type": "mariadb"}
+    loaded = build_config(
+        {"version": 1, "targets": [target], "personal_accounts": [{"role": "dev_role"}]}
+    )
+
+    assert declared_on(loaded, "jdoe@%", "mariadb-dev", roles=("dev_role",)) is not None
+    assert declared_on(loaded, "jdoe@%", "mariadb-dev", roles=("DEV_ROLE",)) is None
+    assert declared_on(loaded, "jdoe@%", "mariadb-dev", roles=("dev_role@%",)) is None
+
+
 def test_a_mysql_application_account_binds_only_its_own_spelling() -> None:
     """An application's `JDOE@%` is another account than `jdoe@%`, so it does
     not refuse it; its own `JDOE@%` it does (#1225, item 6)."""

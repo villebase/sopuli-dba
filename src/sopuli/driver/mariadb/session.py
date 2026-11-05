@@ -8,12 +8,15 @@ rule 1). The modules beside it are tier 0.
 **What this build does** (#1268). It connects through
 :mod:`sopuli.driver.mysql_family`, labels the session with the run's
 correlation id, checks that a mode which requires TLS got it, and reports the
-scope: ``server``, whether it takes writes, and its encryption. For ``doctor
+scope: ``server``, whether it takes writes, its encryption, and
+``role_lookup``. For ``doctor
 --check-privileges`` it audits the tool account's grants
 (:mod:`~sopuli.driver.mariadb.privileges`) and surveys the declared accounts
 (:mod:`~sopuli.driver.mariadb.accounts`). It describes a declared account,
-with the privileges guardrail 9 checks, and sets its password by the value its
-plugin stores (#1270). Every other method refuses with
+with the privileges guardrail 9 checks and the roles it holds, sets its password
+by the value its plugin stores and verifies it by login (#1270). It resolves a
+role and lists its members, and suspends an account (#1272). Every other method
+refuses with
 ``SOPULI-20006``, and the registry lists no command but `doctor`: the rest of
 UC-1 is #1270 and UC-2 #1272.
 
@@ -35,23 +38,28 @@ import pymysql
 from sopuli.config.model import ExpandedTarget, Runtime
 from sopuli.driver.mariadb import accounts as accounts_module
 from sopuli.driver.mariadb import password as password_module
-from sopuli.driver.mariadb import verification
+from sopuli.driver.mariadb import roles, verification
 from sopuli.driver.mariadb.errors import from_error
 from sopuli.driver.mariadb.privileges import audit as privilege_audit
 from sopuli.driver.mariadb.scope import observe, require_read_write
-from sopuli.driver.mysql_family.accounts import current_user, split
+from sopuli.driver.mysql_family import account_statements
+from sopuli.driver.mysql_family.accounts import Principal, current_user, split
 from sopuli.driver.mysql_family.client import client_lines
 from sopuli.driver.mysql_family.connection import connect_arguments, require_tls
 from sopuli.driver.mysql_family.encryption import read_encryption
 from sopuli.driver.mysql_family.errors import COLUMN_ACCESS_DENIED, TABLE_ACCESS_DENIED
 from sopuli.driver.protocol import (
+    ACCOUNT_LOCK,
     OFFLINE_VERIFY,
     OLD_DISCARD,
     OLD_PASSWORD_MODES,
+    PROFILE_MANAGEMENT,
+    ROLE_LOOKUP,
     UNAVAILABLE,
     VERIFY_BOTH,
     VERIFY_HASH,
     VERIFY_LOGIN,
+    AccountChange,
     ChangeResult,
     ClosesConnection,
     Credential,
@@ -71,6 +79,12 @@ from sopuli.output.debug import logger
 from sopuli.secrets import Secret
 
 LOG = logger("mariadb")
+
+#: The hint for a `profile:` rule on a MariaDB server.
+NO_PROFILES = (
+    "MariaDB has no profiles; declare these accounts by name with `accounts:`, "
+    "or by a role they hold with `role:`"
+)
 
 MISSING_GRANT_HINT = (
     "the tool account lacks a grant of 02-mariadb-privileges.md section 2.1, which it "
@@ -112,9 +126,9 @@ T = TypeVar("T")
 @dataclass
 class MariadbSession(ClosesConnection):
     """One open connection to a MariaDB server. Implements the
-    :class:`~sopuli.driver.protocol.Session` methods `doctor` uses,
-    :meth:`describe_user` and :meth:`set_password`; every other one refuses
-    with ``SOPULI-20006``."""
+    :class:`~sopuli.driver.protocol.Session` methods `doctor` uses, and those
+    the module docstring names; every other one refuses with
+    ``SOPULI-20006``."""
 
     connection: Any
     target: ExpandedTarget
@@ -133,9 +147,12 @@ class MariadbSession(ClosesConnection):
         """What this session is: a server, read-write or not, and its
         encryption. Probed on the first call and cached (invariant 3)."""
         if self._scope is None:
-            self._scope = self._read(
+            observed = self._read(
                 lambda cursor: observe(cursor, target=self.target.name, encryption=self.encryption)
             )
+            # `role_lookup` always: a role is a row of the view, and its grants
+            # are in mysql.roles_mapping, and §2.1 grants the tool account both.
+            self._scope = replace(observed, capabilities=frozenset({ROLE_LOOKUP}))
             if LOG.isEnabledFor(logging.DEBUG):
                 LOG.debug(
                     "%s is a server, %s %s, encryption %s",
@@ -181,9 +198,9 @@ class MariadbSession(ClosesConnection):
             what=what,
             hint=(
                 "the MariaDB driver connects, reports the server for `doctor`, "
-                "describes an account, sets its password and verifies it by login, and "
-                "the rest of it is "
-                "not written yet (#1270, #1271, #1272)"
+                "describes an account, sets its password and verifies it by login, "
+                "resolves a role and suspends an account, and the rest of it is not "
+                "written yet (#1270, #1271, #1272)"
             ),
         )
 
@@ -202,9 +219,15 @@ class MariadbSession(ClosesConnection):
     def _describe(self, cursor: Any, account: str) -> UserState | None:
         if self._session_user is None:
             self._session_user = current_user(cursor)
-        return accounts_module.describe(
+        state = accounts_module.describe(
             cursor, account, target=self.target.name, session_user=self._session_user
         )
+        if state is None:
+            return None
+        # A `role:` rule admits by these (`sopuli.personal.admits`), and
+        # `accounts_matching` lists by the same grants the other way.
+        user, host = split(state.name)
+        return replace(state, roles=frozenset(roles.granted(cursor, Principal(user, host))))
 
     def _read_grants(self, reader: Callable[[Any], T]) -> T:
         """:meth:`_read`, with the hint about §2.1's grants on a refused read."""
@@ -272,8 +295,41 @@ class MariadbSession(ClosesConnection):
         LOG.debug("password set for %s on %s", found.name, self.target.name)
         return ChangeResult(changed=True, detail="password set", discarded=True)
 
-    def suspend_account(self, account: str) -> NoReturn:
-        self._not_written("suspend an account")
+    def suspend_account(self, account: str) -> AccountChange:
+        """``ALTER USER … ACCOUNT LOCK``, sent every time (#1267, decision 2).
+
+        The lock is only in ``mysql.global_priv``, which the tool account does
+        not read, so whether the account is already locked cannot be read. A
+        second ``ACCOUNT LOCK`` is accepted (``04_lock_expiry_probe.py``, LK1),
+        so the statement is sent and the change reported as ``changed: true``
+        on every run: an exception to invariant 9, as CLAUDE.md records.
+        ``CREATE USER`` is enough. Refused before anything is sent where the
+        account does not exist or uses another plugin.
+        """
+        require_read_write(self.scope(), target=self.target.name)
+        found = self._read_grants(
+            lambda cursor: accounts_module.read_one(cursor, account, target=self.target.name)
+        )
+        if found is None:
+            raise DriverError(
+                f'account "{account}" does not exist on target "{self.target.name}"',
+                hint=(
+                    "the tool does not create accounts (Q8); nothing is suspended, and the "
+                    "account name is worth checking against the server"
+                ),
+            )
+        status = accounts_module.state_of(found).status
+        self._read(lambda cursor: cursor.execute(account_statements.lock(found.user, found.host)))
+        LOG.debug("ACCOUNT LOCK for %s on %s", found.name, self.target.name)
+        return AccountChange(
+            ACCOUNT_LOCK,
+            changed=True,
+            status=status,
+            detail=(
+                "sent ACCOUNT LOCK; whether the account was already locked cannot be read "
+                "on MariaDB"
+            ),
+        )
 
     def reset_password(self, *args: Any, **kwargs: Any) -> NoReturn:
         self._not_written("reset a password")
@@ -287,14 +343,40 @@ class MariadbSession(ClosesConnection):
     def apply_attributes(self, *args: Any, **kwargs: Any) -> NoReturn:
         self._not_written("apply account attributes")
 
-    def resolve_profile(self, profile: str) -> NoReturn:
-        self._not_written("resolve a profile")
+    def resolve_profile(self, profile: str) -> str | None:
+        """Refused by capability: MariaDB has no profiles, so a `profile:` rule
+        names nothing on a server."""
+        require_capability(
+            self.scope(), PROFILE_MANAGEMENT, target=self.target.name, hint=NO_PROFILES
+        )
+        return None  # pragma: no cover -- the capability is never reported
 
-    def resolve_role(self, role: str) -> NoReturn:
-        self._not_written("resolve a role")
+    def resolve_role(self, role: str) -> str | None:
+        """The role as the view spells it, or ``None``
+        (:func:`~sopuli.driver.mariadb.roles.resolve`). A role ``PUBLIC``
+        reaches is refused with exit 9."""
+        require_capability(self.scope(), ROLE_LOOKUP, target=self.target.name)
+        return self._read_grants(
+            lambda cursor: roles.resolve(cursor, role, target=self.target.name)
+        )
 
-    def accounts_matching(self, *args: Any, **kwargs: Any) -> NoReturn:
-        self._not_written("list accounts")
+    def accounts_matching(
+        self, *, profile: str | None = None, role: str | None = None
+    ) -> tuple[str, ...]:
+        """Every account that holds ``role``, through any chain of grants
+        (:func:`~sopuli.driver.mariadb.roles.members_of`). The account that
+        created the role holds it too. A ``profile`` is refused as
+        :meth:`resolve_profile` refuses it."""
+        if (profile is None) == (role is None):
+            raise ValueError("accounts_matching takes exactly one of `profile` and `role`")
+        if profile is not None:
+            self.resolve_profile(profile)
+            return ()  # pragma: no cover -- resolve_profile always raises
+        assert role is not None
+        spelled = self.resolve_role(role)
+        if spelled is None:
+            return ()
+        return self._read_grants(lambda cursor: roles.members_of(cursor, spelled))
 
     def verify_password(
         self,

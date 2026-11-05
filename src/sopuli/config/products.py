@@ -467,6 +467,21 @@ def account_matcher(product: str) -> Callable[[str, str], bool]:
     return same_mysql_account if product in USER_AT_HOST_TYPES else same_name
 
 
+def same_mariadb_role(left: str, right: str) -> bool:
+    """Two MariaDB role names are one role: compared exactly, as a user name
+    is. A MariaDB role has no host, so a `role:` rule names it alone
+    (``sql/mariadb/05_identity_grants_probe.py``, TG7)."""
+    return left == right
+
+
+def role_matcher(product: str) -> Callable[[str, str], bool]:
+    """How a `role:` rule's role is compared with a role an account holds on a
+    target of ``product``. On MySQL a role is an account, ``user@host``, so it
+    compares as one (#1225). On MariaDB it is a bare name
+    (:func:`same_mariadb_role`)."""
+    return same_mariadb_role if product == MARIADB else account_matcher(product)
+
+
 def account_key(product: str) -> Callable[[str], object]:
     """A key that is equal for two names :func:`account_matcher` takes as one
     account, so a caller can fold names in a dict rather than compare every

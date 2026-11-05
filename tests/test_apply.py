@@ -39,6 +39,8 @@ from sopuli.payload import (
     ORIGIN,
     PENDING,
     PREVIOUS,
+    REACH_PASSED,
+    REACH_SPENT,
     REACHED,
     REMOVE,
     SUPPLIED,
@@ -785,13 +787,18 @@ def _document(reached: Any) -> dict[str, Any]:
 
 
 def test_a_pending_s_reaching_login_is_spent_only_where_its_mark_says() -> None:
-    """#1316: per target. Unspent on a target the mark does not name."""
-    source = apply.source_for(_document(["mariadb-dev"]), _ref())
+    """#1316: per target. Unspent on a target the mark does not name, and a
+    pass counts only where it was recorded."""
+    mark = {"mariadb-dev": REACH_SPENT, "mariadb-test": REACH_PASSED}
+    source = apply.source_for(_document(mark), _ref())
 
     assert source is not None
-    assert source.reached == ("mariadb-dev",)
+    assert source.reached == mark
     assert apply.reach_spent(source, "mariadb-dev")
+    assert not apply.reach_passed(source, "mariadb-dev")
+    assert apply.reach_passed(source, "mariadb-test")
     assert not apply.reach_spent(source, "mariadb-prod")
+    assert not apply.reach_passed(source, "mariadb-prod")
 
 
 def test_a_pending_with_no_mark_has_its_reaching_login_everywhere() -> None:
@@ -803,14 +810,20 @@ def test_a_pending_with_no_mark_has_its_reaching_login_everywhere() -> None:
     assert not apply.reach_spent(source, "mariadb-dev")
 
 
-@pytest.mark.parametrize("mark", ["mariadb-dev", {"t": 1}, [1]], ids=["string", "object", "number"])
-def test_a_mark_that_cannot_be_read_is_spent_everywhere(mark: Any) -> None:
-    """The safe side: no login that may reach an undeclared account."""
+@pytest.mark.parametrize(
+    "mark",
+    ["mariadb-dev", ["mariadb-dev"], {"mariadb-dev": 1}, {"mariadb-dev": "maybe"}],
+    ids=["string", "list", "number", "unknown result"],
+)
+def test_a_mark_that_cannot_be_read_is_spent_everywhere_and_passed_nowhere(mark: Any) -> None:
+    """The safe side: no login that may reach an undeclared account, and no
+    confirmation the tool did not record."""
     source = apply.source_for(_document(mark), _ref())
 
     assert source is not None
     assert source.reached is None
     assert apply.reach_spent(source, "mariadb-dev")
+    assert not apply.reach_passed(source, "mariadb-dev")
 
 
 @pytest.mark.parametrize("root", [["mariadb-dev"], "mariadb-dev"], ids=["list", "string"])

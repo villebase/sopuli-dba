@@ -422,9 +422,9 @@ class MariadbSession(ClosesConnection):
         Any other account is :data:`~sopuli.driver.protocol.UNAVAILABLE`
         without a login, as is one that does not exist: a failed login counts
         toward ``max_password_errors`` on the account it reaches, and `creds
-        check` and `creds apply` repeat (#1270, decision 3). The login after
-        a change follows the same rule. TODO(#1316): once per staged
-        ``pending``, that login may reach further (#1267, decision 8).
+        check` and `creds apply` repeat (#1270, decision 3). Such a result has
+        ``attempted`` unset, which is what lets `creds apply` make the one
+        reaching login of :meth:`verify_reaching` instead.
 
         The tool cannot read MariaDB's count of failed logins, so
         ``lockout_margin`` and ``attempts`` have nothing to guard, and the
@@ -438,6 +438,25 @@ class MariadbSession(ClosesConnection):
                 target=self.target.name,
                 hint="this driver verifies by `login` only",
             )
+        return self._verify(account, secret, reach=False)
+
+    def verify_reaching(self, account: str, secret: Secret) -> VerifyResult:
+        """The one login after a change from a staged ``pending`` that may
+        reach further (#1270, decision 5): where :meth:`verify_password` did
+        not log in because another account could answer, it logs in wherever
+        the login reaches, and passes only where ``CURRENT_USER()`` is the
+        declared account (#1267, decision 8). A refusal then says nothing,
+        because another account may have sent it.
+
+        Not on the protocol. `creds apply` asks it of a driver that has it,
+        in place of a login and never after one, and only once it has written
+        the vault mark that spends this ``pending``'s reach on this target
+        (#1316). It may reach an account the config does not declare, the one
+        exception to invariant 5, which CLAUDE.md records.
+        """
+        return self._verify(account, secret, reach=True)
+
+    def _verify(self, account: str, secret: Secret, *, reach: bool) -> VerifyResult:
         user, host = split(account)
         # One read: the user's accounts at every host, and the anonymous ones,
         # which compete for the same login.
@@ -455,19 +474,21 @@ class MariadbSession(ClosesConnection):
                 declared.name, declared.plugin, target=self.target.name
             )
         competing = verification.competitor(declared, found[user], found[""])
-        if competing is not None:
+        if competing is not None and not reach:
             return VerifyResult(
                 method=VERIFY_LOGIN,
                 result=UNAVAILABLE,
                 detail=f"no login was attempted, because {competing}",
+                attempted=False,
             )
         return verification.login(
             self.target,
             declared,
             secret,
-            # Always None here. TODO(#1316): the reaching login passes the
-            # competitor, and `verification` judges what comes back by it.
-            competing=None,
+            # `verification` judges what comes back by it: an answer that comes
+            # before `CURRENT_USER()` can be read says nothing where another
+            # account could have sent it.
+            competing=competing,
             correlation_id=self.correlation_id,
             timeouts=self.timeouts,
         )

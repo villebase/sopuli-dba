@@ -46,6 +46,7 @@ from sopuli.driver.protocol import (
     FAIL,
     PASS,
     PASSWORD_ROLLOVER,
+    UNAVAILABLE,
     ChangeResult,
     Credential,
     Encryption,
@@ -465,6 +466,37 @@ def test_a_rotation_generates_applies_and_promotes(
     issued = changed(harness)
     assert len(issued) == 1
     assert body["DB_CREDENTIALS"]["acme_web_user"] == issued[0][1]
+
+
+def test_a_rotation_makes_mariadb_s_reaching_login_once(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#1316: `rotate` passes the marker too. Where the check made no login,
+    the rotation's login reaches further, once, and the pending it drew is
+    promoted."""
+    reached: list[str] = []
+
+    def not_tried(self: FakeSession, account: str, secret: Secret, **_: Any) -> VerifyResult:
+        return VerifyResult("login", UNAVAILABLE, detail="no login", attempted=False)
+
+    def verify_reaching(self: FakeSession, account: str, secret: Secret) -> VerifyResult:
+        reached.append(account.upper())
+        ok = self.database.accepts(account.upper(), secret.reveal())
+        return VerifyResult("login", PASS if ok else FAIL)
+
+    monkeypatch.setattr(FakeSession, "verifies_before_change", False, raising=False)
+    monkeypatch.setattr(FakeSession, "verify_password", not_tried)
+    monkeypatch.setattr(FakeSession, "verify_reaching", verify_reaching, raising=False)
+    harness = estate()
+    result = run(runner, write_config(CONFIG), "--select", "tenant=alpha", "--output", "json")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert reached == ["ACME_WEB_USER"]
+    body = stored(harness["store"], "apps/acme/appdb-alpha")
+    assert body["DB_CREDENTIALS"]["acme_web_user"] == changed(harness)[0][1]
 
 
 def test_a_rotation_over_a_connection_in_clear_warns_once_per_target(

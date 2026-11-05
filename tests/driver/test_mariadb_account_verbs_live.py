@@ -107,6 +107,23 @@ def test_a_reset_sets_and_expires_by_one_statement(
     assert _login(live_mariadb, user, OLD) == ACCESS_DENIED
 
 
+def test_an_ed25519_reset_sets_and_expires_by_one_statement(
+    live_mariadb: Any, session: Any, user: str
+) -> None:
+    """The same statement for the other plugin the tool changes."""
+    pytest.importorskip("nacl", reason="PyNaCl comes with the `mariadb` extra")
+    _root(live_mariadb, "alter user %s@'%%' identified via ed25519 using password(%s)", (user, OLD))
+
+    session.reset_password(f"{user}@%", Secret(NEW), expire=True)
+
+    with live_mariadb.connect() as admin, admin.cursor() as cursor:
+        cursor.execute("select plugin from mysql.user where user = %s", (user,))
+        assert cursor.fetchone()[0] == "ed25519"
+    assert _expired(live_mariadb, user) == "Y"
+    assert _login(live_mariadb, user, NEW) == MUST_CHANGE_PASSWORD
+    assert _login(live_mariadb, user, OLD) == ACCESS_DENIED
+
+
 def test_a_reset_ends_a_second_method(live_mariadb: Any, session: Any, user: str) -> None:
     """A method added with OR stops logging in: the reset names one."""
     _root(

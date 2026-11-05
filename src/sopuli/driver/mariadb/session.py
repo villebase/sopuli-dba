@@ -9,17 +9,15 @@ rule 1). The modules beside it are tier 0.
 :mod:`sopuli.driver.mysql_family`, labels the session with the run's
 correlation id, checks that a mode which requires TLS got it, and reports the
 scope: ``server``, whether it takes writes, its encryption, and
-``role_lookup``. For ``doctor
---check-privileges`` it audits the tool account's grants
-(:mod:`~sopuli.driver.mariadb.privileges`) and surveys the declared accounts
-(:mod:`~sopuli.driver.mariadb.accounts`). It describes a declared account,
-with the privileges guardrail 9 checks and the roles it holds, sets its password
-by the value its plugin stores and verifies it by login (#1270). It resolves a
-role and lists its members, suspends an account, resets its password and
-expires it (#1272). Every other method
-refuses with
+:data:`CAPABILITIES`. For ``doctor --check-privileges`` it audits the tool
+account's grants (:mod:`~sopuli.driver.mariadb.privileges`) and surveys the
+declared accounts (:mod:`~sopuli.driver.mariadb.accounts`). It describes a
+declared account, with the privileges guardrail 9 checks and the roles it
+holds, sets its password by the value its plugin stores and verifies it by
+login (#1270). It resolves a role and lists its members, suspends an account,
+resets its password and expires it (#1272). Every other method refuses with
 ``SOPULI-20006``, and the registry lists no command but `doctor`: the rest of
-UC-1 is #1270 and UC-2 #1272.
+UC-1 is #1270, and registering UC-2's verbs is #1272.
 
 The session claims no server identity: MariaDB has no ``server_uuid``, and
 11.8.9 shows no ``server_uid`` status either, so two targets on one server are
@@ -67,6 +65,7 @@ from sopuli.driver.protocol import (
     VERIFY_HASH,
     VERIFY_LOGIN,
     AccountChange,
+    AuditCoverage,
     ChangeResult,
     ClosesConnection,
     Credential,
@@ -101,6 +100,18 @@ MISSING_GRANT_HINT = (
     "that grant them"
 )
 
+#: The capabilities every MariaDB session reports, with no query behind them
+#: because each holds on every supported release:
+#:
+#: - ``role_lookup``: a role is a row of the view, its grants are in
+#:   ``mysql.roles_mapping``, and §2.1 grants the tool account both;
+#: - ``expire_password``: an account with only ``CREATE USER`` expires another
+#:   on 10.11.19 to 12.3.3 (``04_lock_expiry_probe.py``, LK3), and a new value
+#:   sent alone ends an expiry (``11_rollover_expiry_probe.py``). It also tells
+#:   `creds apply` it may set a password on an expired account, as on MySQL
+#:   (:func:`sopuli.apply.settled_before_acting`'s ``expiry_cleared``).
+CAPABILITIES = frozenset({ROLE_LOOKUP, EXPIRE_PASSWORD})
+
 #: The server refused a read of a table (``1142``) or a column (``1143``).
 REFUSED_READ = frozenset({str(TABLE_ACCESS_DENIED), str(COLUMN_ACCESS_DENIED)})
 
@@ -131,6 +142,15 @@ CHECK_9_GAP = (
 T = TypeVar("T")
 
 
+def _nothing(what: str) -> str:
+    """The hint for an account a UC-2 verb found missing; ``what`` is the
+    verb's participle."""
+    return (
+        f"the tool does not create accounts (Q8); nothing is {what}, and the account "
+        "name is worth checking against the server"
+    )
+
+
 @dataclass
 class MariadbSession(ClosesConnection):
     """One open connection to a MariaDB server. Implements the
@@ -158,17 +178,7 @@ class MariadbSession(ClosesConnection):
             observed = self._read(
                 lambda cursor: observe(cursor, target=self.target.name, encryption=self.encryption)
             )
-            # `role_lookup` always: a role is a row of the view, and its grants
-            # are in mysql.roles_mapping, and §2.1 grants the tool account both.
-            # `expire_password` always: an account with only CREATE USER
-            # expires another on every supported release (10.11.19 to 12.3.3,
-            # `04_lock_expiry_probe.py`, LK3), and a new value sent alone ends
-            # an expiry (`11_rollover_expiry_probe.py`). The capability also
-            # tells `creds apply` it may set a password on an expired account,
-            # as on MySQL (`apply.py`, `expiry_cleared`).
-            self._scope = replace(
-                observed, capabilities=observed.capabilities | {ROLE_LOOKUP, EXPIRE_PASSWORD}
-            )
+            self._scope = replace(observed, capabilities=observed.capabilities | CAPABILITIES)
             if LOG.isEnabledFor(logging.DEBUG):
                 LOG.debug(
                     "%s is a server, %s %s, encryption %s",
@@ -330,7 +340,7 @@ class MariadbSession(ClosesConnection):
         account does not exist or uses another plugin.
         """
         require_read_write(self.scope(), target=self.target.name)
-        found = self._existing(account, what="suspended")
+        found = self._existing(account, hint=_nothing("suspended"))
         status = accounts_module.state_of(found).status
         self._read(lambda cursor: cursor.execute(account_statements.lock(found.user, found.host)))
         LOG.debug("ACCOUNT LOCK for %s on %s", found.name, self.target.name)
@@ -344,23 +354,15 @@ class MariadbSession(ClosesConnection):
             ),
         )
 
-    def _existing(
-        self, account: str, *, what: str = "changed", hint: str | None = None
-    ) -> accounts_module.Account:
+    def _existing(self, account: str, *, hint: str) -> accounts_module.Account:
         """The account's row in the view, refused before anything is sent where
-        it does not exist or uses another plugin. ``what`` is the verb's
-        participle for the hint, and ``hint`` replaces the hint whole."""
+        it does not exist, with ``hint``, or uses another plugin."""
         found = self._read_grants(
             lambda cursor: accounts_module.read_one(cursor, account, target=self.target.name)
         )
         if found is None:
             raise DriverError(
-                f'account "{account}" does not exist on target "{self.target.name}"',
-                hint=hint
-                or (
-                    f"the tool does not create accounts (Q8); nothing is {what}, and the "
-                    "account name is worth checking against the server"
-                ),
+                f'account "{account}" does not exist on target "{self.target.name}"', hint=hint
             )
         return found
 
@@ -377,7 +379,8 @@ class MariadbSession(ClosesConnection):
         afterwards, whether a rollover's or one added by hand with ``OR``. A
         second method the view does not show, such as ``unix_socket``, stops
         working too: that gap is accepted (``02-mariadb-privileges.md`` §4,
-        #1301), and ``doctor --check-privileges`` says so.
+        #1301). The tool cannot see whether an account has one, and ``doctor
+        --check-privileges`` warns that the gap exists.
 
         **The lock is left as it is** (#1272, decision 1). It is not read, so
         the reset cannot tell a suspension from a block after failed logins,
@@ -398,7 +401,7 @@ class MariadbSession(ClosesConnection):
             )
         password_module.admit(secret)
         require_read_write(self.scope(), target=self.target.name)
-        found = self._existing(account, what="reset")
+        found = self._existing(account, hint=_nothing("reset"))
         status = accounts_module.state_of(found).status
         statement = password_module.alter_user(
             found.user, found.host, found.plugin, secret, expire=expire
@@ -438,7 +441,9 @@ class MariadbSession(ClosesConnection):
         (UC-2, decided on #1272). ``CREATE USER`` is enough (LK1 to LK3).
         """
         require_read_write(self.scope(), target=self.target.name)
-        found = self._existing(account, what="expired")
+        # Always reported (CAPABILITIES); the driver's own line all the same.
+        require_capability(self.scope(), EXPIRE_PASSWORD, target=self.target.name)
+        found = self._existing(account, hint=_nothing("expired"))
         status = accounts_module.state_of(found).status
         if found.expired:
             return (
@@ -461,8 +466,12 @@ class MariadbSession(ClosesConnection):
             ),
         )
 
-    def audit_coverage(self, account: str) -> NoReturn:
-        self._not_written("read audit coverage")
+    def audit_coverage(self, account: str) -> AuditCoverage:
+        """Never raises, as the protocol promises: the answer is unknown, as
+        on MySQL. An unseen reset asks it."""
+        return AuditCoverage(
+            audited=None, detail="the MariaDB driver does not read audit settings yet"
+        )
 
     def apply_attributes(self, *args: Any, **kwargs: Any) -> NoReturn:
         self._not_written("apply account attributes")

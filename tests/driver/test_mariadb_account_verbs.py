@@ -59,7 +59,10 @@ def _session(
         timeouts=Timeouts(),
     )
     scope = Scope(
-        type="server", read_write=read_write, encryption=Encryption(method=ENCRYPTION_TLS)
+        type="server",
+        read_write=read_write,
+        capabilities=session_module.CAPABILITIES,
+        encryption=Encryption(method=ENCRYPTION_TLS),
     )
     monkeypatch.setattr(session, "scope", lambda: scope)
     monkeypatch.setattr(session, "_read_grants", recorder.read_grants)
@@ -107,6 +110,19 @@ def test_a_failed_reset_says_the_value_was_sent(monkeypatch: pytest.MonkeyPatch)
 
     assert caught.value.password_sent
     assert len(recorder.sent) == 1
+
+
+def test_audit_coverage_answers_unknown_and_never_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unseen reset asks it, so it must not refuse as an unwritten method."""
+    recorder = Recorder(ACCOUNT)
+    session = _session(monkeypatch, recorder)
+
+    coverage = session.audit_coverage("acme_dev_alice@%")
+
+    assert coverage.audited is None
+    assert recorder.sent == []
 
 
 def test_an_expired_password_is_left_alone(monkeypatch: pytest.MonkeyPatch) -> None:

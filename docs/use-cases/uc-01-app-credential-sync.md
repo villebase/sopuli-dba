@@ -278,14 +278,23 @@ stage. One word with two meanings, one flag apart, would eventually be misread.
 
 On MariaDB the first login after a change made from a staged `pending`, on each
 target, may reach an account the config does not declare
-([#1270](../decisions/log.md#1270), decision 5). `reached` lists the targets
-where that login was spent, so a later `apply` of the same `pending` does not
-repeat it. It follows the mirror rule, as `origin` does, and it is reserved too.
-Every write that stages a new `pending` clears it, and so does the promotion. A
-`reached` the tool cannot read counts as spent on every target. `creds apply`
-and `creds rotate` add a target to it before that login, under the run's lock,
-and read the document again so the promotion compares against the new
-version. If the write fails, no login is made, and the row says why.
+([#1270](../decisions/log.md#1270), decision 5). `reached` maps each target
+where that login was spent to what it showed, so a later `apply` of the same
+`pending` does not repeat it: `{"mariadb-dev": "spent", "mariadb-test":
+"passed"}`. It follows the mirror rule, as `origin` does, and it is reserved
+too. Every write that stages a new `pending` clears it, and so does the
+promotion. A `reached` the tool cannot read counts as spent on every target
+and passed on none.
+
+`creds apply` and `creds rotate` write `spent` for the target before that
+login, under the run's lock, and the run's copy of the document moves to the
+version the write left, so the promotion compares against it. If the write
+fails, no login is made, and the row says why. After a login that passes, they
+write `passed`. A later run of the same `pending` counts a `passed` target as
+confirmed, as `stored`, with no new login, once it has set the `pending` again
+(#1316). So a password shared by several targets can be promoted when its
+targets confirmed in different runs, as in a rollout narrowed one target at a
+time.
 
 ### `rollover`: a pending a rollover rotation staged
 

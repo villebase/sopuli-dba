@@ -103,10 +103,17 @@ RETAINING = "retaining"
 #: Beside a ``pending``, the targets where its reaching login was spent (#1316).
 #: On MariaDB the first login after a change from a staged ``pending`` may reach
 #: an account the config does not declare, and a later `creds apply` of the same
-#: ``pending`` must not repeat it (#1270, decision 5). The value is a list of
-#: target names, per account in a shared document, as ``origin``. Cleared with
-#: ``pending``, by every staging write and at promotion.
+#: ``pending`` must not repeat it (#1270, decision 5). The value maps each target
+#: name to what that login showed, per account in a shared document, as
+#: ``origin``. Cleared with ``pending``, by every staging write and at promotion.
 REACHED = "reached"
+
+#: A :data:`REACHED` result. ``spent`` is written before the login, so a run that
+#: ends at any point leaves the reach used. ``passed`` is written after a login
+#: that passed, and counts as that target's confirmation in a later run of the
+#: same ``pending``.
+REACH_SPENT, REACH_PASSED = "spent", "passed"
+REACH_RESULTS = frozenset({REACH_SPENT, REACH_PASSED})
 
 #: When and by whom a version's password was made. Written into each version's
 #: content under native staging (decision 3, #1158), beside ``origin``.
@@ -143,6 +150,9 @@ __all__ = [
     "PENDING",
     "PREVIOUS",
     "REACHED",
+    "REACH_PASSED",
+    "REACH_RESULTS",
+    "REACH_SPENT",
     "REMOVE",
     "RESERVED",
     "RETAINING",

@@ -175,11 +175,13 @@ def test_a_reaching_login_mark_is_kept_in_the_attributes_beside_its_pending(
     staged = inner.read_stage(PATH, "pending")
     assert staged is not None
 
-    apply_patch(view, PATH, LAYOUT.patch(REACHED, ["mariadb-dev"]), cas=token(view))
+    apply_patch(view, PATH, LAYOUT.patch(REACHED, {"mariadb-dev": "spent"}), cas=token(view))
+    # As `creds apply` writes it: one target per patch, merged with the others.
+    apply_patch(view, PATH, LAYOUT.patch(REACHED, {"mariadb-test": "passed"}), cas=token(view))
 
     marked = view.read(PATH)
     assert marked is not None
-    assert marked.data["reached"] == ["mariadb-dev"]
+    assert marked.data["reached"] == {"mariadb-dev": "spent", "mariadb-test": "passed"}
     assert marked.data["pending"] == "b"
     still = inner.read_stage(PATH, "pending")
     assert still is not None
@@ -195,7 +197,7 @@ def test_every_write_that_ends_the_pending_drops_the_mark(
     cannot carry one pending's mark to the next. The patches here send none."""
     seeded(view)
     apply_patch(view, PATH, stage_patch("b"), cas=token(view))
-    apply_patch(view, PATH, LAYOUT.patch(REACHED, ["mariadb-dev"]), cas=token(view))
+    apply_patch(view, PATH, LAYOUT.patch(REACHED, {"mariadb-dev": "passed"}), cas=token(view))
 
     patch = {
         "stage": stage_patch("c"),

@@ -4421,7 +4421,11 @@ the register.
      was spent (#1316), so a later `apply` of the same `pending` follows
      decision 3's rule. A new `pending` clears the mark. That login is an
      exception to invariant 5. Decided the same day, from the reviews of
-     #1312.
+     #1312. The mark also records a login that passed, and a later run of
+     the same `pending` counts that target as confirmed, as `stored`, with no
+     new login: otherwise a password shared by several targets that confirm
+     in different runs could never be promoted. Decided on the review of
+     #1320.
 - **Why:**
   1. The server sees only the value the driver computes, so it sets and logs
      in a password of up to 1 MiB (PW1). An application's client was not

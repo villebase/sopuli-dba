@@ -198,10 +198,12 @@ from sopuli.driver.protocol import (
     PASSWORD_SET,
     PROFILE_MANAGEMENT,
     ROLLOVER_FINISH,
+    STORED,
     UNAVAILABLE,
     VERIFY_BOTH,
     VERIFY_HASH,
     VERIFY_LOGIN,
+    VERIFY_NONE,
     AccountAttributes,
     AccountChange,
     AttributeChange,
@@ -352,9 +354,12 @@ from sopuli.payload import (
     ORIGIN,
     PENDING,
     PREVIOUS,
+    REACH_PASSED,
+    REACH_SPENT,
     REACHED,
     RETAINING,
     ROLLOVER,
+    merge,
     stage_layout,
 )
 from sopuli.personal import declared_on, rules_for
@@ -8356,47 +8361,55 @@ def _reach_marker(
     *,
     manager: LockManager,
     run: Invocation,
-) -> Callable[[Binding], str | None]:
-    """What spends a staged ``pending``'s reaching login on one target (#1316).
+) -> Callable[[Binding, str], str | None]:
+    """What records a staged ``pending``'s reaching login on one target (#1316).
 
-    It adds the binding's target to the ``pending``'s
+    It sets the binding's target to ``result`` in the ``pending``'s
     :data:`~sopuli.payload.REACHED` mark in the vault, behind the fence, and
-    returns ``None``. The run's copy of the document is read again, so the
-    promotion compare-and-sets against the version the mark left. Where the
-    write fails it returns why, and the caller then makes no reaching login:
-    a lost mark must never let a scheduled `apply` repeat one. A run that ends
-    between the write and the login has spent the reach unused, and the next
-    ``pending`` brings a new one.
+    returns ``None``, or why it could not. A merge patch names only this
+    target, so the other targets' results stay. The run's copy of the document
+    moves to the version the write left, so the promotion compare-and-sets
+    against it.
+
+    :data:`~sopuli.payload.REACH_SPENT` goes in before the login. Where that
+    fails, the caller makes no reaching login: a lost mark must never let a
+    scheduled `apply` repeat one. :data:`~sopuli.payload.REACH_PASSED` goes in
+    after a login that passed, so a later run of this ``pending`` counts the
+    target as confirmed. A run that ends between the two has spent the reach
+    with nothing to show, and the next ``pending`` brings a new one.
     """
 
-    def spend(binding: Binding) -> str | None:
+    def record(binding: Binding, result: str) -> str | None:
         assert binding.secret is not None
         key = _lock_key(binding)
         stored = documents.get(key)
-        layout = stage_layout(binding.secret)
-        found = layout.read(None if stored is None else stored.data, REACHED)
-        marked = [*(found if isinstance(found, list) else ()), binding.target]
+        assert stored is not None, "a `pending` was read from this document"
+        patch = stage_layout(binding.secret).patch(REACHED, {binding.target: result})
         manager.check(key)
         try:
-            write_credential(
-                stores[key.store], key.path, layout.patch(REACHED, marked), cas=_version_of(stored)
-            )
-        except Exception as error:  # noqa: BLE001 -- the row says why, and no login follows
+            written = write_credential(stores[key.store], key.path, patch, cas=stored.version)
+        except Exception as error:  # noqa: BLE001 -- the caller says why in the row
             reported = _finding(error)
             run.emitter().event(
                 run.document,
                 "vault.write",
                 data={**_vault_event(key, None), "error": reported.to_dict()},
             )
-            return (
-                f"the vault mark that spends this `pending`'s reaching login could not "
-                f"be written, so no login was made: {reported.message}"
+            return reported.message
+        try:
+            documents[key] = stores[key.store].read(key.path)
+        except Exception:  # noqa: BLE001 -- the write landed, and its version is known
+            documents[key] = replace(
+                stored, version=written.version, data=merge(stored.data, patch)
             )
-        documents[key] = stores[key.store].read(key.path)
-        run.emitter().event(run.document, "vault.write", data=_vault_event(key, documents[key]))
+        run.emitter().event(
+            run.document,
+            "vault.write",
+            data={"vault": key.store, "path": key.path, "version": written.reported},
+        )
         return None
 
-    return spend
+    return record
 
 
 def _header(plan: Any, sources: Sequence[tuple[Binding, Source | None]]) -> str:
@@ -8422,7 +8435,7 @@ def _apply_estate(
     surveyed: Mapping[tuple[str, str], UserState] | None = None,
     decided: Mapping[Credential, Mapping[str, guardrails.Review]] | None = None,
     rotating: bool = False,
-    spend_reach: Callable[[Binding], str | None] | None = None,
+    spend_reach: Callable[[Binding, str], str | None] | None = None,
 ) -> tuple[list[_Applied], LockStolenError | None]:
     """Every account, target by target, one connection each.
 
@@ -8912,7 +8925,7 @@ def _apply_target(
     unreachable: BaseException | None = None,
     out: list[_Applied],
     rotating: bool = False,
-    spend_reach: Callable[[Binding], str | None] | None = None,
+    spend_reach: Callable[[Binding, str], str | None] | None = None,
 ) -> None:
     """One target's worth of accounts, over one connection.
 
@@ -9195,6 +9208,59 @@ NOT_CHECKED_WITHOUT_LOGIN = (
 )
 
 
+#: The detail of a target confirmed by an earlier run's reaching login (#1316).
+CONFIRMED_EARLIER = (
+    "verified by login in an earlier run of this `pending`, which this run set again; "
+    "another account could answer a login now, so none was made"
+)
+
+
+def _reach_after_change(
+    binding: Binding,
+    account: str,
+    source: Source,
+    unattempted: VerifyResult,
+    *,
+    reaching: Callable[[str, Secret], VerifyResult],
+    record: Callable[[Binding, str], str | None],
+) -> VerifyResult:
+    """MariaDB's answer after a change where no login was made, because another
+    account could answer (#1270, decision 5; #1316).
+
+    A target whose reaching login passed for this ``pending`` in an earlier
+    run is confirmed, as ``stored``, with no login: a password shared by
+    several targets is promoted only when every one confirms. Otherwise, once
+    per ``pending`` and target, the vault mark is written first and one login
+    may then reach further. If the mark cannot be written, no login is made, so
+    a scheduled `apply` never repeats one. A pass is recorded for later runs;
+    if that record fails, this run's row stands and a later run cannot count it.
+    """
+    if apply_states.reach_passed(source, binding.target):
+        return VerifyResult(method=VERIFY_NONE, result=STORED, detail=CONFIRMED_EARLIER)
+    if apply_states.reach_spent(source, binding.target):
+        return unattempted
+    unwritten = record(binding, REACH_SPENT)
+    if unwritten is not None:
+        reason = (
+            "the vault mark that spends this `pending`'s reaching login could not be "
+            f"written, so no login was made: {unwritten}"
+        )
+        before = f"{unattempted.detail}; " if unattempted.detail else ""
+        return replace(unattempted, detail=f"{before}{reason}")
+    after = reaching(account, source.value)
+    if after.result == PASS:
+        unrecorded = record(binding, REACH_PASSED)
+        if unrecorded is not None:
+            after = replace(
+                after,
+                detail=(
+                    f"{after.detail}; the vault did not record the pass, so a later run of "
+                    f"this `pending` cannot count it: {unrecorded}"
+                ),
+            )
+    return after
+
+
 def _verify_before_change(
     session: Session, account: str, secret: Secret, margin: int, *, attempts: int
 ) -> VerifyResult | None:
@@ -9233,13 +9299,14 @@ def _apply_one(
     encryption_required: str | None = None,
     held: Mapping[str, guardrails.Review] | None = None,
     rotating: bool = False,
-    spend_reach: Callable[[Binding], str | None] | None = None,
+    spend_reach: Callable[[Binding, str], str | None] | None = None,
 ) -> _Applied:
     """One account in one target: ask, change if needed, ask again.
 
-    ``spend_reach`` writes the vault mark that spends a staged ``pending``'s
-    reaching login on this binding's target (#1316), and returns ``None``, or
-    why it could not. Without it no login reaches further.
+    ``spend_reach`` records a result in the vault mark of a staged ``pending``'s
+    reaching login on this binding's target (#1316, :func:`_reach_marker`), and
+    returns ``None``, or why it could not. Without it no login reaches further
+    (:func:`_reach_after_change`).
 
     ``rotating`` is set by the `creds rotate` run that staged the ``pending``.
     Only that run opens a window the tool must open itself, on MySQL
@@ -9586,22 +9653,9 @@ def _apply_one(
             after_user.name, source.value, method=VERIFY_LOGIN, lockout_margin=margin, attempts=2
         )
         reaching = getattr(session, "verify_reaching", None)
-        if (
-            not after.attempted
-            and reaching is not None
-            and spend_reach is not None
-            and not apply_states.reach_spent(source, binding.target)
-        ):
-            # MariaDB (#1270, decision 5; #1316): no login was made, because
-            # another account could answer. Once per staged `pending` and target,
-            # the vault mark is written first, and then one login may reach
-            # further. If the mark cannot be written, no login is made: a
-            # scheduled `apply` must never repeat it.
-            unwritten = spend_reach(binding)
-            after = (
-                reaching(after_user.name, source.value)
-                if unwritten is None
-                else replace(after, detail=f"{after.detail}; {unwritten}")
+        if not after.attempted and reaching is not None and spend_reach is not None:
+            after = _reach_after_change(
+                binding, after_user.name, source, after, reaching=reaching, record=spend_reach
             )
         if after.result == UNAVAILABLE:
             # MySQL, for an account no login can reach (#1223): the server's
@@ -11592,7 +11646,9 @@ def _write_promotion(
     """The one compare-and-set that makes a rotation visible to applications.
 
     ``cas`` is the version read at the start of this run, under the lock this run
-    holds. A conflict therefore means a writer outside this tool, and it is never
+    holds, or the one this run's own reaching-login mark left (#1316,
+    :func:`_reach_marker`). A conflict therefore means a writer outside this
+    tool, and it is never
     retried: re-reading to merge over them would rewrite fields belonging to
     accounts nobody selected.
 

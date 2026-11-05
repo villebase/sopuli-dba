@@ -66,7 +66,7 @@ only asked about a run that covered everything the promotion needs.
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
@@ -101,6 +101,8 @@ from sopuli.payload import (
     ORIGIN,
     PENDING,
     PREVIOUS,
+    REACH_PASSED,
+    REACH_RESULTS,
     REACHED,
     REMOVE,
     RETAINING,
@@ -177,6 +179,7 @@ __all__ = [
     "may_redraw",
     "promotes",
     "promotion_patch",
+    "reach_passed",
     "reach_spent",
     "settled_before_acting",
     "source_for",
@@ -229,10 +232,11 @@ class Source:
     #: a rollover rotation staged it and retained the old password on MySQL,
     #: so setting it again must not end that window (#1224).
     rollover: bool = False
-    #: The targets where the ``pending`` read has spent its reaching login, from
-    #: :data:`~sopuli.payload.REACHED` (#1316), or ``None`` where the mark is
-    #: there and unreadable. Empty for any other stage. Ask :func:`reach_spent`.
-    reached: tuple[str, ...] | None = ()
+    #: Each target where the ``pending`` read has spent its reaching login, with
+    #: what that login showed, from :data:`~sopuli.payload.REACHED` (#1316), or
+    #: ``None`` where the mark is there and unreadable. Empty for any other
+    #: stage. Ask :func:`reach_spent` and :func:`reach_passed`.
+    reached: Mapping[str, str] | None = field(default_factory=dict)
 
 
 #: The stages a run can be asked to apply from, in the order UC-1 §5 lists them.
@@ -296,14 +300,15 @@ def source_for(document: Any, ref: SecretRef, *, stage: str | None = None) -> So
         replaces=current if promotes(chosen) else None,
         pending_staged=staged is not None,
         rollover=chosen == PENDING and layout.read(document, ROLLOVER) == RETAINING,
-        reached=_reached(document, layout) if chosen == PENDING else (),
+        reached=_reached(document, layout) if chosen == PENDING else {},
     )
 
 
-def _reached(document: Any, layout: StageLayout) -> tuple[str, ...] | None:
-    """The target names in ``layout``'s :data:`~sopuli.payload.REACHED` mark:
-    empty where there is none, ``None`` where it is there and is not a list of
-    strings.
+def _reached(document: Any, layout: StageLayout) -> Mapping[str, str] | None:
+    """``layout``'s :data:`~sopuli.payload.REACHED` mark, target to result:
+    empty where there is none, ``None`` where it is there and is not a mapping
+    of target names to :data:`~sopuli.payload.REACH_SPENT` or
+    :data:`~sopuli.payload.REACH_PASSED`.
 
     Walked here rather than read with :meth:`StageLayout.read`, which answers
     ``None`` both for no mark and for a root of the wrong shape in a shared
@@ -313,13 +318,15 @@ def _reached(document: Any, layout: StageLayout) -> tuple[str, ...] | None:
         if not isinstance(node, Mapping):
             return None
         if segment not in node:
-            return ()
+            return {}
         node = node[segment]
     if node is None:
-        return ()
-    if not isinstance(node, list) or not all(isinstance(name, str) for name in node):
+        return {}
+    if not isinstance(node, Mapping) or not all(
+        isinstance(target, str) and result in REACH_RESULTS for target, result in node.items()
+    ):
         return None
-    return tuple(node)
+    return dict(node)
 
 
 def reach_spent(source: Source, target: str) -> bool:
@@ -333,6 +340,17 @@ def reach_spent(source: Source, target: str) -> bool:
     if source.stage != PENDING or source.reached is None:
         return True
     return target in source.reached
+
+
+def reach_passed(source: Source, target: str) -> bool:
+    """Whether ``source``'s reaching login passed on ``target`` in an earlier
+    run (#1316). Such a target counts as confirmed for this ``pending``
+    without a new login, once the run has set the ``pending`` again: a
+    password shared by several targets is promoted only when every one
+    confirms, and each target's reach can be spent only once."""
+    if source.stage != PENDING or source.reached is None:
+        return False
+    return source.reached.get(target) == REACH_PASSED
 
 
 def attributes_for(config: Config, binding: Binding) -> AccountAttributes:

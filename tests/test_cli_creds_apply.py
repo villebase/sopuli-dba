@@ -1005,8 +1005,12 @@ def test_the_first_apply_of_a_pending_marks_it_and_logs_in_once_more(
 
     assert result.exit_code == ExitCode.SUCCESS, result.output
     assert reached == ["ACME_WEB_USER"]
-    # The mark, then the promotion clearing it.
-    assert marks == [{"acme_web_user": ["appdb-alpha"]}, {"acme_web_user": None}]
+    # Spent before the login, passed after it, then the promotion clearing it.
+    assert marks == [
+        {"acme_web_user": {"appdb-alpha": "spent"}},
+        {"acme_web_user": {"appdb-alpha": "passed"}},
+        {"acme_web_user": None},
+    ]
     row = document(result)["results"][0]
     assert (row["state"], row["secret"]["stage"]) == ("IN_SYNC", "current")
     # Cleared as `pending` is: RFC 7396 leaves the emptied container.
@@ -1023,7 +1027,7 @@ def test_a_pending_whose_mark_names_the_target_logs_in_no_further(
     row stays unconfirmed and no login reaches an undeclared account again."""
     reached = _reaching(monkeypatch, VerifyResult(VERIFY_LOGIN, PASS))
     documents = _staged_two_targets()
-    documents["apps/acme/appdb-alpha"][REACHED] = {"acme_web_user": ["appdb-alpha"]}
+    documents["apps/acme/appdb-alpha"][REACHED] = {"acme_web_user": {"appdb-alpha": "spent"}}
     estate(documents=documents, answers={"ACME_WEB_USER": [NOT_TRIED]})
     result = run(runner, write_config(CONFIG), "--select", "tenant=alpha", "--output", "json")
 
@@ -1031,6 +1035,30 @@ def test_a_pending_whose_mark_names_the_target_logs_in_no_further(
     row = document(result)["results"][0]
     assert row["state"] == "UNVERIFIABLE"
     assert row["secret"]["stage"] != "current"
+
+
+def test_a_target_whose_reaching_login_passed_earlier_is_confirmed_again(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#1316, decided on the review of #1320: a password shared by several
+    targets is promoted only when every one confirms in one run. A target
+    whose reaching login passed for this same `pending` counts as `stored`,
+    with no new login, after the run sets the `pending` again."""
+    reached = _reaching(monkeypatch, VerifyResult(VERIFY_LOGIN, PASS))
+    documents = _staged_two_targets()
+    documents["apps/acme/appdb-alpha"][REACHED] = {"acme_web_user": {"appdb-alpha": "passed"}}
+    harness = estate(documents=documents, answers={"ACME_WEB_USER": [NOT_TRIED]})
+    result = run(runner, write_config(CONFIG), "--select", "tenant=alpha", "--output", "json")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert reached == []
+    assert harness["sessions"][0].changed == [("ACME_WEB_USER", STAGED)]
+    row = document(result)["results"][0]
+    assert (row["state"], row["verification"]["result"]) == ("IN_SYNC", "stored")
+    assert row["secret"]["stage"] == "current"
 
 
 def test_no_mark_written_means_no_reaching_login(

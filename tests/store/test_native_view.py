@@ -21,6 +21,7 @@ from sopuli.payload import (
     ORIGIN,
     PENDING,
     PREVIOUS,
+    REACHED,
     REMOVE,
     RETAINING,
     ROLLOVER,
@@ -161,6 +162,52 @@ def test_a_rollover_mark_is_staged_with_its_pending_and_cleared_with_it(
     promoted = view.read(PATH)
     assert promoted is not None
     assert "rollover" not in promoted.data
+
+
+def test_a_reaching_login_mark_is_kept_in_the_attributes_beside_its_pending(
+    view: NativeStagedStore, inner: MemoryStore
+) -> None:
+    """#1316: the mark becomes true after the PENDING version was made, whose
+    content cannot change, so it goes in the attributes. The live pending stays
+    the same version."""
+    seeded(view)
+    apply_patch(view, PATH, stage_patch("b"), cas=token(view))
+    staged = inner.read_stage(PATH, "pending")
+    assert staged is not None
+
+    apply_patch(view, PATH, LAYOUT.patch(REACHED, ["mariadb-dev"]), cas=token(view))
+
+    marked = view.read(PATH)
+    assert marked is not None
+    assert marked.data["reached"] == ["mariadb-dev"]
+    assert marked.data["pending"] == "b"
+    still = inner.read_stage(PATH, "pending")
+    assert still is not None
+    assert still.generation == staged.generation
+    assert "reached" not in still.data
+
+
+@pytest.mark.parametrize("next_write", ["stage", "promote"])
+def test_a_new_pending_or_a_promotion_drops_the_mark(
+    view: NativeStagedStore, next_write: str
+) -> None:
+    """Both carry no mark in what they write, as `generate` and the promotion
+    patch send none."""
+    seeded(view)
+    apply_patch(view, PATH, stage_patch("b"), cas=token(view))
+    apply_patch(view, PATH, LAYOUT.patch(REACHED, ["mariadb-dev"]), cas=token(view))
+
+    patch = (
+        merge(stage_patch("c"), LAYOUT.patch(REACHED, REMOVE))
+        if next_write == "stage"
+        else merge(promotion("b", "a"), LAYOUT.patch(REACHED, REMOVE))
+    )
+    apply_patch(view, PATH, patch, cas=token(view))
+
+    after = view.read(PATH)
+    assert after is not None
+    assert "reached" not in after.data
+    assert "reached" not in after.attributes
 
 
 def test_a_pending_that_is_not_the_recorded_one_is_not_a_pending(

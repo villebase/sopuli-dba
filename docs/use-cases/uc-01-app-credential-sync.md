@@ -135,7 +135,8 @@ split by when they become true (decision 3 in
 [`../decisions/log.md`](../decisions/log.md#1158)). The content holds the
 password, `origin`, `rollover`, `generated_at` and `generated_by`. `rotated_at`,
 `rotated_by`, `policy` and `targets` go in the secret's metadata, written in the
-same call that moves CURRENT. The metadata also records `pending_version`, the
+same call that moves CURRENT. So does `reached` (below), which becomes true after
+the pending version was made. The metadata also records `pending_version`, the
 number of the version that is the live pending. A PENDING version with another
 number is not a pending for any verb, because OCI cannot drop a stage without
 promoting it.
@@ -270,6 +271,17 @@ reserved root names, so a `secret:` ref may not name a field called `origin`.
 
 It is called `origin` and not `source` because `apply --source` already names a
 stage. One word with two meanings, one flag apart, would eventually be misread.
+
+### `reached`: where a staged password's reaching login was spent
+
+On MariaDB the first login after a change made from a staged `pending`, on each
+target, may reach an account the config does not declare
+([#1270](../decisions/log.md#1270), decision 5). `reached` lists the targets
+where that login was spent, so a later `apply` of the same `pending` does not
+repeat it. It follows the mirror rule, as `origin` does, and it is reserved too.
+Every write that stages a new `pending` clears it, and so does the promotion. A
+`reached` the tool cannot read counts as spent on every target. Nothing writes
+it yet (open: #1316).
 
 ### `rollover`: a pending a rollover rotation staged
 

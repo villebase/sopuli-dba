@@ -70,6 +70,7 @@ from sopuli.payload import (
     GENERATED,
     ORIGIN,
     PENDING,
+    REACHED,
     REMOVE,
     RETAINING,
     ROLLOVER,
@@ -194,6 +195,8 @@ class DocumentWrite:
                 patches.append(
                     staged_patch(ref, RETAINING if candidate.rollover else REMOVE, stage=ROLLOVER)
                 )
+                # A new `pending` has spent no reaching login anywhere (#1316).
+                patches.append(staged_patch(ref, REMOVE, stage=REACHED))
         return merge(*patches)
 
     @property

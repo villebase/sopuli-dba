@@ -47,6 +47,7 @@ from sopuli.payload import (
     ORIGIN,
     PENDING,
     PREVIOUS,
+    REACHED,
     ROLLOVER,
     STAMPS,
     StageLayout,
@@ -82,6 +83,14 @@ PREVIOUS_VERSION = "previous_version"
 #: (decision 3). Not part of the secret's own keys, so neither shown nor
 #: carried from one version to the next.
 OWN_KEYS = frozenset({ORIGIN, ROLLOVER, GENERATED_AT, GENERATED_BY})
+
+#: What the tool keeps in the secret's attributes, beside ``pending_version``:
+#: the stamps, which become true at promotion, and the reaching-login mark of
+#: #1316, which becomes true after the PENDING version was made. A version's
+#: content cannot change, so neither can live there. The mark describes the
+#: live pending, so a new pending or a promotion drops it: neither carries it
+#: in what it writes.
+ATTRIBUTE_KEYS = (*STAMPS, REACHED)
 
 
 class StagingStore(SecretStore, NativeStaging, Protocol):
@@ -156,6 +165,8 @@ class _View:
         }
         for stamp in STAMPS:
             found[stamp] = self.attributes.get(stamp)
+        # Only beside a live pending, which is all it describes.
+        found[REACHED] = None if self.pending is None else self.attributes.get(REACHED)
         return found
 
     def numbers(self) -> Mapping[str, Any]:
@@ -374,7 +385,7 @@ class NativeStagedStore:
             return token
         new = {
             key: layout.read(data, key)
-            for key in (CURRENT, PENDING, PREVIOUS, ORIGIN, ROLLOVER, *STAMPS)
+            for key in (CURRENT, PENDING, PREVIOUS, ORIGIN, ROLLOVER, *ATTRIBUTE_KEYS)
         }
         seen = self._seen.pop(path, None)
         view = (
@@ -431,7 +442,9 @@ class NativeStagedStore:
             or new[ROLLOVER] != old[ROLLOVER]
         ):
             return self._stage(path, view, new, cas=cas)
-        if any(new[stamp] != old[stamp] for stamp in STAMPS):
+        if any(new[key] != old[key] for key in ATTRIBUTE_KEYS):
+            # The stamps alone, or the reaching-login mark (#1316): the
+            # attributes change, and the live pending stays.
             return self._promote(path, view.current, new, pending=view.pending is not None, cas=cas)
         # Nothing to change; the compare-and-set still has to hold.
         if cas is not None and cas != view.current.version:
@@ -635,7 +648,8 @@ def _without(attributes: Mapping[str, Any], key: str) -> Mapping[str, Any]:
 
 
 def _stamps(keys: Mapping[str, Any]) -> dict[str, Any]:
-    return {stamp: keys[stamp] for stamp in STAMPS if keys.get(stamp) is not None}
+    """The :data:`ATTRIBUTE_KEYS` ``keys`` holds a value for."""
+    return {key: keys[key] for key in ATTRIBUTE_KEYS if keys.get(key) is not None}
 
 
 def _get(data: Any, key: str) -> Any:

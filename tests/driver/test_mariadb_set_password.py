@@ -20,6 +20,7 @@ import pytest
 from sopuli.config.model import ExpandedTarget, Target, TargetMysql
 from sopuli.driver.protocol import (
     FAIL,
+    OLD_KEEP,
     OLD_RETAIN,
     PASS,
     UNAVAILABLE,
@@ -193,8 +194,24 @@ def test_a_missing_account_is_refused_before_anything_is_sent(session: Any) -> N
 def test_a_rollover_is_not_written_yet(live_mariadb: Any, session: Any, user: str) -> None:
     _create(live_mariadb, user, "mysql_native_password")
 
-    with pytest.raises(NotWrittenError):
+    with pytest.raises(NotWrittenError) as caught:
         session.set_password(f"{user}@%", Secret("Acme-not-sent-1"), old_password=OLD_RETAIN)
+
+    assert "--strategy staged" in (caught.value.hint or "")
+
+
+def test_keeping_a_window_this_target_never_opened_sets_the_password(
+    live_mariadb: Any, session: Any, user: str
+) -> None:
+    """`keep` comes from a `pending` a MySQL rollover marked, in a document a
+    MariaDB target shares. No window is open here, so it is a plain change."""
+    _create(live_mariadb, user, "mysql_native_password")
+    password = f"Acme-{uuid.uuid4().hex[:12]}"
+
+    result = session.set_password(f"{user}@%", Secret(password), old_password=OLD_KEEP)
+
+    assert (result.changed, result.discarded) == (True, True)
+    assert session.verify_password(f"{user}@%", Secret(password)).result == PASS
 
 
 @pytest.mark.parametrize("plugin", ["mysql_native_password", "ed25519"])

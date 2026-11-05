@@ -15,9 +15,10 @@ declared accounts (:mod:`~sopuli.driver.mariadb.accounts`). It describes a
 declared account, with the privileges guardrail 9 checks and the roles it
 holds, sets its password by the value its plugin stores and verifies it by
 login (#1270). It resolves a role and lists its members, suspends an account,
-resets its password and expires it (#1272). Every other method refuses with
-``SOPULI-20006``. The registry lists `doctor` and UC-2's four verbs; UC-1's
-are #1270.
+resets its password and expires it (#1272). The registry lists `doctor`,
+UC-1's `creds generate`, `apply`, `check`, `rotate` and `status`, and UC-2's
+four verbs. Every other method refuses with ``SOPULI-20006``: a rollover is
+#1271.
 
 The session claims no server identity: MariaDB has no ``server_uuid``, and
 11.8.9 shows no ``server_uid`` status either, so two targets on one server are
@@ -56,6 +57,7 @@ from sopuli.driver.protocol import (
     OFFLINE_VERIFY,
     OLD_DISCARD,
     OLD_PASSWORD_MODES,
+    OLD_RETAIN,
     PASSWORD_EXPIRE,
     PASSWORD_SET,
     PROFILE_MANAGEMENT,
@@ -86,6 +88,12 @@ from sopuli.passwords import ByteLimit
 from sopuli.secrets import Secret
 
 LOG = logger("mariadb")
+
+#: The hint for `--strategy rollover` on a MariaDB server.
+NO_ROLLOVER = (
+    "a rollover window is not written for MariaDB yet (#1271); use "
+    "`--strategy staged` or `--strategy direct`"
+)
 
 #: The hint for a `profile:` rule on a MariaDB server.
 NO_PROFILES = (
@@ -241,16 +249,16 @@ class MariadbSession(ClosesConnection):
             )
         return replace(audit, remedies=(*audit.remedies, *lines, *ACCOUNT_GAPS))
 
-    def _not_written(self, what: str) -> NoReturn:
+    def _not_written(self, what: str, *, hint: str | None = None) -> NoReturn:
         raise NotWrittenError(
             self.target.name,
             product="a MariaDB server",
             what=what,
-            hint=(
-                "the MariaDB driver connects, reports the server for `doctor`, "
-                "describes an account, sets its password and verifies it by login, "
-                "resolves a role, and suspends, resets and expires an account; the rest "
-                "of it is not written yet (#1270, #1271)"
+            hint=hint
+            or (
+                "the MariaDB driver runs `doctor`, the `creds` commands but "
+                "`finish-rollover`, and the `account` commands; a rollover is not "
+                "written yet (#1271)"
             ),
         )
 
@@ -309,15 +317,17 @@ class MariadbSession(ClosesConnection):
         value for the account's own plugin computed here (invariant 15,
         :mod:`~sopuli.driver.mariadb.password`).
 
-        Only ``discard``: the statement names one method, which replaces every
-        method the account had (``03_dual_password_probe.py``, DP3). That ends
-        a second password a rollover kept, so only the vault's password logs
-        in. It also ends a second method of another kind, such as
-        ``unix_socket``, which the view does not show. That gap is accepted
-        (``02-mariadb-privileges.md`` §4, #1301), and ``doctor`` says so
-        (:data:`OR_GAP`). No verb that calls this is registered yet.
-        TODO(#1270): register the UC-1 verbs. ``retain`` and ``keep`` are a
-        rollover, which is #1271.
+        ``discard``, and ``keep`` taken as ``discard``: the statement names one
+        method, which replaces every method the account had
+        (``03_dual_password_probe.py``, DP3). That ends a second password a
+        rollover kept, so only the vault's password logs in. It also ends a
+        second method of another kind, such as ``unix_socket``, which the view
+        does not show. That gap is accepted (``02-mariadb-privileges.md`` §4,
+        #1301), and ``doctor`` says so (:data:`OR_GAP`). ``keep`` reaches here
+        when a ``pending`` a MySQL rollover rotation marked, in a document a
+        MariaDB target shares, is set again: no window was opened on this
+        target, so there is none to keep. ``retain`` opens one, and that is
+        #1271.
 
         As on the other drivers, ``changed`` is ``True`` whenever the statement
         succeeded: the command decides first whether the account already had
@@ -331,8 +341,8 @@ class MariadbSession(ClosesConnection):
         """
         if old_password not in OLD_PASSWORD_MODES:
             raise ValueError(f"not an old-password mode: {old_password!r}")
-        if old_password != OLD_DISCARD:
-            self._not_written("keep a rollover window")
+        if old_password == OLD_RETAIN:
+            self._not_written("keep a rollover window", hint=NO_ROLLOVER)
         password_module.admit(secret)
         require_read_write(self.scope(), target=self.target.name)
         found = self._existing(
@@ -644,7 +654,7 @@ class MariadbSession(ClosesConnection):
         )
 
     def require_rollover(self, account: str) -> NoReturn:
-        self._not_written("keep a rollover window")
+        self._not_written("keep a rollover window", hint=NO_ROLLOVER)
 
     def finish_rollover(self, account: str) -> NoReturn:
         self._not_written("finish a rollover")

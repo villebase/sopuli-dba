@@ -252,6 +252,34 @@ def test_the_uc2_commands_are_let_through_on_mysql(command: str) -> None:
     require_command(target("mysql-dev", "mysql"), command)
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        "creds.check",
+        "creds.apply",
+        "creds.rotate",
+        "creds.generate",
+        "creds.status",
+        "account.list",
+        "account.reset-password",
+        "account.suspend",
+        "account.expire-password",
+    ],
+)
+def test_the_uc1_and_uc2_commands_are_let_through_on_mariadb(command: str) -> None:
+    """#1270 and #1272."""
+    require_command(target("mariadb-dev", "mariadb"), command)
+
+
+def test_mariadb_s_rollover_is_refused() -> None:
+    """The rollover is not written for MariaDB."""
+    # TODO(#1271): the rollover.
+    with pytest.raises(DriverNotImplementedError) as refused:
+        require_command(target("mariadb-dev", "mariadb"), "creds.finish-rollover")
+
+    assert refused.value.code == DRIVER_NOT_IMPLEMENTED
+
+
 def test_account_list_is_let_through_on_postgresql() -> None:
     """#1201: the driver resolves a `role:` predicate, so `account list` runs."""
     require_command(target("pg-dev", "postgresql"), "account.list")

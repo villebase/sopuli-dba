@@ -652,24 +652,20 @@ These rules decide what `apply` does with each account:
   ([#1267](../decisions/log.md#1267), decision 2), so a locked account is
   changed. Its login after the change answers `4151`, which only the right
   password gets.
-- **On MariaDB, `creds check` logs in only where no other account can answer
-  the login, and only the login after `creds rotate`'s change may reach an
-  account the config does not declare** ([#1270](../decisions/log.md#1270),
-  decisions 3 and 5). A check logs in only to a `user@%` account that is the
-  user's only one, with no anonymous account at a named host, as on MySQL.
-  Any other account is `unavailable` without a login, because a failed login
-  counts toward `max_password_errors` on the account it reaches, and checks
-  repeat. `creds apply` setting a held `pending` again follows the same rule,
-  because a scheduled `apply` repeats too: its row is `unavailable`, and the
-  `pending` stays. Once per drawn password, the login after `creds rotate`'s
-  change logs in wherever a login may reach, and verifies only when
-  `CURRENT_USER()` is the declared account
+- **On MariaDB, the tool logs in only where no other account can answer the
+  login** ([#1270](../decisions/log.md#1270), decision 3). That is a `user@%`
+  account that is the user's only one, with no anonymous account at a named
+  host, as on MySQL. Any other account is `unavailable` without a login,
+  because a failed login counts toward `max_password_errors` on the account it
+  reaches, and `creds check` and a scheduled `creds apply` repeat. The rule
+  covers the login after a change too, so such an account is changed and its
+  `pending` is not promoted (open: #1316). Decision 5 lets the first login
+  after a change from each staged `pending` log in wherever a login may reach,
+  and verify only when `CURRENT_USER()` is the declared account
   ([#1267](../decisions/log.md#1267), decision 8). A login reaches the account
-  the server matches from the tool's host, which may be another one. A session
-  whose `CURRENT_USER()` names another account says nothing, and its `pending`
-  is not promoted. Some answers come before `CURRENT_USER()` can be read.
-  These count only where no other account can answer. Elsewhere the result is
-  `unavailable`. A refusal is a `fail` only where the target's
+  the server matches from the tool's host, which may be another one. Some
+  answers come before `CURRENT_USER()` can be read. These count only where no
+  other account can answer. A refusal is a `fail` only where the target's
   `mariadb.ssl_mode` requires TLS, because an account that requires TLS
   refuses its right password over a session without it. MariaDB keeps no
   `password_last_changed` the tool can read, so there is no `stored` result.

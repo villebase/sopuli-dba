@@ -4,13 +4,13 @@
 password. The server picks the account a login reaches from the **client's
 host** (``05_identity_grants_probe.py``, ID1): a login as ``acme_app`` from the
 tool's host reaches ``acme_app@%`` even where ``acme_app@localhost`` is the one
-declared. ``creds check`` and ``creds apply`` therefore log in only where no
-other account can answer: the declared account is ``user@%``, it is the user's
-only account, and no anonymous account sits at a named host
-(:func:`competitor`), as on MySQL. The session decides that (#1270, decisions
-3 and 5). Once per drawn password, the login after ``creds rotate``'s change
-logs in wherever a login may reach, and its result counts only when the login
-is known to have reached the declared account (#1267, decision 8):
+declared. The session therefore logs in only where no other account can
+answer: the declared account is ``user@%``, it is the user's only account, and
+no anonymous account sits at a named host (:func:`competitor`), as on MySQL
+(#1270, decision 3). TODO(#1316): once per staged ``pending``, the login after
+a change logs in wherever a login may reach (decision 5). Wherever this module
+logs in, the result counts only when the login is known to have reached the
+declared account (#1267, decision 8):
 
 - a session that reads ``CURRENT_USER()`` as the declared account passes;
 - a session that reads another account says nothing about the declared one;
@@ -50,8 +50,8 @@ without it at connect.
 **There is no lockout guard.** MariaDB counts failed logins against
 ``max_password_errors`` in ``mysql.global_priv``, beside the stored value, which
 the tool account does not read. A failed login counts on the account it
-reaches. After a change that is an accepted cost of decision 8, and an
-exception to invariant 5 (``02-mariadb-privileges.md`` §7).
+reaches, so the session logs in only where that is the declared account
+(``02-mariadb-privileges.md`` §7).
 """
 
 from __future__ import annotations

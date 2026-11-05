@@ -9524,14 +9524,6 @@ def _apply_one(
         after = session.verify_password(
             after_user.name, source.value, method=VERIFY_LOGIN, lockout_margin=margin, attempts=2
         )
-        reach = getattr(session, "verify_after_change", None)
-        if after.result == UNAVAILABLE and rotating and reach is not None:
-            # MariaDB, for an account another account could answer for
-            # (#1270, decision 5): the run that drew the password logs in once
-            # wherever the login reaches, and trusts it only for the declared
-            # account. A held `pending` set again never does, so a scheduled
-            # `apply` cannot repeat a login that may reach an undeclared account.
-            after = reach(after_user.name, source.value)
         if after.result == UNAVAILABLE:
             # MySQL, for an account no login can reach (#1223): the server's
             # record of the change stands in for the login, as `stored`. A

@@ -364,23 +364,23 @@ and on `ed25519` with PyNaCl, which the `mariadb` extra installs
 `offline_verify`: the stored value is in a column the tool account does not
 read.
 
-**`creds check` logs in only where no other account can answer the login**
+**The tool logs in only where no other account can answer the login**
 ([#1270](../decisions/log.md#1270), decision 3): the declared account is
 `user@%`, it is the user's only account, and no anonymous account sits at a
 named host. This is the MySQL driver's rule
 ([#1223](../decisions/log.md#1223)). Any other account is `unavailable`
 without a login, and the detail names the other account. A failed login counts
-toward `max_password_errors` on the account it reaches, and a check repeats.
-`creds apply` follows the same rule, because a scheduled `apply` repeats too
-(decision 5).
+toward `max_password_errors` on the account it reaches, and `creds check` and
+a scheduled `creds apply` repeat. The rule covers the login after a change
+too, so such an account's `pending` is not promoted (open: #1316).
 
 **A change is verified only when `CURRENT_USER()` is the declared account**
-([#1267](../decisions/log.md#1267), decision 8). Once per drawn password, the
-login after `creds rotate`'s change logs in wherever a login may reach. It may
-reach an account the config does not declare, an exception to invariant 5. A
-login reaches the account
-the server matches from the client's host, which need not be the declared one
-(ID1). After the login, the tool reads `CURRENT_USER()`. Where it names another
+([#1267](../decisions/log.md#1267), decision 8). Decision 5 lets the first
+login after a change from each staged `pending` log in wherever a login may
+reach, and a mark in the vault spends that reach. Such a login may reach an
+account the config does not declare. A login reaches the account the server
+matches from the client's host, which need not be the declared one (ID1).
+After the login, the tool reads `CURRENT_USER()`. Where it names another
 account, or the login reaches none, the change is not verified, and its
 `pending` is not promoted (invariant 7). MySQL verifies such an account by
 `password_last_changed` instead ([#1223](../decisions/log.md#1223)); MariaDB
@@ -402,11 +402,11 @@ gets `1820`, which is the tool's TLS read. With `disconnect_on_expired_password
 TLS.
 
 `1820`, `1862` and `4151` come only to the right password, but before the tool
-can read `CURRENT_USER()`. `1045` does not say which account refused. A check
+can read `CURRENT_USER()`. `1045` does not say which account refused. The tool
 logs in only where no other account can answer, so there each answer counts.
-After `creds rotate`'s change, where another account could answer, each is
-`unavailable`, and the detail names the other account. `1045` is a `fail` only where the
-target's `ssl_mode` requires TLS. `4150` answers any password, so it is
+After a reaching login, where another account could answer, each is
+`unavailable`, and the detail names the other account. `1045` is a `fail` only
+where the target's `ssl_mode` requires TLS. `4150` answers any password, so it is
 `unavailable` everywhere. On an `ed25519` account with `OR`, a rollover in
 progress, PyMySQL 1.2.3 logs in only with the first method: the server asks
 for a second authentication for the second method, and for a wrong password,
@@ -415,9 +415,9 @@ and PyMySQL fails itself with "received multiple auth switch requests"
 the `OR` is in place: it cannot tell a wrong password from the second
 method's. `sopuli/driver/mariadb/verification.py` holds the rule.
 
-A failed login after `creds rotate`'s change counts toward
-`max_password_errors` on the account it reaches. That is an accepted cost of
-decision 8. It happens once per drawn password, with the password just set.
+A failed reaching login counts toward `max_password_errors` on the account it
+reaches. That is an accepted cost of decision 8. It happens once per staged
+`pending`, with the password just set.
 
 **TLS.** The `mariadb` images of 11.4 and later start with TLS on. The 10.11
 image starts with it off, and

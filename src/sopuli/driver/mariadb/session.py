@@ -422,8 +422,9 @@ class MariadbSession(ClosesConnection):
         Any other account is :data:`~sopuli.driver.protocol.UNAVAILABLE`
         without a login, as is one that does not exist: a failed login counts
         toward ``max_password_errors`` on the account it reaches, and `creds
-        check` and `creds apply` repeat (#1270, decisions 3 and 5).
-        :meth:`verify_after_change` is the one login that reaches further.
+        check` and `creds apply` repeat (#1270, decision 3). The login after
+        a change follows the same rule. TODO(#1316): once per staged
+        ``pending``, that login may reach further (#1267, decision 8).
 
         The tool cannot read MariaDB's count of failed logins, so
         ``lockout_margin`` and ``attempts`` have nothing to guard, and the
@@ -437,24 +438,6 @@ class MariadbSession(ClosesConnection):
                 target=self.target.name,
                 hint="this driver verifies by `login` only",
             )
-        return self._verify(account, secret, reach=False)
-
-    def verify_after_change(self, account: str, secret: Secret) -> VerifyResult:
-        """The login after `creds rotate` set a fresh password, where
-        :meth:`verify_password` found that another account could answer it.
-        Not on the protocol: `creds apply` asks it of a driver that has it,
-        only for the run that drew the password (#1270, decision 5).
-
-        It logs in wherever a login may reach, and passes only where
-        ``CURRENT_USER()`` is the declared account (#1267, decision 8). A
-        refusal then says nothing, because another account may have sent it.
-        It runs once per drawn password: setting a held ``pending`` again,
-        `creds apply` never asks it. That login is an exception to invariant
-        5, as CLAUDE.md records.
-        """
-        return self._verify(account, secret, reach=True)
-
-    def _verify(self, account: str, secret: Secret, *, reach: bool) -> VerifyResult:
         user, host = split(account)
         # One read: the user's accounts at every host, and the anonymous ones,
         # which compete for the same login.
@@ -472,7 +455,7 @@ class MariadbSession(ClosesConnection):
                 declared.name, declared.plugin, target=self.target.name
             )
         competing = verification.competitor(declared, found[user], found[""])
-        if competing is not None and not reach:
+        if competing is not None:
             return VerifyResult(
                 method=VERIFY_LOGIN,
                 result=UNAVAILABLE,

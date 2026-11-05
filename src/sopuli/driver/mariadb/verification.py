@@ -26,6 +26,11 @@ the password as UTF-8 bytes:
 | locked | ``4151`` | ``1045`` |
 | blocked after failed logins | ``4150`` | ``4150`` |
 | ``REQUIRE SSL``, over a session without TLS | ``1045`` | ``1045`` |
+| ``ed25519`` ``OR``, the second method (a rollover) | PyMySQL's own error | PyMySQL's own error |
+
+The last row is PyMySQL's: the server asks for a second authentication, and
+PyMySQL 1.2.3 takes only one. The first method of the ``OR`` logs in as the
+open row does (``11_rollover_expiry_probe.py``, on 10.11.19 to 12.3.3).
 
 ``1820``, ``1862`` and ``4151`` say the password is right, for the account the
 login reached. ``4150`` answers any password, so it says nothing. ``1045``
@@ -132,8 +137,10 @@ def _accepted(declared: Account, competing: str | None, why: str, number: int) -
 
 #: PyMySQL 1.2.3's own error, with no number, when the server asks for a
 #: second authentication: for the second method of an ``ed25519`` ``OR``, which
-#: a rollover sets, and for a wrong password on such an account
-#: (``11_rollover_expiry_probe.py``, RE1 and RE2, #1271).
+#: a rollover sets, and for a wrong password on such an account. Measured on
+#: 10.11.19, 11.4.13, 11.8.9 and 12.3.3 by ``11_rollover_expiry_probe.py``, RE1,
+#: RE2 and RE5 (#1271, PR #1304). Matched as text anywhere in the error's
+#: arguments, so a release that adds a number still matches.
 MULTIPLE_SWITCHES = "received multiple auth switch requests"
 
 #: What a login that met :data:`MULTIPLE_SWITCHES` says.
@@ -250,7 +257,7 @@ def _ended(
 ) -> VerifyResult:
     """The result for a login that ended in ``error``, at connect or after."""
     latency = _ms(started) if latency is None else latency
-    if connecting and tuple(getattr(error, "args", ())) == (MULTIPLE_SWITCHES,):
+    if connecting and any(MULTIPLE_SWITCHES in str(arg) for arg in getattr(error, "args", ())):
         # Unavailable wherever no other account can answer too: a wrong
         # password and a right second method fail the same way here.
         LOG.debug("login as %s: PyMySQL met a second auth switch", declared.name)

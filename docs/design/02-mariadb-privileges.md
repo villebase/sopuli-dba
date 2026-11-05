@@ -375,7 +375,7 @@ What the server answers at a login, measured with the `mariadb` client:
 | open | logs in | `1045` |
 | expired | logs in, then `1820` to a statement (LK3) | `1045` |
 | locked | `4151` (LK1) | `1045` |
-| blocked after failed logins | `4150` (LK4) | `4150`, measured on 11.8.9 with `max_password_errors = 1` |
+| blocked after failed logins | `4150` (LK4) | `4150` once the block is set, measured on 11.8.9 with `max_password_errors = 1`; the failed logins that set it got `1045` (LK4) |
 
 With PyMySQL 1.2.3 on 11.8.9, an expired account's first statement after login
 gets `1820`, which is the tool's TLS read. With `disconnect_on_expired_password
@@ -394,8 +394,9 @@ the detail names the other account. `1045` is a `fail` only where the target's
 everywhere. On an `ed25519` account with `OR`, a rollover in progress, PyMySQL
 1.2.3 logs in only with the first method: the server asks for a second
 authentication for the second method, and for a wrong password, and PyMySQL
-fails itself with "received multiple auth switch requests" (#1271). That
-login is `unavailable` too. `sopuli/driver/mariadb/verification.py` holds the
+fails itself with "received multiple auth switch requests" (#1271; probe 11,
+#1304). That login is `unavailable` too, and stays so while the `OR` is in
+place: it cannot tell a wrong password from the second method's. `sopuli/driver/mariadb/verification.py` holds the
 rule.
 
 A failed verification login counts toward `max_password_errors` on the account

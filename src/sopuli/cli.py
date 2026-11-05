@@ -9666,7 +9666,15 @@ def _apply_one(
         old_password = strategies.old_password(
             regime, user, source.stage, rotating=rotating, marked=source.rollover
         )
-        set_result = session.set_password(user.name, source.value, old_password=old_password)
+        # The vault's `current`, for a driver that keeps an old password only by
+        # being sent it again (MariaDB, #1271). Passed only when one is kept.
+        keeping = old_password in (OLD_RETAIN, OLD_KEEP)
+        set_result = session.set_password(
+            user.name,
+            source.value,
+            old_password=old_password,
+            previous=source.replaces if keeping else None,
+        )
         retained, discarded = set_result.retained, set_result.discarded
         # From here on the database holds the new password whatever else fails, and
         # the row has to say so: an error in the re-read or the verification below
@@ -9727,7 +9735,8 @@ def _apply_one(
             # and one operation cannot encode two different rules about whether the
             # fence applies to it.
             manager.check(_lock_key(binding))
-            session.finish_rollover(after_user.name)
+            # The password just set is the one to keep (#1271).
+            session.finish_rollover(after_user.name, current=source.value)
             after_user = session.describe_user(binding.account) or after_user
             outcome = apply_states.after_change(after_user, after)
     except LockError as lost:
@@ -12194,7 +12203,9 @@ def _finish_one(
 
         if manager is not None:
             manager.check(_lock_key(binding))
-        result = session.finish_rollover(user.name)
+        # The vault's `current`, which the login above just verified, is the
+        # one to keep (#1271).
+        result = session.finish_rollover(user.name, current=source.value)
         if not result.changed:
             # The window closed between the read and the statement -- it elapsed,
             # or another run got there first. Not a failure and not a change:

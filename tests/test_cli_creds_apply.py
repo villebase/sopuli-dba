@@ -396,6 +396,10 @@ class FakeSession:
         self.attempted: list[tuple[str, str]] = []
         #: What each ``set_password`` was told to do with the old password.
         self.old_passwords: list[str] = []
+        #: The ``previous`` each ``set_password`` was given, revealed (#1271).
+        self.previous: list[str | None] = []
+        #: The ``current`` each ``finish_rollover`` was given, revealed (#1271).
+        self.kept: list[str | None] = []
         #: Accounts this session actually issued ``ACCOUNT UNLOCK`` for, which is
         #: not the same list as the ones it was asked about -- invariant 9 for the
         #: attributes is that an account already open is not touched.
@@ -531,8 +535,9 @@ class FakeSession:
         if self.rollover_refusal is not None:
             raise self.rollover_refusal
 
-    def finish_rollover(self, account: str) -> ChangeResult:
+    def finish_rollover(self, account: str, *, current: Secret | None = None) -> ChangeResult:
         self.finished.append(account.upper())
+        self.kept.append(None if current is None else current.reveal())
         return ChangeResult(changed=True, detail="rollover window ended")
 
     def verify_password(
@@ -550,7 +555,12 @@ class FakeSession:
         return queued.pop(0) if queued else VerifyResult(VERIFY_LOGIN, PASS, latency_ms=9)
 
     def set_password(
-        self, account: str, secret: Secret, *, old_password: str = "discard"
+        self,
+        account: str,
+        secret: Secret,
+        *,
+        old_password: str = "discard",
+        previous: Secret | None = None,
     ) -> ChangeResult:
         # Recorded before the refusal, unlike `changed` below, which only sees the
         # calls that succeeded. A bounded redraw has to be asserted on the
@@ -558,6 +568,7 @@ class FakeSession:
         # them for ever and appends nothing to a list of successes.
         self.attempted.append((account.upper(), secret.reveal()))
         self.old_passwords.append(old_password)
+        self.previous.append(None if previous is None else previous.reveal())
         if self.set_error is not None and next(self.refusals, False):
             raise self.set_error
         self.changed.append((account.upper(), secret.reveal()))
@@ -885,6 +896,9 @@ def test_only_a_rollover_s_pending_keeps_a_retained_password(
 
     assert result.exit_code == ExitCode.SUCCESS, result.output
     assert harness["sessions"][-1].old_passwords == [expected]
+    # The password the account had goes with a mode that keeps it, for a
+    # driver that keeps it only by being sent it again (MariaDB, #1271).
+    assert harness["sessions"][-1].previous == [LIVE if expected == "keep" else None]
     promoted = stored(harness["store"], "apps/acme/appdb-alpha")
     assert promoted.get("rollover") in (None, {}), "cleared with `pending`"
     kept = "the previous password still logs in" in result.output
@@ -3613,6 +3627,9 @@ def test_direct_closes_the_window_it_opened(
     result = run(runner, write_config(CONFIG), "--select", "tenant=alpha", "--strategy", "direct")
 
     assert applying(harness).finished == ["ACME_WEB_USER"]
+    # The password just set and verified, not promoted yet, is the one to
+    # keep (#1271): the vault's `current` is still the old one here.
+    assert applying(harness).kept == [STAGED]
     assert check.IN_SYNC in result.output
     assert "no longer works" in result.output
 

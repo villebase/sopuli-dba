@@ -125,7 +125,7 @@ class FakeSession:
     def require_rollover(self, account: str) -> None:
         return None
 
-    def finish_rollover(self, account: str) -> ChangeResult:
+    def finish_rollover(self, account: str, *, current: Secret | None = None) -> ChangeResult:
         self.finished.append(account.upper())
         return ChangeResult(changed=True, detail="rollover window ended")
 
@@ -133,7 +133,12 @@ class FakeSession:
         return VerifyResult("login", PASS, latency_ms=9)
 
     def set_password(
-        self, account: str, secret: Secret, *, old_password: str = "discard"
+        self,
+        account: str,
+        secret: Secret,
+        *,
+        old_password: str = "discard",
+        previous: Secret | None = None,
     ) -> ChangeResult:
         self.changed.append((account.upper(), secret.reveal()))
         return ChangeResult(changed=True)

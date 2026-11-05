@@ -29,7 +29,7 @@ Session
   describe_user(account) -> UserState | None
   byte_limit() -> ByteLimit                     # how long a password may be here
   privileges() -> PrivilegeAudit                # doctor --check-privileges: reports, never refuses
-  set_password(account, secret) -> ChangeResult
+  set_password(account, secret, old_password, previous) -> ChangeResult
   suspend_account(account) -> AccountChange     # UC-2: lock an account on purpose
   reset_password(account, secret, expire, keep_rollover) -> AccountChange[]   # UC-2 §4.1
   expire_password(account) -> AccountChange[]   # UC-2: change at next logon
@@ -41,7 +41,7 @@ Session
   verify_password(account, secret, method, lockout_margin, attempts) -> VerifyResult
   require_verifier(account, secret) -> None     # refuses, or returns
   require_rollover(account) -> None             # refuses, or returns
-  finish_rollover(account) -> ChangeResult
+  finish_rollover(account, current) -> ChangeResult
   close()
 ```
 
@@ -64,6 +64,11 @@ The interface has this shape for these reasons:
   reports each attribute as a separate change, so that the result says which
   attribute changed. `set_password` takes no attributes and returns one
   `ChangeResult`, because one result must not describe two changes.
+- **`set_password` takes `previous`, and `finish_rollover` takes `current`.**
+  A server that keeps an old password itself, and ends a window by name, ignores
+  them. MariaDB keeps the old password only by being sent its value beside the
+  new one, and ends the window by being sent the kept value alone (#1271). The
+  command passes `previous` only where `old_password` keeps one.
 - **`resolve_profile` and `resolve_role` return the name as the database spells
   it**, not a boolean. A quoted identifier is case-sensitive, and only the
   dictionary's spelling may reach a statement (`02-oracle-privileges.md` §4).

@@ -463,7 +463,12 @@ class OracleSession(ClosesConnection):
             )
 
     def set_password(
-        self, account: str, secret: Secret, *, old_password: str = OLD_DISCARD
+        self,
+        account: str,
+        secret: Secret,
+        *,
+        old_password: str = OLD_DISCARD,
+        previous: Secret | None = None,
     ) -> ChangeResult:
         """Issue the ``ALTER USER``, and let a rejection be a rejection.
 
@@ -1654,7 +1659,7 @@ class OracleSession(ClosesConnection):
                 ),
             )
 
-    def finish_rollover(self, account: str) -> ChangeResult:
+    def finish_rollover(self, account: str, *, current: Secret | None = None) -> ChangeResult:
         """End an open rollover window now, or report that there was none.
 
         **The state is read first, and that is invariant 9 rather than

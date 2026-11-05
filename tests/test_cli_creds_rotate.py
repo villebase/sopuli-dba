@@ -218,6 +218,8 @@ class FakeSession:
         self.changed: list[tuple[str, str]] = []
         #: What each `set_password` was told to do with the old password.
         self.old_passwords: list[str] = []
+        #: The ``previous`` each `set_password` was given, revealed (#1271).
+        self.previous: list[str | None] = []
         self.finished: list[str] = []
         self.closed = False
 
@@ -251,7 +253,7 @@ class FakeSession:
         if self.database.user(account.upper()) is None:
             raise RuntimeError(f'account "{account}" does not exist on this target')
 
-    def finish_rollover(self, account: str) -> ChangeResult:
+    def finish_rollover(self, account: str, *, current: Secret | None = None) -> ChangeResult:
         closed = self.database.finish_rollover(account.upper())
         self.finished.append(account.upper())
         self._called("finish_rollover")
@@ -281,13 +283,19 @@ class FakeSession:
         return VerifyResult("login", FAIL, detail="ORA-01017: invalid credential")
 
     def set_password(
-        self, account: str, secret: Secret, *, old_password: str = "discard"
+        self,
+        account: str,
+        secret: Secret,
+        *,
+        old_password: str = "discard",
+        previous: Secret | None = None,
     ) -> ChangeResult:
         if self.set_error is not None:
             raise self.set_error
         self.database.set_password(account.upper(), secret.reveal())
         self.changed.append((account.upper(), secret.reveal()))
         self.old_passwords.append(old_password)
+        self.previous.append(None if previous is None else previous.reveal())
         if old_password == "retain":
             self._called("set_password")
             return ChangeResult(changed=True, retained=True)
@@ -1412,6 +1420,9 @@ def test_a_rollover_with_no_profile_window_retains_the_old_password(
 
     assert result.exit_code == ExitCode.SUCCESS, result.output
     assert old_passwords(harness) == ["retain", "retain"]
+    # The password each account had, for a driver that keeps it only by being
+    # sent it again (MariaDB, #1271).
+    assert [one for session in harness["sessions"] for one in session.previous] == [LIVE, LIVE]
     body = document(result)
     assert not list(validator.iter_errors(body))
     applied = [row for row in body["results"] if row["state"] != "PENDING_APPLY"]

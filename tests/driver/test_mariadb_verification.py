@@ -7,7 +7,13 @@ import pytest
 
 from sopuli.driver.mariadb.accounts import Account
 from sopuli.driver.mariadb.errors import ACCOUNT_BLOCKED, ACCOUNT_LOCKED, RULES
-from sopuli.driver.mariadb.verification import UNGUARDED, competitor, outcome
+from sopuli.driver.mariadb.verification import (
+    MULTIPLE_SWITCHES,
+    UNGUARDED,
+    _ended,
+    competitor,
+    outcome,
+)
 from sopuli.driver.mysql.errors import MUST_CHANGE_PASSWORD_LOGIN
 from sopuli.driver.mysql_family.errors import ACCESS_DENIED, MUST_CHANGE_PASSWORD
 from sopuli.driver.protocol import FAIL, PASS, UNAVAILABLE
@@ -100,3 +106,34 @@ def test_any_other_number_is_left_to_the_caller() -> None:
 @pytest.mark.parametrize("number", [ACCOUNT_LOCKED, ACCOUNT_BLOCKED])
 def test_mariadbs_own_numbers_are_authentication_failures(number: int) -> None:
     assert RULES[number].category == "authentication"
+
+
+class _OperationalError(Exception):
+    """Stands in for PyMySQL's, which this tier does not import."""
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        (MULTIPLE_SWITCHES,),
+        # A later release that numbers it still matches.
+        (2059, f"... {MULTIPLE_SWITCHES} ..."),
+    ],
+)
+def test_a_second_auth_switch_at_connect_is_unavailable_wherever_it_happens(
+    args: tuple[object, ...],
+) -> None:
+    result = _ended(ANY, _OperationalError(*args), None, 0.0, tls=True, connecting=True)
+
+    assert result.result == UNAVAILABLE
+    assert "authenticate twice" in str(result.detail)
+
+
+def test_the_same_text_after_login_is_not_read_as_a_second_auth_switch() -> None:
+    """Only a connect meets the switch; after login the error is the
+    caller's, as any other is."""
+    result = _ended(
+        ANY, _OperationalError(MULTIPLE_SWITCHES), None, 0.0, tls=True, connecting=False
+    )
+
+    assert "authenticate twice" not in str(result.detail)

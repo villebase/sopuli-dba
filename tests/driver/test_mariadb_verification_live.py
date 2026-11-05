@@ -25,6 +25,8 @@ from sopuli.driver.mariadb import accounts  # noqa: E402
 from sopuli.driver.mariadb.verification import competitor, login  # noqa: E402
 
 PASSWORD = "Acme-Vfy-pw1"
+#: A rollover's second password, beside PASSWORD.
+SECOND_PASSWORD = "Acme-Vfy-pw2"
 
 
 @dataclass
@@ -164,6 +166,27 @@ def test_a_blocked_account_says_nothing(stage: Stage) -> None:
 
     assert result.result == UNAVAILABLE
     assert "(4150)" in str(result.detail)
+
+
+def test_an_ed25519_rollover_s_second_method_says_nothing(stage: Stage) -> None:
+    """PyMySQL takes one authentication; the server asks for a second one for
+    the second method of an ed25519 `OR`, and for a wrong password on such an
+    account (#1271). The first method still logs in and passes."""
+    pytest.importorskip("nacl", reason="PyNaCl comes with the `mariadb` extra")
+    from sopuli.driver.mariadb.password import ed25519_value
+
+    stage.create("%")
+    first, second = (ed25519_value(Secret(p)).reveal() for p in (PASSWORD, SECOND_PASSWORD))
+    stage.root(
+        f"ALTER USER %s@'%%' IDENTIFIED VIA ed25519 USING '{first}' OR ed25519 USING '{second}'",
+        (stage.user,),
+    )
+
+    assert stage.verify("%", PASSWORD).result == PASS
+    for password in (SECOND_PASSWORD, "Not-the-pw9"):
+        result = stage.verify("%", password)
+        assert result.result == UNAVAILABLE
+        assert "authenticate twice" in str(result.detail)
 
 
 def test_a_login_that_reaches_another_account_says_nothing(stage: Stage) -> None:

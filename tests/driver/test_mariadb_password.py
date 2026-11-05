@@ -104,7 +104,10 @@ def test_any_length_and_any_character_is_admitted(password: str) -> None:
     admit(Secret(password))
 
 
-@pytest.mark.parametrize(("plugin", "password", "stored"), SERVER_VALUES[:1] + SERVER_VALUES[3:4])
+@pytest.mark.parametrize(
+    ("plugin", "password", "stored"),
+    [vector for vector in SERVER_VALUES if vector[1] == "Acme-Vector-1"],
+)
 def test_the_statement_carries_the_value_for_the_account_s_plugin(
     plugin: str, password: str, stored: str
 ) -> None:

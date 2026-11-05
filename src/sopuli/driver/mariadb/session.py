@@ -103,8 +103,9 @@ T = TypeVar("T")
 @dataclass
 class MariadbSession(ClosesConnection):
     """One open connection to a MariaDB server. Implements the
-    :class:`~sopuli.driver.protocol.Session` methods `doctor` uses, and
-    :meth:`describe_user`; every other one refuses with ``SOPULI-20006``."""
+    :class:`~sopuli.driver.protocol.Session` methods `doctor` uses,
+    :meth:`describe_user` and :meth:`set_password`; every other one refuses
+    with ``SOPULI-20006``."""
 
     connection: Any
     target: ExpandedTarget
@@ -170,9 +171,9 @@ class MariadbSession(ClosesConnection):
             product="a MariaDB server",
             what=what,
             hint=(
-                "the MariaDB driver connects, reports the server for `doctor` and "
-                "describes an account, and the rest of it is not written yet "
-                "(#1270, #1272)"
+                "the MariaDB driver connects, reports the server for `doctor`, "
+                "describes an account and sets its password, and the rest of it is "
+                "not written yet (#1270, #1271, #1272)"
             ),
         )
 
@@ -214,9 +215,14 @@ class MariadbSession(ClosesConnection):
         value for the account's own plugin computed here (invariant 15,
         :mod:`~sopuli.driver.mariadb.password`).
 
-        Only ``discard``: a single value ends a second password an ``OR`` kept
-        beside it (``03_dual_password_probe.py``, DP3), so only the vault's
-        password logs in. ``retain`` and ``keep`` are a rollover, which is #1271.
+        Only ``discard``: the statement names one method, which replaces every
+        method the account had (``03_dual_password_probe.py``, DP3). That ends
+        a second password a rollover kept, so only the vault's password logs
+        in. It also ends a second method of another kind, such as
+        ``unix_socket``, which the view does not show. That gap is open, and
+        no verb that calls this is registered. TODO(#1301): register them once
+        the gap is decided. ``retain`` and ``keep`` are a rollover, which is
+        #1271.
 
         As on the other drivers, ``changed`` is ``True`` whenever the statement
         succeeded: the command decides first whether the account already had

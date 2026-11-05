@@ -115,14 +115,18 @@ def alter_user(user: str, host: str, plugin: str, secret: Secret) -> str:
 
 
 _QUOTED = re.compile(r"USING\s+'[^']*'", re.IGNORECASE)
-_NATIVE = re.compile(r"\*[0-9A-Fa-f]{40}")
-_ED25519 = re.compile(r"(?<![A-Za-z0-9+/])[A-Za-z0-9+/]{43}(?![A-Za-z0-9+/=])")
+#: Each of :data:`SHAPES`, standing alone: not a part of a longer run of the
+#: same characters. Built from them, so a value the statement may carry is a
+#: value the scrub finds.
+_VALUE = re.compile(
+    "|".join(
+        rf"(?<![A-Za-z0-9+/])(?:{shape.pattern})(?![A-Za-z0-9+/=])" for shape in SHAPES.values()
+    )
+)
 
 
 def scrub(message: str) -> str:
     """The server's message about :func:`alter_user`'s statement, with the
     value written as ``***``. The server may quote part of the statement, and
     the value is worth an offline guess (§6)."""
-    message = _QUOTED.sub("USING '***'", message)
-    message = _NATIVE.sub("***", message)
-    return _ED25519.sub("***", message)
+    return _VALUE.sub("***", _QUOTED.sub("USING '***'", message))

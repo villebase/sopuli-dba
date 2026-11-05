@@ -105,8 +105,14 @@ def test_a_password_set_by_the_driver_reaches_no_log(
         log_output, general_log = cursor.fetchone()
         cursor.execute(f"select name, enabled from performance_schema.setup_consumers {CONSUMERS}")
         consumers = cursor.fetchall()
-        cursor.execute("show master status")
-        binlog = cursor.fetchone()[0]
+        cursor.execute("show binlog status")
+        status = cursor.fetchone()
+    if status is None:
+        pytest.skip("the server runs without a binary log; the tier-1 service has one")
+    binlog = status[0]
+    # A general log already written to a table keeps its rows: the CSV table
+    # can only be emptied whole, and those rows are not this test's.
+    ours = not (general_log and "TABLE" in str(log_output).upper())
     _root(live_mariadb, "set global log_output = 'TABLE'")
     _root(live_mariadb, "set global general_log = 'ON'")
     _root(
@@ -131,9 +137,11 @@ def test_a_password_set_by_the_driver_reaches_no_log(
             cursor.execute(f"show binlog events in '{binlog}'")
             binary = [str(row[-1]) for row in cursor.fetchall() if user in str(row[-1])]
     finally:
-        # The server as it was, and none of the rows this test made it log.
+        # The server as it was, and none of the rows this test made it log
+        # where the log was this test's alone.
         _root(live_mariadb, "set global general_log = 'OFF'")
-        _root(live_mariadb, "truncate table mysql.general_log")
+        if ours:
+            _root(live_mariadb, "truncate table mysql.general_log")
         _root(live_mariadb, "set global log_output = %s", (log_output,))
         _root(live_mariadb, "set global general_log = %s", (general_log,))
         for name, enabled in consumers:

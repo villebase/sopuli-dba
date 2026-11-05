@@ -139,6 +139,21 @@ CHECK_9_GAP = (
     "(02-mariadb-privileges.md section 5)"
 )
 
+#: The gap in what the tool reads that ``02-mariadb-privileges.md`` §4
+#: accepts (decisions/log.md #1301): said with :data:`CHECK_9_GAP`, for the same
+#: reason. The view shows one method of an account that has two.
+OR_GAP = (
+    "a declared account with a second login method, joined by OR, shows one of them: "
+    "the mysql.user view does not show the other. A password change sends one method "
+    "and ends the other, so a login by unix_socket, for example, stops working. "
+    "Check SHOW CREATE USER for accounts the tool manages (02-mariadb-privileges.md "
+    "section 4)"
+)
+
+#: What ``doctor --check-privileges`` says last for a target with declared
+#: accounts, whether or not the survey's read succeeded.
+ACCOUNT_GAPS = (CHECK_9_GAP, OR_GAP)
+
 T = TypeVar("T")
 
 
@@ -202,8 +217,9 @@ class MariadbSession(ClosesConnection):
         for each declared account that does not exist, uses a plugin the tool
         does not change, or shares its user name with an account at an
         undeclared host. Where the survey's read fails, the audit stands and a
-        line says why, as on MySQL. With any declared account, a last line
-        says what check 9 cannot see (:data:`CHECK_9_GAP`)."""
+        line says why, as on MySQL. With any declared account, the last lines
+        say what check 9 cannot see (:data:`CHECK_9_GAP`) and that a second
+        login method is not seen (:data:`OR_GAP`)."""
         audit = self._read(privilege_audit)
         if not accounts:
             return audit
@@ -220,10 +236,10 @@ class MariadbSession(ClosesConnection):
                 remedies=(
                     *audit.remedies,
                     f"the declared accounts were not read: {error}",
-                    CHECK_9_GAP,
+                    *ACCOUNT_GAPS,
                 ),
             )
-        return replace(audit, remedies=(*audit.remedies, *lines, CHECK_9_GAP))
+        return replace(audit, remedies=(*audit.remedies, *lines, *ACCOUNT_GAPS))
 
     def _not_written(self, what: str) -> NoReturn:
         raise NotWrittenError(
@@ -297,10 +313,11 @@ class MariadbSession(ClosesConnection):
         method the account had (``03_dual_password_probe.py``, DP3). That ends
         a second password a rollover kept, so only the vault's password logs
         in. It also ends a second method of another kind, such as
-        ``unix_socket``, which the view does not show. That gap is open, and
-        no verb that calls this is registered. TODO(#1301): register them once
-        the gap is decided. ``retain`` and ``keep`` are a rollover, which is
-        #1271.
+        ``unix_socket``, which the view does not show. That gap is accepted
+        (``02-mariadb-privileges.md`` §4, #1301), and ``doctor`` says so
+        (:data:`OR_GAP`). No verb that calls this is registered yet.
+        TODO(#1270): register the UC-1 verbs. ``retain`` and ``keep`` are a
+        rollover, which is #1271.
 
         As on the other drivers, ``changed`` is ``True`` whenever the statement
         succeeded: the command decides first whether the account already had
@@ -542,9 +559,9 @@ class MariadbSession(ClosesConnection):
         Any other account is :data:`~sopuli.driver.protocol.UNAVAILABLE`
         without a login, as is one that does not exist: a failed login counts
         toward ``max_password_errors`` on the account it reaches, and `creds
-        check` and `creds apply` repeat (#1270, decision 3). The login after
-        a change follows the same rule. TODO(#1316): once per staged
-        ``pending``, that login may reach further (#1267, decision 8).
+        check` and `creds apply` repeat (#1270, decision 3). Such a result has
+        ``attempted`` unset, which is what lets `creds apply` make the one
+        reaching login of :meth:`verify_reaching` instead.
 
         The tool cannot read MariaDB's count of failed logins, so
         ``lockout_margin`` and ``attempts`` have nothing to guard, and the
@@ -558,6 +575,25 @@ class MariadbSession(ClosesConnection):
                 target=self.target.name,
                 hint="this driver verifies by `login` only",
             )
+        return self._verify(account, secret, reach=False)
+
+    def verify_reaching(self, account: str, secret: Secret) -> VerifyResult:
+        """The one login after a change from a staged ``pending`` that may
+        reach further (#1270, decision 5): where :meth:`verify_password` did
+        not log in because another account could answer, it logs in wherever
+        the login reaches, and passes only where ``CURRENT_USER()`` is the
+        declared account (#1267, decision 8). A refusal then says nothing,
+        because another account may have sent it.
+
+        Not on the protocol. `creds apply` asks it of a driver that has it,
+        in place of a login and never after one, and only once it has written
+        the vault mark that spends this ``pending``'s reach on this target
+        (#1316). It may reach an account the config does not declare, the one
+        exception to invariant 5, which CLAUDE.md records.
+        """
+        return self._verify(account, secret, reach=True)
+
+    def _verify(self, account: str, secret: Secret, *, reach: bool) -> VerifyResult:
         user, host = split(account)
         # One read: the user's accounts at every host, and the anonymous ones,
         # which compete for the same login.
@@ -575,19 +611,21 @@ class MariadbSession(ClosesConnection):
                 declared.name, declared.plugin, target=self.target.name
             )
         competing = verification.competitor(declared, found[user], found[""])
-        if competing is not None:
+        if competing is not None and not reach:
             return VerifyResult(
                 method=VERIFY_LOGIN,
                 result=UNAVAILABLE,
                 detail=f"no login was attempted, because {competing}",
+                attempted=False,
             )
         return verification.login(
             self.target,
             declared,
             secret,
-            # Always None here. TODO(#1316): the reaching login passes the
-            # competitor, and `verification` judges what comes back by it.
-            competing=None,
+            # `verification` judges what comes back by it: an answer that comes
+            # before `CURRENT_USER()` can be read says nothing where another
+            # account could have sent it.
+            competing=competing,
             correlation_id=self.correlation_id,
             timeouts=self.timeouts,
         )

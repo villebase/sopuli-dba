@@ -62,11 +62,13 @@ cosmetic:
 
 1. **A vendor client is imported inside its backend module, never at package
    import time.** The registry maps `type:` to a module path and imports on
-   first use. For the MariaDB driver, a module in `sopuli.driver.mariadb` that
-   only the driver's session imports may import the clients the `mariadb` extra
-   provides at module scope. A module the base CLI imports, such as `roles.py`,
-   may not, and no module of the package may import another driver's client
-   (#1296).
+   first use. For the MariaDB driver, a module in `sopuli.driver.mariadb` may
+   import the clients the `mariadb` extra provides at module scope, and only the
+   driver's own modules may then import it. A module the base CLI imports, such
+   as `roles.py`, may not import them, and no module of the package may import
+   another driver's client (#1296). `tests/store/test_install_shape.py` catches
+   a module-scope import that breaks this. An import inside a function, outside
+   the driver, is the author's to keep out.
 2. **A missing backend is a diagnosable condition, not a traceback.** An
    `ImportError` at registry resolution becomes a structured error naming the
    extra that supplies it, with `error.category: "config"` and exit 9.
@@ -188,7 +190,9 @@ The cost is one more name in an install line and one more cell in the matrix, wh
 is small and is paid by the estates that use the feature. What it buys is that the
 three registries — stores, drivers and channels — all answer the same question
 the same way, and `tests/store/test_install_shape.py` derives its exemptions from all
-three rather than from a hand-kept list.
+three rather than from a hand-kept list. The one exception is the MariaDB driver's
+package, which the test names, so that registering a driver does not exempt its
+package (#1296).
 
 **A channel with nothing to install needs no extra.** An `smtp` channel, for
 example, would send with the standard library. So

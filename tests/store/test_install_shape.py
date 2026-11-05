@@ -10,7 +10,9 @@ install none of the clients the backends reach with is importable. Rather than
 depending on how this machine happens to be installed, the clients are **blocked
 at the import system** and every sopuli module outside a backend is imported
 against that. The result is the same statement and it holds in either
-environment.
+environment. The MariaDB driver's package is the one exception: its modules
+are imported last, with that driver's own clients allowed (ADR-006 rule 1,
+#1296).
 
 The standard library's ``urllib`` and ``http.client`` are deliberately not
 blocked. They are importable in every Python and no packaging rule changes that,
@@ -20,6 +22,7 @@ reach the network, whatever it would reach it with.
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import subprocess
 import sys
@@ -128,7 +131,15 @@ def _package(name):
 
 imported = []
 in_packages = []
-for found in pkgutil.walk_packages(sopuli.__path__, "sopuli."):
+def _unwalkable(name):
+    # `walk_packages` swallows a package that fails to import, and then lists
+    # none of its modules. A backend package may fail: its client is blocked.
+    if any(name == module or name.startswith(module + ".") for module in backends):
+        return
+    raise
+
+
+for found in pkgutil.walk_packages(sopuli.__path__, "sopuli.", onerror=_unwalkable):
     # Rule 1 puts the client import *inside* the backend module, so a backend is
     # the one place importing a client is correct. Everything else must not.
     # Drivers are backends for this purpose: `sopuli.driver.oracle` is
@@ -157,8 +168,9 @@ for name in in_packages:
         importlib.import_module(name)
     except ModuleNotFoundError as error:
         # The driver's own client is not installed here, so the rest of the
-        # module was not run and is not counted. Installing it is the extra's
-        # business, not this rule's.
+        # module was not run, is not counted, and is not checked: its imports
+        # after that line are checked only where the extra is installed, as
+        # in CI's `[all]` test job.
         if (error.name or "").split(".")[0] not in ALLOWED:
             raise
         continue
@@ -179,9 +191,18 @@ for name in in_packages:
 # below imports each one again with every client blocked.
 for name in set(sys.modules) - before:
     del sys.modules[name]
+    # And from its package, which the first pass loaded: `from package
+    # import name` takes the attribute before it looks in sys.modules.
+    parent, _, child = name.rpartition(".")
+    if parent in sys.modules:
+        vars(sys.modules[parent]).pop(child, None)
 for name in list(sys.modules):
     if name.split(".")[0] in BLOCKED:
         del sys.modules[name]
+
+if {walk_only!r}:
+    print(json.dumps({{"modules": len(imported)}}))
+    sys.exit(0)
 
 # What the *walk* pulled in, before the command runs. `walk_packages` imports a
 # package in order to enumerate it, so a backend whose client import survives the
@@ -211,6 +232,8 @@ print(json.dumps({{
 def _run(
     tmp_path: Path, config: str, planted: dict[str, str] | None = None
 ) -> subprocess.CompletedProcess[str]:
+    """The probe, with ``planted`` modules. With any, it stops after the
+    walk, which is all a planted module tests."""
     path = tmp_path / "sopuli.yaml"
     path.write_text(config, encoding="utf-8")
     if sys.platform != "win32":
@@ -220,6 +243,7 @@ def _run(
         blocked=set(CLIENTS),
         package_exempt=set(PACKAGE_EXEMPT),
         planted=planted or {},
+        walk_only=bool(planted),
         config=str(path),
     )
     return subprocess.run(
@@ -252,11 +276,15 @@ def _plant(tmp_path: Path, package: str, name: str, source: str) -> dict[str, st
         # The package's allowance is its own clients only.
         ("sopuli.driver.mariadb", "zz_planted", "import oracledb\n", "blocked by"),
         # Nor does it reach another driver's session, which has its own client.
-        (
+        # Without PyMySQL the session stops at its import, and nothing loads.
+        pytest.param(
             "sopuli.driver.mariadb",
             "zz_planted",
             "import sopuli.driver.mysql.session\n",
             "loaded sopuli.driver.mysql.session",
+            marks=pytest.mark.skipif(
+                importlib.util.find_spec("pymysql") is None, reason="PyMySQL is not installed"
+            ),
         ),
         # A name that only starts with the package's is not in it.
         ("sopuli.driver", "mariadbzz", "import nacl\n", "blocked by"),
@@ -281,7 +309,8 @@ def test_a_mariadb_module_may_import_its_own_clients(tmp_path: Path) -> None:
 
 
 def test_base_imports_none_of_the_backend_clients(tmp_path: Path) -> None:
-    """Every sopuli module outside a backend imports with the clients blocked.
+    """Every sopuli module outside a backend imports with the clients blocked,
+    except the MariaDB package's, which may use that driver's own.
 
     A module-level ``import httpx`` anywhere else fails this with the name of
     the module that did it, which is the diagnosis as well as the failure.

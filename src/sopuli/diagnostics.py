@@ -565,9 +565,8 @@ ADMITTED_REFUSED_ACCOUNT = "SOPULI-W062"
 #: (#1225).
 FAILED_LOGIN_BLOCK_UNREAD = "SOPULI-W063"
 
-#: `creds rotate --strategy rollover` will open a window that does not work for
-#: every client: on a MariaDB `ed25519` account a PyMySQL client can use only
-#: the new password (#1271).
+#: A rollover window that does not work for every client: on a MariaDB
+#: `ed25519` account a PyMySQL client can use only the new password (#1271).
 ROLLOVER_CAVEAT = "SOPULI-W064"
 
 #: ``SOPULI-W004`` and ``SOPULI-W034`` to ``SOPULI-W039`` -- imported above
@@ -791,13 +790,15 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "lists an account that exists and is not locked, with `target` set."
         ),
         ROLLOVER_CAVEAT: (
-            "`creds rotate --strategy rollover` will open a window that not every client "
-            "can use. On a MariaDB `ed25519` account, PyMySQL uses only the first method of "
-            "the `OR`, which is the new password, so a PyMySQL client still on the old "
+            "A rollover window that not every client can use. On a MariaDB `ed25519` "
+            "account, PyMySQL uses only the first method of the `OR`, which is the new "
+            "password, so a PyMySQL client still on the old "
             "password cannot log in during the window. Other clients, and PyMySQL on "
-            "`mysql_native_password`, use both. One entry per account, with `target` and "
-            "`account` set, from the pre-flight, so a `--dry-run` reports it too. The row "
-            "of the change says the same."
+            "`mysql_native_password`, use both. One entry per account and target, with "
+            "`target` and `account` set: in a run, for each confirmed change that kept the "
+            "old password, `creds apply` setting a held rollover's `pending` again "
+            "included, and the row says the same; under `creds rotate --dry-run`, for each "
+            "account the run would stage."
         ),
         CONSTRAINTS_UNREAD: (
             "`creds generate` could not read a target's password constraints, so the "

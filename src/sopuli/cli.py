@@ -7877,6 +7877,7 @@ def creds_apply(
     _stream_results(run)
     unchecked = _guardrail_caveats(applied)
     document.diagnostics.extend(unchecked)
+    _warn_rollover_caveats(applied, document)
     clear = _encryption_notices(applied)
     document.diagnostics.extend(clear)
     # A (target, profile) the pre-flight already warned about is not warned about
@@ -8042,6 +8043,9 @@ class _Applied:
     #: end of the run rather than reported here, because the warning is grouped per
     #: profile and one account cannot see the others on it.
     reuse: UserState | None = None
+    #: What the old password a confirmed change kept will not do, from the
+    #: driver (#1271): `SOPULI-W064` at the end of the run.
+    rollover_caveat: str | None = None
     #: The encryption of the connection this account's new password was sent
     #: over; ``None`` where no password was sent. Reported once per target at the
     #: end of the run (SOPULI-W031/W032).
@@ -9414,6 +9418,7 @@ def _apply_one(
     sent: Encryption | None = None
     outcome: check_states.Outcome | None = None
     after_user: UserState | None = None
+    kept_caveat: str | None = None
 
     def changed_row(
         final: check_states.Outcome, now: UserState, *, error: Error | None = None
@@ -9437,6 +9442,7 @@ def _apply_one(
             error=error,
             reuse=reuse,
             encryption=sent,
+            rollover_caveat=kept_caveat,
         )
 
     try:
@@ -9720,10 +9726,12 @@ def _apply_one(
             # The driver ended any retained password and cannot read the
             # window, so the row says none is open (#1254).
             after_user = replace(after_user, rollover_active=False)
-        if set_result.caveat:
-            # What the kept password will not do (#1271, `SOPULI-W064`'s
-            # sentence): on MariaDB, PyMySQL on an `ed25519` account.
-            outcome = replace(outcome, detail=f"{outcome.detail}; {set_result.caveat}")
+        if set_result.caveat and apply_states.is_confirmed(outcome.state):
+            # What the kept password will not do (#1271, `SOPULI-W064`): on
+            # MariaDB, PyMySQL on an `ed25519` account. Only where the change
+            # was confirmed, so the window it describes is the one in place.
+            kept_caveat = set_result.caveat
+            outcome = replace(outcome, detail=f"{outcome.detail}; {kept_caveat}")
 
         if strategies.closes_window(regime, after_user) and apply_states.is_confirmed(
             outcome.state
@@ -10401,8 +10409,13 @@ def _preflight(
     states: dict[tuple[str, str], UserState] | None = None,
     scopes: dict[str, Scope] | None = None,
     rotating: bool = False,
+    rollover_caveats: list[Diagnostic] | None = None,
 ) -> list[Finding]:
     """UC-1 §8 step 3: ask the estate before anything is written.
+
+    ``rollover_caveats`` collects `SOPULI-W064` for each account a rollover is
+    allowed on with a caveat (#1271). `creds rotate --dry-run` warns of the
+    ones it would stage; a run warns from the change itself.
 
     ``rotating`` is set by `creds rotate`, the one command that may open a
     window the tool must open itself (:func:`_refuse_tool_window`).
@@ -10488,7 +10501,7 @@ def _preflight(
                     target=name,
                     config=config,
                     rotating=rotating,
-                    warn=run.document.warn_in_text,
+                    caveats=rollover_caveats,
                 )
             if full:
                 findings.extend(
@@ -10803,11 +10816,11 @@ def _check_strategy(
     target: str,
     config: Config,
     rotating: bool = False,
-    warn: Callable[[Diagnostic], None] | None = None,
+    caveats: list[Diagnostic] | None = None,
 ) -> None:
     """Every account in one target, against one requested regime.
 
-    ``warn`` takes the driver's caveat about a rollover it allows, as
+    ``caveats`` collects the driver's caveat about a rollover it allows, as
     `SOPULI-W064` (#1271).
 
     Rollover goes through the driver's own ``require_rollover``, which owns both of
@@ -10872,10 +10885,10 @@ def _check_strategy(
         if strategy == strategies.ROLLOVER:
             caveat = session.require_rollover(binding.account)
             _refuse_tool_window(strategy, user, target=target, rotating=rotating)
-            if caveat and warn is not None:
-                # `SOPULI-W064` (#1271): allowed, with what the window will not
-                # do here. From the pre-flight, so `--dry-run` says it too.
-                warn(rollover_caveat(target, binding.account, caveat))
+            if caveat and caveats is not None:
+                # Allowed, with what the window will not do here (#1271). The
+                # caller decides whether to warn of it: `--dry-run` does.
+                caveats.append(rollover_caveat(target, binding.account, caveat))
             continue
         refusal = strategies.unhonourable(strategy, session.scope(), user)
         if refusal is None:
@@ -11780,6 +11793,20 @@ def _rotated_by() -> str:
     return f"{holder.os_user}@{holder.host}"
 
 
+def _warn_rollover_caveats(applied: Sequence[_Applied], document: RunDocument) -> None:
+    """`SOPULI-W064` for each confirmed change whose kept password the driver
+    has a caveat about (#1271), in the JSON and under the text. From the row,
+    so `creds apply` setting a held rollover's `pending` again warns too, and
+    a change that was refused or not confirmed does not."""
+    for record in applied:
+        if record.rollover_caveat:
+            document.warn_in_text(
+                rollover_caveat(
+                    record.binding.target, record.binding.account, record.rollover_caveat
+                )
+            )
+
+
 def _guardrail_caveats(applied: Sequence[_Applied]) -> list[Diagnostic]:
     """§4's checks that could not be run, as this run's warnings.
 
@@ -12557,6 +12584,7 @@ def creds_rotate(
         return refusal
     unchecked = _guardrail_caveats(sequence.applied)
     document.diagnostics.extend(unchecked)
+    _warn_rollover_caveats(sequence.applied, document)
     clear = _encryption_notices(sequence.applied)
     document.diagnostics.extend(clear)
     # The invocation that repairs this run, for SOPULI-W033 and the repair line
@@ -13284,15 +13312,29 @@ def _preview_rotation(
     _refuse_narrow_rotation(rotating, documents, run)
 
     read: dict[tuple[str, str], UserState] = {}
+    caveats: list[Diagnostic] = []
     findings = _preflight(
-        rotating, run, config, strategy=strategy, full=True, states=read, rotating=True
+        rotating,
+        run,
+        config,
+        strategy=strategy,
+        full=True,
+        states=read,
+        rotating=True,
+        rollover_caveats=caveats,
     )
     document.diagnostics.extend(_preflight_diagnostics(findings))
     if preflight.refusal(findings) is not None:
         return _refuse_preflight(findings, document, header=header)
     # The run's own decision, from the same reads (#1009): a credential the
     # guardrails would skip is not staged, so its `pending` refuses nothing.
-    _, skipped = _to_stage(rotating, documents, read, run=run, force=force)
+    drawn, skipped = _to_stage(rotating, documents, read, run=run, force=force)
+    # `SOPULI-W064` (#1271), for what the run would stage: the run itself
+    # warns from each confirmed change.
+    staged = {(binding.target, binding.account) for binding in drawn}
+    for caveat in caveats:
+        if (caveat.target, caveat.account) in staged:
+            document.warn_in_text(caveat)
     # After the refusal, as in `apply`: a run the survey stops never reaches the
     # pass.
     shared = _shared_among(rotating)

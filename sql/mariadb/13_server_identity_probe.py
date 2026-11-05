@@ -7,12 +7,13 @@ can read, whether it survives a restart, and whether it differs between the
 four servers:
 
   SI1  as the tool account: @@server_id, @@hostname, @@port, @@datadir,
-       @@gtid_domain_id, @@server_uid where the server has the variable, and
-       the status variable server_uid. Each answers its value, or its
-       refusal's number
+       @@gtid_domain_id and @@server_uid, and the status variable
+       server_uid. Each answers its value, or its refusal's number. A value
+       that differs per server (hostname, server_uid) is checked as `read`
   SI2  the server is restarted (docker restart), and SI1 is read again. A
        value answers `same` or `changed`
-  SI3  across the four servers: for each value, whether all four differ
+  SI3  across the four servers, once all four are read: for each value,
+       whether all four differ
 
 A replica of one of these servers was not measured: whether a value differs
 between a primary and its replica, as `server_uuid` does, stays open.
@@ -109,8 +110,11 @@ def values(service: str) -> dict[str, str]:
 
 
 def restart(service: str) -> None:
-    container = f"sopuli-test-{service}-1"
-    subprocess.run(["docker", "restart", container], check=True, capture_output=True)
+    """docker restart, by the container name 02 uses, which honours the
+    stack's project name, then wait for the server to answer."""
+    subprocess.run(
+        ["docker", "restart", ch.base.container(service)], check=True, capture_output=True
+    )
     for _ in range(60):
         ok, _out = ch.mysql(service, "root", ch.ROOT_PASSWORD, "SELECT 1")
         if ok:
@@ -119,24 +123,38 @@ def restart(service: str) -> None:
     raise ch.StepError(f"{service}: did not come back after a restart")
 
 
-def probe(service: str) -> None:
-    ch.cleaned(service, lambda: cases(service), lambda: ch.base.teardown(service))
+#: The values that differ per server, checked in SI1 only as read.
+PER_SERVER = frozenset({"hostname", "server_uid"})
+
+
+def shape(found: dict[str, str]) -> dict[str, str]:
+    """SI1 as RECORDED holds it: a per-server value as `read`, unless the
+    read was refused, which shows as its number."""
+    return {
+        name: "read" if name in PER_SERVER and not value[:4].isdigit() else value
+        for name, value in found.items()
+    }
 
 
 def cases(service: str) -> None:
     ch.base.setup(service, "Acme-Ident-pw0")
     before = values(service)
     print(f"SI1 {service}: {before}")
+    ch.check(f"SI1 {service}", shape(before), RECORDED.get("SI1"))
     restart(service)
     after = values(service)
     stable = {name: "same" if after[name] == before[name] else "changed" for name in before}
     print(f"SI2 {service}: {stable}")
     ch.check(f"SI2 {service}", stable, RECORDED.get("SI2"))
     SEEN[service] = after
+    if len(SEEN) == len(ch.base.SERVICES):
+        compare()
 
 
 def compare() -> None:
-    names = next(iter(SEEN.values())).keys() if SEEN else ()
+    """SI3, once every server was read, so the verdict that follows includes
+    it. A server that failed leaves SI3 unrun, and the run fails anyway."""
+    names = next(iter(SEEN.values())).keys()
     unique = {
         name: "all differ" if len({one[name] for one in SEEN.values()}) == len(SEEN) else "shared"
         for name in names
@@ -147,6 +165,15 @@ def compare() -> None:
 
 #: Each case's results, the same on every release.
 RECORDED: dict[str, dict[str, str]] = {
+    "SI1": {
+        "server_id": "1",
+        "hostname": "read",
+        "port": "3306",
+        "datadir": "/var/lib/mysql/",
+        "gtid_domain_id": "0",
+        "server_uid": "read",
+        "status server_uid": "no row",
+    },
     "SI2": {
         "server_id": "same",
         "hostname": "same",
@@ -169,12 +196,8 @@ RECORDED: dict[str, dict[str, str]] = {
 
 
 def main() -> int:
-    result: int = ch.run(probe)
-    compare()
-    if ch.base.DIFFERENCES and result == 0:
-        for difference in ch.base.DIFFERENCES:
-            print(f"DIFFERS: {difference}")
-        return 1
+    # 02's run tears each server down after its cases, also after a failure.
+    result: int = ch.run(cases)
     return result
 
 

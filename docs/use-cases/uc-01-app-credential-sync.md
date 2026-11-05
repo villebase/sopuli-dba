@@ -448,11 +448,14 @@ read does not change the argument.
 - `--from-stdin` is for migration, and for cases where an external system
   dictates the password. It checks the password against the policy and refuses
   on a violation, unless `--no-policy-check` is passed. The audit event records
-  that flag and the violations it accepted. The flag cannot waive a control
-  character, which every driver refuses, or a `"` where any target the
-  password is staged for is Oracle (invariant 11). The password would be staged
-  and then refused by every `creds apply` there (#1327). These are refused with
-  or without the flag, before anything is written. A password that ends in a
+  that flag and the violations it accepted. The flag cannot waive what a
+  driver of a target the password is staged for refuses, because the password
+  would be staged and then refused by every `creds apply` there (#1327, #1335).
+  Every driver refuses a control character, a password longer than the
+  target's byte limit, and one its character set cannot hold. The Oracle
+  driver also refuses `"` (invariant 11). The two limit rules apply only where
+  the target answered its limit, so `--offline` leaves them to `creds apply`.
+  These are refused with or without the flag, before anything is written. A password that ends in a
   line break is told a pipe may have added one. An empty stdin is refused
   before any check. It reads `length:` as a minimum, not an exact figure,
   because a dictated password is not weaker for being longer. It reads a pipe

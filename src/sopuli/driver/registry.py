@@ -219,15 +219,26 @@ DRIVERS: dict[str, DatabaseDriver] = {
     ),
     # PyMySQL reaches MariaDB too, and its `ed25519` extra brings PyNaCl for that
     # plugin (#1267, decisions 1 and 5), so the extra provides `nacl` as well as
-    # `pymysql`: with only the `mysql` extra installed, `mariadb` is not. The
-    # session connects and serves `doctor` (#1268); no other command is written
-    # for it yet (UC-1 is #1270, UC-2 #1272).
+    # `pymysql`: with only the `mysql` extra installed, `mariadb` is not. UC-1
+    # (#1270): `creds check`, by login only where no other account can answer;
+    # `creds apply` and `rotate --strategy direct`, which set the value the
+    # account's plugin stores, computed on the client, and never log in first,
+    # so with only `current` an account is skipped; `creds generate` and
+    # `status`. A rollover is #1271, and the `account` commands #1272.
     "mariadb": DatabaseDriver(
         module="sopuli.driver.mariadb.session",
         extra="mariadb",
         provides=frozenset({"pymysql", "nacl"}),
         password_limit="1024",
-        commands=frozenset(),
+        commands=frozenset(
+            {
+                "creds.check",
+                "creds.apply",
+                "creds.rotate",
+                "creds.generate",
+                "creds.status",
+            }
+        ),
     ),
 }
 

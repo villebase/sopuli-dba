@@ -1237,7 +1237,7 @@ something the estate can express and the set silently cannot.
 | Key | Meaning |
 |---|---|
 | `name` | **required, unique** — what `--target` selects on. In a target set this is the *name template* |
-| `type` | **required** — the driver selector (P1): `oracle`, `postgresql`, `mysql` or `mariadb`. Any other value is refused while the file is being written, not at the first connection. `doctor` connects to a `mariadb` target and reports the server; every other command refuses one with `SOPULI-20006` until UC-1 (#1270) and UC-2 (#1272) are written for it. `doctor` connects to a `mysql` target and reports the server, and UC-1's commands and UC-2's commands run against it. `doctor` connects to a `postgresql` target and reports the cluster, and UC-1's commands (`creds generate`, `apply`, `check`, `rotate`, `status` and `finish-rollover`) run against it. `creds check` logs in as the role, and `creds apply` and `rotate` set a password with a verifier computed on the client. UC-2's commands (`account list`, `reset-password`, `suspend` and `expire-password`) run against it too, and what a cluster lacks is refused at plan time by capability |
+| `type` | **required** — the driver selector (P1): `oracle`, `postgresql`, `mysql` or `mariadb`. Any other value is refused while the file is being written, not at the first connection. `doctor` connects to a `mariadb` target and reports the server, and UC-1's `creds generate`, `apply`, `check`, `rotate` and `status` run against it; every other command refuses one with `SOPULI-20006`. `doctor` connects to a `mysql` target and reports the server, and UC-1's commands and UC-2's commands run against it. `doctor` connects to a `postgresql` target and reports the cluster, and UC-1's commands (`creds generate`, `apply`, `check`, `rotate`, `status` and `finish-rollover`) run against it. `creds check` logs in as the role, and `creds apply` and `rotate` set a password with a verifier computed on the client. UC-2's commands (`account list`, `reset-password`, `suspend` and `expire-password`) run against it too, and what a cluster lacks is refused at plan time by capability |
 | `dsn` | **required** — Oracle: `host:port/service`, or a TNS alias. PostgreSQL, MySQL and MariaDB: `host:port`. See below |
 | `environment` | first-class rather than a label, because safety rules key on it (§4). Not overridable from the environment (§6) |
 | `vault` | which store masters passwords here |
@@ -1785,8 +1785,11 @@ way.
 `doctor` connects to the server and reports it, and `doctor
 --check-privileges` audits the tool account and the declared accounts
 ([`02-mariadb-privileges.md`](02-mariadb-privileges.md), which has the tool
-account's grants). Every other command refuses a MariaDB target with
-`SOPULI-20006` until UC-1 (#1270) and UC-2 (#1272) are written for it.
+account's grants). UC-1's `creds generate`, `apply`, `check`, `rotate` and
+`status` run against a MariaDB target ([#1270](../decisions/log.md#1270));
+every other command refuses it with `SOPULI-20006`, `finish-rollover` (#1271)
+and the `account` commands (#1272) among them. Two targets on one MariaDB
+server are not caught, because MariaDB has no `server_uuid` (#1286).
 
 **Each product's keys stay on its own targets.** These are refused, each
 naming the target and the key:

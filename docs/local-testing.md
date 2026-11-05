@@ -907,7 +907,9 @@ knows a server by its `server_uuid`.
 The stack also runs MariaDB 11.8 at `127.0.0.1:3307`. Its init creates the
 tool account `sopuli_admin`, password `sopuli-test-admin`, with the grants
 that [`design/02-mariadb-privileges.md`](design/02-mariadb-privileges.md) lists
-for it. So far only `doctor` runs against MariaDB.
+for it. `doctor` runs against it, and so do the UC-1 commands `creds
+generate`, `apply`, `check`, `rotate` and `status`. `finish-rollover` and the
+`account` commands do not run yet.
 
 Save this as `mariadb.yaml`, and export `SOPULI_DB_ADMIN_PASSWORD=sopuli-test-admin`:
 
@@ -950,7 +952,135 @@ guardrail 9 cannot see:
   mariadb-dev: check 9 cannot see BINLOG ADMIN, BINLOG REPLAY, CONNECTION ADMIN, FEDERATED ADMIN, READ_ONLY ADMIN, REPLICATION MASTER ADMIN, REPLICATION SLAVE ADMIN, SET USER or SLAVE MONITOR: they set no column of the mysql.user view, so it does not refuse a declared account that holds one. Revoke them from accounts the tool manages (02-mariadb-privileges.md section 5)
 ```
 
-Two targets on one MariaDB server are not caught yet (#1286).
+To manage passwords, create two accounts as root, one at any host and one at a
+named host:
+
+```
+$ docker exec -it -e MYSQL_PWD=sopuli-test sopuli-test-mariadb-1 mariadb -uroot
+MariaDB> CREATE USER 'acme_app'@'%' IDENTIFIED BY '…';
+MariaDB> CREATE USER 'acme_batch'@'192.0.2.%' IDENTIFIED BY '…';
+```
+
+Add the vault from §5 and an application to `mariadb.yaml`. An account names
+its host, as on MySQL:
+
+```yaml
+targets:
+  - name: mariadb-dev
+    ...
+    vault: vault-dev
+
+applications:
+  - name: acme-mariadb
+    targets: [mariadb-dev]
+    accounts: [acme_app@%, acme_batch@192.0.2.%]
+    secret_template: "vault-dev:acme/mariadb/{host}#DB_CREDENTIALS/{user}"
+```
+
+Stage passwords with `creds generate`, then run `creds apply`:
+
+```
+$ sopuli --config mariadb.yaml creds apply
+Plan: 2 accounts x 1 target = 2 applys   [dev]
+
+ACCOUNT               TARGET       INTENT                               SECRET
+acme_app@%            mariadb-dev  verify, password_set, vault_promote  vault-dev:acme/mariadb/any
+acme_batch@192.0.2.%  mariadb-dev  verify, password_set, vault_promote  vault-dev:acme/mariadb/192.0.2.any
+
+ACCOUNT               TARGET       SECRET                              SOURCE
+acme_app@%            mariadb-dev  vault-dev:acme/mariadb/any          pending
+acme_batch@192.0.2.%  mariadb-dev  vault-dev:acme/mariadb/192.0.2.any  pending
+
+ACCOUNT               TARGET       STATE         DETAIL
+acme_app@%            mariadb-dev  IN_SYNC       changed and verified by login
+acme_batch@192.0.2.%  mariadb-dev  UNVERIFIABLE  the server refused the password (1045), but the login reaches the account the server matches from the tool's host, which need not be acme_batch@192.0.2.%, so it says nothing certain about acme_batch@192.0.2.%
+
+2 changed, 1 promoted to `current`, 1 not confirmed
+repair with: sopuli creds apply --config mariadb.yaml
+         or: --repair FILE, if you captured this run with --output json
+...
+```
+
+It exits 4. The server never sees the password: the statement carries the
+value the account's plugin stores, computed on this machine. `apply` does not
+log in before the change, because a failed login counts toward
+`max_password_errors`, which the tool cannot read. After the change it logs in
+with the new password, and `acme_app@%` is verified. A login for
+`acme_batch@192.0.2.%` could reach another account, so this login is the one
+the staged `pending` allows on this target. First the vault records that it is
+spent, beside the `pending`:
+
+```
+"reached": {"acme_batch": {"mariadb-dev": "spent"}}
+```
+
+The tool's host is not in `192.0.2.%`, so the login reaches no account, the
+refusal says nothing, and the account stays `pending`. A login that passed
+would have been recorded as `passed` too, and would count as confirmed for this
+`pending` in a later run.
+
+Run `creds apply` again. `acme_app@%` has only `current` now, and without a
+login the tool cannot tell whether it needs a change, so it is left alone.
+`acme_batch@192.0.2.%` still has its `pending`, which is set again, and its
+reach is spent, so no login is made:
+
+```
+$ sopuli --config mariadb.yaml creds apply
+...
+ACCOUNT               TARGET       STATE         DETAIL
+acme_app@%            mariadb-dev  SKIPPED       not changed: on this target the tool does not log in before a change, so it cannot tell whether the account already has the vault's `current`, and it sets a password only for a rotation in flight. `creds check` compares them, and `creds rotate` changes the password
+acme_batch@192.0.2.%  mariadb-dev  UNVERIFIABLE  no login was attempted, because the login reaches the account the server matches from the tool's host, which need not be acme_batch@192.0.2.%
+
+1 changed, 1 skipped, 1 not confirmed
+...
+```
+
+`creds check` logs in only where nothing but the declared account can answer.
+A wrong password counts toward `max_password_errors` on whatever account the
+login reaches, and checks repeat:
+
+```
+$ sopuli --config mariadb.yaml creds check
+Plan: 2 accounts x 1 target = 2 checks   [dev]
+
+ACCOUNT               TARGET       INTENT  SECRET
+acme_app@%            mariadb-dev  verify  vault-dev:acme/mariadb/any
+acme_batch@192.0.2.%  mariadb-dev  verify  vault-dev:acme/mariadb/192.0.2.any
+
+ACCOUNT               TARGET       STATE         DETAIL
+acme_app@%            mariadb-dev  IN_SYNC       vault v2 verified by login; the lockout guard is unavailable: MariaDB counts failed logins against max_password_errors in mysql.global_priv, which the tool account does not read
+acme_batch@192.0.2.%  mariadb-dev  UNVERIFIABLE  the vault holds no password at vault-dev:acme/mariadb/192.0.2.any#DB_CREDENTIALS/acme_batch
+
+1 unverifiable
+...
+```
+
+`creds rotate` draws, stages, applies and promotes in one run. It refuses an
+account that already has a `pending` staged, so name the other one:
+
+```
+$ sopuli --config mariadb.yaml creds rotate --account 'acme_app@%' --confirm
+Plan: 1 account x 1 target = 1 rotation   [dev]
+
+ACCOUNT     TARGET       INTENT                                                              SECRET
+acme_app@%  mariadb-dev  generate, vault_write_pending, verify, password_set, vault_promote  vault-dev:acme/mariadb/any
+
+ACCOUNT     TARGET       STATE    DETAIL
+acme_app@%  mariadb-dev  IN_SYNC  changed and verified by login
+
+1 changed, 1 promoted to `current`
+
+rotation: staged 1 document, promoted 1 document
+...
+```
+
+`acme_batch@192.0.2.%` stays `pending` until a new password is staged with
+`creds generate --overwrite-pending` and applied from a host whose login
+reaches the account. A new `pending` brings a new reaching login.
+
+`--strategy rollover` is refused before anything changes, exit 9: a rollover
+on MariaDB is not written yet (#1271). Two targets on one MariaDB server are
+not caught yet (#1286).
 
 ---
 

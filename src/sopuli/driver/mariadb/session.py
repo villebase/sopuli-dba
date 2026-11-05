@@ -15,10 +15,10 @@ scope: ``server``, whether it takes writes, its encryption, and
 (:mod:`~sopuli.driver.mariadb.accounts`). It describes a declared account,
 with the privileges guardrail 9 checks and the roles it holds, sets its password
 by the value its plugin stores and verifies it by login (#1270). It resolves a
-role and lists its members, and suspends an account (#1272). Every other method
-refuses with
-``SOPULI-20006``, and the registry lists no command but `doctor`: the rest of
-UC-1 is #1270 and UC-2 #1272.
+role and lists its members, and suspends an account (#1272). The registry lists
+`doctor` and UC-1's `creds generate`, `apply`, `check`, `rotate` and `status`.
+Every other method refuses with ``SOPULI-20006``: a rollover is #1271, and UC-2
+is #1272.
 
 The session claims no server identity: MariaDB has no ``server_uuid``, and
 11.8.9 shows no ``server_uid`` status either, so two targets on one server are
@@ -207,10 +207,9 @@ class MariadbSession(ClosesConnection):
             product="a MariaDB server",
             what=what,
             hint=(
-                "the MariaDB driver connects, reports the server for `doctor`, "
-                "describes an account, sets its password and verifies it by login, "
-                "resolves a role and suspends an account, and the rest of it is not "
-                "written yet (#1270, #1271, #1272)"
+                "the MariaDB driver runs `doctor` and the `creds` commands but "
+                "`finish-rollover`; a rollover (#1271) and the `account` commands "
+                "(#1272) are not written yet"
             ),
         )
 
@@ -273,10 +272,9 @@ class MariadbSession(ClosesConnection):
         method the account had (``03_dual_password_probe.py``, DP3). That ends
         a second password a rollover kept, so only the vault's password logs
         in. It also ends a second method of another kind, such as
-        ``unix_socket``, which the view does not show. That gap is open, and
-        no verb that calls this is registered. TODO(#1301): register them once
-        the gap is decided. ``retain`` and ``keep`` are a rollover, which is
-        #1271.
+        ``unix_socket``, which the view does not show. The maintainer accepted
+        that gap on #1301 (option A). ``retain`` and ``keep`` are a rollover,
+        which is #1271.
 
         As on the other drivers, ``changed`` is ``True`` whenever the statement
         succeeded: the command decides first whether the account already had

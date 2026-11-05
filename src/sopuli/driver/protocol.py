@@ -1161,13 +1161,18 @@ class Session(Protocol):
         ``old_password`` is one of :data:`OLD_PASSWORD_MODES`, and only a driver
         that keeps a second password on request acts on it.
 
-        ``previous`` is the password the account had, which the command passes
-        when ``old_password`` asks to keep one. A server that keeps the old
-        password itself (Oracle, MySQL) ignores it. MariaDB keeps it only by
-        being sent its value again, beside the new one (#1271).
+        ``previous`` is the vault's ``current`` as the run read it, the password
+        the account is expected to have. The command passes it when
+        ``old_password`` asks to keep one, and it is ``None`` otherwise, or
+        where the vault holds no ``current``. A server that keeps the old
+        password itself (Oracle, MySQL) ignores it, and keeps whatever the
+        account really had. MariaDB keeps an old password only by being sent
+        its value again, beside the new one (#1271): it keeps the vault's
+        value, and refuses before sending anything where it is asked to keep
+        one and ``previous`` is ``None``.
 
-        The one call in this interface that reveals a secret, which is one of
-        invariant 2's three permitted reveals.
+        With :meth:`finish_rollover`, the calls in this interface that reveal
+        a secret to send it, which is invariant 2's driver call.
 
         Implementations are bound by invariants 11, 13 and 14: a password
         containing ``"`` is refused rather than escaped, the statement is never
@@ -1506,9 +1511,12 @@ class Session(Protocol):
         accepted silently and changes nothing, so a driver that just issued it
         would report a change for every run that did nothing.
 
-        ``current`` is the vault's current password, the one to keep. A server
+        ``current`` is the password to keep: the vault's ``current`` for `creds
+        finish-rollover`, and for `creds apply --strategy direct` the password
+        that call just set and verified, which is not promoted yet. A server
         that ends a window by name ignores it. MariaDB ends one only by being
-        sent that value alone (#1271).
+        sent that value alone (#1271), and so reveals it, as
+        :meth:`set_password` does.
 
         Called by ``creds apply --strategy direct`` **after** the change has been
         verified. Closing a window on a change nobody confirmed would leave an

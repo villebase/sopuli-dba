@@ -398,6 +398,8 @@ class FakeSession:
         self.old_passwords: list[str] = []
         #: The ``previous`` each ``set_password`` was given, revealed (#1271).
         self.previous: list[str | None] = []
+        #: The ``current`` each ``finish_rollover`` was given, revealed (#1271).
+        self.kept: list[str | None] = []
         #: Accounts this session actually issued ``ACCOUNT UNLOCK`` for, which is
         #: not the same list as the ones it was asked about -- invariant 9 for the
         #: attributes is that an account already open is not touched.
@@ -535,6 +537,7 @@ class FakeSession:
 
     def finish_rollover(self, account: str, *, current: Secret | None = None) -> ChangeResult:
         self.finished.append(account.upper())
+        self.kept.append(None if current is None else current.reveal())
         return ChangeResult(changed=True, detail="rollover window ended")
 
     def verify_password(
@@ -3624,6 +3627,9 @@ def test_direct_closes_the_window_it_opened(
     result = run(runner, write_config(CONFIG), "--select", "tenant=alpha", "--strategy", "direct")
 
     assert applying(harness).finished == ["ACME_WEB_USER"]
+    # The password just set and verified, not promoted yet, is the one to
+    # keep (#1271): the vault's `current` is still the old one here.
+    assert applying(harness).kept == [STAGED]
     assert check.IN_SYNC in result.output
     assert "no longer works" in result.output
 

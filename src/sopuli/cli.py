@@ -9666,14 +9666,14 @@ def _apply_one(
         old_password = strategies.old_password(
             regime, user, source.stage, rotating=rotating, marked=source.rollover
         )
-        # The password the account had, for a driver that keeps it only by
+        # The vault's `current`, for a driver that keeps an old password only by
         # being sent it again (MariaDB, #1271). Passed only when one is kept.
         keeping = old_password in (OLD_RETAIN, OLD_KEEP)
         set_result = session.set_password(
             user.name,
             source.value,
             old_password=old_password,
-            **({"previous": source.replaces} if keeping else {}),
+            previous=source.replaces if keeping else None,
         )
         retained, discarded = set_result.retained, set_result.discarded
         # From here on the database holds the new password whatever else fails, and

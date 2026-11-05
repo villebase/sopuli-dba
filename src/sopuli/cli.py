@@ -2368,6 +2368,13 @@ def account_reset_password(
     # (#1214): a yes followed by a refusal means nothing, and teaches people to
     # answer without reading. The cost is that the checks' logins to each target,
     # and the password prompt of a target with `auth: prompt`, come before it.
+    #
+    # #1317: on MariaDB the reset ends a second login method the tool cannot
+    # see. A warning in text goes out with the plan, so the operator reads it
+    # before the question and before the change, `--dry-run` included.
+    for target in reached:
+        if target.target.type == MARIADB:
+            run.document.warn_in_text(second_method_unseen(target.name))
     _ask_environments(plan, run, demand, action=action, noun="account")
 
     # **The delivery backend**, after the question, so that an operator who
@@ -2402,13 +2409,6 @@ def account_reset_password(
         unrecorded = no_reset_record()
         document.diagnostics.append(unrecorded)
         notices.append(unrecorded)
-    # #1317: on MariaDB the reset ends a second login method the tool cannot
-    # see. Said here, before the change and under `--dry-run` too.
-    for target in reached:
-        if target.target.type == MARIADB:
-            unseen = second_method_unseen(target.name)
-            document.diagnostics.append(unseen)
-            notices.append(unseen)
 
     if not run.dry_run:
         # **The plan goes out before the first statement** (invariant 8). The

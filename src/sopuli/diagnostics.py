@@ -800,7 +800,9 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "joined by `OR`, such as a `unix_socket` login on the database host, stops "
             "working. The tool cannot see whether the account has one: it is only in "
             "`mysql.global_priv`, which the tool account does not read. One entry per "
-            "MariaDB target, with `target` set, at plan time, so `--dry-run` says it too."
+            "MariaDB target the reset reaches, with `target` set, at plan time: printed "
+            "with the plan, before any confirmation question and the first change, "
+            "`--dry-run` included."
         ),
         ROLLOVER_CAVEAT: (
             "A rollover window that not every client can use. On a MariaDB `ed25519` "
@@ -1684,9 +1686,9 @@ def second_method_unseen(target: str) -> Diagnostic:
         code=SECOND_METHOD_UNSEEN,
         target=target,
         message=(
-            f"{target}: the reset sets the password as the only login method. Any other "
-            "method the account has, such as unix_socket, stops working, and the tool "
-            "cannot see one"
+            f"{target}: where the account is reset, the password is set as the only login "
+            "method. Any other method it has, such as unix_socket, stops working, and the "
+            "tool cannot see one"
         ),
     )
 

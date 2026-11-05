@@ -361,6 +361,47 @@ def test_a_mariadb_reset_warns_of_a_login_method_it_cannot_see(
         assert warned == []
 
 
+def test_a_real_mariadb_reset_warns_with_the_plan_before_anything_connects(
+    runner: CliRunner,
+    write_config: WriteConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#1317: on a real run the warning goes to stderr with the plan, before
+    the first connection, so it comes before any change."""
+    account = f"{ACCOUNT}@%"
+    config = (
+        WRAPPED.replace("type: oracle", "type: mariadb")
+        .replace("192.0.2.10:1521/ALPHA", "192.0.2.10:3306")
+        .replace(f"[{ACCOUNT}]", f"['{account}']")
+    )
+    seen_before: list[bool] = []
+
+    def unreachable(*_: Any) -> Any:
+        # Asked of the run's stderr so far: was the warning already printed?
+        seen_before.append("unix_socket" in result_stderr())
+        raise DriverError("not reached in this test")
+
+    captured: list[str] = []
+    monkeypatch.setattr("sopuli.cli._echo_err", lambda text, **_: captured.append(text))
+    monkeypatch.setattr("sopuli.invocation.echo_err", lambda text, **_: captured.append(text))
+
+    def result_stderr() -> str:
+        return "\n".join(captured)
+
+    monkeypatch.setattr("sopuli.cli._open_session", unreachable)
+    monkeypatch.setattr(
+        "sopuli.cli._delivery_backends",
+        lambda run, config, delivery, reached, account, **_: {TARGET: FakeBackend()},
+    )
+    result = runner.invoke(
+        cli,
+        ["--config", str(write_config(config)), "account", "reset-password", "--account", account],
+    )
+
+    assert seen_before, result.output
+    assert all(seen_before), "the warning came after the first connection"
+
+
 # ------------------------------------------- the set committed, the close not ---
 
 

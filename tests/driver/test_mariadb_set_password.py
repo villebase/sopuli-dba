@@ -253,23 +253,36 @@ def test_a_check_where_another_account_could_answer_logs_in_nowhere(
     elsewhere = session.verify_password(f"{user}@{OTHER_HOST}", Secret(theirs))
 
     assert [right.result, wrong.result, elsewhere.result] == [UNAVAILABLE] * 3
+    assert not any(one.attempted for one in (right, wrong, elsewhere))
     assert "no login was attempted" in (wrong.detail or "")
     assert f"{user}@{OTHER_HOST}" in (wrong.detail or "")
 
 
-def test_after_a_change_the_rule_is_the_same(
-    session: Any, user: str, two_accounts: tuple[str, str], monkeypatch: pytest.MonkeyPatch
+def test_the_reaching_login_logs_in_where_the_check_would_not(
+    session: Any, user: str, two_accounts: tuple[str, str]
 ) -> None:
-    """Every MariaDB login follows the check rule for now. TODO(#1316): once
-    per staged `pending`, the login after a change may reach further."""
+    """#1270 decision 5: it reaches `user@%` and passes where `CURRENT_USER()`
+    names it (#1267, decision 8). `creds apply` asks it once per staged
+    `pending` and target, after writing the vault mark (#1316)."""
     password = f"Acme-{uuid.uuid4().hex[:12]}"
     session.set_password(f"{user}@%", Secret(password))
-    _refuse_any_login(monkeypatch)
 
-    after = session.verify_password(f"{user}@%", Secret(password))
+    after = session.verify_reaching(f"{user}@%", Secret(password))
 
-    assert after.result == UNAVAILABLE
-    assert "no login was attempted" in (after.detail or "")
+    assert after.result == PASS
+    assert after.attempted
+
+
+def test_a_reaching_login_s_refusal_says_nothing_where_another_account_could_answer(
+    session: Any, user: str, two_accounts: tuple[str, str]
+) -> None:
+    """Another account could have sent the refusal, so it is no fail."""
+    session.set_password(f"{user}@%", Secret(f"Acme-{uuid.uuid4().hex[:12]}"))
+
+    wrong = session.verify_reaching(f"{user}@%", Secret("Acme-wrong-password-1"))
+
+    assert wrong.result == UNAVAILABLE
+    assert f"{user}@{OTHER_HOST}" in (wrong.detail or "")
 
 
 def _refuse_any_login(monkeypatch: pytest.MonkeyPatch) -> None:

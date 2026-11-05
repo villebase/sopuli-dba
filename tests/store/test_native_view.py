@@ -21,6 +21,7 @@ from sopuli.payload import (
     ORIGIN,
     PENDING,
     PREVIOUS,
+    REACHED,
     REMOVE,
     RETAINING,
     ROLLOVER,
@@ -161,6 +162,74 @@ def test_a_rollover_mark_is_staged_with_its_pending_and_cleared_with_it(
     promoted = view.read(PATH)
     assert promoted is not None
     assert "rollover" not in promoted.data
+
+
+def test_a_reaching_login_mark_is_kept_in_the_attributes_beside_its_pending(
+    view: NativeStagedStore, inner: MemoryStore
+) -> None:
+    """#1316: the mark becomes true after the PENDING version was made, whose
+    content cannot change, so it goes in the attributes. The live pending stays
+    the same version."""
+    seeded(view)
+    apply_patch(view, PATH, stage_patch("b"), cas=token(view))
+    staged = inner.read_stage(PATH, "pending")
+    assert staged is not None
+
+    apply_patch(view, PATH, LAYOUT.patch(REACHED, {"mariadb-dev": "spent"}), cas=token(view))
+    # As `creds apply` writes it: one target per patch, merged with the others.
+    apply_patch(view, PATH, LAYOUT.patch(REACHED, {"mariadb-test": "passed"}), cas=token(view))
+
+    marked = view.read(PATH)
+    assert marked is not None
+    assert marked.data["reached"] == {"mariadb-dev": "spent", "mariadb-test": "passed"}
+    assert marked.data["pending"] == "b"
+    still = inner.read_stage(PATH, "pending")
+    assert still is not None
+    assert still.generation == staged.generation
+    assert "reached" not in still.data
+
+
+@pytest.mark.parametrize("next_write", ["stage", "promote", "clear"])
+def test_every_write_that_ends_the_pending_drops_the_mark(
+    view: NativeStagedStore, inner: MemoryStore, next_write: str
+) -> None:
+    """The view drops it itself, so a caller that sends no `reached: null`
+    cannot carry one pending's mark to the next. The patches here send none."""
+    seeded(view)
+    apply_patch(view, PATH, stage_patch("b"), cas=token(view))
+    apply_patch(view, PATH, LAYOUT.patch(REACHED, {"mariadb-dev": "passed"}), cas=token(view))
+
+    patch = {
+        "stage": stage_patch("c"),
+        "promote": promotion("b", "a"),
+        "clear": merge(LAYOUT.patch(PENDING, REMOVE), LAYOUT.patch(ORIGIN, REMOVE)),
+    }[next_write]
+    apply_patch(view, PATH, patch, cas=token(view))
+
+    after = view.read(PATH)
+    assert after is not None
+    assert "reached" not in after.data
+    assert "reached" not in after.attributes
+    stored = inner.read(PATH)
+    assert stored is not None
+    assert "reached" not in stored.attributes, "no orphan mark is left in the metadata"
+
+
+def test_a_mark_in_the_content_is_not_carried_into_a_new_version(
+    view: NativeStagedStore, inner: MemoryStore
+) -> None:
+    """A `reached` in CURRENT's content is from when the secret held several
+    accounts. Copied forward, it would read as a mark on every later pending."""
+    inner.write(PATH, {"password": "a", "reached": {}}, cas=0)
+
+    apply_patch(view, PATH, stage_patch("b"), cas=token(view))
+
+    staged = inner.read_stage(PATH, "pending")
+    assert staged is not None
+    assert "reached" not in staged.data
+    after = view.read(PATH)
+    assert after is not None
+    assert "reached" not in after.data
 
 
 def test_a_pending_that_is_not_the_recorded_one_is_not_a_pending(

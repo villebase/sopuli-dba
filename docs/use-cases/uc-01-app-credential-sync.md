@@ -135,7 +135,10 @@ split by when they become true (decision 3 in
 [`../decisions/log.md`](../decisions/log.md#1158)). The content holds the
 password, `origin`, `rollover`, `generated_at` and `generated_by`. `rotated_at`,
 `rotated_by`, `policy` and `targets` go in the secret's metadata, written in the
-same call that moves CURRENT. The metadata also records `pending_version`, the
+same call that moves CURRENT. `reached` (below) goes in the metadata too, because
+it becomes true after the pending version was made. It is written by a metadata
+update that keeps CURRENT and the live pending, and every other write drops it.
+The metadata also records `pending_version`, the
 number of the version that is the live pending. A PENDING version with another
 number is not a pending for any verb, because OCI cannot drop a stage without
 promoting it.
@@ -270,6 +273,28 @@ reserved root names, so a `secret:` ref may not name a field called `origin`.
 
 It is called `origin` and not `source` because `apply --source` already names a
 stage. One word with two meanings, one flag apart, would eventually be misread.
+
+### `reached`: where a staged password's reaching login was spent
+
+On MariaDB the first login after a change made from a staged `pending`, on each
+target, may reach an account the config does not declare
+([#1270](../decisions/log.md#1270), decision 5). `reached` maps each target
+where that login was spent to what it showed, so a later `apply` of the same
+`pending` does not repeat it: `{"mariadb-dev": "spent", "mariadb-test":
+"passed"}`. It follows the mirror rule, as `origin` does, and it is reserved
+too. Every write that stages a new `pending` clears it, and so does the
+promotion. A `reached` the tool cannot read counts as spent on every target
+and passed on none.
+
+`creds apply` and `creds rotate` write `spent` for the target before that
+login, under the run's lock, and the run's copy of the document moves to the
+version the write left, so the promotion compares against it. If the write
+fails, no login is made, and the row says why. After a login that passes, they
+write `passed`. A later run of the same `pending` counts a `passed` target as
+confirmed, as `stored`, with no new login, once it has set the `pending` again
+(#1316). So a password shared by several targets can be promoted when its
+targets confirmed in different runs, as in a rollout narrowed one target at a
+time.
 
 ### `rollover`: a pending a rollover rotation staged
 
@@ -657,12 +682,14 @@ These rules decide what `apply` does with each account:
   account that is the user's only one, with no anonymous account at a named
   host, as on MySQL. Any other account is `unavailable` without a login,
   because a failed login counts toward `max_password_errors` on the account it
-  reaches, and `creds check` and a scheduled `creds apply` repeat. The rule
-  covers the login after a change too, so such an account is changed and its
-  `pending` is not promoted (open: #1316). Decision 5 will let the first login
-  after a change from each staged `pending` log in wherever a login may reach,
-  and verify only when `CURRENT_USER()` is the declared account
-  ([#1267](../decisions/log.md#1267), decision 8). A login reaches the account
+  reaches, and `creds check` and a scheduled `creds apply` repeat. One login
+  is the exception (decision 5). Once per staged `pending` and target, the
+  login after a change logs in wherever a login may reach, and verifies only
+  when `CURRENT_USER()` is the declared account
+  ([#1267](../decisions/log.md#1267), decision 8). Before it the run writes
+  the `reached` mark (§3). A later `apply` of the same `pending` makes no such
+  login, so where it was not confirmed the row stays `unavailable` and the
+  `pending` stays, until a new one is staged. A login reaches the account
   the server matches from the tool's host, which may be another one. Some
   answers come before `CURRENT_USER()` can be read. These count only where no
   other account can answer. A refusal is a `fail` only where the target's

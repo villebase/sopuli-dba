@@ -122,6 +122,21 @@ CHECK_9_GAP = (
     "(02-mariadb-privileges.md section 5)"
 )
 
+#: The gap in what the tool reads that ``02-mariadb-privileges.md`` §4
+#: accepts (decisions/log.md #1301): said with :data:`CHECK_9_GAP`, for the same
+#: reason. The view shows one method of an account that has two.
+OR_GAP = (
+    "a declared account with a second login method, joined by OR, shows one of them: "
+    "the mysql.user view does not show the other. A password change sends one method "
+    "and ends the other, so a login by unix_socket, for example, stops working. "
+    "Check SHOW CREATE USER for accounts the tool manages (02-mariadb-privileges.md "
+    "section 4)"
+)
+
+#: What ``doctor --check-privileges`` says last for a target with declared
+#: accounts, whether or not the survey's read succeeded.
+ACCOUNT_GAPS = (CHECK_9_GAP, OR_GAP)
+
 T = TypeVar("T")
 
 
@@ -178,8 +193,9 @@ class MariadbSession(ClosesConnection):
         for each declared account that does not exist, uses a plugin the tool
         does not change, or shares its user name with an account at an
         undeclared host. Where the survey's read fails, the audit stands and a
-        line says why, as on MySQL. With any declared account, a last line
-        says what check 9 cannot see (:data:`CHECK_9_GAP`)."""
+        line says why, as on MySQL. With any declared account, the last lines
+        say what check 9 cannot see (:data:`CHECK_9_GAP`) and that a second
+        login method is not seen (:data:`OR_GAP`)."""
         audit = self._read(privilege_audit)
         if not accounts:
             return audit
@@ -196,10 +212,10 @@ class MariadbSession(ClosesConnection):
                 remedies=(
                     *audit.remedies,
                     f"the declared accounts were not read: {error}",
-                    CHECK_9_GAP,
+                    *ACCOUNT_GAPS,
                 ),
             )
-        return replace(audit, remedies=(*audit.remedies, *lines, CHECK_9_GAP))
+        return replace(audit, remedies=(*audit.remedies, *lines, *ACCOUNT_GAPS))
 
     def _not_written(self, what: str) -> NoReturn:
         raise NotWrittenError(
@@ -273,10 +289,11 @@ class MariadbSession(ClosesConnection):
         method the account had (``03_dual_password_probe.py``, DP3). That ends
         a second password a rollover kept, so only the vault's password logs
         in. It also ends a second method of another kind, such as
-        ``unix_socket``, which the view does not show. That gap is open, and
-        no verb that calls this is registered. TODO(#1301): register them once
-        the gap is decided. ``retain`` and ``keep`` are a rollover, which is
-        #1271.
+        ``unix_socket``, which the view does not show. That gap is accepted
+        (``02-mariadb-privileges.md`` §4, #1301), and ``doctor`` says so
+        (:data:`OR_GAP`). No verb that calls this is registered yet.
+        TODO(#1270): register the UC-1 verbs. ``retain`` and ``keep`` are a
+        rollover, which is #1271.
 
         As on the other drivers, ``changed`` is ``True`` whenever the statement
         succeeded: the command decides first whether the account already had

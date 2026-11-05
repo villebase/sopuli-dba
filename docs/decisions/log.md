@@ -4476,3 +4476,27 @@ the register.
   an account to the vault's `current` (`creds rotate` does). A named-host
   account whose reaching login did not confirm it stays `pending` until a new
   `pending` is staged, from a host whose login reaches it.
+
+## #1301
+
+- **Decided:** 2026-11-05, #1301
+- **Question:** A MariaDB account can log in by two methods joined by `OR`,
+  and the `mysql.user` view shows only one of them. A password change sends one
+  method and ends the other. What does the tool do about a second method it
+  cannot see?
+- **Decision:** Accept the gap. `02-mariadb-privileges.md` §4 documents it, and
+  `doctor --check-privileges` says it for every target with declared accounts.
+  No grant is added.
+- **Why:** The second method is only in `auth_or` in `mysql.global_priv` and in
+  `SHOW CREATE USER`, and reading either reads every stored value, which
+  [#1267](#1267) decision 3 refused. An account with a socket or other second
+  method is rare among the accounts the tool manages. Measured by hand on
+  11.8.9: the view shows one method, the same as `global_priv`'s top-level
+  `plugin`, and `mysql_native_password` on whichever side it is.
+- **Rejected:** Granting `SELECT (User, Host, Priv)` on `mysql.global_priv` to
+  read `auth_or`, which reads every stored value. Refusing an account whose
+  stored value is empty where its plugin needs one, which does not detect the
+  case.
+- **Accepted cost:** a password change on an account with a second method,
+  such as `unix_socket`, ends that login without a word from the tool, beyond
+  `doctor`'s line.

@@ -27,10 +27,11 @@ UTF-8 bytes, which is what the server hashes for ``PASSWORD('…')`` on a
 Both agree with the server's own ``PASSWORD()`` value, and an account with only
 ``CREATE USER`` sets each (``02_client_hash_probe.py``, CH1 and CH2).
 
-**No length limit.** The server never sees the password, only the value, so it
-has nothing to limit: a password of 1 byte to 1 MiB is set and logs in with
-PyMySQL, on each plugin and on every release measured
-(``09_password_length_probe.py``, PW1).
+**At most 1024 bytes** (:mod:`~sopuli.driver.mariadb.limits`). The server
+never sees the password, only the value, so it has nothing to limit: a password
+of 1 byte to 1 MiB is set and logs in with PyMySQL, on each plugin and on every
+release measured (``09_password_length_probe.py``, PW1). The limit is for the
+application's client.
 """
 
 from __future__ import annotations
@@ -46,13 +47,14 @@ import re
 # `provides` lists `nacl`. A later import would fail in the middle of a run.
 from nacl.bindings import crypto_scalarmult_ed25519_base_noclamp
 
+from sopuli.driver.mariadb.limits import LIMIT
 from sopuli.driver.mysql_family.accounts import Principal
 
 # Re-exported: the driver's callers and tests catch it from here.
 from sopuli.driver.mysql_family.password import (
     PasswordNotAdmissibleError as PasswordNotAdmissibleError,
 )
-from sopuli.driver.mysql_family.password import refuse_unusable
+from sopuli.driver.mysql_family.password import refuse_longer, refuse_unusable
 from sopuli.secrets import Secret
 
 #: The plugins this module computes a value for, by the server's name.
@@ -63,10 +65,20 @@ ED25519 = "ed25519"
 def admit(secret: Secret) -> None:
     """Refuse a password the target cannot take, before anything is computed.
 
-    What :func:`~sopuli.driver.mysql_family.password.refuse_unusable` refuses.
-    There is no length limit (PW1).
+    What :func:`~sopuli.driver.mysql_family.password.refuse_unusable` refuses,
+    and more than :data:`~sopuli.driver.mariadb.limits.MAX_PASSWORD_BYTES`.
     """
-    refuse_unusable(secret.reveal())
+    text = secret.reveal()
+    refuse_unusable(text)
+    refuse_longer(
+        text,
+        LIMIT,
+        product="a MariaDB target",
+        hint=(
+            "an application's client may not log in with a longer one; lower the "
+            "policy's `length`, or use a charset of one-byte characters"
+        ),
+    )
 
 
 def _utf8(secret: Secret) -> bytes:

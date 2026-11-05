@@ -320,12 +320,17 @@ The value is the plugin's (`02_client_hash_probe.py`, CH1):
 
 `sopuli.driver.mariadb.password` computes both. Values computed in Python agree
 with the server's, and an account with only `CREATE USER` sets them (CH1, CH2).
-**There is no length limit**: the server sees only the value, and a password of
-1 byte to 1 MiB is set and logs in (`09_password_length_probe.py`, PW1). The
-driver refuses an empty password, control characters, and text that cannot be
-encoded as UTF-8, as the other drivers do. The server refuses a malformed value with
-the plain `1396` (CH3). A new server loads only `mysql_native_password`;
-`ed25519` must be installed with `INSTALL SONAME 'auth_ed25519'` (CH4).
+**A password is at most 1024 bytes of UTF-8**
+([#1270](../decisions/log.md#1270)). The server sees only the value, and a
+password of 1 byte to 1 MiB is set and logs in with PyMySQL
+(`09_password_length_probe.py`, PW1). The limit is for an application's client,
+which was not measured. The driver refuses a longer password before anything is
+sent. It also refuses an empty password, control characters, and text that
+cannot be encoded as UTF-8, as the other drivers do. The server refuses a
+malformed value with the plain `1396` (CH3). A new server loads only
+`mysql_native_password`; `ed25519` must be installed with `INSTALL SONAME
+'auth_ed25519'` (CH4). Whether a password check plugin, such as
+`simple_password_check`, refuses the value is not measured (#1310).
 
 **The value is sensitive.** A `mysql_native_password` value is an unsalted
 SHA-1 hash. It allows an offline guess, and with one captured login handshake

@@ -226,6 +226,7 @@ DRIVERS: dict[str, DatabaseDriver] = {
         module="sopuli.driver.mariadb.session",
         extra="mariadb",
         provides=frozenset({"pymysql", "nacl"}),
+        password_limit="1024",
         commands=frozenset(),
     ),
 }

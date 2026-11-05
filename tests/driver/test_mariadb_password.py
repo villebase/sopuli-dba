@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import pytest
 
+from sopuli.config.model import ExpandedTarget, Target
+from sopuli.driver.protocol import Timeouts
 from sopuli.secrets import Secret
 
 # Before the module, which imports PyNaCl: it comes with the `mariadb` extra.
@@ -96,12 +98,43 @@ def test_a_password_the_target_cannot_take_is_refused(password: str, words: str)
 
 
 @pytest.mark.parametrize(
-    "password", ["A" * 1_048_576, "é€😀-Acme", "x"], ids=["1 MiB", "not ASCII", "1 byte"]
+    "password",
+    ["A" * 1024, "é" * 512, "é€😀-Acme", "x"],
+    ids=["1024 bytes", "1024 bytes not ASCII", "not ASCII", "1 byte"],
 )
-def test_any_length_and_any_character_is_admitted(password: str) -> None:
-    """A password of 1 byte to 1 MiB, ASCII or not, was set and logged in on
-    every release (PW1, PW2)."""
+def test_up_to_the_limit_any_character_is_admitted(password: str) -> None:
+    """ASCII or not, a password was set and logged in on every release (PW1,
+    PW2). The limit is decided on #1270."""
     admit(Secret(password))
+
+
+@pytest.mark.parametrize("password", ["A" * 1025, "é" * 512 + "A"], ids=["ASCII", "not ASCII"])
+def test_a_password_over_1024_bytes_is_refused(password: str) -> None:
+    """Counted in UTF-8 bytes, not characters: 513 characters of `é` is 1025
+    bytes."""
+    with pytest.raises(PasswordNotAdmissibleError, match="1025 bytes") as caught:
+        admit(Secret(password))
+
+    assert "at most 1024" in str(caught.value)
+    assert caught.value.category == "policy"
+
+
+def test_the_session_says_the_limit_and_no_other_constraint() -> None:
+    """Neither reads the server, so a session with no connection answers."""
+    session_module = pytest.importorskip("sopuli.driver.mariadb.session")
+    session = session_module.MariadbSession(
+        connection=None,
+        target=ExpandedTarget(
+            target=Target(name="mariadb-dev", type="mariadb", dsn="mariadb-dev.example.com:3306")
+        ),
+        correlation_id="tier0",
+        timeouts=Timeouts(),
+    )
+
+    limit = session.byte_limit()
+
+    assert (limit.max_bytes, limit.encoding) == (1024, "utf-8")
+    assert session.password_constraints("acme_app_user@%") is None
 
 
 @pytest.mark.parametrize(

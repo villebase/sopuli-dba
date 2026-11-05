@@ -9147,8 +9147,10 @@ def _verify_before_change(
 
     MySQL says so (#1223): a wrong login during a rotation can block an account
     with ``FAILED_LOGIN_ATTEMPTS 1`` for days, a new password does not clear the
-    block, and the tool cannot read the setting. Without the login there is no
-    answer, so a `pending` is set, and a `current` is left alone
+    block, and the tool cannot read the setting. MariaDB says so too (#1270,
+    decision 4): a failure counts toward ``max_password_errors``, which the
+    tool cannot read either. Without the login there is no answer, so a
+    `pending` is set, and a `current` is left alone
     (:data:`NOT_CHECKED_WITHOUT_LOGIN`).
     """
     if not getattr(session, "verifies_before_change", True):

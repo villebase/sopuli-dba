@@ -201,16 +201,19 @@ def test_a_role_names_no_host_on_mariadb() -> None:
 # ------------------------------------------------------------- the driver ---
 
 
-def test_the_driver_serves_doctor_and_no_other_command_yet() -> None:
-    """`doctor` connects (#1268); every other command is refused before anything
-    connects, until UC-1 (#1270) and UC-2 (#1272) write it."""
+def test_the_driver_serves_doctor_and_the_uc2_verbs() -> None:
+    """`doctor` connects (#1268), and UC-2's four verbs do (#1272); UC-1 is
+    refused before anything connects, until #1270 writes it."""
     target = loaded(targets=[SERVER]).expanded_targets[0].target
 
-    assert DRIVERS["mariadb"].commands == frozenset()
+    assert DRIVERS["mariadb"].commands == frozenset(
+        {"account.list", "account.reset-password", "account.suspend", "account.expire-password"}
+    )
     assert DRIVERS["mariadb"].extra == "mariadb"
     # PyMySQL's `ed25519` extra brings PyNaCl; without it the extra is not installed.
     assert DRIVERS["mariadb"].provides == frozenset({"pymysql", "nacl"})
     require_command(target, "doctor")
+    require_command(target, "account.reset-password")
     with pytest.raises(DriverNotImplementedError) as caught:
         require_command(target, "creds.check")
     assert caught.value.code == DRIVER_NOT_IMPLEMENTED

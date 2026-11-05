@@ -11,7 +11,7 @@ lists the method that is not built yet. §9 lists the open questions. On
 PostgreSQL, `account list`, the unseen `account reset-password` (§4.1) and
 `account suspend` are built. The seen reset and `account expire-password` are
 refused there with exit 5, because a role cannot be made to change its password
-at its next login. On MySQL every verb is built.
+at its next login. On MySQL and MariaDB every verb is built.
 
 **These commands are experimental in the alpha.** They are the newest part of
 the tool, so they may change more than the application-credential commands.
@@ -566,8 +566,7 @@ login method, so a second one joined by `OR` stops working, a `unix_socket`
 login the view does not show included (#1301). `account
 expire-password` sends `PASSWORD EXPIRE` alone and reads nothing from the
 vault. A second method someone added with `OR` survives it, and both
-passwords then log in, expired, only to set a new one (decision 2). These
-verbs are not yet registered for MariaDB (open: #1272).
+passwords then log in, expired, only to set a new one (decision 2).
 
 ---
 

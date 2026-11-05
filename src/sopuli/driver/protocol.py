@@ -132,23 +132,24 @@ EXPIRY_UNAVAILABLE = (
 )
 
 #: What `account reset-password --keep-rollover` names as the missing
-#: capability on a MySQL server, given at plan time and by the driver alike
-#: (#1225, decision 2).
+#: capability on a MySQL or MariaDB server, given at plan time and by the
+#: driver alike (#1225, decision 2; #1272).
 KEEP_ROLLOVER = "--keep-rollover"
 
-#: Its hint.
+#: The end of both hints below.
+_KEPT_WINDOW_TAIL = "so nothing could say when the window ends. Drop --keep-rollover"
+
+#: Its hint on MySQL.
 KEPT_WINDOW_UNREADABLE = (
     "a reset on a MySQL server discards the old password: a password kept with "
-    "RETAIN CURRENT PASSWORD cannot be read back, so nothing could say when the "
-    "window ends. Drop --keep-rollover"
+    f"RETAIN CURRENT PASSWORD cannot be read back, {_KEPT_WINDOW_TAIL}"
 )
 
-#: The same refusal on MariaDB, where a rollover is a second method joined by
-#: ``OR`` (#1267, decision 3).
+#: Its hint on MariaDB, where a rollover is a second method joined by ``OR``
+#: (#1267, decision 3).
 KEPT_WINDOW_UNREADABLE_MARIADB = (
     "a reset on a MariaDB server sets one login method, which ends a second one: "
-    "a rollover's second method, joined by OR, cannot be read back, so nothing "
-    "could say when the window ends. Drop --keep-rollover"
+    f"a rollover's second method, joined by OR, cannot be read back, {_KEPT_WINDOW_TAIL}"
 )
 
 #: Lock state can be read and set.

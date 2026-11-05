@@ -44,8 +44,10 @@ ACCOUNT_MISSING = "ACCOUNT_MISSING"
 SKIPPED = "SKIPPED"
 
 #: The target types where guardrail 9 runs for these verbs too. On MariaDB a
-#: `role:` rule admits the account that created the role, often root, and
-#: nothing else marks root as the database's own (#1272, option B).
+#: `role:` rule admits the account that created the role, often root or the
+#: tool account, and nothing else marks root as the database's own. So an
+#: administrator is refused whatever the verb, even one declared by name
+#: (#1272, option B, decided by the maintainer on 2026-11-05).
 GUARDED_TYPES = frozenset({MARIADB})
 
 
@@ -95,7 +97,9 @@ def decide(
     server reserves. Check 9 does not run here, because neither verb sets a
     password (#1222), except where ``target_type`` is in
     :data:`GUARDED_TYPES`: on MariaDB a `role:` rule admits the role's creator,
-    so an administrator is refused whatever the verb (#1272). That is enforced by
+    so an administrator is refused whatever the verb, the session's own
+    account included (#1272). It runs where ``target_type`` is ``None`` too,
+    so a caller that leaves it out refuses more, never less. That is enforced by
     :func:`~sopuli.driver.guardrails.review` rather than here, and it is why the
     declaration is expressed *through* the review's check 1 instead of
     short-circuiting it -- one refusal vocabulary, one place that decides what
@@ -134,7 +138,9 @@ def decide(
         state,
         declared=[state.name] if rule is not None else [],
         force=force,
-        sets_password=target_type in GUARDED_TYPES,
+        sets_password=False,
+        # No type is the safe side: a caller that forgets it refuses more.
+        every_account=target_type is None or target_type in GUARDED_TYPES,
     )
 
     if not found.permitted:

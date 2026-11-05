@@ -41,8 +41,8 @@ from sopuli.reset import (
     decide,
     deliverable,
     refuse_kept_window,
-    refuse_kept_window_on_mysql,
     refuse_seen_path,
+    refuse_unreadable_kept_window,
 )
 from sopuli.safety import RefusedError
 
@@ -304,13 +304,13 @@ def test_a_kept_window_is_refused_by_capability_where_it_cannot_be_read(
     ]
 
     with pytest.raises(UnsupportedCapabilityError) as caught:
-        refuse_kept_window_on_mysql(targets, keep_rollover=True)
+        refuse_unreadable_kept_window(targets, keep_rollover=True)
 
     assert caught.value.exit_code == ExitCode.UNSUPPORTED_CAPABILITY
     assert caught.value.capability == KEEP_ROLLOVER
     assert f'target "{product}-dev"' in str(caught.value)
     assert says in str(caught.value.hint)
-    refuse_kept_window_on_mysql(targets, keep_rollover=False)
+    refuse_unreadable_kept_window(targets, keep_rollover=False)
 
 
 # --------------------------------------------------------------- the decision ---

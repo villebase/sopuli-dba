@@ -81,6 +81,7 @@ def test_an_account_with_a_global_privilege_is_expired() -> None:
         config=config({"accounts": ["jdoe"]}),
         account="jdoe",
         target="appdb-dev-alpha",
+        target_type="oracle",
     )
 
     assert decision.proceed

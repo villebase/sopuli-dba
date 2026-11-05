@@ -233,10 +233,39 @@ def test_an_account_with_a_global_privilege_is_suspended() -> None:
         config=config({"accounts": ["jdoe"]}),
         account="jdoe",
         target="appdb-dev-alpha",
+        target_type="oracle",
     )
 
     assert decision.proceed
     assert decision.state == LOCKED
+
+
+def test_without_a_target_type_check_9_runs() -> None:
+    """A caller that forgets the type refuses more, never less (#1272)."""
+    decision = decide(
+        state(global_privileges=frozenset({"ALL PRIVILEGES ON *.*"})),
+        config=config({"accounts": ["jdoe"]}),
+        account="jdoe",
+        target="appdb-dev-alpha",
+    )
+
+    assert not decision.proceed
+
+
+def test_on_mariadb_check_9_refuses_the_session_account_too() -> None:
+    """The tool account may have created the role, and locking it is not a
+    password the tool sets (#1272)."""
+    decision = decide(
+        state(global_privileges=frozenset({"SELECT ON mysql.*"}), session_account=True),
+        config=config({"accounts": ["jdoe"]}),
+        account="jdoe",
+        target="appdb-dev-alpha",
+        target_type="mariadb",
+        force=True,
+    )
+
+    assert not decision.proceed
+    assert "SELECT ON mysql.*" in decision.detail
 
 
 @pytest.mark.parametrize("force", [False, True])

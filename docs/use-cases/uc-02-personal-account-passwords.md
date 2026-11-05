@@ -544,8 +544,9 @@ dev_role` makes a role with an empty host, so the rule is `role: dev_role`, and
 the name is compared exactly, as a user name is (TG7). A `role:` written with a
 host is refused when the file loads, with exit 9. A `role:` rule admits
 every account the role is granted to, directly or through another role, and
-the account that created the role, which holds it with `ADMIN OPTION`. Whether
-that account counts is not decided (open: #1272). A role in the chain is
+the account that created the role, which holds it with `ADMIN OPTION`. That
+account is admitted, and guardrail 9 refuses it for every verb when it holds a
+global privilege, as root and the tool account do (§3, #1272). A role in the chain is
 followed and not admitted: it cannot log in. A rule that names a role `PUBLIC`
 reaches is refused by `account list` and by every verb, as a mandatory role is
 on MySQL: at plan time with exit 9, and in the run as the target's `ERROR`

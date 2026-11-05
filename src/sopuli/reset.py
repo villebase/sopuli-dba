@@ -183,7 +183,9 @@ def refuse_kept_window(delivery: Delivery, *, keep_rollover: bool) -> None:
     )
 
 
-def refuse_kept_window_on_mysql(targets: Iterable[ExpandedTarget], *, keep_rollover: bool) -> None:
+def refuse_unreadable_kept_window(
+    targets: Iterable[ExpandedTarget], *, keep_rollover: bool
+) -> None:
     """Refuse ``--keep-rollover`` where a target is MySQL or MariaDB, at plan
     time, exit 5 (#1225, decision 2; #1272).
 

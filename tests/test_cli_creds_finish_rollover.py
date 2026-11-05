@@ -118,6 +118,8 @@ class FakeSession:
         self.attempts: list[str] = []
         self.budgets: list[int] = []
         self.closed: list[str] = []
+        #: The ``current`` each `finish_rollover` was given, revealed (#1271).
+        self.kept: list[str | None] = []
 
     def scope(self) -> Scope:
         return Scope(type="pdb", container="ALPHA", read_write=True, capabilities=self.capabilities)
@@ -141,7 +143,8 @@ class FakeSession:
         self.budgets.append(attempts)
         return self.answers.get(account.upper(), VerifyResult(VERIFY_LOGIN, PASS, latency_ms=8))
 
-    def finish_rollover(self, account: str) -> ChangeResult:
+    def finish_rollover(self, account: str, *, current: Secret | None = None) -> ChangeResult:
+        self.kept.append(None if current is None else current.reveal())
         if self.already_closed:
             return ChangeResult(changed=False, detail="no rollover window is open")
         self.closed.append(account.upper())
@@ -325,6 +328,9 @@ def test_an_open_window_is_closed(
 
     assert result.exit_code == ExitCode.SUCCESS
     assert harness["sessions"][0].closed == ["ACME_WEB_USER"]
+    # The vault's `current`, for a driver that ends a window only by being
+    # sent the value to keep (MariaDB, #1271).
+    assert harness["sessions"][0].kept == [LIVE]
     assert "rollover window closed" in result.output
 
 

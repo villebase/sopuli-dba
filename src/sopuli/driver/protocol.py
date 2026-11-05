@@ -1149,12 +1149,22 @@ class Session(Protocol):
         ...
 
     def set_password(
-        self, account: str, secret: Secret, *, old_password: str = OLD_DISCARD
+        self,
+        account: str,
+        secret: Secret,
+        *,
+        old_password: str = OLD_DISCARD,
+        previous: Secret | None = None,
     ) -> ChangeResult:
         """Set ``account``'s password to ``secret``.
 
         ``old_password`` is one of :data:`OLD_PASSWORD_MODES`, and only a driver
         that keeps a second password on request acts on it.
+
+        ``previous`` is the password the account had, which the command passes
+        when ``old_password`` asks to keep one. A server that keeps the old
+        password itself (Oracle, MySQL) ignores it. MariaDB keeps it only by
+        being sent its value again, beside the new one (#1271).
 
         The one call in this interface that reveals a secret, which is one of
         invariant 2's three permitted reveals.
@@ -1488,13 +1498,17 @@ class Session(Protocol):
         """
         ...
 
-    def finish_rollover(self, account: str) -> ChangeResult:
+    def finish_rollover(self, account: str, *, current: Secret | None = None) -> ChangeResult:
         """End ``account``'s open rollover window now, or report there was none.
 
         ``changed: false`` where no window is open, which is invariant 9 and not
         caution: measured on 26ai, issuing the statement with no window open is
         accepted silently and changes nothing, so a driver that just issued it
         would report a change for every run that did nothing.
+
+        ``current`` is the vault's current password, the one to keep. A server
+        that ends a window by name ignores it. MariaDB ends one only by being
+        sent that value alone (#1271).
 
         Called by ``creds apply --strategy direct`` **after** the change has been
         verified. Closing a window on a change nobody confirmed would leave an

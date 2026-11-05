@@ -277,7 +277,12 @@ class _Session:
         return PrivilegeAudit()
 
     def set_password(
-        self, account: str, secret: Secret, *, old_password: str = "discard"
+        self,
+        account: str,
+        secret: Secret,
+        *,
+        old_password: str = "discard",
+        previous: Secret | None = None,
     ) -> ChangeResult:
         return ChangeResult(changed=True)
 
@@ -359,7 +364,7 @@ class _Session:
     def require_rollover(self, account: str) -> None:
         return None
 
-    def finish_rollover(self, account: str) -> ChangeResult:
+    def finish_rollover(self, account: str, *, current: Secret | None = None) -> ChangeResult:
         return ChangeResult(changed=False, detail="no rollover window is open")
 
     def close(self) -> None:

@@ -355,15 +355,10 @@ class MariadbSession(ClosesConnection):
             raise ValueError(f"not an old-password mode: {old_password!r}")
         keeps_old = old_password != OLD_DISCARD
         if keeps_old and previous is None:
-            raise DriverError(
-                f'no old password was given to keep for "{account}" on target '
-                f'"{self.target.name}"; nothing was sent',
-                hint=(
-                    "this is a fault in sopuli: a MariaDB rollover sends the old password's "
-                    "value again, so the command must pass it"
-                ),
-            )
+            raise self._not_passed("previous", account)
         password_module.admit(secret)
+        if keeps_old and previous is not None:
+            password_module.admit(previous)
         require_read_write(self.scope(), target=self.target.name)
         found = self._existing(
             account,
@@ -709,19 +704,13 @@ class MariadbSession(ClosesConnection):
         change: the exception to invariant 9 this verb has on MariaDB.
 
         Refused before anything is sent, with ``password_sent`` left ``False``:
-        no ``current``, a read-only session, an account that does not exist,
-        and one on another plugin. A failure of the statement has
-        ``password_sent`` set.
+        no ``current``, one the target cannot take, a read-only session, an
+        account that does not exist, and one on another plugin. A failure of
+        the statement has ``password_sent`` set.
         """
         if current is None:
-            raise DriverError(
-                f'no current password was given to finish the rollover of "{account}" on '
-                f'target "{self.target.name}"; nothing was sent',
-                hint=(
-                    "this is a fault in sopuli: MariaDB ends a rollover by sending the current "
-                    "password's value alone, so the command must pass it"
-                ),
-            )
+            raise self._not_passed("current", account)
+        password_module.admit(current)
         require_read_write(self.scope(), target=self.target.name)
         found = self._existing(account, hint=_nothing("changed"))
         statement = password_module.alter_user(found.user, found.host, found.plugin, current)
@@ -736,6 +725,20 @@ class MariadbSession(ClosesConnection):
             detail=(
                 "sent the current password alone; whether a rollover was open cannot be "
                 "read on MariaDB"
+            ),
+        )
+
+    def _not_passed(self, which: str, account: str) -> DriverError:
+        """The refusal for a password the command must pass and did not:
+        ``previous`` for :meth:`set_password` to keep, or ``current`` for
+        :meth:`finish_rollover`. MariaDB keeps or ends a rollover only by being
+        sent the value (#1271)."""
+        return DriverError(
+            f'no {which} password was passed for "{account}" on target '
+            f'"{self.target.name}"; nothing was sent',
+            hint=(
+                f"this is a fault in sopuli: MariaDB keeps or ends a rollover only by being "
+                f"sent the {which} password's value, so the command must pass it"
             ),
         )
 

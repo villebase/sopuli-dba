@@ -356,7 +356,12 @@ class MysqlSession(ClosesConnection):
             raise from_error(error, scrub=scrub).as_error() from None
 
     def set_password(
-        self, account: str, secret: Secret, *, old_password: str = OLD_DISCARD
+        self,
+        account: str,
+        secret: Secret,
+        *,
+        old_password: str = OLD_DISCARD,
+        previous: Secret | None = None,
     ) -> ChangeResult:
         """``ALTER USER … IDENTIFIED WITH caching_sha2_password AS 0x…``, with
         the hash computed here (invariant 15, :mod:`~sopuli.driver.mysql.password`).
@@ -969,7 +974,7 @@ class MysqlSession(ClosesConnection):
         if self.describe_user(account) is None:
             raise DriverError(f'account "{account}" does not exist on target "{self.target.name}"')
 
-    def finish_rollover(self, account: str) -> ChangeResult:
+    def finish_rollover(self, account: str, *, current: Secret | None = None) -> ChangeResult:
         """``ALTER USER … DISCARD OLD PASSWORD``, always, and ``changed: True``.
 
         The tool cannot read whether a password is retained: it is in

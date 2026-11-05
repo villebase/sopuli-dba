@@ -9,10 +9,12 @@ read back from ``mysql.user`` as root: the same on 10.11.19, 11.4.13, 11.8.9 and
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from sopuli.config.model import ExpandedTarget, Target
-from sopuli.driver.protocol import Timeouts
+from sopuli.driver.protocol import DriverError, Timeouts
 from sopuli.secrets import Secret
 
 # Before the module, which imports PyNaCl: it comes with the `mariadb` extra.
@@ -162,49 +164,59 @@ def test_the_reset_refuses_to_keep_a_rollover_before_anything_is_read() -> None:
     assert "joined by OR" in str(caught.value.hint)
 
 
+@pytest.fixture
+def unconnected() -> Any:
+    """A MariaDB session with no connection: anything it refuses, it refused
+    before reading or sending anything."""
+    session_module = pytest.importorskip("sopuli.driver.mariadb.session")
+    return session_module.MariadbSession(
+        connection=None,
+        target=ExpandedTarget(
+            target=Target(name="mariadb-dev", type="mariadb", dsn="mariadb-dev.example.com:3306")
+        ),
+        correlation_id="tier0",
+        timeouts=Timeouts(),
+    )
+
+
 @pytest.mark.parametrize("old_password", ["retain", "keep"])
 def test_keeping_the_old_password_without_it_is_refused_before_anything_is_read(
-    old_password: str,
+    unconnected: Any, old_password: str
 ) -> None:
     """#1271: the rollover sends the old value again, so the command must pass
-    it. A session with no connection refuses, so nothing was read or sent."""
-    from sopuli.driver.protocol import DriverError
-
-    session_module = pytest.importorskip("sopuli.driver.mariadb.session")
-    session = session_module.MariadbSession(
-        connection=None,
-        target=ExpandedTarget(
-            target=Target(name="mariadb-dev", type="mariadb", dsn="mariadb-dev.example.com:3306")
-        ),
-        correlation_id="tier0",
-        timeouts=Timeouts(),
-    )
-
+    it."""
     with pytest.raises(DriverError) as caught:
-        session.set_password("acme_app@%", Secret("Acme-Vector-1"), old_password=old_password)
+        unconnected.set_password("acme_app@%", Secret("Acme-Vector-1"), old_password=old_password)
 
+    assert "previous password" in str(caught.value)
     assert "fault in sopuli" in str(caught.value.hint)
     assert caught.value.password_sent is False
 
 
-def test_finishing_a_rollover_without_the_current_password_is_refused_first() -> None:
-    from sopuli.driver.protocol import DriverError
-
-    session_module = pytest.importorskip("sopuli.driver.mariadb.session")
-    session = session_module.MariadbSession(
-        connection=None,
-        target=ExpandedTarget(
-            target=Target(name="mariadb-dev", type="mariadb", dsn="mariadb-dev.example.com:3306")
-        ),
-        correlation_id="tier0",
-        timeouts=Timeouts(),
-    )
-
+def test_finishing_a_rollover_without_the_current_password_is_refused_first(
+    unconnected: Any,
+) -> None:
     with pytest.raises(DriverError) as caught:
-        session.finish_rollover("acme_app@%")
+        unconnected.finish_rollover("acme_app@%")
 
+    assert "current password" in str(caught.value)
     assert "fault in sopuli" in str(caught.value.hint)
     assert caught.value.password_sent is False
+
+
+def test_a_rollover_s_old_password_and_a_finish_s_current_one_are_admitted_first(
+    unconnected: Any,
+) -> None:
+    """Each value the driver computes is from a password the target can take,
+    as for the new one."""
+    too_long = Secret("A" * 1025)
+
+    with pytest.raises(PasswordNotAdmissibleError):
+        unconnected.set_password(
+            "acme_app@%", Secret("Acme-Vector-1"), old_password="retain", previous=too_long
+        )
+    with pytest.raises(PasswordNotAdmissibleError):
+        unconnected.finish_rollover("acme_app@%", current=too_long)
 
 
 def test_apply_finds_the_hook_it_looks_up_by_name() -> None:

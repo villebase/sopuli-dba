@@ -546,7 +546,9 @@ host is refused when the file loads, with exit 9. A `role:` rule admits
 every account the role is granted to, directly or through another role, and
 the account that created the role, which holds it with `ADMIN OPTION`. That
 account is admitted, and guardrail 9 refuses it for every verb when it holds a
-global privilege, as root and the tool account do (§3, #1272). A role in the chain is
+global privilege, as root does (§3, #1272). The tool's own account is refused
+for `suspend` and `expire-password`; a reset of it is refused by guardrail 7
+unless `--force`, as on MySQL. A role in the chain is
 followed and not admitted: it cannot log in. A rule that names a role `PUBLIC`
 reaches is refused by `account list` and by every verb, as a mandatory role is
 on MySQL: at plan time with exit 9, and in the run as the target's `ERROR`

@@ -42,6 +42,8 @@ personal_accounts:
 """
 
 MANDATORY = "everyone@%"
+#: A departed DBA with a global privilege.
+ADMIN = "dba@%"
 
 
 class FakeSession:
@@ -65,6 +67,10 @@ class FakeSession:
         return role
 
     def describe_user(self, account: str) -> UserState | None:
+        if account == ADMIN:
+            return UserState(
+                name=account, status="OPEN", global_privileges=frozenset({"ALL PRIVILEGES ON *.*"})
+            )
         if account not in ("jdoe@%", "JDOE@%"):
             return None
         return UserState(name=account, status="OPEN", roles=frozenset({"dev_role@%"}))
@@ -134,6 +140,19 @@ def test_another_spelling_of_the_user_is_not_declared(
     assert result.exit_code == ExitCode.SUCCESS, result.output
     assert "SKIPPED" in result.output
     assert calls == []
+
+
+@pytest.mark.parametrize(("verb", "said"), [("suspend", "suspend"), ("expire-password", "expire")])
+def test_an_account_with_a_global_privilege_reaches_the_driver_on_mysql(
+    write_config: WriteConfig, calls: list[str], verb: str, said: str
+) -> None:
+    """Guardrail 9 does not run for these verbs on MySQL (#1222). The command
+    passes the target's type, so this is not the refusal a missing type
+    gets (#1272)."""
+    result = run(write_config, verb, f"  - accounts: [{ADMIN}]", ADMIN)
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert calls == [f"{said} {ADMIN}"]
 
 
 def test_suspend_needs_no_capability_on_mysql(write_config: WriteConfig, calls: list[str]) -> None:

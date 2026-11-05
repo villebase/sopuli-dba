@@ -198,7 +198,9 @@ chain is not admitted: a role cannot log in. `CREATE ROLE` grants the role to
 the account that created it, with `ADMIN OPTION`, so that account holds it
 too: usually root or the tool account. Where it holds a privilege §5 counts,
 guardrail 9 refuses it for every UC-2 verb, `account suspend` and `account
-expire-password` included, and the session's own account too (§5, #1272). A
+expire-password` included (§5, #1272). For those two it refuses the session's
+own account too. A reset still exempts it, as on MySQL: setting the tool's own
+password hands over nothing, and guardrail 7 refuses it unless `--force`. A
 role that `PUBLIC` holds, directly or through another role, is refused with
 exit 9: every account holds it (RR3), and a rule that
 admits every account is not a whitelist. MySQL refuses a mandatory role for

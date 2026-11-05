@@ -33,7 +33,8 @@ still works after the expiry, and the tool cannot see whether one is kept.
 uses the same account guardrails as every mutating verb. `--force` waives
 guardrails 2 to 5 and 7, never 1, 6 or 8. Guardrail 9 does not apply,
 because expiring sets no password, except on MariaDB: there a `role:` rule
-declares the account that created the role.
+declares the account that created the role. So on MariaDB it refuses every
+account with a global privilege, one declared by name too.
 
 An account that is already expired, with no window open, reports no
 change, and the command issues nothing. `EXPIRED(GRACE)` does not count as
@@ -53,7 +54,7 @@ Options:
 - `--target` `NAME` (repeatable): Keep only this target. Repeat to add more.
 - `--group` `NAME` (repeatable): Keep only targets in this group. Repeat to add more.
 - `--confirm`: Proceed without asking. Required where `safety.confirm_environments` applies.
-- `--force`: Waive guardrails 2 to 5 and 7. Nothing waives guardrails 1, 6 and 8: an account the config does not declare, a superuser, and a role the server reserves. Guardrail 9, a global privilege, applies only on MariaDB, where a `role:` rule admits the role's creator; elsewhere this verb sets no password, so it does not apply.
+- `--force`: Waive guardrails 2 to 5 and 7. Nothing waives guardrails 1, 6 and 8: an account the config does not declare, a superuser, and a role the server reserves. Guardrail 9, a global privilege, applies only on MariaDB, to every account, because a `role:` rule there admits the role's creator; elsewhere this verb sets no password, so it does not apply.
 
 It also takes the [global options](README.md#global-options).
 
@@ -185,7 +186,8 @@ suspending DBSNMP is refused just as rotating it would be. `--force`
 waives guardrails 2 to 5 and 7, never 1, 6 or 8. Guardrail 9 does not
 apply, because suspending sets no password, except on MariaDB: there a
 `role:` rule declares the account that created the role, and nothing else
-stops it locking root.
+stops it locking root. So on MariaDB it refuses every account with a
+global privilege, one declared by name too.
 
 An account that is already locked reports no change, and the command
 issues nothing. The driver reads the state first, because Oracle and
@@ -201,6 +203,6 @@ Options:
 - `--target` `NAME` (repeatable): Keep only this target. Repeat to add more.
 - `--group` `NAME` (repeatable): Keep only targets in this group. Repeat to add more.
 - `--confirm`: Proceed without asking. Required where `safety.confirm_environments` applies.
-- `--force`: Waive guardrails 2 to 5 and 7. Nothing waives guardrails 1, 6 and 8: an account the config does not declare, a superuser, and a role the server reserves. Guardrail 9, a global privilege, applies only on MariaDB, where a `role:` rule admits the role's creator; elsewhere this verb sets no password, so it does not apply.
+- `--force`: Waive guardrails 2 to 5 and 7. Nothing waives guardrails 1, 6 and 8: an account the config does not declare, a superuser, and a role the server reserves. Guardrail 9, a global privilege, applies only on MariaDB, to every account, because a `role:` rule there admits the role's creator; elsewhere this verb sets no password, so it does not apply.
 
 It also takes the [global options](README.md#global-options).

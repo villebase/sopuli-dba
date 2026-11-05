@@ -183,6 +183,10 @@ def refuse_kept_window(delivery: Delivery, *, keep_rollover: bool) -> None:
     )
 
 
+#: The products where a kept window cannot be read, and why.
+_KEPT_WINDOW_HINTS = {MYSQL: KEPT_WINDOW_UNREADABLE, MARIADB: KEPT_WINDOW_UNREADABLE_MARIADB}
+
+
 def refuse_unreadable_kept_window(
     targets: Iterable[ExpandedTarget], *, keep_rollover: bool
 ) -> None:
@@ -200,9 +204,8 @@ def refuse_unreadable_kept_window(
     """
     if not keep_rollover:
         return
-    hints = {MYSQL: KEPT_WINDOW_UNREADABLE, MARIADB: KEPT_WINDOW_UNREADABLE_MARIADB}
     for expanded in targets:
-        hint = hints.get(expanded.target.type)
+        hint = _KEPT_WINDOW_HINTS.get(expanded.target.type)
         if hint is not None:
             raise UnsupportedCapabilityError(KEEP_ROLLOVER, target=expanded.name, hint=hint)
 

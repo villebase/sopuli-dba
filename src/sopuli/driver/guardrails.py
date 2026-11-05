@@ -430,9 +430,11 @@ def review(
             )
         )
 
-    # The session's own account is exempt: the tool already has its power, so
-    # setting its password hands over nothing. Check 7 still refuses it unless
-    # `--force` waives that (#1059, #1222).
+    # The session's own account is exempt when the verb sets a password: the
+    # tool already has its power, so setting its password hands over nothing.
+    # Check 7 still refuses it unless `--force` waives that (#1059, #1222).
+    # `every_account` ends the exemption, for MariaDB's suspend and expire
+    # (#1272).
     privileges = sorted(state.global_privileges)
     if privileges and (every_account or (sets_password and not state.session_account)):
         named = ", ".join(privileges[:NAMED_PRIVILEGES])

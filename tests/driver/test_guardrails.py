@@ -340,6 +340,29 @@ def test_the_tool_s_own_account_is_exempt_from_check_nine() -> None:
     assert [refusal.check for refusal in forced.overridden] == [OWN_ACCOUNT]
 
 
+@pytest.mark.parametrize("session_account", [False, True])
+def test_every_account_runs_check_nine_for_a_verb_that_sets_no_password(
+    session_account: bool,
+) -> None:
+    """MariaDB's suspend and expire (#1272): the session's own account is not
+    exempt, and `--force` waives nothing of check 9."""
+    state = UserState(
+        name="sopuli_svc@%",
+        status="OPEN",
+        session_account=session_account,
+        global_privileges=frozenset({"CREATE USER ON *.*"}),
+    )
+
+    skipped = review(state, declared=("sopuli_svc@%",), sets_password=False)
+    forced = review(
+        state, declared=("sopuli_svc@%",), force=True, sets_password=False, every_account=True
+    )
+
+    assert GLOBAL_PRIVILEGE not in {refusal.check for refusal in skipped.refusals}
+    assert not forced.permitted
+    assert [refusal.check for refusal in forced.refusals] == [GLOBAL_PRIVILEGE]
+
+
 def test_an_account_with_no_global_privilege_passes_check_nine() -> None:
     """Every driver but MySQL's leaves the field empty, so an Oracle or
     PostgreSQL account is never refused by it."""

@@ -136,20 +136,19 @@ EXPIRY_UNAVAILABLE = (
 #: driver alike (#1225, decision 2; #1272).
 KEEP_ROLLOVER = "--keep-rollover"
 
-#: The end of both hints below.
-_KEPT_WINDOW_TAIL = "so nothing could say when the window ends. Drop --keep-rollover"
-
 #: Its hint on MySQL.
 KEPT_WINDOW_UNREADABLE = (
     "a reset on a MySQL server discards the old password: a password kept with "
-    f"RETAIN CURRENT PASSWORD cannot be read back, {_KEPT_WINDOW_TAIL}"
+    "RETAIN CURRENT PASSWORD cannot be read back, so nothing could say when the "
+    "window ends. Drop --keep-rollover"
 )
 
 #: Its hint on MariaDB, where a rollover is a second method joined by ``OR``
 #: (#1267, decision 3).
 KEPT_WINDOW_UNREADABLE_MARIADB = (
     "a reset on a MariaDB server sets one login method, which ends a second one: "
-    f"a rollover's second method, joined by OR, cannot be read back, {_KEPT_WINDOW_TAIL}"
+    "a rollover's second method, joined by OR, cannot be read back, so nothing "
+    "could say when the window ends. Drop --keep-rollover"
 )
 
 #: Lock state can be read and set.

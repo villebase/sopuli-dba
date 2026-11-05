@@ -642,16 +642,21 @@ These rules decide what `apply` does with each account:
   new password ends the expiry, with `RETAIN CURRENT PASSWORD` or without, and
   a rollover's retained password logs in too (`04_lock_expiry_probe.py`, LE7
   and LE8, [#1225](../decisions/log.md#1225)).
-- **On MariaDB, a login verifies only when `CURRENT_USER()` is the declared
-  account** ([#1267](../decisions/log.md#1267), decision 8; open: #1270). The
-  tool will log in as any declared account, after a change and for
-  `creds check`. A login reaches the account the server matches from the
-  tool's host, which may be another one. A session whose `CURRENT_USER()`
-  names another account says nothing, and its `pending` is not promoted.
-  Some answers come before `CURRENT_USER()` can be read. These count only
-  where no other account can answer: a `user@%` account that is the user's
-  only one, with no anonymous account at a named host. Elsewhere the result
-  is `unavailable`. A refusal is a `fail` only where the target's
+- **On MariaDB, `creds check` logs in only where no other account can answer
+  the login, and the login after a change logs in as any declared account**
+  ([#1270](../decisions/log.md#1270), decision 3). A check logs in only to a
+  `user@%` account that is the user's only one, with no anonymous account at
+  a named host, as on MySQL. Any other account is `unavailable` without a
+  login, because a failed login counts toward `max_password_errors` on the
+  account it reaches, and checks repeat. The one login after a change logs in
+  wherever a login may reach, and verifies only when `CURRENT_USER()` is the
+  declared account ([#1267](../decisions/log.md#1267), decision 8). A login
+  reaches the account the server matches from the tool's host, which may be
+  another one. A session whose `CURRENT_USER()` names another account says
+  nothing, and its `pending` is not promoted. Some answers come before
+  `CURRENT_USER()` can be read. These count only where no other account can
+  answer. Elsewhere the result is `unavailable`. A refusal is a `fail` only
+  where the target's
   `mariadb.ssl_mode` requires TLS, because an account that requires TLS
   refuses its right password over a session without it. MariaDB keeps no
   `password_last_changed` the tool can read, so there is no `stored` result.

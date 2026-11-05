@@ -221,29 +221,71 @@ def test_a_missing_account_is_unavailable_without_a_login(session: Any) -> None:
     assert "no account" in (result.detail or "")
 
 
-def test_another_account_of_the_user_makes_a_refusal_unavailable(
-    live_mariadb: Any, session: Any, user: str
-) -> None:
-    """The user also exists at a host the tool does not connect from. A login
-    still reaches `user@%`, and passes where `CURRENT_USER()` names it
-    (decision 8). A refusal says nothing: another account could have sent it.
-    The other account's own password reaches `user@%` and is refused, which
-    says nothing about the other account either."""
-    other = "192.0.2.%"
+#: A host the tool does not connect from, for the user's second account.
+OTHER_HOST = "192.0.2.%"
+
+
+@pytest.fixture
+def two_accounts(live_mariadb: Any, user: str) -> Iterator[tuple[str, str]]:
+    """The user at `%` and at :data:`OTHER_HOST`, with their passwords."""
     password, theirs = f"Acme-{uuid.uuid4().hex[:12]}", f"Acme-{uuid.uuid4().hex[:12]}"
     _root(live_mariadb, "create user %s@'%%' identified by %s", (user, password))
-    _root(live_mariadb, "create user %s@%s identified by %s", (user, other, theirs))
+    _root(live_mariadb, "create user %s@%s identified by %s", (user, OTHER_HOST, theirs))
     try:
-        right = session.verify_password(f"{user}@%", Secret(password))
-        wrong = session.verify_password(f"{user}@%", Secret("Acme-wrong-password-1"))
-        elsewhere = session.verify_password(f"{user}@{other}", Secret(theirs))
+        yield password, theirs
     finally:
-        _root(live_mariadb, "drop user if exists %s@%s", (user, other))
+        _root(live_mariadb, "drop user if exists %s@%s", (user, OTHER_HOST))
 
-    assert right.result == PASS
+
+def test_a_check_where_another_account_could_answer_logs_in_nowhere(
+    session: Any, user: str, two_accounts: tuple[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The user also exists at a host the tool does not connect from, so a
+    login could reach an account the config does not declare, and a wrong
+    password would count toward its `max_password_errors`. Without a change
+    in this session, nothing is tried (#1270, decision 3). MariaDB keeps that
+    count in memory only, so the test watches the login itself."""
+    password, theirs = two_accounts
+    tried: list[str] = []
+    monkeypatch.setattr(session_module.verification, "login", lambda *a, **k: tried.append("login"))
+
+    right = session.verify_password(f"{user}@%", Secret(password))
+    wrong = session.verify_password(f"{user}@%", Secret("Acme-wrong-password-1"))
+    elsewhere = session.verify_password(f"{user}@{OTHER_HOST}", Secret(theirs))
+
+    assert tried == []
+    assert [right.result, wrong.result, elsewhere.result] == [UNAVAILABLE] * 3
+    assert "no login was attempted" in (wrong.detail or "")
+    assert f"{user}@{OTHER_HOST}" in (wrong.detail or "")
+
+
+def test_the_one_login_after_a_change_may_reach_another_account(
+    session: Any, user: str, two_accounts: tuple[str, str]
+) -> None:
+    """After the change, one login is made. It reaches `user@%` and passes
+    where `CURRENT_USER()` names it (#1267, decision 8). A second
+    verification is a check again, and logs in nowhere."""
+    password = f"Acme-{uuid.uuid4().hex[:12]}"
+    session.set_password(f"{user}@%", Secret(password))
+
+    after = session.verify_password(f"{user}@%", Secret(password))
+    again = session.verify_password(f"{user}@%", Secret(password))
+
+    assert after.result == PASS
+    assert again.result == UNAVAILABLE
+    assert "no login was attempted" in (again.detail or "")
+
+
+def test_a_refusal_after_a_change_says_nothing_where_another_account_could_answer(
+    session: Any, user: str, two_accounts: tuple[str, str]
+) -> None:
+    """Another account could have sent the refusal, so it is no fail."""
+    session.set_password(f"{user}@%", Secret(f"Acme-{uuid.uuid4().hex[:12]}"))
+
+    wrong = session.verify_password(f"{user}@%", Secret("Acme-wrong-password-1"))
+
     assert wrong.result == UNAVAILABLE
-    assert f"{user}@{other}" in (wrong.detail or "")
-    assert elsewhere.result == UNAVAILABLE
+    assert f"{user}@{OTHER_HOST}" in (wrong.detail or "")
 
 
 @pytest.mark.parametrize("method", [VERIFY_HASH, VERIFY_BOTH])

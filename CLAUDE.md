@@ -107,9 +107,15 @@ detail.
    requires the account named on the command line. A name may not be declared
    twice. One database user on one target is bound to one place, in one
    spelling: two application entries that bind it to different places, or spell
-   it two ways, are refused, with names compared by `upper()`. Reasons:
+   it two ways, are refused, with names compared by `upper()`. One exception
+   is accepted, on MariaDB: the one login after a password change may reach
+   another account of the same user, which the server matches from the tool's
+   host. It passes only when `CURRENT_USER()` is the declared account. A
+   failed one counts toward that account's `max_password_errors`. `creds check`
+   never logs in there. Reasons:
    [H1](docs/decisions/log.md#h1),
-   [#874](docs/decisions/log.md#874).
+   [#874](docs/decisions/log.md#874),
+   [#1270](docs/decisions/log.md#1270).
 
 6. **Vault is master; direction is vault → database, always.** The database is
    never the source of truth.

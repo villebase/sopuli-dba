@@ -560,6 +560,20 @@ def typed_user(name: str, *, default: str) -> str:
     return (split[0] if split else name).strip("'\"` \t@") or default
 
 
+def refuse_a_mariadb_role_with_a_host(expanded: ExpandedTarget, role: str, *, at: KeyPath) -> None:
+    """Refuse a MariaDB ``role:`` written as ``user@host``, as a MySQL role is
+    written. A MariaDB role has no host (TG7), so the rule would match nothing."""
+    if mysql_account(role) is None:
+        return
+    name = typed_user(role, default="dev_role")
+    raise ConfigError(
+        f"a personal account rule's `role:` declares {role!r} on MariaDB target "
+        f"{expanded.name!r} with a host, and a MariaDB role has none",
+        at=at,
+        hint=f"write the role alone, as `{name}`: CREATE ROLE {name} makes a role with no host",
+    )
+
+
 def check_personal_mysql_accounts(config: Config) -> None:
     """A `personal_accounts:` rule names its hosts on a MySQL or MariaDB target too.
 
@@ -568,14 +582,18 @@ def check_personal_mysql_accounts(config: Config) -> None:
     an account, and ``CREATE ROLE dev_role`` makes ``dev_role@%`` (decision 4 of
     #1225). A MariaDB role has no host: it is stored with an empty one, and
     ``mysql.roles_mapping`` names it without one
-    (``sql/mariadb/05_identity_grants_probe.py``, TG7). How a ``role:`` rule
-    matches on MariaDB is #1272's. A ``profile:`` names no account, and has
-    nothing to check. Run after references are resolved, so the rule's
+    (``sql/mariadb/05_identity_grants_probe.py``, TG7). So a MariaDB ``role:``
+    is the name alone, compared exactly (:func:`same_mariadb_role`), and one
+    written with a host is refused: it would match no role, and the run would
+    report only that there is no such role. A ``profile:`` names no account, and
+    has nothing to check. Run after references are resolved, so the rule's
     ``targets:`` names exist.
     """
     for index, rule in enumerate(config.personal_accounts):
         at = ROOT.key("personal_accounts").index(index)
         for expanded in select(config, rule.targets):
+            if rule.role is not None and expanded.target.type == MARIADB:
+                refuse_a_mariadb_role_with_a_host(expanded, rule.role, at=at.key("role"))
             if rule.role is not None and expanded.target.type == MYSQL:
                 refuse_a_bare_mysql_account(
                     expanded,

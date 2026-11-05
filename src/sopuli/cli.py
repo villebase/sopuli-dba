@@ -126,7 +126,7 @@ from sopuli.config.scope import refuse_personal_on
 from sopuli.config.secret_refs import SecretRef
 from sopuli.config.selection import LeftOut, narrow, narrow_to_pairs
 from sopuli.config.sharing import native_layouts, pinned_versions, unsure_layouts
-from sopuli.config.targets import MYSQL, USER_AT_HOST_TYPES
+from sopuli.config.targets import MARIADB, MYSQL, USER_AT_HOST_TYPES
 from sopuli.config.vault_env import ADDR_FLAG, DEFAULT_STORE_VARIABLE
 from sopuli.constraints import AccountConstraints, Constraints, reuse_restricted
 from sopuli.delivery import DeliveryBackend, Handover, Receipt
@@ -179,6 +179,7 @@ from sopuli.diagnostics import (
 )
 from sopuli.driver import guardrails
 from sopuli.driver.clusters import ClusterIdentity, scope_and_claim
+from sopuli.driver.mariadb.roles import PublicRoleError
 from sopuli.driver.mysql.roles import MandatoryRoleError
 from sopuli.driver.oracle.wallet import survey as wallet_survey
 from sopuli.driver.protocol import (
@@ -2710,24 +2711,32 @@ def _refuse_a_bare_mysql_name(account: str, reached: Sequence[ExpandedTarget]) -
     )
 
 
+#: The products where a role can be held by every account: MySQL's
+#: `mandatory_roles`, and MariaDB's `PUBLIC`.
+EVERY_ACCOUNT_ROLE_TYPES = frozenset({MYSQL, MARIADB})
+
+
 def _refuse_mandatory_roles(session: Any, config: Config, target: ExpandedTarget) -> None:
-    """Refuse a `role:` rule that names a mandatory role on a MySQL target, or a
-    role one holds, with ``MandatoryRoleError``, exit 9 (#1225, decision 5).
+    """Refuse a `role:` rule that names a role every account holds, exit 9: on
+    MySQL a mandatory role, or a role one holds, with ``MandatoryRoleError``
+    (#1225, decision 5); on MariaDB a role ``PUBLIC`` reaches, with
+    ``PublicRoleError`` (#1272).
 
     Every account holds such a role, so the rule would admit every account on
     the server, and a rule that admits every account is not a whitelist
     (invariant 5). `account list` refuses it when it resolves the rule. A verb
-    admits by the roles the account holds, which leave mandatory roles out, so
-    it would not admit by such a rule; it asks the same question here, before it
-    describes the account, so that the verb and the listing refuse alike. Each
-    `role:` rule that reaches the target is resolved: a few reads per rule.
+    admits by the roles the account holds. On MySQL those leave mandatory roles
+    out; on MariaDB they include such a role where it is also granted to the
+    account directly. Either way the verb asks the listing's question here,
+    before it describes the account, so that the verb and the listing refuse
+    alike. Each `role:` rule that reaches the target is resolved: a few reads
+    per rule.
 
     At plan time the refusal ends the run, exit 9. In the run it is that
     target's `ERROR` row, exit 4, as every refusal there is: an earlier target
     may already have been reset, and its row must still be reported.
     """
-    # MySQL only: MariaDB has no `mandatory_roles`.
-    if target.target.type != MYSQL:
+    if target.target.type not in EVERY_ACCOUNT_ROLE_TYPES:
         return
     for rule in rules_for(config, target.name):
         if rule.role is not None:
@@ -2738,11 +2747,12 @@ def _refuse_mandatory_roles_at_plan(
     targets: Iterable[ExpandedTarget], run: Invocation, config: Config
 ) -> None:
     """:func:`_refuse_mandatory_roles` at plan time, before any password is
-    drawn or any question asked: one connection per MySQL target that a
-    `role:` rule reaches, and none otherwise. A target this cannot reach, or
-    whose rules it cannot read, is left to the run, which asks again."""
+    drawn or any question asked: one connection per MySQL or MariaDB target
+    that a `role:` rule reaches, and none otherwise. A target this cannot
+    reach, or whose rules it cannot read, is left to the run, which asks
+    again."""
     for expanded in targets:
-        if expanded.target.type != MYSQL or not any(
+        if expanded.target.type not in EVERY_ACCOUNT_ROLE_TYPES or not any(
             rule.role is not None for rule in rules_for(config, expanded.name)
         ):
             continue
@@ -2752,7 +2762,7 @@ def _refuse_mandatory_roles_at_plan(
             continue
         try:
             _refuse_mandatory_roles(session, config, expanded)
-        except MandatoryRoleError:
+        except (MandatoryRoleError, PublicRoleError):
             raise
         except Exception:  # noqa: BLE001 -- the run asks again, and reports it
             pass

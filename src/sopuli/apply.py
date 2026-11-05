@@ -159,6 +159,7 @@ REFUSED = ERROR
 #: the predicates a summary is built from. They are `check`'s, unchanged: the two
 #: commands describe one estate and must count it the same way.
 __all__ = [
+    "CONFIRMED_EARLIER",
     "CONFIRMED",
     "PENDING_APPLY",
     "SKIPPED",
@@ -340,6 +341,14 @@ def reach_spent(source: Source, target: str) -> bool:
     if source.stage != PENDING or source.reached is None:
         return True
     return target in source.reached
+
+
+#: The verification detail of a target confirmed by an earlier run's reaching
+#: login (#1316), and what :func:`after_change` recognises it by.
+CONFIRMED_EARLIER = (
+    "verified by login in an earlier run of this `pending`, which this run set again; "
+    "another account could answer a login now, so none was made"
+)
 
 
 def reach_passed(source: Source, target: str) -> bool:
@@ -597,6 +606,14 @@ def after_change(user: UserState, verification: VerifyResult) -> Outcome:
                 verification,
             )
         return Outcome(IN_SYNC, "changed and verified by login", verification)
+    if verification.result == STORED and verification.detail == CONFIRMED_EARLIER:
+        # MariaDB (#1316): this target's reaching login passed for this
+        # `pending` in an earlier run, and this run set it again.
+        return Outcome(
+            IN_SYNC,
+            "changed; an earlier run of this `pending` verified it by login",
+            verification,
+        )
     if verification.result == STORED:
         # Weaker than a login, and promotable all the same (#1223): the server
         # records a password change at or after the tool's statement. The

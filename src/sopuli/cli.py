@@ -9208,13 +9208,6 @@ NOT_CHECKED_WITHOUT_LOGIN = (
 )
 
 
-#: The detail of a target confirmed by an earlier run's reaching login (#1316).
-CONFIRMED_EARLIER = (
-    "verified by login in an earlier run of this `pending`, which this run set again; "
-    "another account could answer a login now, so none was made"
-)
-
-
 def _reach_after_change(
     binding: Binding,
     account: str,
@@ -9223,22 +9216,27 @@ def _reach_after_change(
     *,
     reaching: Callable[[str, Secret], VerifyResult],
     record: Callable[[Binding, str], str | None],
-) -> VerifyResult:
+) -> tuple[VerifyResult, str | None]:
     """MariaDB's answer after a change where no login was made, because another
-    account could answer (#1270, decision 5; #1316).
+    account could answer (#1270, decision 5; #1316), and a note for the row.
 
     A target whose reaching login passed for this ``pending`` in an earlier
     run is confirmed, as ``stored``, with no login: a password shared by
     several targets is promoted only when every one confirms. Otherwise, once
     per ``pending`` and target, the vault mark is written first and one login
     may then reach further. If the mark cannot be written, no login is made, so
-    a scheduled `apply` never repeats one. A pass is recorded for later runs;
-    if that record fails, this run's row stands and a later run cannot count it.
+    a scheduled `apply` never repeats one. A pass is recorded for later runs.
+    If that record fails, this run's row stands, and the note says a later run
+    cannot count it: a pass's row is worded from its outcome, which would
+    otherwise drop it.
     """
     if apply_states.reach_passed(source, binding.target):
-        return VerifyResult(method=VERIFY_NONE, result=STORED, detail=CONFIRMED_EARLIER)
+        confirmed = VerifyResult(
+            method=VERIFY_NONE, result=STORED, detail=apply_states.CONFIRMED_EARLIER
+        )
+        return confirmed, None
     if apply_states.reach_spent(source, binding.target):
-        return unattempted
+        return unattempted, None
     unwritten = record(binding, REACH_SPENT)
     if unwritten is not None:
         reason = (
@@ -9246,19 +9244,23 @@ def _reach_after_change(
             f"written, so no login was made: {unwritten}"
         )
         before = f"{unattempted.detail}; " if unattempted.detail else ""
-        return replace(unattempted, detail=f"{before}{reason}")
+        return replace(unattempted, detail=f"{before}{reason}"), None
     after = reaching(account, source.value)
-    if after.result == PASS:
+    if after.result != PASS:
+        return after, None
+    try:
         unrecorded = record(binding, REACH_PASSED)
-        if unrecorded is not None:
-            after = replace(
-                after,
-                detail=(
-                    f"{after.detail}; the vault did not record the pass, so a later run of "
-                    f"this `pending` cannot count it: {unrecorded}"
-                ),
-            )
-    return after
+    except LockError as lost:
+        # The login was made and passed, so the row says so. The run has lost
+        # its lock, and the next fence check, before any further change or the
+        # promotion, ends it.
+        unrecorded = f"this run lost its lock: {lost}"
+    if unrecorded is None:
+        return after, None
+    return after, (
+        f"the vault did not record the pass, so a later run of this `pending` cannot "
+        f"count it: {unrecorded}"
+    )
 
 
 def _verify_before_change(
@@ -9653,8 +9655,9 @@ def _apply_one(
             after_user.name, source.value, method=VERIFY_LOGIN, lockout_margin=margin, attempts=2
         )
         reaching = getattr(session, "verify_reaching", None)
+        unrecorded = None
         if not after.attempted and reaching is not None and spend_reach is not None:
-            after = _reach_after_change(
+            after, unrecorded = _reach_after_change(
                 binding, after_user.name, source, after, reaching=reaching, record=spend_reach
             )
         if after.result == UNAVAILABLE:
@@ -9666,6 +9669,8 @@ def _apply_one(
             if isinstance(stored, VerifyResult):
                 after = stored
         outcome = apply_states.after_change(after_user, after)
+        if unrecorded is not None:
+            outcome = replace(outcome, detail=f"{outcome.detail}; {unrecorded}")
         if retained:
             # MySQL (#1224): the server cannot say a password is retained, and
             # the driver says this call retained one, so the row says so.
@@ -9705,10 +9710,11 @@ def _apply_one(
         # through the error handler instead of past the check.
         if issued:
             # The password is set, so the row says so whatever else the run had
-            # reached. Two checks follow `set_password`: the one before writing
-            # the reaching-login mark (#1316), with no outcome yet, and the one
-            # before `finish_rollover`, where the outcome is known and the
-            # window is open.
+            # reached. Two checks follow `set_password` and reach here: the one
+            # before writing the `spent` mark (#1316), with no outcome yet, and
+            # the one before `finish_rollover`, where the outcome is known and
+            # the window is open. The one before the `passed` mark is caught in
+            # `_reach_after_change`, because the login has already passed.
             if outcome is None:
                 stopped = check_states.Outcome(check_states.ERROR, STOPPED_BEFORE_VERIFY)
             else:

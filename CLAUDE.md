@@ -140,7 +140,9 @@ detail.
    what they replaced. Any verb with an observable target state is convergent.
    Three exceptions. On MySQL and MariaDB, `creds apply` does not log in
    before a change, so while a rotation's promotion is held it sets the staged
-   `pending` again on each run, until the rotation completes. On MySQL, `creds
+   `pending` again on each run, until the rotation completes. On MariaDB a
+   target whose one reaching login did not pass holds it until a new `pending`
+   is staged (#1316). On MySQL, `creds
    finish-rollover` cannot read whether a password is retained, so it sends
    `DISCARD OLD PASSWORD` and reports `changed: true` on every run. On
    MariaDB, `account suspend` cannot read the lock, so it sends `ACCOUNT LOCK`

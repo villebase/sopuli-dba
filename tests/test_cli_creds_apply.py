@@ -89,6 +89,7 @@ from sopuli.lock import (
     LockRecord,
     lock_path,
 )
+from sopuli.lock.errors import LockStolenError
 from sopuli.output.document import SCHEMA_VERSION
 from sopuli.output.emit import EVENT_SCHEMA_VERSION
 from sopuli.payload import REACHED
@@ -1085,6 +1086,72 @@ def test_no_mark_written_means_no_reaching_login(
     row = document(result)["results"][0]
     assert row["state"] == "UNVERIFIABLE"
     assert "could not be written, so no login was made" in json.dumps(row)
+
+
+def _watch_marks(
+    monkeypatch: pytest.MonkeyPatch, fail_passed: Exception | None = None
+) -> list[Any]:
+    """Record each mark the run writes; optionally refuse the `passed` one."""
+    marks: list[Any] = []
+
+    def watching(store: Any, path: str, patch: Any, *, cas: int | None) -> Any:
+        if REACHED in patch:
+            if fail_passed is not None and "passed" in json.dumps(patch[REACHED]):
+                raise fail_passed
+            marks.append(patch[REACHED])
+        return apply_patch(store, path, patch, cas=cas)
+
+    monkeypatch.setattr(cli_module, "write_credential", watching)
+    return marks
+
+
+def test_a_reaching_login_that_does_not_pass_leaves_the_reach_spent(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only `spent` is written, so a later run makes no reaching login and
+    counts nothing as confirmed."""
+    _reaching(monkeypatch, VerifyResult(VERIFY_LOGIN, UNAVAILABLE, detail="another reached"))
+    estate(answers={"ACME_WEB_USER": [NOT_TRIED]})
+    marks = _watch_marks(monkeypatch)
+    result = run(runner, write_config(CONFIG), "--select", "tenant=alpha", "--output", "json")
+
+    assert marks == [{"acme_web_user": {"appdb-alpha": "spent"}}]
+    row = document(result)["results"][0]
+    assert row["state"] == "UNVERIFIABLE"
+    assert row["secret"]["stage"] != "current"
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        StoreError("the vault refused the write"),
+        LockStolenError(
+            "taken over", key=LockKey(store="vault-prod", path="apps/acme/appdb-alpha")
+        ),
+    ],
+    ids=["vault", "lock"],
+)
+def test_a_pass_the_vault_does_not_record_still_confirms_this_run(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: Exception,
+) -> None:
+    """The login was made and passed, so the row says so, and the detail says
+    a later run cannot count it. A lost lock is reported the same way here;
+    the next fence check ends the run."""
+    _reaching(monkeypatch, VerifyResult(VERIFY_LOGIN, PASS, detail="verified"))
+    estate(answers={"ACME_WEB_USER": [NOT_TRIED]})
+    _watch_marks(monkeypatch, fail_passed=failure)
+    result = run(runner, write_config(CONFIG), "--select", "tenant=alpha", "--output", "json")
+
+    row = document(result)["results"][0]
+    assert row["state"] == "IN_SYNC"
+    assert "a later run of this `pending` cannot count it" in json.dumps(row)
 
 
 def test_a_login_that_was_made_is_never_followed_by_a_reaching_one(

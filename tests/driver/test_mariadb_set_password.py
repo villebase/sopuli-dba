@@ -235,7 +235,7 @@ def test_a_rollover_keeps_the_old_password_until_it_is_finished(
     second = session.finish_rollover(f"{user}@%", current=Secret(new))
 
     assert (first.changed, second.changed) == (True, True)
-    assert "cannot be read" in (first.detail or "")
+    assert first.detail == "any second password ended; the current password was sent alone"
     assert _login(live_mariadb, user, new)
     assert not _login(live_mariadb, user, old)
 

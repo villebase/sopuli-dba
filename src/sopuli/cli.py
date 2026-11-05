@@ -12178,7 +12178,7 @@ def _finish_one(
         unknown = windows.window_unknown(user, session.scope())
         if preview:
             would = (
-                "would discard any retained password"
+                "would end any old password kept beside `current`"
                 if unknown
                 else f"would end this window, {windows.remaining(user) or 'time unknown'} early"
             )
@@ -12221,7 +12221,7 @@ def _finish_one(
                 user=user,
                 duration_ms=_elapsed(started),
             )
-        outcome = windows.closed(user, verified, unknown_window=unknown)
+        outcome = windows.closed(user, verified, unknown_window=unknown, sent=result.detail)
     except LockError:
         # Ahead of the catch-all on purpose -- see the docstring. The run ends;
         # it does not report a takeover as one account's bad luck.

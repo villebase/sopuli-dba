@@ -1580,6 +1580,37 @@ CURRENT PASSWORD` keeps the old password working beside the new one, and
   fails. Where no login can reach the account, the close goes ahead and the row
   says `current` was not verified. The rotation confirmed it before it promoted.
 
+**On MariaDB the tool opens the window too** ([#1271](../decisions/log.md#1271)).
+MariaDB has no `RETAIN CURRENT PASSWORD` and no `DISCARD OLD PASSWORD`. A
+window is two methods joined by `OR`, and a statement names every method the
+account keeps, so the tool keeps the old password by sending its value again.
+
+- `creds rotate --strategy rollover` sends `IDENTIFIED VIA <plugin> USING
+  '<new>' OR <plugin> USING '<old>'`, the new value first. The old value is
+  the vault's `current`. As on MySQL, `rollover` is never the default, and
+  the row reports `ROLLOVER_ACTIVE`.
+- A later `creds apply` of the marked `pending` sends the same `OR` again,
+  so the window stays open while a promotion is held. Unlike on MySQL, that
+  opens a window on a target the rotation did not reach too. `creds apply
+  --strategy rollover` is still refused at pre-flight, as on MySQL. `apply`
+  sends the new value alone after an unmarked `pending`, and `staged` and
+  `direct` send it alone after the change, so only the new password works.
+- **On an `ed25519` account, PyMySQL can use only the first method of the
+  `OR`** (`11_rollover_expiry_probe.py`, RE5). A PyMySQL client still on the
+  old password cannot log in during the window, so for it the window gives
+  no grace. Other clients, and PyMySQL on `mysql_native_password`, use both.
+- `check` cannot see the second method: it is in `mysql.global_priv`, which
+  the tool account never reads ([#1267](../decisions/log.md#1267), decision
+  3).
+- `creds finish-rollover` sends the vault's `current` alone to every selected
+  account and reports `changed: true`. That ends the old password, and any
+  expiry with it. `PASSWORD EXPIRE` would not end it (RE2). As on MySQL, that
+  is an exception to invariant 9, and the same gates apply. Unlike MySQL's
+  close, this one sets the account's password. Where no login can reach the
+  account, it still goes ahead, so it sets the vault's `current` unverified,
+  replacing any password the account drifted to. That is the value `creds
+  apply` would set, and the rotation confirmed it before it promoted.
+
 ### `creds finish-rollover`, and what it refuses (decided in #263)
 
 The command below closes rollover windows:

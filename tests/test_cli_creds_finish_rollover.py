@@ -289,7 +289,7 @@ def test_a_window_that_cannot_be_read_is_discarded_without_a_login(
     assert result.exit_code == ExitCode.SUCCESS, result.output
     assert "unknown" in result.output
     if dry_run:
-        assert "would discard any retained password" in result.output
+        assert "would end any old password kept beside `current`" in result.output
         assert harness["sessions"][0].closed == []
     else:
         assert "was not verified by login" in result.output

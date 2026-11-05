@@ -908,8 +908,8 @@ The stack also runs MariaDB 11.8 at `127.0.0.1:3307`. Its init creates the
 tool account `sopuli_admin`, password `sopuli-test-admin`, with the grants
 that [`design/02-mariadb-privileges.md`](design/02-mariadb-privileges.md) lists
 for it. `doctor` runs against it, and so do the UC-1 commands `creds
-generate`, `apply`, `check`, `rotate` and `status`, and the personal-account
-commands of §9. `finish-rollover` does not run yet.
+generate`, `apply`, `check`, `rotate`, `status` and `finish-rollover`, and the
+personal-account commands of §9.
 
 Save this as `mariadb.yaml`, and export `SOPULI_DB_ADMIN_PASSWORD=sopuli-test-admin`:
 
@@ -1096,9 +1096,43 @@ acme_app@%  mariadb-dev  IN_SYNC  changed and verified by login
 
 `password_expired` in `mysql.user` then reads `N`.
 
-`--strategy rollover` is refused before anything changes, exit 9: a rollover
-on MariaDB is not written yet (#1271). Two targets on one MariaDB server are
-not caught yet (#1286).
+`creds rotate --strategy rollover` keeps the old password working beside the
+new one. MariaDB keeps it as a second login method, joined by `OR`:
+
+```
+$ sopuli --config mariadb.yaml creds rotate --account 'acme_app@%' --strategy rollover --confirm
+...
+ACCOUNT     TARGET       STATE            DETAIL
+acme_app@%  mariadb-dev  ROLLOVER_ACTIVE  changed and verified by login; the previous password also logs in until `sopuli creds finish-rollover`
+
+1 changed, 1 promoted to `current`
+...
+```
+
+On an `ed25519` account, a PyMySQL client can use only the new password.
+
+`creds finish-rollover` sends the current password alone, which ends the old
+one. The tool cannot read whether an old password is kept, so the window is
+`unknown`, and every run reports a change:
+
+```
+$ sopuli --config mariadb.yaml creds finish-rollover --account 'acme_app@%' --confirm
+Plan: 1 account x 1 target = 1 window   [dev]
+
+ACCOUNT     TARGET       INTENT                   SECRET
+acme_app@%  mariadb-dev  verify, rollover_finish  vault-dev:acme/mariadb/any
+
+ACCOUNT     TARGET       WINDOW
+acme_app@%  mariadb-dev  unknown
+
+ACCOUNT     TARGET       STATE    DETAIL
+acme_app@%  mariadb-dev  IN_SYNC  any second password ended; the current password was sent alone
+
+1 closed
+...
+```
+
+Two targets on one MariaDB server are not caught yet (#1286).
 
 ---
 

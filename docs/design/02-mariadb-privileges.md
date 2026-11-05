@@ -169,7 +169,7 @@ MariaDB has no `server_uuid`. It warns, and never fails
   once the driver changes passwords (open: #1270);
 - the second login method that §4 describes, on the same condition: the view
   shows one method of an account that has two, and a password change ends the
-  other (#1301).
+  other ([#1301](../decisions/log.md#1301)).
 
 ---
 
@@ -235,7 +235,7 @@ a `parsec` password could be changed and never checked. The tool never moves an
 account to another plugin: the change names the account's own plugin (§6).
 
 **An account with a second method is not seen, and the gap is accepted**
-(#1301). An account can log in by two methods joined by `OR`, such as
+([#1301](../decisions/log.md#1301)). An account can log in by two methods joined by `OR`, such as
 `mysql_native_password` and `unix_socket`. The view shows one of them, the
 same one as the top-level `plugin` in `mysql.global_priv`, and gives no sign
 of the other. Only `auth_or` in `mysql.global_priv` and `SHOW CREATE USER`

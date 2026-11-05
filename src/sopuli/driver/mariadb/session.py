@@ -123,7 +123,7 @@ CHECK_9_GAP = (
 )
 
 #: The gap in what the tool reads that ``02-mariadb-privileges.md`` §4
-#: accepts (#1301, option A): said with :data:`CHECK_9_GAP`, for the same
+#: accepts (decisions/log.md #1301): said with :data:`CHECK_9_GAP`, for the same
 #: reason. The view shows one method of an account that has two.
 OR_GAP = (
     "a declared account with a second login method, joined by OR, shows one of them: "

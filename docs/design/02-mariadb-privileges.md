@@ -227,7 +227,7 @@ hash.
 | Never read | What the tool does instead |
 |---|---|
 | the lock, `account_locked` (LK2) | `account list` says the lock cannot be read. `account suspend` always sends `ACCOUNT LOCK` and reports `changed: true` ([#1267](../decisions/log.md#1267), decision 2) |
-| an open rollover, `auth_or` (`03_dual_password_probe.py`, DP4) | `creds finish-rollover` always sends the new value alone and reports `changed: true` (decision 3; open: #1271) |
+| an open rollover, `auth_or` (`03_dual_password_probe.py`, DP4) | `creds finish-rollover` always sends the current value alone and reports `changed: true` (decision 3, #1271) |
 | when the password changed, and its lifetime (RD1) | a change is verified by login (§7), not by its time (decision 8) |
 | a block after failed logins, `max_password_errors` (LK4, RD6) | `ACCOUNT UNLOCK` ends it. A reset never sends it, and a DBA unlocks by hand after checking for a suspension ([#1272](../decisions/log.md#1272), decision 1) |
 
@@ -369,10 +369,18 @@ statement is scrubbed before it is kept, as on MySQL
 ([`02-mysql-privileges.md`](02-mysql-privileges.md) §6).
 
 **A rollover is `OR`.** MariaDB has no `RETAIN CURRENT PASSWORD`: it is a
-syntax error, `1064` (DP1). `IDENTIFIED VIA <plugin> USING '<old>' OR <plugin>
-USING '<new>'` lets both passwords log in, also across two plugins, and the new
-value alone ends it (DP2, DP3, DP5). The tool computes both values from the
-`current` and `pending` passwords it holds (open: #1271).
+syntax error, `1064` (DP1). Two methods joined by `OR` both log in, also
+across two plugins, and the new value alone ends them (DP2, DP3, DP5). The
+tool opens a rollover with
+`IDENTIFIED VIA <plugin> USING '<new>' OR <plugin> USING '<old>'`, the new
+value first, on the account's own plugin. It computes both values from the
+passwords the vault holds (#1271). PyMySQL uses
+only the first method of an `ed25519` `OR`, so the tool's login after the
+change uses the new password (`11_rollover_expiry_probe.py`, RE5). A change
+names every method the account keeps, so `creds apply` sends both values
+again when it sets a held rollover's `pending` again. `creds finish-rollover`
+sends the current value alone, which ends the old password and any expiry
+(RE4). `PASSWORD EXPIRE` does not end a rollover (RE2).
 
 **The other statements carry no password.** `ACCOUNT LOCK`, `ACCOUNT UNLOCK`
 and `PASSWORD EXPIRE` need only `CREATE USER` (LK1 to LK4). A locked account

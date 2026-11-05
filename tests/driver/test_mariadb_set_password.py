@@ -31,12 +31,12 @@ from sopuli.driver.protocol import (
     Timeouts,
     UnsupportedCapabilityError,
 )
-from sopuli.driver.registry import NotWrittenError
 from sopuli.secrets import Secret
 
 pymysql = pytest.importorskip("pymysql")
 session_module = pytest.importorskip("sopuli.driver.mariadb.session")
 accounts_module = pytest.importorskip("sopuli.driver.mariadb.accounts")
+password_module = pytest.importorskip("sopuli.driver.mariadb.password")
 
 
 @pytest.fixture
@@ -103,15 +103,24 @@ def test_a_password_is_set_by_its_value_and_logs_in(
     live_mariadb.connect_as(user, password).close()
 
 
+@pytest.mark.parametrize("rollover", [False, True], ids=["set", "rollover"])
 def test_a_password_set_by_the_driver_reaches_no_log(
-    live_mariadb: Any, session: Any, user: str
+    live_mariadb: Any, session: Any, user: str, rollover: bool
 ) -> None:
     """Invariant 15 on MariaDB. With the general log on, written to a table,
     and performance_schema's long statement history on, the driver sets a
     password. The statement is in both and in the binary log, and the password
-    is in none of them."""
-    _create(live_mariadb, user, "mysql_native_password")
+    is in none of them. A rollover sends the old password's value too, and
+    the old password is in none of them either (#1271)."""
+    old = f"Acme-Old-{uuid.uuid4().hex[:12]}"
+    # By its value, so the old password is in no log even where one is on.
+    _root(
+        live_mariadb,
+        "create user %s@'%%' identified via mysql_native_password using %s",
+        (user, password_module.native_value(Secret(old)).reveal()),
+    )
     password = f"Acme-Leak-{uuid.uuid4().hex[:12]}"
+    mode: dict[str, Any] = {"old_password": OLD_RETAIN, "previous": Secret(old)} if rollover else {}
     # The long history keeps a statement only while `current` is on as well;
     # a new server has both off (`01_password_text_probe.py`).
     with live_mariadb.connect() as admin, admin.cursor() as cursor:
@@ -134,7 +143,7 @@ def test_a_password_set_by_the_driver_reaches_no_log(
         f"update performance_schema.setup_consumers set enabled = 'YES' {CONSUMERS}",
     )
     try:
-        session.set_password(f"{user}@%", Secret(password))
+        session.set_password(f"{user}@%", Secret(password), **mode)
         with live_mariadb.connect() as admin, admin.cursor() as cursor:
             cursor.execute(
                 "select convert(argument using utf8mb4) from mysql.general_log "
@@ -168,7 +177,10 @@ def test_a_password_set_by_the_driver_reaches_no_log(
     seen = {"general log": logged, "history": history, "binary log": binary}
     for where, lines in seen.items():
         assert any("IDENTIFIED VIA" in line.upper() for line in lines), f"the {where} saw it"
-    assert not any(password in line for lines in seen.values() for line in lines)
+    for secret in (password, old):
+        assert not any(secret in line for lines in seen.values() for line in lines)
+    if rollover:
+        assert any(" OR " in line.upper() for line in logged), "the rollover was logged"
     live_mariadb.connect_as(user, password).close()
 
 
@@ -191,27 +203,91 @@ def test_a_missing_account_is_refused_before_anything_is_sent(session: Any) -> N
     assert caught.value.password_sent is False
 
 
-def test_a_rollover_is_not_written_yet(live_mariadb: Any, session: Any, user: str) -> None:
-    _create(live_mariadb, user, "mysql_native_password")
+def _login(live_mariadb: Any, user: str, password: str) -> bool:
+    """Whether ``password`` logs in over PyMySQL and a statement runs."""
+    try:
+        live_mariadb.connect_as(user, password).close()
+    except pymysql.err.MySQLError:
+        return False
+    return True
 
-    with pytest.raises(NotWrittenError) as caught:
-        session.set_password(f"{user}@%", Secret("Acme-not-sent-1"), old_password=OLD_RETAIN)
 
-    assert "--strategy staged" in (caught.value.hint or "")
-
-
-def test_keeping_a_window_this_target_never_opened_sets_the_password(
+def test_a_rollover_keeps_the_old_password_until_it_is_finished(
     live_mariadb: Any, session: Any, user: str
 ) -> None:
-    """`keep` comes from a `pending` a MySQL rollover marked, in a document a
-    MariaDB target shares. No window is open here, so it is a plain change."""
-    _create(live_mariadb, user, "mysql_native_password")
-    password = f"Acme-{uuid.uuid4().hex[:12]}"
+    """#1271: `retain` sends the new value `OR` the old one, and both log in.
+    `finish_rollover` sends the current value alone, and the old one stops;
+    a second run sends it again and reports a change, because the tool cannot
+    read whether a rollover is open (#1267, decision 3)."""
+    old, new = f"Acme-Old-{uuid.uuid4().hex[:8]}", f"Acme-New-{uuid.uuid4().hex[:8]}"
+    _root(live_mariadb, "create user %s@'%%' identified by %s", (user, old))
 
-    result = session.set_password(f"{user}@%", Secret(password), old_password=OLD_KEEP)
+    opened = session.set_password(
+        f"{user}@%", Secret(new), old_password=OLD_RETAIN, previous=Secret(old)
+    )
 
-    assert (result.changed, result.discarded) == (True, True)
-    assert session.verify_password(f"{user}@%", Secret(password)).result == PASS
+    assert (opened.changed, opened.retained, opened.discarded) == (True, True, False)
+    assert _login(live_mariadb, user, new)
+    assert _login(live_mariadb, user, old)
+    assert session.verify_password(f"{user}@%", Secret(new)).result == PASS
+
+    first = session.finish_rollover(f"{user}@%", current=Secret(new))
+    second = session.finish_rollover(f"{user}@%", current=Secret(new))
+
+    assert (first.changed, second.changed) == (True, True)
+    assert "cannot be read" in (first.detail or "")
+    assert _login(live_mariadb, user, new)
+    assert not _login(live_mariadb, user, old)
+
+
+def test_an_ed25519_rollover_s_new_password_logs_in_over_pymysql(
+    live_mariadb: Any, session: Any, user: str
+) -> None:
+    """PyMySQL takes only the first method of an ed25519 `OR`, so the new
+    value comes first (`11_rollover_expiry_probe.py`, RE5), and the login
+    after the change confirms it."""
+    pytest.importorskip("nacl", reason="PyNaCl comes with the `mariadb` extra")
+    old, new = f"Acme-Old-{uuid.uuid4().hex[:8]}", f"Acme-New-{uuid.uuid4().hex[:8]}"
+    _root(
+        live_mariadb, "create user %s@'%%' identified via ed25519 using password(%s)", (user, old)
+    )
+
+    session.set_password(f"{user}@%", Secret(new), old_password=OLD_RETAIN, previous=Secret(old))
+
+    assert session.verify_password(f"{user}@%", Secret(new)).result == PASS
+    with live_mariadb.connect() as admin, admin.cursor() as cursor:
+        cursor.execute("select plugin from mysql.user where User = %s", (user,))
+        assert cursor.fetchone()[0] == "ed25519", "the plugin is the account's own"
+
+
+def test_a_held_rollover_set_again_keeps_its_window(
+    live_mariadb: Any, session: Any, user: str
+) -> None:
+    """`keep`: `creds apply` sets a rollover's `pending` again while its
+    promotion is held. The statement names its methods, so it sends the old
+    value again, and the old password keeps logging in."""
+    old, new = f"Acme-Old-{uuid.uuid4().hex[:8]}", f"Acme-New-{uuid.uuid4().hex[:8]}"
+    _root(live_mariadb, "create user %s@'%%' identified by %s", (user, old))
+    session.set_password(f"{user}@%", Secret(new), old_password=OLD_RETAIN, previous=Secret(old))
+
+    again = session.set_password(
+        f"{user}@%", Secret(new), old_password=OLD_KEEP, previous=Secret(old)
+    )
+
+    assert (again.changed, again.retained, again.discarded) == (True, False, False)
+    assert _login(live_mariadb, user, new)
+    assert _login(live_mariadb, user, old)
+
+
+def test_a_discard_ends_a_rollover(live_mariadb: Any, session: Any, user: str) -> None:
+    old, new = f"Acme-Old-{uuid.uuid4().hex[:8]}", f"Acme-New-{uuid.uuid4().hex[:8]}"
+    _root(live_mariadb, "create user %s@'%%' identified by %s", (user, old))
+    session.set_password(f"{user}@%", Secret(new), old_password=OLD_RETAIN, previous=Secret(old))
+
+    session.set_password(f"{user}@%", Secret(new))
+
+    assert _login(live_mariadb, user, new)
+    assert not _login(live_mariadb, user, old)
 
 
 @pytest.mark.parametrize("plugin", ["mysql_native_password", "ed25519"])

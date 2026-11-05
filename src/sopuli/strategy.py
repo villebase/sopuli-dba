@@ -153,8 +153,9 @@ def closes_window(strategy: str, user: UserState) -> bool:
 def tool_opens_window(strategy: str, user: UserState) -> bool:
     """Whether ``rollover`` here needs the tool to open the window itself.
 
-    On MySQL no profile opens one, and the tool sends ``RETAIN CURRENT
-    PASSWORD`` (#1224). :meth:`~sopuli.driver.protocol.Session.require_rollover`
+    On MySQL and MariaDB no profile opens one. The tool sends ``RETAIN CURRENT
+    PASSWORD`` on MySQL (#1224), and the new and the old value joined by ``OR``
+    on MariaDB (#1271). :meth:`~sopuli.driver.protocol.Session.require_rollover`
     has already refused a target that cannot keep a second password, so
     ``rollover`` with no window from the profile means this.
     """

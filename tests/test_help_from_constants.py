@@ -16,6 +16,7 @@ from click.testing import CliRunner
 from repo_files import requires_repo
 from sopuli.cli import cli, help_with
 from sopuli.config.delivery import IMPLEMENTED, MANUAL
+from sopuli.driver.mariadb import limits as mariadb_limits
 from sopuli.driver.mysql import limits as mysql_limits
 from sopuli.driver.oracle import limits
 from sopuli.driver.oracle.errors import INSTALL_SCRIPT
@@ -54,6 +55,13 @@ def test_the_registry_states_the_mysql_limit() -> None:
     """Pinned for the same reason. `limits.py` imports no PyMySQL."""
     assert DRIVERS["mysql"].password_limit == str(mysql_limits.MAX_PASSWORD_BYTES)
     assert f"mysql: {mysql_limits.MAX_PASSWORD_BYTES}" in _help("policy", "sample")
+
+
+def test_the_registry_states_the_mariadb_limit() -> None:
+    """Pinned for the same reason. `limits.py` imports neither PyMySQL nor
+    PyNaCl."""
+    assert DRIVERS["mariadb"].password_limit == str(mariadb_limits.MAX_PASSWORD_BYTES)
+    assert f"mariadb: {mariadb_limits.MAX_PASSWORD_BYTES}" in _help("policy", "sample")
 
 
 def test_the_rule_in_words_follows_the_floor(monkeypatch: pytest.MonkeyPatch) -> None:

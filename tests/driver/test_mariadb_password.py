@@ -96,12 +96,25 @@ def test_a_password_the_target_cannot_take_is_refused(password: str, words: str)
 
 
 @pytest.mark.parametrize(
-    "password", ["A" * 1_048_576, "é€😀-Acme", "x"], ids=["1 MiB", "not ASCII", "1 byte"]
+    "password",
+    ["A" * 1024, "é" * 512, "é€😀-Acme", "x"],
+    ids=["1024 bytes", "1024 bytes not ASCII", "not ASCII", "1 byte"],
 )
-def test_any_length_and_any_character_is_admitted(password: str) -> None:
-    """A password of 1 byte to 1 MiB, ASCII or not, was set and logged in on
-    every release (PW1, PW2)."""
+def test_up_to_the_limit_any_character_is_admitted(password: str) -> None:
+    """ASCII or not, a password was set and logged in on every release (PW1,
+    PW2). The limit is decided on #1270."""
     admit(Secret(password))
+
+
+@pytest.mark.parametrize("password", ["A" * 1025, "é" * 512 + "A"], ids=["ASCII", "not ASCII"])
+def test_a_password_over_1024_bytes_is_refused(password: str) -> None:
+    """Counted in UTF-8 bytes, not characters: 513 characters of `é` is 1025
+    bytes."""
+    with pytest.raises(PasswordNotAdmissibleError, match="1025 bytes") as caught:
+        admit(Secret(password))
+
+    assert "at most 1024" in str(caught.value)
+    assert caught.value.category == "policy"
 
 
 @pytest.mark.parametrize(

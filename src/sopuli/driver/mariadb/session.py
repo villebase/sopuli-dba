@@ -40,6 +40,7 @@ from sopuli.driver.mariadb import accounts as accounts_module
 from sopuli.driver.mariadb import password as password_module
 from sopuli.driver.mariadb import roles, verification
 from sopuli.driver.mariadb.errors import from_error
+from sopuli.driver.mariadb.limits import LIMIT
 from sopuli.driver.mariadb.privileges import audit as privilege_audit
 from sopuli.driver.mariadb.scope import observe, require_read_write
 from sopuli.driver.mysql_family import account_statements
@@ -76,6 +77,7 @@ from sopuli.driver.protocol import (
 )
 from sopuli.driver.registry import NotWrittenError
 from sopuli.output.debug import logger
+from sopuli.passwords import ByteLimit
 from sopuli.secrets import Secret
 
 LOG = logger("mariadb")
@@ -238,8 +240,11 @@ class MariadbSession(ClosesConnection):
                 error.hint = MISSING_GRANT_HINT
             raise
 
-    def byte_limit(self) -> NoReturn:
-        self._not_written("say how long a password may be")
+    def byte_limit(self) -> ByteLimit:
+        """1024 bytes of UTF-8, whatever the server: the server sees only the
+        value, and the limit is for the application's client
+        (:mod:`~sopuli.driver.mariadb.limits`)."""
+        return LIMIT
 
     def set_password(
         self, account: str, secret: Secret, *, old_password: str = OLD_DISCARD

@@ -4390,3 +4390,50 @@ the register.
   failed verification login counts toward `max_password_errors` on the
   account it reaches. A blocked owner stays blocked after a reset unless the
   operator adds `--unlock`.
+
+## #1270
+
+- **Decided:** 2026-11-05, #1270
+- **Question:** UC-1 on MariaDB. What is the longest password on a MariaDB
+  target? What does a policy's `account.unlock_if_locked` do, when the tool
+  never reads the lock ([#1267](#1267), decision 2)? And may a verification
+  login reach an account the config does not declare, as decision 8 of #1267
+  allows?
+- **Decision:**
+  1. A password is at most 1024 bytes, counted in UTF-8. A longer one is
+     refused before anything is sent.
+  2. A policy with `account.unlock_if_locked` is refused at plan time on a
+     MariaDB target, naming the capability (invariant 4).
+  3. `creds check` logs in only where no other account can answer the login,
+     as on MySQL ([#1223](#1223)). The one login after a change keeps decision
+     8's reach: it may reach another account, and is trusted only when
+     `CURRENT_USER()` is the declared one. That login is an exception to
+     invariant 5.
+- **Why:**
+  1. The server sees only the value the driver computes, so it sets and logs
+     in a password of up to 1 MiB (PW1). An application's client was not
+     measured, and one with a fixed buffer would break at its next login,
+     after the vault and the database agreed. 1024 bytes is the PostgreSQL
+     limit ([#1060](#1060)) and far above any policy.
+  2. As written, the policy would do nothing on MariaDB and say nothing.
+     Sending `ACCOUNT UNLOCK` on every run would also end a
+     `max_password_errors` block, which decision 9 of #1267 lets only
+     `--unlock` do.
+  3. A failed login counts toward `max_password_errors` on the account it
+     reaches, and enough of them block it (`4150`, measured on 11.8.9). The
+     risk comes from repetition, and `creds check` is the verb that repeats.
+     The login after a change runs once, with the password just set.
+- **Rejected:**
+  1. 256 bytes, as on MySQL, tighter than anything MariaDB needs; and 1 MiB,
+     which trusts every application client to handle what PyMySQL does.
+  2. Sending `ACCOUNT UNLOCK` and reporting `changed: true`, as `account
+     suspend` does; and ignoring the setting with a warning.
+  3. Decision 8's reach for every login, which lets repeated checks block an
+     undeclared account; and no login wherever another account could answer,
+     which never verifies a change on such an account, so its `pending` is
+     never promoted.
+- **Accepted cost:** an application whose client takes more than 1024 bytes
+  cannot be given a longer password. An operator who wants a locked account
+  unlocked does it by hand. `creds check` reports an account it cannot reach
+  alone as not checked. The login after a change can still count one failure
+  toward an undeclared account.

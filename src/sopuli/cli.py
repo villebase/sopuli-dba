@@ -6141,8 +6141,13 @@ def _nothing_to_compare(binding: Binding, stores: Mapping[str, SecretStore]) -> 
     if ref.stage is None and ref.version is None:
         try:
             staged = read_secret(stores[binding.vault], replace(ref, stage=PENDING))
-        except Exception:  # noqa: BLE001 -- a failed read for a message leaves the plain one
-            staged = None
+        except Exception as error:  # noqa: BLE001 -- the read is for the message only
+            # Said, not swallowed: "holds no password" alone would send the
+            # operator to the config, which is what #1328 is about.
+            return (
+                f"`current` is empty at {binding.secret}, and `pending` could not be read "
+                f"({type(error).__name__})"
+            )
         if staged is not None:
             return (
                 "`current` is empty and a password is staged in `pending`; `creds apply` "
@@ -11438,11 +11443,17 @@ def _held_by(records: Sequence[_Applied]) -> tuple[tuple[str, str, str], ...]:
     states = [record.outcome.state for record in records]
     if not any(state in apply_states.CONFIRMED for state in states):
         return ()
+    # Sorted and unique, as `_skipped_pairs` is, so the message reads the same
+    # from run to run whatever order the targets were visited in.
     return tuple(
-        (record.binding.account, record.binding.target, record.outcome.state)
-        for record in records
-        if record.outcome.state != apply_states.SKIPPED
-        and record.outcome.state not in apply_states.CONFIRMED
+        sorted(
+            {
+                (record.binding.account, record.binding.target, record.outcome.state)
+                for record in records
+                if record.outcome.state != apply_states.SKIPPED
+                and record.outcome.state not in apply_states.CONFIRMED
+            }
+        )
     )
 
 

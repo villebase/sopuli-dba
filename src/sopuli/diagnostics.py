@@ -810,8 +810,9 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "A secret document was not promoted because a row of it did not confirm, while "
             "other rows of it did. Its confirmed rows carry `SOPULI-W049`; this names the "
             "document, and each row that held it with its account, target and state. Fix "
-            "what that row reports and run the same command again: run as it stands, it "
-            "holds the promotion again. One entry per document."
+            "what those rows report, then run `creds apply`, after `creds apply` or `creds "
+            "rotate` alike: run before the fix, it holds the promotion again. One entry per "
+            "document."
         ),
         CONSTRAINTS_UNREAD: (
             "`creds generate` could not read a target's password constraints, so the "
@@ -1833,17 +1834,22 @@ def promotion_unconfirmed(document: str, held: Sequence[tuple[str, str, str]]) -
     """One document a target that did not confirm held back (#1328).
 
     ``held`` is (account, target, state) for each row that did not confirm, so
-    the reader knows where to go and what that target reported. Running the
-    same command again holds the promotion again until what those rows report
+    the reader knows where to go and what that target reported. Running
+    `creds apply` again holds the promotion again until what those rows report
     is fixed, so the message says so rather than offering the re-run alone.
+
+    **`creds apply`, not "the same command".** `creds rotate` raises this too,
+    and a second rotate is refused while the document has a `pending` staged:
+    `apply` is what promotes it, after either command.
     """
     named = "; ".join(f"{account} on {target} ({state})" for account, target, state in held)
+    rows = "that row reports" if len(held) == 1 else "those rows report"
     return Diagnostic(
         level="warning",
         code=PROMOTION_UNCONFIRMED,
         message=(
-            f"{document} was not promoted: {named} did not confirm -- fix what that row "
-            "reports, then run the same command again to promote it"
+            f"{document} was not promoted: {named} did not confirm -- fix what {rows}, "
+            "then run `creds apply` to promote it"
         ),
     )
 

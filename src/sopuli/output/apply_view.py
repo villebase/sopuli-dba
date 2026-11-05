@@ -91,8 +91,8 @@ _HELD_MESSAGES = {
     HELD_UNCONFIRMED: (
         "this database has the new password and the vault was not promoted, because another "
         "row of this document did not confirm, so `current` does not hold it yet -- "
-        f"{PROMOTION_UNCONFIRMED} names that row's target, and the same command again "
-        "finishes it once that is fixed"
+        f"{PROMOTION_UNCONFIRMED} names that row's target, and `creds apply` finishes it "
+        "once that is fixed"
     ),
 }
 

@@ -170,6 +170,7 @@ from sopuli.diagnostics import (
     reset_record_unwritten,
     rollback_reuse,
     rollover_caveat,
+    second_method_unseen,
     unaddressable_lock_paths,
     unlistable_for_orphans,
     unlistable_stores,
@@ -2401,6 +2402,13 @@ def account_reset_password(
         unrecorded = no_reset_record()
         document.diagnostics.append(unrecorded)
         notices.append(unrecorded)
+    # #1317: on MariaDB the reset ends a second login method the tool cannot
+    # see. Said here, before the change and under `--dry-run` too.
+    for target in reached:
+        if target.target.type == MARIADB:
+            unseen = second_method_unseen(target.name)
+            document.diagnostics.append(unseen)
+            notices.append(unseen)
 
     if not run.dry_run:
         # **The plan goes out before the first statement** (invariant 8). The

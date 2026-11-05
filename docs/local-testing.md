@@ -2159,20 +2159,23 @@ acme_dev_alice@%  mariadb-dev  RESET  OPEN  declared by role 'acme_dev_team'
 
 reset acme_dev_alice@% on 1 of 1 targets
 
+
+1 note:
+  mariadb-dev: the reset sets the password as the only login method. Any other method the account has, such as unix_socket, stops working, and the tool cannot see one
+
 hand this to acme_dev_alice@% for mariadb-dev; it unwraps once:
 
     <TOKEN>
 ...
 ```
 
-The password in the token logs in. A reset never sends `ACCOUNT UNLOCK`,
-because the tool cannot tell a suspension from a block after failed logins:
-a locked account keeps its new password and still answers `4151`, and the
-JSON row's `actions[].detail` says the lock cannot be read. Unlock by hand,
-after checking that nobody suspended the account. The same detail says that
-any other login method, such as `unix_socket`, stops working: the tool cannot
-see one. `--keep-rollover` is refused
-with exit 5.
+The note is `SOPULI-W065`, and `--dry-run` prints it too: a DBA's own
+`unix_socket` login ends with the reset. The password in the token logs in.
+A reset never sends `ACCOUNT UNLOCK`, because the tool cannot tell a
+suspension from a block after failed logins: a locked account keeps its new
+password and still answers `4151`, and the JSON row's `actions[].detail` says
+the lock cannot be read. Unlock by hand, after checking that nobody suspended
+the account. `--keep-rollover` is refused with exit 5.
 
 `expire-password` sends `PASSWORD EXPIRE` alone, and a second run changes
 nothing:

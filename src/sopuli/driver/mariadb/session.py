@@ -461,9 +461,9 @@ class MariadbSession(ClosesConnection):
         second method the view does not show, such as ``unix_socket``, stops
         working too: that gap is accepted for personal accounts as for
         application ones (``02-mariadb-privileges.md`` §4, #1301, #1317). The
-        tool cannot see whether an account has one, so the row says that any
-        other method stops working, and ``doctor --check-privileges`` warns
-        that the gap exists.
+        tool cannot see whether an account has one, so the command warns at
+        plan time (`SOPULI-W065`) and the row says that any other method stops
+        working.
 
         **The lock is left as it is** (#1272, decision 1). It is not read, so
         the reset cannot tell a suspension from a block after failed logins,
@@ -502,9 +502,9 @@ class MariadbSession(ClosesConnection):
                 status=status,
                 detail=(
                     f"{'password set, expired' if expire else 'password set'}, as the only "
-                    "login method, so any other the account had, such as unix_socket, which "
-                    "the tool cannot see, stops working. Whether the account is locked cannot "
-                    "be read on MariaDB, and a reset does not unlock it"
+                    "login method. Any other method, such as unix_socket, stops working; the "
+                    "tool cannot see one. Whether the account is locked cannot be read on "
+                    "MariaDB, and a reset does not unlock it"
                 ),
             ),
         )

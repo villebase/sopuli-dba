@@ -565,9 +565,11 @@ locked, and a DBA unlocks it by hand after checking for a suspension
 login method, so a second one joined by `OR` stops working, a `unix_socket`
 login the view does not show included. A DBA's own socket login on the
 database host is the likely case. The tool cannot see whether an account has
-one, so it does not refuse the reset, and the row says that any other method
-stops working ([#1317](../decisions/log.md#1317), which keeps #1301's
-decision for personal accounts). `account
+one, so it does not refuse the reset. It warns at plan time instead,
+`SOPULI-W065` once per MariaDB target, `--dry-run` included, while the
+operator can still stop, and the row says the same
+([#1317](../decisions/log.md#1317), which keeps #1301's decision for
+personal accounts). `account
 expire-password` sends `PASSWORD EXPIRE` alone and reads nothing from the
 vault. A second method someone added with `OR` survives it, and both
 passwords then log in, expired, only to set a new one (decision 2).

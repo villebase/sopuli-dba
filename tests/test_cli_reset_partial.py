@@ -314,6 +314,53 @@ def test_a_failure_before_anything_committed_is_an_ordinary_failure(
     assert TOKEN not in result.output
 
 
+@pytest.mark.parametrize("product", ["mariadb", "oracle"])
+def test_a_mariadb_reset_warns_of_a_login_method_it_cannot_see(
+    runner: CliRunner,
+    write_config: WriteConfig,
+    monkeypatch: pytest.MonkeyPatch,
+    product: str,
+) -> None:
+    """#1317: on MariaDB the reset sets one login method, which ends a second
+    one the tool cannot see, so the plan warns, `SOPULI-W065`, before anything
+    connects and under `--dry-run`. Oracle has no such method."""
+    config, account = WRAPPED, ACCOUNT
+    if product == "mariadb":
+        account = f"{ACCOUNT}@%"
+        config = (
+            WRAPPED.replace("type: oracle", "type: mariadb")
+            .replace("192.0.2.10:1521/ALPHA", "192.0.2.10:3306")
+            .replace(f"[{ACCOUNT}]", f"['{account}']")
+        )
+
+    def unreachable(*_: Any) -> Any:
+        raise DriverError("not reached in this test")
+
+    monkeypatch.setattr("sopuli.cli._open_session", unreachable)
+    result = runner.invoke(
+        cli,
+        [
+            "--config",
+            str(write_config(config)),
+            "account",
+            "reset-password",
+            "--account",
+            account,
+            "--dry-run",
+            "--output",
+            "json",
+        ],
+    )
+
+    document = json.loads(result.stdout)
+    warned = [one for one in document.get("diagnostics", []) if one.get("code") == "SOPULI-W065"]
+    if product == "mariadb":
+        assert [one["target"] for one in warned] == [TARGET]
+        assert "unix_socket" in warned[0]["message"]
+    else:
+        assert warned == []
+
+
 # ------------------------------------------- the set committed, the close not ---
 
 

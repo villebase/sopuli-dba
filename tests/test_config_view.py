@@ -195,11 +195,41 @@ def test_an_estate_with_nothing_in_it_says_so_without_a_breakdown(config: Config
 
 
 def test_a_target_nothing_manages_is_shown_rather_than_warned_about(config: Config) -> None:
-    """§2's CDB root: declared for a use case that is not designed yet. The one
-    thing it must not be is invisible."""
+    """A CDB root declared before anything manages it. The one thing it must
+    not be is invisible."""
     text = render_text(PATHS, config, resolved=True)
 
     assert "1 target managed by nothing: cdb-root-dev" in text
+
+
+def _personal_on_the_root() -> Config:
+    """The fixture's estate, with a personal account on the CDB root and no
+    application there (#1326)."""
+    document = {
+        **DOCUMENT,
+        "personal_accounts": [{"accounts": ["C##ACME_DBA"], "targets": ["cdb-root-dev"]}],
+    }
+    return build_config(document)
+
+
+def test_a_target_only_personal_accounts_reach_is_not_managed_by_nothing() -> None:
+    """The UC-2 verbs act on it, so the summary must not call it dead config."""
+    text = render_text(PATHS, _personal_on_the_root(), resolved=True)
+
+    assert "managed by nothing" not in text
+
+
+def test_a_target_only_personal_accounts_reach_says_so_in_json() -> None:
+    """`managed` keeps its meaning, an application binds here, and the new
+    field says a personal account reaches it."""
+    section = build_section(PATHS, _personal_on_the_root(), DOCUMENT, resolved=True)
+    root = next(t for t in section["targets"] if t["name"] == "cdb-root-dev")
+    alpha = next(t for t in section["targets"] if t["name"] == "appdb-dev-alpha")
+
+    assert root["managed"] is False
+    assert root["personal_accounts"] is True
+    assert alpha["managed"] is True
+    assert alpha["personal_accounts"] is False
 
 
 def test_the_resolved_view_shows_the_ref_each_account_lands_on(config: Config) -> None:
@@ -274,6 +304,7 @@ def test_an_unmanaged_target_says_so(config: Config) -> None:
     root = next(t for t in section["targets"] if t["name"] == "cdb-root-dev")
 
     assert root["managed"] is False
+    assert root["personal_accounts"] is False
     assert root["target_set"] is None
     assert root["postgres"] is None
     assert root["mysql"] is None

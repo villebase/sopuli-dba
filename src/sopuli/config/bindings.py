@@ -26,9 +26,9 @@ stored there -- whether anything is -- is the vault layer's question (P2), and
 separate.
 
 A target no application selects simply has no bindings. That is a legitimate
-state, not an oversight: §2's estate declares a CDB root for a use case that is
-not designed yet, and the view that renders this shows it as unmanaged rather
-than warning about it.
+state, not an oversight: §2's estate declares a CDB root where only personal
+accounts (UC-2) live, and ``config show --resolved`` says which targets nothing
+manages rather than warning about them.
 """
 
 from __future__ import annotations

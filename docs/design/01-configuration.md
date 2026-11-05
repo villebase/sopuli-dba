@@ -647,7 +647,7 @@ file would not load, and if it did it would describe an estate nobody meant.
 
 So the rule is sharper than "one application": **the inline form fits an estate
 where every target is that application's.** The moment the estate serves a second
-purpose — another application, or a use case that is not designed yet — the
+purpose — another application, or personal accounts on a CDB root (UC-2) — the
 binding has to say which targets it means, and only `applications:` can.
 
 Commands against it:

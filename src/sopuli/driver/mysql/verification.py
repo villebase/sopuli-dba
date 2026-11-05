@@ -46,12 +46,9 @@ from sopuli.driver.mysql.errors import (
     ACCOUNT_LOCKED,
     MUST_CHANGE_PASSWORD_LOGIN,
 )
-from sopuli.driver.mysql_family.accounts import same_host
 from sopuli.driver.mysql_family.errors import ACCESS_DENIED, MUST_CHANGE_PASSWORD, Diagnosis
+from sopuli.driver.mysql_family.verification import competition
 from sopuli.driver.protocol import FAIL, PASS, UNAVAILABLE
-
-#: The host of the one kind of account a login can only reach: any host.
-ANY_HOST = "%"
 
 #: Said on every login, because MySQL gives the tool nothing to guard it with.
 UNGUARDED = (
@@ -75,13 +72,9 @@ def not_tried_reason(
     and the right password would then be refused with ``1045``. An anonymous
     account at ``%`` does not: at one host, a named user wins.
     """
-    others = sorted(
-        account.name for account in same_user if not same_host(account.host, declared.host)
-    )
-    named_anonymous = sorted(
-        f"''@{account.host}" for account in anonymous if not same_host(account.host, ANY_HOST)
-    )
-    if not same_host(declared.host, ANY_HOST):
+    found = competition(declared, same_user, anonymous)
+    others, named_anonymous = found.others, found.named_anonymous
+    if found.named_host:
         return (
             f"a login reaches the account the server matches from the tool's host, which "
             f"may not be {declared.name}, so its password is checked by login only where "

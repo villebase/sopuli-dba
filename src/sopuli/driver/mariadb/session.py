@@ -54,6 +54,7 @@ from sopuli.driver.protocol import (
     OFFLINE_VERIFY,
     OLD_DISCARD,
     OLD_PASSWORD_MODES,
+    OLD_RETAIN,
     PROFILE_MANAGEMENT,
     ROLE_LOOKUP,
     UNAVAILABLE,
@@ -81,6 +82,12 @@ from sopuli.passwords import ByteLimit
 from sopuli.secrets import Secret
 
 LOG = logger("mariadb")
+
+#: The hint for `--strategy rollover` on a MariaDB server.
+NO_ROLLOVER = (
+    "a rollover window is not written for MariaDB yet (#1271); use "
+    "`--strategy staged` or `--strategy direct`"
+)
 
 #: The hint for a `profile:` rule on a MariaDB server.
 NO_PROFILES = (
@@ -201,12 +208,13 @@ class MariadbSession(ClosesConnection):
             )
         return replace(audit, remedies=(*audit.remedies, *lines, CHECK_9_GAP))
 
-    def _not_written(self, what: str) -> NoReturn:
+    def _not_written(self, what: str, *, hint: str | None = None) -> NoReturn:
         raise NotWrittenError(
             self.target.name,
             product="a MariaDB server",
             what=what,
-            hint=(
+            hint=hint
+            or (
                 "the MariaDB driver runs `doctor` and the `creds` commands but "
                 "`finish-rollover`; a rollover (#1271) and the `account` commands "
                 "(#1272) are not written yet"
@@ -268,13 +276,16 @@ class MariadbSession(ClosesConnection):
         value for the account's own plugin computed here (invariant 15,
         :mod:`~sopuli.driver.mariadb.password`).
 
-        Only ``discard``: the statement names one method, which replaces every
-        method the account had (``03_dual_password_probe.py``, DP3). That ends
-        a second password a rollover kept, so only the vault's password logs
-        in. It also ends a second method of another kind, such as
-        ``unix_socket``, which the view does not show. The maintainer accepted
-        that gap on #1301 (option A). ``retain`` and ``keep`` are a rollover,
-        which is #1271.
+        ``discard``, and ``keep`` taken as ``discard``: the statement names one
+        method, which replaces every method the account had
+        (``03_dual_password_probe.py``, DP3). That ends a second password a
+        rollover kept, so only the vault's password logs in. It also ends a
+        second method of another kind, such as ``unix_socket``, which the view
+        does not show. The maintainer accepted that gap on #1301 (option A).
+        ``keep`` reaches here when a ``pending`` a MySQL rollover rotation
+        marked, in a document a MariaDB target shares, is set again: no window
+        was opened on this target, so there is none to keep. ``retain`` opens
+        one, and that is #1271.
 
         As on the other drivers, ``changed`` is ``True`` whenever the statement
         succeeded: the command decides first whether the account already had
@@ -288,8 +299,8 @@ class MariadbSession(ClosesConnection):
         """
         if old_password not in OLD_PASSWORD_MODES:
             raise ValueError(f"not an old-password mode: {old_password!r}")
-        if old_password != OLD_DISCARD:
-            self._not_written("keep a rollover window")
+        if old_password == OLD_RETAIN:
+            self._not_written("keep a rollover window", hint=NO_ROLLOVER)
         password_module.admit(secret)
         require_read_write(self.scope(), target=self.target.name)
         found = self._read_grants(
@@ -505,7 +516,7 @@ class MariadbSession(ClosesConnection):
         )
 
     def require_rollover(self, account: str) -> NoReturn:
-        self._not_written("keep a rollover window")
+        self._not_written("keep a rollover window", hint=NO_ROLLOVER)
 
     def finish_rollover(self, account: str) -> NoReturn:
         self._not_written("finish a rollover")

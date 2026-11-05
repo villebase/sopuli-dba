@@ -225,11 +225,17 @@ hash.
 
 **The tool changes only `mysql_native_password` and `ed25519` accounts**
 (decision 1). `doctor --check-privileges` names an account on `parsec`, or on
-any other plugin, today. A command that changes a password refuses it at plan
-time, naming the plugin and the account (open: #1270).
+any other plugin. The driver refuses to describe it or change its password, and
+names the plugin and the account, before it sends anything.
 PyMySQL 1.2.3 has no client for `parsec` (`06_pymysql_login_probe.py`, PL1), so
 a `parsec` password could be changed and never checked. The tool never moves an
-account to another plugin.
+account to another plugin: the change names the account's own plugin (§6).
+
+**An account with a second method is not seen.** An account can log in by two
+methods joined by `OR`, such as `mysql_native_password` and `unix_socket`. On
+11.8.9 the view shows `mysql_native_password` for it in either order, so the
+plugin check admits it. A change sends one method, which ends the other
+(open: #1301).
 
 **A user name at an undeclared host is reported** by `doctor` (§2.3).
 
@@ -296,7 +302,7 @@ fails. The binary log keeps the ones that succeed, the password included, except
 `SET PASSWORD`, which it rewrites to the hash. Only `IDENTIFIED VIA <plugin>
 USING '<value>'`, with a value the client computed, keeps the password out of
 all of them (`01_password_text_probe.py`). So the driver computes the value for
-the account's plugin and sends (open: #1270):
+the account's plugin and sends:
 
 ```sql
 ALTER USER `acme_app`@`10.%` IDENTIFIED VIA ed25519 USING '<value>'

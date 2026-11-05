@@ -22,8 +22,10 @@ from sopuli.driver.mariadb.password import (  # noqa: E402
     VALUES,
     PasswordNotAdmissibleError,
     admit,
+    alter_user,
     ed25519_value,
     native_value,
+    scrub,
 )
 
 LONG = "Acme-Long-" * 30
@@ -100,3 +102,39 @@ def test_any_length_and_any_character_is_admitted(password: str) -> None:
     """A password of 1 byte to 1 MiB, ASCII or not, was set and logged in on
     every release (PW1, PW2)."""
     admit(Secret(password))
+
+
+@pytest.mark.parametrize(
+    ("plugin", "password", "stored"),
+    [vector for vector in SERVER_VALUES if vector[1] == "Acme-Vector-1"],
+)
+def test_the_statement_carries_the_value_for_the_account_s_plugin(
+    plugin: str, password: str, stored: str
+) -> None:
+    statement = alter_user("acme_app", "10.%", plugin, Secret(password))
+
+    assert statement == f"ALTER USER `acme_app`@`10.%` IDENTIFIED VIA {plugin} USING '{stored}'"
+    assert password not in statement
+
+
+def test_the_account_is_backquoted_whatever_its_name() -> None:
+    statement = alter_user("acme`x", "%", NATIVE, Secret("Acme-Vector-1"))
+
+    assert statement.startswith("ALTER USER `acme``x`@`%` ")
+
+
+def test_a_value_of_the_wrong_shape_is_never_sent(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(VALUES, NATIVE, lambda secret: Secret("*AB' OR 1=1"))
+
+    with pytest.raises(ValueError, match="wrong shape"):
+        alter_user("acme_app", "%", NATIVE, Secret("Acme-Vector-1"))
+
+
+@pytest.mark.parametrize(("plugin", "password", "stored"), SERVER_VALUES)
+def test_the_scrub_hides_each_value(plugin: str, password: str, stored: str) -> None:
+    quoted = f"Operation ALTER USER failed near 'USING '{stored}''"
+    bare = f"hash {stored} is malformed"
+
+    assert stored not in scrub(quoted)
+    assert stored not in scrub(bare)
+    assert "***" in scrub(bare)

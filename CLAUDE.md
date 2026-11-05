@@ -166,7 +166,7 @@ detail.
     affected. The rule applies to `check --method hash`: never send a password or
     a verifier as a bind to compare it.
 
-15. **On PostgreSQL and MySQL the password never reaches the server.** On
+15. **On PostgreSQL, MySQL and MariaDB the password never reaches the server.** On
     PostgreSQL the driver computes a SCRAM-SHA-256 verifier on the client,
     through libpq, and sends `ALTER ROLE … PASSWORD 'SCRAM-SHA-256$…'`.
     PostgreSQL keeps the statement's text in its log, in `pg_stat_statements`
@@ -174,10 +174,14 @@ detail.
     driver computes the `caching_sha2_password` hash on the client and sends
     `ALTER USER … IDENTIFIED WITH caching_sha2_password AS 0x…`. MySQL keeps a
     statement that fails to parse in `performance_schema`'s history as sent,
-    password included, and a hex literal always parses. The verifier or hash
-    still allows an offline guessing attack, so treat it as sensitive, but it is
-    never the password. `docs/design/02-postgres-privileges.md` §6 and
-    `02-mysql-privileges.md` §6 have the measurements. A tier-1 test per product
+    password included, and a hex literal always parses. On MariaDB the driver
+    computes the value the account's plugin stores and sends `ALTER USER …
+    IDENTIFIED VIA <plugin> USING '<value>'`. MariaDB keeps every other form
+    in its logs and its statement history as sent, password included. The
+    verifier, hash or value still allows an offline guessing attack, so treat
+    it as sensitive, but it is never the password.
+    `docs/design/02-postgres-privileges.md` §6, `02-mysql-privileges.md` §6 and
+    `02-mariadb-privileges.md` §6 have the measurements. A tier-1 test per product
     turns on the server's statement logging, changes a password, and finds it
     nowhere.
 

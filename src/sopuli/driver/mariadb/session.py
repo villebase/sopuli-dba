@@ -311,7 +311,12 @@ class MariadbSession(ClosesConnection):
         not measured yet (#1310)."""
 
     def set_password(
-        self, account: str, secret: Secret, *, old_password: str = OLD_DISCARD
+        self,
+        account: str,
+        secret: Secret,
+        *,
+        old_password: str = OLD_DISCARD,
+        previous: Secret | None = None,
     ) -> ChangeResult:
         """``ALTER USER … IDENTIFIED VIA <plugin> USING '<value>'``, with the
         value for the account's own plugin computed here (invariant 15,
@@ -656,7 +661,7 @@ class MariadbSession(ClosesConnection):
     def require_rollover(self, account: str) -> NoReturn:
         self._not_written("keep a rollover window", hint=NO_ROLLOVER)
 
-    def finish_rollover(self, account: str) -> NoReturn:
+    def finish_rollover(self, account: str, *, current: Secret | None = None) -> NoReturn:
         self._not_written("finish a rollover")
 
     def _read(self, reader: Callable[[Any], T], *, scrub: Callable[[str], str] | None = None) -> T:

@@ -246,7 +246,12 @@ class PostgresSession(ClosesConnection):
             return audit(cursor, accounts)
 
     def set_password(
-        self, account: str, secret: Secret, *, old_password: str = OLD_DISCARD
+        self,
+        account: str,
+        secret: Secret,
+        *,
+        old_password: str = OLD_DISCARD,
+        previous: Secret | None = None,
     ) -> ChangeResult:
         """``ALTER ROLE … PASSWORD`` with a verifier computed here (invariant 15).
 
@@ -590,7 +595,7 @@ class PostgresSession(ClosesConnection):
             ),
         )
 
-    def finish_rollover(self, account: str) -> ChangeResult:
+    def finish_rollover(self, account: str, *, current: Secret | None = None) -> ChangeResult:
         """A role never has a window, so there is none to end (invariant 4).
         `creds finish-rollover` settles every role before it gets here; this
         refuses by capability for any other caller."""

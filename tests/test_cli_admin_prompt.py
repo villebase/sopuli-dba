@@ -394,7 +394,12 @@ class CredsSession:
         return VerifyResult("login", PASS, latency_ms=7)
 
     def set_password(
-        self, account: str, secret: Secret, *, old_password: str = "discard"
+        self,
+        account: str,
+        secret: Secret,
+        *,
+        old_password: str = "discard",
+        previous: Secret | None = None,
     ) -> ChangeResult:
         self.changed.append((account.upper(), secret.reveal()))
         return ChangeResult(changed=True)

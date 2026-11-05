@@ -1529,8 +1529,9 @@ def account_group() -> None:
     help=(
         "Waive guardrails 2 to 5 and 7. Nothing waives guardrails 1, 6 and 8: an "
         "account the config does not declare, a superuser, and a role the server "
-        "reserves. Guardrail 9, a global privilege, does not apply: this verb sets no "
-        "password."
+        "reserves. Guardrail 9, a global privilege, applies only on MariaDB, to every "
+        "account, because a `role:` rule there admits the role's creator; elsewhere "
+        "this verb sets no password, so it does not apply."
     ),
 )
 @global_options
@@ -1567,7 +1568,10 @@ def account_suspend(
     The command uses the same account guardrails as every mutating verb, so
     suspending DBSNMP is refused just as rotating it would be. `--force`
     waives guardrails 2 to 5 and 7, never 1, 6 or 8. Guardrail 9 does not
-    apply, because suspending sets no password.
+    apply, because suspending sets no password, except on MariaDB: there a
+    `role:` rule declares the account that created the role, and nothing else
+    stops it locking root. So on MariaDB it refuses every account with a
+    global privilege, one declared by name too.
 
     An account that is already locked reports no change, and the command
     issues nothing. The driver reads the state first, because Oracle and
@@ -1739,7 +1743,12 @@ def _suspend_one(
             )
 
         decision = suspend.decide(
-            state, config=config, account=account, target=target.name, force=force
+            state,
+            config=config,
+            account=account,
+            target=target.name,
+            target_type=target.target.type,
+            force=force,
         )
         status = state.status if state is not None else None
         overridden = decision.review.overridden if decision.review is not None else ()
@@ -1829,8 +1838,9 @@ def _suspend_one(
     help=(
         "Waive guardrails 2 to 5 and 7. Nothing waives guardrails 1, 6 and 8: an "
         "account the config does not declare, a superuser, and a role the server "
-        "reserves. Guardrail 9, a global privilege, does not apply: this verb sets no "
-        "password."
+        "reserves. Guardrail 9, a global privilege, applies only on MariaDB, to every "
+        "account, because a `role:` rule there admits the role's creator; elsewhere "
+        "this verb sets no password, so it does not apply."
     ),
 )
 @global_options
@@ -1865,7 +1875,9 @@ def account_expire_password(
     `personal_accounts:` never widens it, as for `account suspend`. The command
     uses the same account guardrails as every mutating verb. `--force` waives
     guardrails 2 to 5 and 7, never 1, 6 or 8. Guardrail 9 does not apply,
-    because expiring sets no password.
+    because expiring sets no password, except on MariaDB: there a `role:` rule
+    declares the account that created the role. So on MariaDB it refuses every
+    account with a global privilege, one declared by name too.
 
     An account that is already expired, with no window open, reports no
     change, and the command issues nothing. `EXPIRED(GRACE)` does not count as
@@ -2049,7 +2061,12 @@ def _expire_one(
             )
 
         decision = expire.decide(
-            state, config=config, account=account, target=target.name, force=force
+            state,
+            config=config,
+            account=account,
+            target=target.name,
+            target_type=target.target.type,
+            force=force,
         )
         status = state.status if state is not None else None
         overridden = decision.review.overridden if decision.review is not None else ()
@@ -2282,7 +2299,7 @@ def account_reset_password(
 
     reached = config.expanded_targets
     _refuse_a_bare_mysql_name(account, reached)
-    reset.refuse_kept_window_on_mysql(reached, keep_rollover=keep_rollover)
+    reset.refuse_unreadable_kept_window(reached, keep_rollover=keep_rollover)
     # Before the plan, the prompt and any event, `--dry-run` included: a preview
     # must not say "would be reset" for a run that will be refused. With them,
     # what the delivery backends would refuse from the config alone (#1257); the

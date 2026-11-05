@@ -194,13 +194,18 @@ A managed account is one the config declares on a MariaDB target, as
 `user@host`: `acme_app@10.%`. A bare name is a config error, as on MySQL. A
 `role:` rule names a role without a host: a MariaDB role has none (TG7).
 
-**Who a `role:` rule admits** (open: #1272). The accounts that hold the role,
-granted to them or to a role they hold, followed to the end through
-`mysql.roles_mapping`, whether it is active or not (`10_role_reads_probe.py`,
-RR2). A role in the chain is not admitted: a role cannot log in. `CREATE ROLE`
-grants the role to the account that created it, with `ADMIN OPTION`, so that
-account holds it too. A role that `PUBLIC` holds, directly or through another
-role, is refused with exit 9: every account holds it (RR3), and a rule that
+**Who a `role:` rule admits.** The accounts that hold the role, granted to
+them or to a role they hold, followed to the end through `mysql.roles_mapping`,
+whether it is active or not (`10_role_reads_probe.py`, RR2). A role in the
+chain is not admitted: a role cannot log in. `CREATE ROLE` grants the role to
+the account that created it, with `ADMIN OPTION`, so that account holds it
+too: usually root or the tool account. Where it holds a privilege §5 counts,
+guardrail 9 refuses it for every UC-2 verb, `account suspend` and `account
+expire-password` included (§5, #1272). For those two it refuses the session's
+own account too. A reset still exempts it, as on MySQL: setting the tool's own
+password hands over nothing, and guardrail 7 refuses it unless `--force`. A
+role that `PUBLIC` holds, directly or through another role, is refused with
+exit 9: every account holds it (RR3), and a rule that
 admits every account is not a whitelist. MySQL refuses a mandatory role for
 the same reason. `sopuli/driver/mariadb/roles.py` holds the rule.
 
@@ -272,7 +277,12 @@ any of these:
 
 `sopuli.driver.mariadb.admin` reads them, and the driver reads them whenever it
 describes an account. The refusal applies once a verb that changes a password
-runs on MariaDB (open: #1270). Each finding
+runs on MariaDB (open: #1270). Unlike on MySQL, it also applies to `account
+suspend` and `account expire-password`, which set no password, and to the
+session's own account for those two: a `role:` rule admits a role's creator
+(§4), and this is what stops one locking root or the tool account. It also
+refuses an administrator declared by name; such an account is locked by hand
+(#1272). Each finding
 names the privilege and its object, and the role it comes through, such as
 `PROCESS ON *.* through PUBLIC`.
 

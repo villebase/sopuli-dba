@@ -23,8 +23,15 @@ import pytest
 from sopuli.config.delivery import IMPLEMENTED
 from sopuli.config.errors import ArgumentError
 from sopuli.config.loading import build_config
-from sopuli.config.model import Config, Delivery, ManualDelivery, WrappedDelivery
-from sopuli.driver.protocol import UserState
+from sopuli.config.model import (
+    Config,
+    Delivery,
+    ExpandedTarget,
+    ManualDelivery,
+    Target,
+    WrappedDelivery,
+)
+from sopuli.driver.protocol import KEEP_ROLLOVER, UnsupportedCapabilityError, UserState
 from sopuli.exit_codes import ExitCode
 from sopuli.reset import (
     ACCOUNT_MISSING,
@@ -35,6 +42,7 @@ from sopuli.reset import (
     deliverable,
     refuse_kept_window,
     refuse_seen_path,
+    refuse_unreadable_kept_window,
 )
 from sopuli.safety import RefusedError
 
@@ -279,6 +287,30 @@ def test_an_unseen_path_may_keep_the_window_and_the_seen_one_may_close_it() -> N
     """Nobody but the owner sees an unseen password, so the flag stays there."""
     refuse_kept_window(UNSEEN, keep_rollover=True)
     refuse_kept_window(SEEN, keep_rollover=False)
+
+
+@pytest.mark.parametrize(
+    ("product", "says"), [("mysql", "RETAIN CURRENT PASSWORD"), ("mariadb", "joined by OR")]
+)
+def test_a_kept_window_is_refused_by_capability_where_it_cannot_be_read(
+    product: str, says: str
+) -> None:
+    """MySQL (#1225, decision 2) and MariaDB (#1272): a reset ends the second
+    password, and the tool cannot read whether one is there. Exit 5, naming
+    the capability and the product's own reason."""
+    targets = [
+        ExpandedTarget(target=Target(name="pg-dev", type="postgres", dsn="pg.example.com/app")),
+        ExpandedTarget(target=Target(name=f"{product}-dev", type=product, dsn="db.example.com")),
+    ]
+
+    with pytest.raises(UnsupportedCapabilityError) as caught:
+        refuse_unreadable_kept_window(targets, keep_rollover=True)
+
+    assert caught.value.exit_code == ExitCode.UNSUPPORTED_CAPABILITY
+    assert caught.value.capability == KEEP_ROLLOVER
+    assert f'target "{product}-dev"' in str(caught.value)
+    assert says in str(caught.value.hint)
+    refuse_unreadable_kept_window(targets, keep_rollover=False)
 
 
 # --------------------------------------------------------------- the decision ---

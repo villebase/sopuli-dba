@@ -6385,6 +6385,9 @@ def creds_generate(
         emitter.event(document, "constraints.resolved", data=document.constraints)
     # Once per password, not per binding: an account on several targets that
     # share its ref is one password (`sopuli.generate`'s docstring).
+    # Every product the one supplied password is staged for, so a driver that
+    # refuses it on any of them is not waived for the others (#1327).
+    products = frozenset(target.target.type for target in _targets_of(config, bindings))
     candidates = staging.draw_once(
         bindings,
         lambda binding: _candidate(
@@ -6394,6 +6397,7 @@ def creds_generate(
             supplied=supplied,
             enforce=not no_policy_check,
             readings=limits.readings,
+            products=products,
         ),
     )
     candidates, skipped = _split_reserved(candidates, reserved)
@@ -6577,6 +6581,7 @@ def _candidate(
     supplied: Secret | None,
     enforce: bool,
     readings: Sequence[tuple[str, ByteLimit]] = (),
+    products: frozenset[str] | None = None,
 ) -> Candidate:
     """One account's password, drawn or validated against its policy.
 
@@ -6593,11 +6598,22 @@ def _candidate(
     fallback -- no target answered, or none was asked -- and the policy's declared
     length then governs, which is what
     :func:`sopuli.generate.candidate_for` already does with it.
+
+    ``products`` is every product a supplied password is staged for, and
+    defaults to this binding's target's.
     """
     effective = binding if name is None else replace(binding, policy=name)
     chosen, policy = staging.policy_for(config, effective)
+    if products is None:
+        products = frozenset({_expanded(config, binding.target).target.type})
     return staging.candidate_for(
-        binding, policy, name=chosen, readings=readings, supplied=supplied, enforce=enforce
+        binding,
+        policy,
+        name=chosen,
+        readings=readings,
+        supplied=supplied,
+        enforce=enforce,
+        products=products,
     )
 
 

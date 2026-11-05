@@ -33,6 +33,7 @@ from jsonschema import Draft202012Validator
 
 from native_estate import FIELD, OCI_VAULT, limited_store, seed, staging_store, view
 from sopuli import apply, check
+from sopuli import cli as cli_module
 from sopuli.admin import Resolved
 from sopuli.cli import _Applied, _left_out, _splice, cli
 from sopuli.clock import to_rfc3339, utc_now
@@ -90,10 +91,12 @@ from sopuli.lock import (
 )
 from sopuli.output.document import SCHEMA_VERSION
 from sopuli.output.emit import EVENT_SCHEMA_VERSION
+from sopuli.payload import REACHED
 from sopuli.safety import RefusedError
 from sopuli.secrets import Secret
 from sopuli.settings.registry import DEFAULT_CONNECT_TIMEOUT_S, NO_QUERY_TIMEOUT
 from sopuli.store import MemoryStore, SecretStore
+from sopuli.store.credentials import apply_patch
 from sopuli.store.native_view import PENDING_VERSION
 from sopuli.store.protocol import Room, StoreError
 
@@ -955,6 +958,121 @@ def test_without_a_login_first_a_current_is_left_alone(
     assert (row["state"], row["changed"]) == ("SKIPPED", False)
     assert row["actions"][0]["kind"] == "none"
     assert "creds rotate" in row["actions"][0]["detail"]
+
+
+# ------------------------------------------- MariaDB's reaching login (#1316) ---
+
+#: MariaDB's answer where another account could answer: no login was made.
+NOT_TRIED = VerifyResult(
+    VERIFY_LOGIN, UNAVAILABLE, detail="no login was attempted, because …", attempted=False
+)
+
+
+def _reaching(monkeypatch: pytest.MonkeyPatch, answer: VerifyResult) -> list[str]:
+    """Give the fake session MariaDB's hooks, and record each reaching login."""
+    reached: list[str] = []
+
+    def verify_reaching(self: FakeSession, account: str, secret: Secret) -> VerifyResult:
+        reached.append(account)
+        return answer
+
+    monkeypatch.setattr(FakeSession, "verifies_before_change", False, raising=False)
+    monkeypatch.setattr(FakeSession, "verify_reaching", verify_reaching, raising=False)
+    return reached
+
+
+def test_the_first_apply_of_a_pending_marks_it_and_logs_in_once_more(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#1270 decision 5: where the login was not made, the mark is written,
+    and then one login may reach further. It passes, so the pending is
+    promoted, which clears the mark with it."""
+    reached = _reaching(monkeypatch, VerifyResult(VERIFY_LOGIN, PASS, latency_ms=9))
+    harness = estate(answers={"ACME_WEB_USER": [NOT_TRIED]})
+    marks: list[Any] = []
+    real = apply_patch
+
+    def watching(store: Any, path: str, patch: Any, *, cas: int | None) -> Any:
+        if REACHED in patch:
+            marks.append(patch[REACHED])
+        return real(store, path, patch, cas=cas)
+
+    monkeypatch.setattr(cli_module, "write_credential", watching)
+    result = run(runner, write_config(CONFIG), "--select", "tenant=alpha", "--output", "json")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert reached == ["ACME_WEB_USER"]
+    # The mark, then the promotion clearing it.
+    assert marks == [{"acme_web_user": ["appdb-alpha"]}, {"acme_web_user": None}]
+    row = document(result)["results"][0]
+    assert (row["state"], row["secret"]["stage"]) == ("IN_SYNC", "current")
+    # Cleared as `pending` is: RFC 7396 leaves the emptied container.
+    assert "acme_web_user" not in stored(harness["store"], "apps/acme/appdb-alpha")[REACHED]
+
+
+def test_a_pending_whose_mark_names_the_target_logs_in_no_further(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A scheduled `apply` of a held pending: its reach is spent here, so the
+    row stays unconfirmed and no login reaches an undeclared account again."""
+    reached = _reaching(monkeypatch, VerifyResult(VERIFY_LOGIN, PASS))
+    documents = _staged_two_targets()
+    documents["apps/acme/appdb-alpha"][REACHED] = {"acme_web_user": ["appdb-alpha"]}
+    estate(documents=documents, answers={"ACME_WEB_USER": [NOT_TRIED]})
+    result = run(runner, write_config(CONFIG), "--select", "tenant=alpha", "--output", "json")
+
+    assert reached == []
+    row = document(result)["results"][0]
+    assert row["state"] == "UNVERIFIABLE"
+    assert row["secret"]["stage"] != "current"
+
+
+def test_no_mark_written_means_no_reaching_login(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The safe side: a mark the vault would not take could let a scheduled
+    `apply` repeat the login, so none is made, and the row says why."""
+    reached = _reaching(monkeypatch, VerifyResult(VERIFY_LOGIN, PASS))
+    estate(answers={"ACME_WEB_USER": [NOT_TRIED]})
+    real = apply_patch
+
+    def refusing(store: Any, path: str, patch: Any, *, cas: int | None) -> Any:
+        if REACHED in patch:
+            raise StoreError("the vault refused the write")
+        return real(store, path, patch, cas=cas)
+
+    monkeypatch.setattr(cli_module, "write_credential", refusing)
+    result = run(runner, write_config(CONFIG), "--select", "tenant=alpha", "--output", "json")
+
+    assert reached == []
+    row = document(result)["results"][0]
+    assert row["state"] == "UNVERIFIABLE"
+    assert "could not be written, so no login was made" in json.dumps(row)
+
+
+def test_a_login_that_was_made_is_never_followed_by_a_reaching_one(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The third review of #1312: `1045` over a session without TLS is
+    `unavailable` after a login. A second one would count a second failure."""
+    reached = _reaching(monkeypatch, VerifyResult(VERIFY_LOGIN, PASS))
+    made = VerifyResult(VERIFY_LOGIN, UNAVAILABLE, detail="1045 without TLS says nothing")
+    estate(answers={"ACME_WEB_USER": [made]})
+    run(runner, write_config(CONFIG), "--select", "tenant=alpha", "--output", "json")
+
+    assert reached == []
 
 
 def test_without_confirm_change_an_unavailable_login_stays_unverifiable(

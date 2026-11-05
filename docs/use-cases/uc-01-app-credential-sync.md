@@ -282,8 +282,10 @@ target, may reach an account the config does not declare
 where that login was spent, so a later `apply` of the same `pending` does not
 repeat it. It follows the mirror rule, as `origin` does, and it is reserved too.
 Every write that stages a new `pending` clears it, and so does the promotion. A
-`reached` the tool cannot read counts as spent on every target. Nothing writes
-it yet (open: #1316).
+`reached` the tool cannot read counts as spent on every target. `creds apply`
+and `creds rotate` add a target to it before that login, under the run's lock,
+and read the document again so the promotion compares against the new
+version. If the write fails, no login is made, and the row says why.
 
 ### `rollover`: a pending a rollover rotation staged
 
@@ -671,12 +673,14 @@ These rules decide what `apply` does with each account:
   account that is the user's only one, with no anonymous account at a named
   host, as on MySQL. Any other account is `unavailable` without a login,
   because a failed login counts toward `max_password_errors` on the account it
-  reaches, and `creds check` and a scheduled `creds apply` repeat. The rule
-  covers the login after a change too, so such an account is changed and its
-  `pending` is not promoted (open: #1316). Decision 5 will let the first login
-  after a change from each staged `pending` log in wherever a login may reach,
-  and verify only when `CURRENT_USER()` is the declared account
-  ([#1267](../decisions/log.md#1267), decision 8). A login reaches the account
+  reaches, and `creds check` and a scheduled `creds apply` repeat. One login
+  is the exception (decision 5). Once per staged `pending` and target, the
+  login after a change logs in wherever a login may reach, and verifies only
+  when `CURRENT_USER()` is the declared account
+  ([#1267](../decisions/log.md#1267), decision 8). Before it the run writes
+  the `reached` mark (§3). A later `apply` of the same `pending` makes no such
+  login, so where it was not confirmed the row stays `unavailable` and the
+  `pending` stays, until a new one is staged. A login reaches the account
   the server matches from the tool's host, which may be another one. Some
   answers come before `CURRENT_USER()` can be read. These count only where no
   other account can answer. A refusal is a `fail` only where the target's

@@ -943,6 +943,12 @@ class VerifyResult:
     #:
     #: ``None`` on every ordinary login, which is almost all of them.
     warning: str | None = None
+    #: ``False`` where the driver settled the answer without logging in because
+    #: another account could have answered the login: MariaDB's check rule
+    #: (#1270, decision 3). `creds apply` may then make the one reaching login
+    #: of #1316 instead, and never after a login that was made. Not part of the
+    #: run document: ``detail`` says it for a reader.
+    attempted: bool = True
 
 
 @dataclass(frozen=True)

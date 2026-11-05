@@ -352,6 +352,7 @@ from sopuli.payload import (
     ORIGIN,
     PENDING,
     PREVIOUS,
+    REACHED,
     RETAINING,
     ROLLOVER,
     stage_layout,
@@ -7803,6 +7804,7 @@ def creds_apply(
                 # Only after a full survey, which read every account the pass
                 # asks about. `--strategy` alone reads none.
                 surveyed=surveyed if preflight_all else None,
+                spend_reach=_reach_marker(documents, stores, manager=manager, run=run),
             )
             if stolen is None:
                 # §6.4's redraw, between the estate pass and the promotion. After,
@@ -8348,6 +8350,55 @@ def _stored_document(binding: Binding, documents: Mapping[LockKey, Any]) -> Any:
     return documents.get(_lock_key(binding))
 
 
+def _reach_marker(
+    documents: dict[LockKey, Any],
+    stores: Mapping[str, SecretStore],
+    *,
+    manager: LockManager,
+    run: Invocation,
+) -> Callable[[Binding], str | None]:
+    """What spends a staged ``pending``'s reaching login on one target (#1316).
+
+    It adds the binding's target to the ``pending``'s
+    :data:`~sopuli.payload.REACHED` mark in the vault, behind the fence, and
+    returns ``None``. The run's copy of the document is read again, so the
+    promotion compare-and-sets against the version the mark left. Where the
+    write fails it returns why, and the caller then makes no reaching login:
+    a lost mark must never let a scheduled `apply` repeat one. A run that ends
+    between the write and the login has spent the reach unused, and the next
+    ``pending`` brings a new one.
+    """
+
+    def spend(binding: Binding) -> str | None:
+        assert binding.secret is not None
+        key = _lock_key(binding)
+        stored = documents.get(key)
+        layout = stage_layout(binding.secret)
+        found = layout.read(None if stored is None else stored.data, REACHED)
+        marked = [*(found if isinstance(found, list) else ()), binding.target]
+        manager.check(key)
+        try:
+            write_credential(
+                stores[key.store], key.path, layout.patch(REACHED, marked), cas=_version_of(stored)
+            )
+        except Exception as error:  # noqa: BLE001 -- the row says why, and no login follows
+            reported = _finding(error)
+            run.emitter().event(
+                run.document,
+                "vault.write",
+                data={**_vault_event(key, None), "error": reported.to_dict()},
+            )
+            return (
+                f"the vault mark that spends this `pending`'s reaching login could not "
+                f"be written, so no login was made: {reported.message}"
+            )
+        documents[key] = stores[key.store].read(key.path)
+        run.emitter().event(run.document, "vault.write", data=_vault_event(key, documents[key]))
+        return None
+
+    return spend
+
+
 def _header(plan: Any, sources: Sequence[tuple[Binding, Source | None]]) -> str:
     """The plan, and what would be applied from where."""
     rows = [(binding, source) for binding, source in sources if source is not None]
@@ -8371,12 +8422,14 @@ def _apply_estate(
     surveyed: Mapping[tuple[str, str], UserState] | None = None,
     decided: Mapping[Credential, Mapping[str, guardrails.Review]] | None = None,
     rotating: bool = False,
+    spend_reach: Callable[[Binding], str | None] | None = None,
 ) -> tuple[list[_Applied], LockStolenError | None]:
     """Every account, target by target, one connection each.
 
     ``rotating`` is set by `creds rotate` for the round that sets the
     ``pending`` it staged (:func:`_apply_one`). `creds apply` leaves it unset,
-    its redraw rounds included.
+    its redraw rounds included. ``spend_reach`` is :func:`_reach_marker`'s,
+    over the documents this run read.
 
     ``decided`` is a guardrail decision the caller already made from the
     survey, over every credential and not only the shared ones. `creds rotate`
@@ -8487,6 +8540,7 @@ def _apply_estate(
                 unreachable=unreachable.get(name),
                 out=applied,
                 rotating=rotating,
+                spend_reach=spend_reach,
             )
         except LockStolenError as stolen:
             return applied, stolen
@@ -8858,6 +8912,7 @@ def _apply_target(
     unreachable: BaseException | None = None,
     out: list[_Applied],
     rotating: bool = False,
+    spend_reach: Callable[[Binding], str | None] | None = None,
 ) -> None:
     """One target's worth of accounts, over one connection.
 
@@ -8946,6 +9001,7 @@ def _apply_target(
                     encryption_required=required,
                     held=refusing or None,
                     rotating=rotating,
+                    spend_reach=spend_reach,
                 )
             except _StoppedAfterChangeError as stopped:
                 # The account the run was working on when it lost the lock had
@@ -9177,8 +9233,13 @@ def _apply_one(
     encryption_required: str | None = None,
     held: Mapping[str, guardrails.Review] | None = None,
     rotating: bool = False,
+    spend_reach: Callable[[Binding], str | None] | None = None,
 ) -> _Applied:
     """One account in one target: ask, change if needed, ask again.
+
+    ``spend_reach`` writes the vault mark that spends a staged ``pending``'s
+    reaching login on this binding's target (#1316), and returns ``None``, or
+    why it could not. Without it no login reaches further.
 
     ``rotating`` is set by the `creds rotate` run that staged the ``pending``.
     Only that run opens a window the tool must open itself, on MySQL
@@ -9524,6 +9585,24 @@ def _apply_one(
         after = session.verify_password(
             after_user.name, source.value, method=VERIFY_LOGIN, lockout_margin=margin, attempts=2
         )
+        reaching = getattr(session, "verify_reaching", None)
+        if (
+            not after.attempted
+            and reaching is not None
+            and spend_reach is not None
+            and not apply_states.reach_spent(source, binding.target)
+        ):
+            # MariaDB (#1270, decision 5; #1316): no login was made, because
+            # another account could answer. Once per staged `pending` and target,
+            # the vault mark is written first, and then one login may reach
+            # further. If the mark cannot be written, no login is made: a
+            # scheduled `apply` must never repeat it.
+            unwritten = spend_reach(binding)
+            after = (
+                reaching(after_user.name, source.value)
+                if unwritten is None
+                else replace(after, detail=f"{after.detail}; {unwritten}")
+            )
         if after.result == UNAVAILABLE:
             # MySQL, for an account no login can reach (#1223): the server's
             # record of the change stands in for the login, as `stored`. A
@@ -9572,8 +9651,10 @@ def _apply_one(
         # through the error handler instead of past the check.
         if issued:
             # The password is set, so the row says so whatever else the run had
-            # reached. Today the only check after `set_password` is the one before
-            # `finish_rollover`, so the outcome is known and the window is open.
+            # reached. Two checks follow `set_password`: the one before writing
+            # the reaching-login mark (#1316), with no outcome yet, and the one
+            # before `finish_rollover`, where the outcome is known and the
+            # window is open.
             if outcome is None:
                 stopped = check_states.Outcome(check_states.ERROR, STOPPED_BEFORE_VERIFY)
             else:
@@ -10780,6 +10861,8 @@ def _redraw_estate(
             # written the new password over the one they hold. Skipping them now
             # would leave a password the vault no longer stores anywhere.
             ask_first=False,
+            # The restage staged a new `pending`, which cleared the mark.
+            spend_reach=_reach_marker(documents, stores, manager=manager, run=run),
         )
         applied = _splice(applied, again)
         if stolen is not None:
@@ -12693,6 +12776,7 @@ def _rotate_estate(
         surveyed=surveyed,
         decided=skipped,
         rotating=True,
+        spend_reach=_reach_marker(documents, stores, manager=manager, run=run),
     )
     if into.stolen is not None:
         return None

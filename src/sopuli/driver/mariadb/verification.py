@@ -7,10 +7,11 @@ tool's host reaches ``acme_app@%`` even where ``acme_app@localhost`` is the one
 declared. The session therefore logs in only where no other account can
 answer: the declared account is ``user@%``, it is the user's only account, and
 no anonymous account sits at a named host (:func:`competitor`), as on MySQL
-(#1270, decision 3). TODO(#1316): once per staged ``pending``, the login after
-a change logs in wherever a login may reach (decision 5). Wherever this module
-logs in, the result counts only when the login is known to have reached the
-declared account (#1267, decision 8):
+(#1270, decision 3). Once per staged ``pending`` and target, the login after a
+change logs in wherever a login may reach (decision 5;
+:meth:`~sopuli.driver.mariadb.session.MariadbSession.verify_reaching`).
+Wherever this module logs in, the result counts only when the login is known
+to have reached the declared account (#1267, decision 8):
 
 - a session that reads ``CURRENT_USER()`` as the declared account passes;
 - a session that reads another account says nothing about the declared one;
@@ -50,7 +51,8 @@ without it at connect.
 **There is no lockout guard.** MariaDB counts failed logins against
 ``max_password_errors`` in ``mysql.global_priv``, beside the stored value, which
 the tool account does not read. A failed login counts on the account it
-reaches, so the session logs in only where that is the declared account
+reaches, so the session logs in only where that is the declared account, but
+for the one reaching login per staged ``pending``, an exception to invariant 5
 (``02-mariadb-privileges.md`` §7).
 """
 

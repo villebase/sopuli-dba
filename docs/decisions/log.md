@@ -4417,11 +4417,11 @@ the register.
      given target, has decision 8's reach: it may reach another account, and
      is trusted only when `CURRENT_USER()` is the declared one. That change
      can come from `creds rotate` or from the first `creds apply`. A mark in
-     the vault document then records that the reach was spent, so a later
-     `apply` of the same `pending` follows decision 3's rule. A new `pending`
-     clears the mark. That login is an exception to invariant 5. Decided the
-     same day, from the reviews of #1312. Until #1316 builds the mark, every
-     MariaDB login follows decision 3's rule.
+     the vault document, written before that login, records that the reach
+     was spent (#1316), so a later `apply` of the same `pending` follows
+     decision 3's rule. A new `pending` clears the mark. That login is an
+     exception to invariant 5. Decided the same day, from the reviews of
+     #1312.
 - **Why:**
   1. The server sees only the value the driver computes, so it sets and logs
      in a password of up to 1 MiB (PW1). An application's client was not

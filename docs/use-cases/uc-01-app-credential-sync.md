@@ -650,8 +650,8 @@ These rules decide what `apply` does with each account:
   and while a promotion is held each `apply` sets the `pending` again and
   reports `changed: true`. The lock is not read
   ([#1267](../decisions/log.md#1267), decision 2), so a locked account is
-  changed. Its login after the change answers `4151`, which only the right
-  password gets.
+  changed. Where the login after the change is made, it answers `4151`, which
+  only the right password gets.
 - **On MariaDB, the tool logs in only where no other account can answer the
   login** ([#1270](../decisions/log.md#1270), decision 3). That is a `user@%`
   account that is the user's only one, with no anonymous account at a named
@@ -659,7 +659,7 @@ These rules decide what `apply` does with each account:
   because a failed login counts toward `max_password_errors` on the account it
   reaches, and `creds check` and a scheduled `creds apply` repeat. The rule
   covers the login after a change too, so such an account is changed and its
-  `pending` is not promoted (open: #1316). Decision 5 lets the first login
+  `pending` is not promoted (open: #1316). Decision 5 will let the first login
   after a change from each staged `pending` log in wherever a login may reach,
   and verify only when `CURRENT_USER()` is the declared account
   ([#1267](../decisions/log.md#1267), decision 8). A login reaches the account

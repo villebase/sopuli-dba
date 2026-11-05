@@ -375,10 +375,11 @@ a scheduled `creds apply` repeat. The rule covers the login after a change
 too, so such an account's `pending` is not promoted (open: #1316).
 
 **A change is verified only when `CURRENT_USER()` is the declared account**
-([#1267](../decisions/log.md#1267), decision 8). Decision 5 lets the first
+([#1267](../decisions/log.md#1267), decision 8). Decision 5 will let the first
 login after a change from each staged `pending` log in wherever a login may
-reach, and a mark in the vault spends that reach. Such a login may reach an
-account the config does not declare. A login reaches the account the server
+reach, with a mark in the vault that spends that reach (open: #1316). Such a
+login may reach an account the config does not declare. A login reaches the
+account the server
 matches from the client's host, which need not be the declared one (ID1).
 After the login, the tool reads `CURRENT_USER()`. Where it names another
 account, or the login reaches none, the change is not verified, and its
@@ -404,8 +405,8 @@ TLS.
 `1820`, `1862` and `4151` come only to the right password, but before the tool
 can read `CURRENT_USER()`. `1045` does not say which account refused. The tool
 logs in only where no other account can answer, so there each answer counts.
-After a reaching login, where another account could answer, each is
-`unavailable`, and the detail names the other account. `1045` is a `fail` only
+After a reaching login (#1316), where another account could answer, each will
+be `unavailable`, with the detail naming the other account. `1045` is a `fail` only
 where the target's `ssl_mode` requires TLS. `4150` answers any password, so it is
 `unavailable` everywhere. On an `ed25519` account with `OR`, a rollover in
 progress, PyMySQL 1.2.3 logs in only with the first method: the server asks
@@ -415,9 +416,9 @@ and PyMySQL fails itself with "received multiple auth switch requests"
 the `OR` is in place: it cannot tell a wrong password from the second
 method's. `sopuli/driver/mariadb/verification.py` holds the rule.
 
-A failed reaching login counts toward `max_password_errors` on the account it
-reaches. That is an accepted cost of decision 8. It happens once per staged
-`pending`, with the password just set.
+A failed reaching login will count toward `max_password_errors` on the account
+it reaches (#1316). That is an accepted cost of decision 8. It will happen once
+per staged `pending`, with the password just set.
 
 **TLS.** The `mariadb` images of 11.4 and later start with TLS on. The 10.11
 image starts with it off, and

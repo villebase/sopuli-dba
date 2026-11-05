@@ -428,7 +428,7 @@ class MariadbSession(ClosesConnection):
 
         The tool cannot read MariaDB's count of failed logins, so
         ``lockout_margin`` and ``attempts`` have nothing to guard, and the
-        detail says so.
+        detail of every login says so.
         """
         if method in (VERIFY_HASH, VERIFY_BOTH):
             self.require_verifier(account, secret)
@@ -459,13 +459,15 @@ class MariadbSession(ClosesConnection):
             return VerifyResult(
                 method=VERIFY_LOGIN,
                 result=UNAVAILABLE,
-                detail=f"{competing}; no login was attempted",
+                detail=f"no login was attempted, because {competing}",
             )
         return verification.login(
             self.target,
             declared,
             secret,
-            competing=competing,
+            # Always None here. TODO(#1316): the reaching login passes the
+            # competitor, and `verification` judges what comes back by it.
+            competing=None,
             correlation_id=self.correlation_id,
             timeouts=self.timeouts,
         )

@@ -16,6 +16,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
+import pytest
+
 from sopuli import check
 from sopuli import finish_rollover as windows
 from sopuli.apply import Source
@@ -350,10 +352,11 @@ def test_an_unavailable_login_does_not_stop_an_unread_close() -> None:
 
 
 def test_an_unread_close_says_what_it_did_and_what_it_did_not_verify() -> None:
-    by_login = windows.closed(unread(), attempt(PASS), unknown_window=True)
-    unverified = windows.closed(unread(), attempt(UNAVAILABLE), unknown_window=True)
+    sent = "any retained password discarded"
+    by_login = windows.closed(unread(), attempt(PASS), unknown_window=True, sent=sent)
+    unverified = windows.closed(unread(), attempt(UNAVAILABLE), unknown_window=True, sent=sent)
 
-    assert by_login.detail == "any retained password discarded"
+    assert by_login.detail == sent
     assert "was not verified by login" in unverified.detail
     assert by_login.state == unverified.state == check.IN_SYNC
 
@@ -368,3 +371,8 @@ def test_an_unread_close_is_worded_by_the_driver() -> None:
     assert by_login.detail == sent
     assert unverified.detail.startswith(f"{sent}; ")
     assert "was not verified by login" in unverified.detail
+
+
+def test_an_unread_close_without_the_drivers_account_is_a_fault() -> None:
+    with pytest.raises(ValueError, match="driver's account"):
+        windows.closed(unread(), attempt(PASS), unknown_window=True)

@@ -143,9 +143,9 @@ detail.
    `pending` again on each run, until the rotation completes. On MariaDB a
    target whose one reaching login did not pass holds it until a new `pending`
    is staged (#1316). On MySQL and MariaDB, `creds finish-rollover` cannot
-   read whether an old password is kept, so it ends one on every run and
-   reports `changed: true`: MySQL sends `DISCARD OLD PASSWORD`, and MariaDB
-   sends the current password's value alone. On
+   read whether an old password is kept, so it sends the close on every run
+   and reports `changed: true`: MySQL sends `DISCARD OLD PASSWORD`, and
+   MariaDB sends the current password's value alone. On
    MariaDB, `account suspend` cannot read the lock, so it sends `ACCOUNT LOCK`
    and reports `changed: true` on every run. Reasons:
    [H7](docs/decisions/log.md#h7), [#1223](docs/decisions/log.md#1223),

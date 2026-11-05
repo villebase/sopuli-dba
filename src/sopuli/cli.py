@@ -12178,7 +12178,7 @@ def _finish_one(
         unknown = windows.window_unknown(user, session.scope())
         if preview:
             would = (
-                "would discard any retained password"
+                "would end any old password kept beside `current`"
                 if unknown
                 else f"would end this window, {windows.remaining(user) or 'time unknown'} early"
             )

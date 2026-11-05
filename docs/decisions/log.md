@@ -4571,9 +4571,9 @@ the register.
   3. While a rollover's promotion is held, `creds apply` sends the same `OR`
      again on each run, as decision 4 of [#1270](#1270) does for a single
      value.
-  4. A rollover is allowed on an `ed25519` account. The plan and the row warn
-     that a PyMySQL client cannot log in with the old password while the
-     rollover is open.
+  4. A rollover is allowed on an `ed25519` account. The plan and the row are
+     to warn that a PyMySQL client cannot log in with the old password while
+     the rollover is open. The warning is not built yet; UC-1 says it.
 - **Why:**
   1. A statement names every method the account has, and replaces the ones
      it had (`03_dual_password_probe.py`, DP3), so the old password is kept

@@ -255,17 +255,18 @@ def closed(
     With ``unknown_window`` (:func:`window_unknown`, MySQL and MariaDB), the
     detail says what was sent instead, and whether ``current`` was verified.
     ``sent`` is the driver's own account of the statement
-    (``ChangeResult.detail``): ``DISCARD OLD PASSWORD`` on MySQL, and the
-    current value alone on MariaDB (#1271).
+    (``ChangeResult.detail``), and is required there: ``DISCARD OLD
+    PASSWORD`` on MySQL, and the current value alone on MariaDB (#1271).
     """
     if unknown_window:
-        what = sent or "any retained password discarded"
+        if not sent:
+            raise ValueError("an unread window's close needs the driver's account of it")
         if verification.result == PASS:
-            return Outcome(IN_SYNC, what, verification)
+            return Outcome(IN_SYNC, sent, verification)
         return Outcome(
             IN_SYNC,
-            f"{what}; the vault's `current` was not verified by login, because no login "
-            f"can reach this account",
+            f"{sent}; the vault's `current` was not verified by login, because no login "
+            "can reach this account",
             verification,
         )
     left = remaining(user, now=now)

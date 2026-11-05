@@ -41,7 +41,12 @@ from sopuli.apply import (
 )
 from sopuli.check import ROLLOVER_ACTIVE, Outcome
 from sopuli.config.model import Binding
-from sopuli.diagnostics import CHANGED_NOT_PROMOTED, PROMOTION_SKIPPED, PROMOTION_WITHHELD
+from sopuli.diagnostics import (
+    CHANGED_NOT_PROMOTED,
+    PROMOTION_SKIPPED,
+    PROMOTION_UNCONFIRMED,
+    PROMOTION_WITHHELD,
+)
 from sopuli.driver.guardrails import Refusal
 from sopuli.driver.protocol import FAIL, PASS, AttributeChange, VerifyResult
 from sopuli.output.document import Error, Summary
@@ -72,19 +77,22 @@ HELD_UNCONFIRMED = "unconfirmed"
 #: The `SOPULI-W049` message for a confirmed row in a held-back document, by
 #: cause. Each points at what the run says about the cause, because the remedy
 #: is there and one row cannot see it.
+#: "`current` does not hold it yet" rather than "still holds the old one": on a
+#: first apply there is no `current` at all (#1328).
 _HELD_MESSAGES = {
     HELD_NARROWED: (
         f"this database has the new password and the vault was not promoted, so `current` "
-        f"still holds the old one -- {PROMOTION_WITHHELD} names the wider run that finishes it"
+        f"does not hold it yet -- {PROMOTION_WITHHELD} names the wider run that finishes it"
     ),
     HELD_SKIPPED: (
         f"this database has the new password and the vault was not promoted, so `current` "
-        f"still holds the old one -- {PROMOTION_SKIPPED} names the target a guardrail skipped"
+        f"does not hold it yet -- {PROMOTION_SKIPPED} names the target a guardrail skipped"
     ),
     HELD_UNCONFIRMED: (
         "this database has the new password and the vault was not promoted, because another "
-        "row of this document did not confirm, so `current` still holds the old one -- "
-        "that row says why, and the same command again finishes it once that is fixed"
+        "row of this document did not confirm, so `current` does not hold it yet -- "
+        f"{PROMOTION_UNCONFIRMED} names that row's target, and the same command again "
+        "finishes it once that is fixed"
     ),
 }
 
@@ -458,7 +466,7 @@ def summarise(states: Sequence[str], *, changed: int, unpromoted: int = 0) -> Su
     ``unpromoted`` is the confirmed rows a promotion was for whose document
     `current` was not moved to: its write failed (#805), or it was held back
     without a write (#873). They move from ``ok`` to ``failed``: the database
-    took the password and `current` still holds the old one, so the run did not
+    took the password and `current` does not hold it yet, so the run did not
     finish its work on them. ``by_state`` still counts their state, which is
     what is true of the database.
     """

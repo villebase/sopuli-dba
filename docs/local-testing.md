@@ -1050,7 +1050,7 @@ acme_batch@192.0.2.%  mariadb-dev  verify  vault-dev:acme/mariadb/192.0.2.any
 
 ACCOUNT               TARGET       STATE         DETAIL
 acme_app@%            mariadb-dev  IN_SYNC       vault v2 verified by login; the lockout guard is unavailable: MariaDB counts failed logins against max_password_errors in mysql.global_priv, which the tool account does not read
-acme_batch@192.0.2.%  mariadb-dev  UNVERIFIABLE  the vault holds no password at vault-dev:acme/mariadb/192.0.2.any#DB_CREDENTIALS/acme_batch
+acme_batch@192.0.2.%  mariadb-dev  UNVERIFIABLE  `current` is empty and a password is staged in `pending`; `creds apply` promotes it once every target confirms
 
 1 unverifiable
 ...

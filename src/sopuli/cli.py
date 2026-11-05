@@ -164,6 +164,7 @@ from sopuli.diagnostics import (
     notification_unsent,
     promotion_failed,
     promotion_skipped,
+    promotion_unconfirmed,
     promotion_withheld,
     refusing_targets,
     reset_journal_unread,
@@ -5939,7 +5940,7 @@ def _check_one(
             outcome = check_states.decide(user, None)
             if stored is None and user is not None and not _settled_by_status(user):
                 outcome = check_states.Outcome(
-                    check_states.UNVERIFIABLE, _nothing_to_compare(binding)
+                    check_states.UNVERIFIABLE, _nothing_to_compare(binding, stores)
                 )
         else:
             # `attempts` is the budget this run intends against this account, and
@@ -6114,22 +6115,39 @@ def _previous_stored(binding: Binding, stores: Mapping[str, SecretStore]) -> Any
     return read_secret(stores[binding.vault], replace(ref, stage=PREVIOUS))
 
 
-def _nothing_to_compare(binding: Binding) -> str:
+def _nothing_to_compare(binding: Binding, stores: Mapping[str, SecretStore]) -> str:
     """Why this account could not be checked, when the vault side came back empty.
 
-    Three different situations reach one ``None`` from
-    :func:`_stored_credential`, and they send an operator to three different
+    Four different situations reach one ``None`` from
+    :func:`_stored_credential`, and they send an operator to four different
     places. Saying "the vault holds no password at this ref" for all of them
-    would name a ref that, in two of the three, does not exist.
+    would name a ref that, in two of them, does not exist, and in a third send
+    them looking for a wrong path when a password is staged there (#1328).
 
     A binding with no ref at all is not a fault: §3 makes ``secret`` optional,
     and an application that declares none is the ordinary shape of a config that
     only ever runs `doctor`.
+
+    **`pending` is read only for the message.** `check` compares against
+    `current` by design, and a staged password is not what applications fetch.
+    The read is made only on this path, where `current` came back empty, and
+    only for a ref that names no stage or version of its own.
     """
     if binding.secret is None:
         return "this account is declared with no secret ref, so there is nothing to compare"
     if binding.vault is None:
         return "no store is named for this ref, so there is nowhere to read it from"
+    ref = binding.secret
+    if ref.stage is None and ref.version is None:
+        try:
+            staged = read_secret(stores[binding.vault], replace(ref, stage=PENDING))
+        except Exception:  # noqa: BLE001 -- a failed read for a message leaves the plain one
+            staged = None
+        if staged is not None:
+            return (
+                "`current` is empty and a password is staged in `pending`; `creds apply` "
+                "promotes it once every target confirms"
+            )
     return f"the vault holds no password at {binding.secret}"
 
 
@@ -7930,6 +7948,8 @@ def creds_apply(
     document.diagnostics.extend(failed_promotions)
     skipped_promotions = _skipped_promotions(promotions)
     document.diagnostics.extend(skipped_promotions)
+    unconfirmed_promotions = _unconfirmed_promotions(promotions)
+    document.diagnostics.extend(unconfirmed_promotions)
     states = [record.outcome.state for record in applied]
     # `mutated`, not `changed`: an account this run unlocked and did not need to
     # re-password changed, and a summary counting only the DDL would call a run that
@@ -7997,6 +8017,7 @@ def creds_apply(
         repair_notes
         + [one.message for one in failed_promotions]
         + [one.message for one in skipped_promotions]
+        + [one.message for one in unconfirmed_promotions]
         + [one.message for one in reuse_notices]
         + [one.message for one in unchecked]
         + [one.message for one in clear]
@@ -8114,6 +8135,9 @@ class _Promotion:
     conflict: bool = False
     skipped: tuple[tuple[str, str], ...] = ()
     held: str | None = None
+    #: (account, target, state) for each row of a document held back because it
+    #: did not confirm, which ``SOPULI-W066`` names (#1328).
+    unconfirmed: tuple[tuple[str, str, str], ...] = ()
 
 
 def _refuse_unanswerable_rollback(
@@ -11362,6 +11386,7 @@ def _promote_documents(
                 "not every target confirmed, so the vault was left as it was",
                 promotable=True,
                 held=HELD_UNCONFIRMED,
+                unconfirmed=_held_by(records),
             )
             continue
         skipped = _skipped_pairs(records)
@@ -11399,6 +11424,36 @@ def _skipped_pairs(records: Sequence[_Applied]) -> tuple[tuple[str, str], ...]:
             }
         )
     )
+
+
+def _held_by(records: Sequence[_Applied]) -> tuple[tuple[str, str, str], ...]:
+    """(account, target, state) for each row that held a document back, or
+    nothing where no row of it confirmed (#1328).
+
+    Only a document with confirmed rows gets ``SOPULI-W066``. Those rows look
+    finished in the table, and nothing on them says which other row held the
+    promotion. Where every row failed, each row already says why, and the
+    verdict counts them.
+    """
+    states = [record.outcome.state for record in records]
+    if not any(state in apply_states.CONFIRMED for state in states):
+        return ()
+    return tuple(
+        (record.binding.account, record.binding.target, record.outcome.state)
+        for record in records
+        if record.outcome.state != apply_states.SKIPPED
+        and record.outcome.state not in apply_states.CONFIRMED
+    )
+
+
+def _unconfirmed_promotions(promotions: Mapping[LockKey, _Promotion]) -> list[Diagnostic]:
+    """``SOPULI-W066`` for each document a target that did not confirm held back
+    (#1328), naming the document and those targets."""
+    return [
+        promotion_unconfirmed(str(key), promotion.unconfirmed)
+        for key, promotion in promotions.items()
+        if promotion.unconfirmed
+    ]
 
 
 def _skipped_promotions(promotions: Mapping[LockKey, _Promotion]) -> list[Diagnostic]:
@@ -12628,6 +12683,8 @@ def creds_rotate(
     document.diagnostics.extend(failed_promotions)
     skipped_promotions = _skipped_promotions(sequence.promotions)
     document.diagnostics.extend(skipped_promotions)
+    unconfirmed_promotions = _unconfirmed_promotions(sequence.promotions)
+    document.diagnostics.extend(unconfirmed_promotions)
     states = [record.outcome.state for record in sequence.applied]
     changed = sum(1 for record in sequence.applied if record.mutated)
 
@@ -12691,6 +12748,7 @@ def creds_rotate(
         sequence.caveats
         + [one.message for one in failed_promotions]
         + [one.message for one in skipped_promotions]
+        + [one.message for one in unconfirmed_promotions]
         + [one.message for one in unchecked]
         + [one.message for one in clear]
         + _lock_notices(manager)

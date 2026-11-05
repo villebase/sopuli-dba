@@ -644,6 +644,32 @@ def test_a_binding_with_no_ref_says_so_rather_than_blaming_a_ref(
     assert "the vault holds no password at" not in result.output
 
 
+def test_an_empty_current_with_a_staged_pending_says_so(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """A first `creds generate` stages `pending` with no `current`. "The vault
+    holds no password" sent an operator looking for a wrong path (#1328)."""
+    harness = estate()
+    for target in ("appdb-alpha", "appdb-beta"):
+        harness["store"].write(f"apps/acme/{target}", {"pending": "Staged-Horse-Battery-7"}, cas=1)
+    result = run(runner, write_config(CONFIG))
+
+    assert "a password is staged in `pending`" in result.output
+    assert "the vault holds no password at" not in result.output
+    assert all(session.attempts == [] for session in harness["sessions"])
+
+
+def test_an_empty_document_still_says_the_vault_holds_no_password(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    harness = estate()
+    for target in ("appdb-alpha", "appdb-beta"):
+        harness["store"].write(f"apps/acme/{target}", {}, cas=1)
+    result = run(runner, write_config(CONFIG))
+
+    assert "the vault holds no password at" in result.output
+
+
 def test_an_unreachable_target_is_counted_as_failed(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:

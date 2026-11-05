@@ -109,10 +109,11 @@ detail.
    spelling: two application entries that bind it to different places, or spell
    it two ways, are refused, with names compared by `upper()`. One exception
    is accepted, on MariaDB: the one login after a password change may reach
-   another account of the same user, which the server matches from the tool's
-   host. It passes only when `CURRENT_USER()` is the declared account. A
-   failed one counts toward that account's `max_password_errors`. `creds check`
-   never logs in there. Reasons:
+   another account of the same user, one the config need not declare, which
+   the server matches from the tool's host. It passes only when
+   `CURRENT_USER()` is the declared account. If it fails, the failure counts
+   toward `max_password_errors` on the account it reached, declared or not.
+   `creds check` never logs in where another account could answer. Reasons:
    [H1](docs/decisions/log.md#h1),
    [#874](docs/decisions/log.md#874),
    [#1270](docs/decisions/log.md#1270).
@@ -135,15 +136,16 @@ detail.
    random password has nothing to converge on, so it is outside this rule:
    `creds generate` and `account reset-password` report `changed: true` and say
    what they replaced. Any verb with an observable target state is convergent.
-   Three exceptions. Two are on MySQL. `creds apply` does not log in before a
-   change, so while a rotation's promotion is held it sets the staged `pending`
-   again on each run, until the rotation completes. `creds finish-rollover`
-   cannot read whether a password is retained, so it sends `DISCARD OLD
-   PASSWORD` and reports `changed: true` on every run. On MariaDB, `account
-   suspend` cannot read the lock, so it sends `ACCOUNT LOCK` and reports
-   `changed: true` on every run. Reasons:
+   Three exceptions. On MySQL and MariaDB, `creds apply` does not log in
+   before a change, so while a rotation's promotion is held it sets the staged
+   `pending` again on each run, until the rotation completes. On MySQL, `creds
+   finish-rollover` cannot read whether a password is retained, so it sends
+   `DISCARD OLD PASSWORD` and reports `changed: true` on every run. On
+   MariaDB, `account suspend` cannot read the lock, so it sends `ACCOUNT LOCK`
+   and reports `changed: true` on every run. Reasons:
    [H7](docs/decisions/log.md#h7), [#1223](docs/decisions/log.md#1223),
-   [#1224](docs/decisions/log.md#1224), [#1267](docs/decisions/log.md#1267).
+   [#1224](docs/decisions/log.md#1224), [#1267](docs/decisions/log.md#1267),
+   [#1270](docs/decisions/log.md#1270).
 
 10. **Safety settings only ratchet toward safe.** `readonly`, `--dry-run`,
     `max_targets`, `confirm_environments`, `safety.delivery.allowed_methods`

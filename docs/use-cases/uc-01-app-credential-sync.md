@@ -642,21 +642,31 @@ These rules decide what `apply` does with each account:
   new password ends the expiry, with `RETAIN CURRENT PASSWORD` or without, and
   a rollover's retained password logs in too (`04_lock_expiry_probe.py`, LE7
   and LE8, [#1225](../decisions/log.md#1225)).
+- **On MariaDB, `apply` and `rotate` do not log in before a change either**
+  ([#1270](../decisions/log.md#1270), decision 4). That login would fail once
+  during a rotation, and a failure counts toward `max_password_errors`, which
+  the tool cannot read. As on MySQL, they set a password only from the vault's
+  `pending` or for a rollback. With only `current` the account is `SKIPPED`,
+  and while a promotion is held each `apply` sets the `pending` again and
+  reports `changed: true`. The lock is not read
+  ([#1267](../decisions/log.md#1267), decision 2), so a locked account is
+  changed. Its login after the change answers `4151`, which only the right
+  password gets.
 - **On MariaDB, `creds check` logs in only where no other account can answer
-  the login, and the login after a change logs in as any declared account**
-  ([#1270](../decisions/log.md#1270), decision 3). A check logs in only to a
-  `user@%` account that is the user's only one, with no anonymous account at
-  a named host, as on MySQL. Any other account is `unavailable` without a
-  login, because a failed login counts toward `max_password_errors` on the
-  account it reaches, and checks repeat. The one login after a change logs in
-  wherever a login may reach, and verifies only when `CURRENT_USER()` is the
-  declared account ([#1267](../decisions/log.md#1267), decision 8). A login
-  reaches the account the server matches from the tool's host, which may be
-  another one. A session whose `CURRENT_USER()` names another account says
-  nothing, and its `pending` is not promoted. Some answers come before
-  `CURRENT_USER()` can be read. These count only where no other account can
-  answer. Elsewhere the result is `unavailable`. A refusal is a `fail` only
-  where the target's
+  the login, and the one login after a change may reach an account the config
+  does not declare** ([#1270](../decisions/log.md#1270), decision 3). A check
+  logs in only to a `user@%` account that is the user's only one, with no
+  anonymous account at a named host, as on MySQL. Any other account is
+  `unavailable` without a login, because a failed login counts toward
+  `max_password_errors` on the account it reaches, and checks repeat. The one
+  login after a change logs in wherever a login may reach, and verifies only
+  when `CURRENT_USER()` is the declared account
+  ([#1267](../decisions/log.md#1267), decision 8). A login reaches the account
+  the server matches from the tool's host, which may be another one. A session
+  whose `CURRENT_USER()` names another account says nothing, and its `pending`
+  is not promoted. Some answers come before `CURRENT_USER()` can be read.
+  These count only where no other account can answer. Elsewhere the result is
+  `unavailable`. A refusal is a `fail` only where the target's
   `mariadb.ssl_mode` requires TLS, because an account that requires TLS
   refuses its right password over a session without it. MariaDB keeps no
   `password_last_changed` the tool can read, so there is no `stored` result.

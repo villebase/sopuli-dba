@@ -399,17 +399,18 @@ gets `1820`, which is the tool's TLS read. With `disconnect_on_expired_password
 TLS.
 
 `1820`, `1862` and `4151` come only to the right password, but before the tool
-can read `CURRENT_USER()`. `1045` does not say which account refused. So after
-a change, each counts only where no other account can answer the login.
-Elsewhere the result is `unavailable`, and the detail names the other account. `1045` is a `fail` only where the target's
-`ssl_mode` requires TLS. `4150` answers any password, so it is `unavailable`
-everywhere. On an `ed25519` account with `OR`, a rollover in progress, PyMySQL
-1.2.3 logs in only with the first method: the server asks for a second
-authentication for the second method, and for a wrong password, and PyMySQL
-fails itself with "received multiple auth switch requests" (#1271; probe 11,
-#1304). That login is `unavailable` too, and stays so while the `OR` is in
-place: it cannot tell a wrong password from the second method's. `sopuli/driver/mariadb/verification.py` holds the
-rule.
+can read `CURRENT_USER()`. `1045` does not say which account refused. A check
+logs in only where no other account can answer, so there each answer counts.
+After a change, where another account could answer, each is `unavailable`,
+and the detail names the other account. `1045` is a `fail` only where the
+target's `ssl_mode` requires TLS. `4150` answers any password, so it is
+`unavailable` everywhere. On an `ed25519` account with `OR`, a rollover in
+progress, PyMySQL 1.2.3 logs in only with the first method: the server asks
+for a second authentication for the second method, and for a wrong password,
+and PyMySQL fails itself with "received multiple auth switch requests"
+(#1271; probe 11, #1304). That login is `unavailable` too, and stays so while
+the `OR` is in place: it cannot tell a wrong password from the second
+method's. `sopuli/driver/mariadb/verification.py` holds the rule.
 
 A failed login after a change counts toward `max_password_errors` on the
 account it reaches. That is an accepted cost of decision 8. It happens once per

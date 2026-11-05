@@ -31,7 +31,7 @@ import logging
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
-from typing import Any, NoReturn, TypeVar
+from typing import Any, ClassVar, NoReturn, TypeVar
 
 import pymysql
 
@@ -132,6 +132,14 @@ class MariadbSession(ClosesConnection):
     the module docstring names; every other one refuses with
     ``SOPULI-20006``."""
 
+    #: ``creds apply`` and ``creds rotate`` do not log in before a change, as
+    #: on MySQL (#1270, decision 4). During a rotation that login fails once,
+    #: and a failure counts toward ``max_password_errors``, which the tool
+    #: cannot read. Whether a new password clears the block it sets (``4150``)
+    #: is not measured. So the one login after a change is the only one a
+    #: change makes. Not on the protocol: a driver without it logs in.
+    verifies_before_change: ClassVar[bool] = False
+
     connection: Any
     target: ExpandedTarget
     correlation_id: str
@@ -145,7 +153,8 @@ class MariadbSession(ClosesConnection):
     #: not change for the life of a connection.
     _session_user: str | None = field(default=None, init=False, repr=False)
     #: The accounts :meth:`set_password` changed whose next
-    #: :meth:`verify_password` has not run yet, by the view's spelling. That
+    #: :meth:`verify_password` has not run yet, as the caller spelled them.
+    #: `creds apply` passes both calls the name `describe_user` returned. That
     #: one login may reach another account (#1270, decision 3).
     _changed: set[str] = field(default_factory=set, init=False, repr=False)
 
@@ -309,7 +318,7 @@ class MariadbSession(ClosesConnection):
         except DriverError as failure:
             failure.password_sent = True
             raise
-        self._changed.add(found.name)
+        self._changed.add(account)
         LOG.debug("password set for %s on %s", found.name, self.target.name)
         return ChangeResult(changed=True, detail="password set", discarded=True)
 
@@ -440,6 +449,10 @@ class MariadbSession(ClosesConnection):
                 target=self.target.name,
                 hint="this driver verifies by `login` only",
             )
+        # Taken first, whatever follows: only the first verification after the
+        # change has decision 8's reach, even where that one fails.
+        after_change = account in self._changed
+        self._changed.discard(account)
         user, host = split(account)
         # One read: the user's accounts at every host, and the anonymous ones,
         # which compete for the same login.
@@ -456,10 +469,6 @@ class MariadbSession(ClosesConnection):
             raise accounts_module.OtherPluginError(
                 declared.name, declared.plugin, target=self.target.name
             )
-        # Taken whether or not the login is needed: only the first verification
-        # after the change has decision 8's reach.
-        after_change = declared.name in self._changed
-        self._changed.discard(declared.name)
         competing = verification.competitor(declared, found[user], found[""])
         if competing is not None and not after_change:
             return VerifyResult(

@@ -49,6 +49,7 @@ from sopuli.diagnostics import (
     PROMOTION_FAILED,
     PROMOTION_WITHHELD,
     REPAIR_DOCUMENT_STALE,
+    ROLLOVER_CAVEAT,
 )
 from sopuli.driver.oracle.accounts import RolesUnreadableError
 from sopuli.driver.oracle.errors import classify
@@ -526,6 +527,10 @@ class FakeSession:
         self.users[account.upper()] = replace(found, profile=spelling)
         return AttributeChange(ATTRIBUTE_SET, changed=True, detail=f"profile {was} -> {spelling}")
 
+    #: What a kept password will not do, as MariaDB's driver says for an
+    #: `ed25519` account (#1271). A test sets it on the class.
+    caveat: str | None = None
+
     def require_rollover(self, account: str) -> None:
         # The real driver raises for a missing account before it looks at
         # anything else, so this one does too -- otherwise the pre-flight
@@ -575,7 +580,12 @@ class FakeSession:
         self._called("set_password")
         # As the MySQL driver does where it can keep a second password (#1254).
         unread = PASSWORD_ROLLOVER in self.capabilities
-        return ChangeResult(changed=True, discarded=unread and old_password == "discard")
+        return ChangeResult(
+            changed=True,
+            discarded=unread and old_password == "discard",
+            # As the MariaDB driver does for an `ed25519` account (#1271).
+            caveat=self.caveat if old_password in ("retain", "keep") else None,
+        )
 
     def _called(self, event: str) -> None:
         """The seam a takeover needs: something happens to the vault *while* this
@@ -903,6 +913,49 @@ def test_only_a_rollover_s_pending_keeps_a_retained_password(
     assert promoted.get("rollover") in (None, {}), "cleared with `pending`"
     kept = "the previous password still logs in" in result.output
     assert kept == (expected == "keep")
+
+
+@pytest.mark.parametrize("confirmed", [True, False], ids=["confirmed", "refused"])
+def test_a_held_rollover_s_caveat_is_warned_only_for_a_confirmed_change(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+    confirmed: bool,
+) -> None:
+    """#1271: `apply` setting a rollover's `pending` again keeps the old
+    password, so a driver's caveat about it is `SOPULI-W064` and ends the row,
+    as in `rotate`. A change the login after it refuses opened no window the
+    caveat could describe, so it says nothing."""
+    caveat = "a PyMySQL client cannot log in with the old password"
+    monkeypatch.setattr(FakeSession, "caveat", caveat)
+    monkeypatch.setattr(FakeSession, "verifies_before_change", False, raising=False)
+    after = passes(1) if confirmed else [VerifyResult(VERIFY_LOGIN, FAIL, detail="refused")]
+    estate(
+        documents={
+            "apps/acme/appdb-alpha": {
+                "DB_CREDENTIALS": {"acme_web_user": LIVE},
+                "pending": {"acme_web_user": STAGED},
+                "rollover": {"acme_web_user": "retaining"},
+            }
+        },
+        capabilities=frozenset({PASSWORD_ROLLOVER}),
+        answers={"ACME_WEB_USER": after},
+    )
+    result = run(runner, write_config(CONFIG), "--select", "tenant=alpha", "--output", "json")
+
+    body = document(result)
+    warned = [one for one in body.get("diagnostics", []) if one.get("code") == ROLLOVER_CAVEAT]
+    details = [action["detail"] for action in body["results"][0]["actions"] if action.get("detail")]
+    if confirmed:
+        assert result.exit_code == ExitCode.SUCCESS, result.output
+        assert [(one["target"], one["account"]) for one in warned] == [
+            ("appdb-alpha", "acme_web_user")
+        ]
+        assert any(detail.endswith(f"; {caveat}") for detail in details)
+    else:
+        assert warned == []
+        assert not any(caveat in detail for detail in details)
 
 
 @pytest.mark.parametrize(

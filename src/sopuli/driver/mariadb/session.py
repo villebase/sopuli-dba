@@ -91,6 +91,21 @@ from sopuli.secrets import Secret
 
 LOG = logger("mariadb")
 
+#: What a rollover does not do on an ``ed25519`` account: PyMySQL uses only the
+#: first method of an ``ed25519`` ``OR``, which is the new password
+#: (``11_rollover_expiry_probe.py``, RE5). Other clients, and PyMySQL on
+#: ``mysql_native_password``, use both (#1271, decision 4).
+ED25519_ROLLOVER = (
+    "the account uses ed25519, so a PyMySQL client cannot log in with the old "
+    "password while the rollover is open; other clients can"
+)
+
+
+def _rollover_caveat(plugin: str) -> str | None:
+    """:data:`ED25519_ROLLOVER` for an ``ed25519`` account, else ``None``."""
+    return ED25519_ROLLOVER if plugin == password_module.ED25519 else None
+
+
 #: The hint for a `profile:` rule on a MariaDB server.
 NO_PROFILES = (
     "MariaDB has no profiles; declare these accounts by name with `accounts:`, "
@@ -340,6 +355,9 @@ class MariadbSession(ClosesConnection):
           apply` sets again while its promotion is held must keep the window
           open, and nothing else keeps it.
 
+        Either way, on an ``ed25519`` account the result carries
+        :data:`ED25519_ROLLOVER` as its ``caveat``.
+
         As on the other drivers, ``changed`` is ``True`` whenever the statement
         succeeded: the command decides first whether the account already had
         this password.
@@ -386,6 +404,7 @@ class MariadbSession(ClosesConnection):
                 changed=True,
                 detail="password set; the old password logs in too",
                 retained=old_password == OLD_RETAIN,
+                caveat=_rollover_caveat(found.plugin),
             )
         LOG.debug("password set for %s on %s", found.name, self.target.name)
         return ChangeResult(changed=True, detail="password set", discarded=True)
@@ -680,16 +699,18 @@ class MariadbSession(ClosesConnection):
             ),
         )
 
-    def require_rollover(self, account: str) -> None:
+    def require_rollover(self, account: str) -> str | None:
         """Refuse ``--strategy rollover`` where the account does not exist or
         uses another plugin, before anything is sent.
 
         Every supported release joins two methods with ``OR``
         (``03_dual_password_probe.py``, DP2), so :data:`CAPABILITIES` reports
         ``password_rollover``, and no profile decides it: the tool opens the
-        window itself (#1271)."""
+        window itself (#1271). An ``ed25519`` account is allowed, with
+        :data:`ED25519_ROLLOVER` as the caveat (#1271, decision 4)."""
         require_capability(self.scope(), PASSWORD_ROLLOVER, target=self.target.name)
-        self._existing(account, hint=_nothing("rolled over"))
+        found = self._existing(account, hint=_nothing("rolled over"))
+        return _rollover_caveat(found.plugin)
 
     def finish_rollover(self, account: str, *, current: Secret | None = None) -> ChangeResult:
         """The ``current`` password's value alone, always, and ``changed:

@@ -1109,7 +1109,19 @@ acme_app@%  mariadb-dev  ROLLOVER_ACTIVE  changed and verified by login; the pre
 ...
 ```
 
-On an `ed25519` account, a PyMySQL client can use only the new password.
+On an `ed25519` account a PyMySQL client can use only the new password. The
+row ends with that, and the run, `--dry-run` included, warns of it:
+
+```
+$ sopuli --config mariadb.yaml creds rotate --account 'acme_app@%' --strategy rollover --dry-run
+...
+nothing was rotated (--dry-run)
+
+2 warnings:
+  targets[0].mariadb.ssl_mode: target 'mariadb-dev' does not verify the server (`ssl_mode: REQUIRED`)
+    hint: anything between this run and the server can present its own certificate and read the password a run sets. Use `ssl_mode: VERIFY_IDENTITY` (the default), with `ssl_ca` naming the CA that issued the server's certificate
+  mariadb-dev: acme_app@%: the account uses ed25519, so a PyMySQL client cannot log in with the old password while the rollover is open; other clients can
+```
 
 `creds finish-rollover` sends the current password alone, which ends the old
 one. The tool cannot read whether an old password is kept, so the window is

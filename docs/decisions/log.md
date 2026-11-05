@@ -4571,9 +4571,13 @@ the register.
   3. While a rollover's promotion is held, `creds apply` sends the same `OR`
      again on each run, as decision 4 of [#1270](#1270) does for a single
      value.
-  4. A rollover is allowed on an `ed25519` account. The plan and the row are
-     to warn that a PyMySQL client cannot log in with the old password while
-     the rollover is open. The warning is not built yet; UC-1 says it.
+  4. A rollover is allowed on an `ed25519` account. The plan and the row
+     warn, as `SOPULI-W064`, that a PyMySQL client cannot log in with the old
+     password while the rollover is open.
+  5. Where no login can reach the account, `creds finish-rollover` still
+     sends the vault's `current` alone, as the gate of [#1224](#1224) allows
+     on MySQL. On MariaDB that sets the password unverified. Decided by the
+     maintainer on the review of #1329.
 - **Why:**
   1. A statement names every method the account has, and replaces the ones
      it had (`03_dual_password_probe.py`, DP3), so the old password is kept
@@ -4591,6 +4595,9 @@ the register.
      end the rollover early.
   4. Other clients, and PyMySQL on `mysql_native_password`, use both
      methods. Refusing `ed25519` would refuse those too.
+  5. No login reaches a named-host account, so a refusal would leave its
+     rollover open until a DBA ended it by hand. The value is the one `creds
+     apply` would set, and the rotation confirmed it before it promoted.
 - **Rejected:**
   1. The old value first, which the tool's own PyMySQL login could not use
      on `ed25519`; and the account's stored value, which the tool cannot
@@ -4599,6 +4606,9 @@ the register.
      `mysql.global_priv`, which [#1267](#1267) decision 3 refused.
   3. Refusing `apply` while a rollover's promotion is held.
   4. Refusing a rollover on `ed25519`.
-- **Accepted cost:** `creds finish-rollover` reports a change on every run.
+  5. Refusing the close on MariaDB where no login can reach the account.
+- **Accepted cost:** `creds finish-rollover` reports a change on every run,
+  and where no login reaches the account it replaces a drifted password and
+  ends an expiry without verifying the vault's `current`.
   On `ed25519`, a PyMySQL client still on the old password cannot log in
   during the rollover, so for it the rollover gives no grace.

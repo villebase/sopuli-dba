@@ -37,6 +37,7 @@ pymysql = pytest.importorskip("pymysql")
 session_module = pytest.importorskip("sopuli.driver.mariadb.session")
 accounts_module = pytest.importorskip("sopuli.driver.mariadb.accounts")
 password_module = pytest.importorskip("sopuli.driver.mariadb.password")
+ED25519_ROLLOVER = session_module.ED25519_ROLLOVER
 
 
 @pytest.fixture
@@ -227,6 +228,8 @@ def test_a_rollover_keeps_the_old_password_until_it_is_finished(
     )
 
     assert (opened.changed, opened.retained, opened.discarded) == (True, True, False)
+    assert opened.caveat is None, "mysql_native_password: PyMySQL uses both methods"
+    assert session.require_rollover(f"{user}@%") is None
     assert _login(live_mariadb, user, new)
     assert _login(live_mariadb, user, old)
     assert session.verify_password(f"{user}@%", Secret(new)).result == PASS
@@ -245,15 +248,26 @@ def test_an_ed25519_rollover_s_new_password_logs_in_over_pymysql(
 ) -> None:
     """PyMySQL takes only the first method of an ed25519 `OR`, so the new
     value comes first (`11_rollover_expiry_probe.py`, RE5), and the login
-    after the change confirms it."""
+    after the change confirms it. The pre-flight and the change both carry
+    the caveat (`SOPULI-W064`, #1271), and a PyMySQL login with the old
+    password fails as it says."""
     pytest.importorskip("nacl", reason="PyNaCl comes with the `mariadb` extra")
     old, new = f"Acme-Old-{uuid.uuid4().hex[:8]}", f"Acme-New-{uuid.uuid4().hex[:8]}"
     _root(
         live_mariadb, "create user %s@'%%' identified via ed25519 using password(%s)", (user, old)
     )
 
-    session.set_password(f"{user}@%", Secret(new), old_password=OLD_RETAIN, previous=Secret(old))
+    assert session.require_rollover(f"{user}@%") == ED25519_ROLLOVER
+    opened = session.set_password(
+        f"{user}@%", Secret(new), old_password=OLD_RETAIN, previous=Secret(old)
+    )
+    again = session.set_password(
+        f"{user}@%", Secret(new), old_password=OLD_KEEP, previous=Secret(old)
+    )
 
+    assert opened.caveat == again.caveat == ED25519_ROLLOVER
+    assert _login(live_mariadb, user, new)
+    assert not _login(live_mariadb, user, old), "PyMySQL cannot use the second method"
     assert session.verify_password(f"{user}@%", Secret(new)).result == PASS
     with live_mariadb.connect() as admin, admin.cursor() as cursor:
         cursor.execute("select plugin from mysql.user where User = %s", (user,))

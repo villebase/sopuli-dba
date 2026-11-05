@@ -6596,8 +6596,15 @@ def _candidate(
     """
     effective = binding if name is None else replace(binding, policy=name)
     chosen, policy = staging.policy_for(config, effective)
+    target = next(one.target for one in config.expanded_targets if one.name == binding.target)
     return staging.candidate_for(
-        binding, policy, name=chosen, readings=readings, supplied=supplied, enforce=enforce
+        binding,
+        policy,
+        name=chosen,
+        readings=readings,
+        supplied=supplied,
+        enforce=enforce,
+        product=target.type,
     )
 
 

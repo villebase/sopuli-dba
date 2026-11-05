@@ -716,7 +716,7 @@ def test_a_second_line_break_from_the_pipe_is_refused_and_nothing_is_written(
     )
 
     assert isinstance(result.exception, ConfigError), result.exception
-    assert "cannot be used on any target" in result.exception.message
+    assert "`--no-policy-check` cannot waive that" in (result.exception.hint or "")
     assert store.read(PATH) is None
 
 

@@ -295,11 +295,12 @@ def test_no_policy_check_accepts_and_records_what_it_accepted() -> None:
         ('SuppliedPassword2026"abcd', "forbidden"),
     ],
 )
-def test_a_password_no_driver_accepts_is_refused_even_under_no_policy_check(
+def test_what_the_oracle_driver_refuses_is_refused_even_under_no_policy_check(
     supplied: str, rule: str, enforce: bool
 ) -> None:
     """A control character or `"` would stage a `pending` that every
-    `creds apply` refuses (#1327), so the flag cannot waive them."""
+    `creds apply` on an Oracle target refuses (#1327), so the flag cannot
+    waive them there."""
     config = estate()
     name, policy = generate.policy_for(config, config.bindings[0])
 
@@ -308,9 +309,57 @@ def test_a_password_no_driver_accepts_is_refused_even_under_no_policy_check(
             config.bindings[0], policy, name=name, supplied=Secret(supplied), enforce=enforce
         )
 
-    assert "cannot be used on any target" in raised.value.message
-    assert rule in raised.value.message
+    hint = raised.value.hint or ""
+    assert f"refuses {rule}, and `--no-policy-check` cannot waive that" in hint
     assert "abcd" not in str(raised.value)
+
+
+@pytest.mark.parametrize("product", ["postgresql", "mysql", "mariadb"])
+def test_a_quote_stays_waivable_where_the_driver_accepts_it(product: str) -> None:
+    """Only Oracle's driver refuses `"` (invariant 11); the others set it."""
+    config = estate()
+    name, policy = generate.policy_for(config, config.bindings[0])
+
+    candidate = generate.candidate_for(
+        config.bindings[0],
+        policy,
+        name=name,
+        supplied=Secret('SuppliedPassword2026"abcd'),
+        enforce=False,
+        product=product,
+    )
+
+    assert "forbidden" in [one.rule for one in candidate.accepted_violations]
+
+
+@pytest.mark.parametrize("product", ["postgresql", "mysql", "mariadb"])
+def test_a_control_character_is_refused_on_every_product(product: str) -> None:
+    config = estate()
+    name, policy = generate.policy_for(config, config.bindings[0])
+
+    with pytest.raises(PasswordPolicyError):
+        generate.candidate_for(
+            config.bindings[0],
+            policy,
+            name=name,
+            supplied=Secret("SuppliedPassword2026abcd\r\n"),
+            enforce=False,
+            product=product,
+        )
+
+
+def test_the_refusal_names_the_waivable_violations_too() -> None:
+    """Fixing the quote must not uncover a length violation nobody was told about."""
+    config = estate()
+    name, policy = generate.policy_for(config, config.bindings[0])
+
+    with pytest.raises(PasswordPolicyError) as raised:
+        generate.candidate_for(config.bindings[0], policy, name=name, supplied=Secret('sh"rt'))
+
+    hint = raised.value.hint or ""
+    assert "forbidden (" in hint
+    assert "length (" in hint
+    assert "refuses forbidden," in hint
 
 
 def test_a_trailing_line_break_is_blamed_on_the_pipe() -> None:

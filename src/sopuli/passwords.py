@@ -37,6 +37,7 @@ from dataclasses import dataclass
 from sopuli.config import charsets
 from sopuli.config.errors import ConfigError
 from sopuli.config.model import PasswordPolicy
+from sopuli.config.targets import ORACLE
 from sopuli.secrets import Secret
 
 #: The only source of randomness this module uses -- P5 and UC-1 §4 step 3 both
@@ -64,13 +65,21 @@ LENGTH = "length"
 BYTE_LENGTH = "byte_length"
 ENCODING = "encoding"
 
-#: The rules ``--no-policy-check`` cannot waive (#1327). They are not policy:
-#: no driver accepts a password that breaks them, so a password staged past them
-#: is one ``creds apply`` refuses on every target. The other rules are what the
-#: config's policy asks for, and an external system may dictate a password that
-#: breaks them and that the database still accepts. An empty password is refused
-#: before any rule runs, where stdin is read.
-UNWAIVABLE = frozenset({FORBIDDEN, CONTROL})
+#: The rules ``--no-policy-check`` cannot waive on a target of each product
+#: (#1327). They are not policy: the product's driver refuses a password that
+#: breaks them, so a password staged past them is one ``creds apply`` refuses
+#: there. Every driver refuses a control character. Only Oracle's refuses ``"``
+#: (invariant 11): a quoted identifier has no escape for it. The other rules
+#: are what the config's policy asks for, and an external system may dictate a
+#: password that breaks them and that the database still accepts. An empty
+#: password is refused before any rule runs, where stdin is read.
+_EVERY_DRIVER_REFUSES = frozenset({CONTROL})
+_ORACLE_REFUSES = frozenset({CONTROL, FORBIDDEN})
+
+
+def unwaivable(product: str) -> frozenset[str]:
+    """The rules ``--no-policy-check`` cannot waive on a ``product`` target."""
+    return _ORACLE_REFUSES if product == ORACLE else _EVERY_DRIVER_REFUSES
 
 
 class PasswordPolicyError(ConfigError):

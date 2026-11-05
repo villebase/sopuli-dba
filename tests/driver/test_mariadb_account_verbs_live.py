@@ -13,15 +13,18 @@ from typing import Any
 
 import pytest
 
+from sopuli.apply import Source, settled_before_acting
 from sopuli.config.model import ExpandedTarget, Target, TargetMysql
 from sopuli.driver.protocol import (
     EXPIRE_PASSWORD,
+    PASS,
     PASSWORD_EXPIRE,
     PASSWORD_SET,
     Credential,
     DriverError,
     Timeouts,
 )
+from sopuli.payload import PENDING
 from sopuli.secrets import Secret
 
 pymysql = pytest.importorskip("pymysql")
@@ -175,6 +178,33 @@ def test_an_expiry_leaves_a_second_method_expired_and_working(
 
     assert _login(live_mariadb, user, OLD) == MUST_CHANGE_PASSWORD
     assert _login(live_mariadb, user, OTHER) == MUST_CHANGE_PASSWORD
+
+
+def test_creds_apply_changes_an_expired_account_and_the_login_passes(
+    live_mariadb: Any, session: Any, user: str
+) -> None:
+    """Why `creds apply` changes an expired MariaDB account instead of
+    reporting `EXPIRED` (#1322): the scope reports `expire_password`, and a
+    new value sent alone ends the expiry (`11_rollover_expiry_probe.py`, RE4).
+    The login after the change then logs in without `1820`."""
+    _root(live_mariadb, "alter user %s@'%%' password expire", (user,))
+    state = session.describe_user(f"{user}@%")
+    assert state is not None
+    assert state.expired
+
+    settled = settled_before_acting(
+        state,
+        Source(PENDING, Secret(NEW), Secret(OLD)),
+        expiry_cleared=session.scope().supports(EXPIRE_PASSWORD),
+    )
+    assert settled is None
+    session.set_password(f"{user}@%", Secret(NEW))
+
+    verified = session.verify_password(f"{user}@%", Secret(NEW))
+    assert verified.result == PASS
+    assert "1820" not in str(verified.detail)
+    assert _expired(live_mariadb, user) == "N"
+    assert _login(live_mariadb, user, OLD) == ACCESS_DENIED
 
 
 def test_an_account_that_does_not_exist_is_refused(session: Any) -> None:

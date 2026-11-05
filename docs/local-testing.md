@@ -1079,6 +1079,22 @@ rotation: staged 1 document, promoted 1 document
 `creds generate --overwrite-pending` and applied from a host whose login
 reaches the account. A new `pending` brings a new reaching login.
 
+An expired account is changed too, because the new password ends the expiry.
+Stage a password with `creds generate`, expire the account as root with
+`ALTER USER 'acme_app'@'%' PASSWORD EXPIRE`, and run `creds apply`:
+
+```
+$ sopuli --config mariadb.yaml creds apply
+...
+ACCOUNT     TARGET       STATE    DETAIL
+acme_app@%  mariadb-dev  IN_SYNC  changed and verified by login
+
+1 changed, 1 promoted to `current`
+...
+```
+
+`password_expired` in `mysql.user` then reads `N`.
+
 `--strategy rollover` is refused before anything changes, exit 9: a rollover
 on MariaDB is not written yet (#1271). Two targets on one MariaDB server are
 not caught yet (#1286).

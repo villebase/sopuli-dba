@@ -353,7 +353,7 @@ the account is locked by `account suspend` or blocked after failed logins
 ## 7. Checking a password by login
 
 The tool verifies a password by logging in as the account, over the target's
-own TLS settings (open: #1270). PyMySQL logs in on `mysql_native_password`,
+own TLS settings. PyMySQL logs in on `mysql_native_password`,
 and on `ed25519` with PyNaCl, which the `mariadb` extra installs
 (`06_pymysql_login_probe.py`, PL1 and PL3). The driver reports no
 `offline_verify`: the stored value is in a column the tool account does not
@@ -375,7 +375,7 @@ What the server answers at a login, measured with the `mariadb` client:
 | open | logs in | `1045` |
 | expired | logs in, then `1820` to a statement (LK3) | `1045` |
 | locked | `4151` (LK1) | `1045` |
-| blocked after failed logins | `4150` (LK4) | `1045` |
+| blocked after failed logins | `4150` (LK4) | `4150`, measured on 11.8.9 with `max_password_errors = 1` |
 
 With PyMySQL 1.2.3 on 11.8.9, an expired account's first statement after login
 gets `1820`, which is the tool's TLS read. With `disconnect_on_expired_password

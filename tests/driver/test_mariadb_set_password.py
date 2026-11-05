@@ -1,9 +1,11 @@
-"""`set_password` on the tier-1 `mariadb` service, as the tool account (#1270).
+"""`set_password` and `verify_password` on the tier-1 `mariadb` service, as
+the tool account (#1270).
 
 Tier 1. The driver sends ``IDENTIFIED VIA <plugin> USING '<value>'`` with the
 value for the account's own plugin, and the account then logs in with the
 password. With every log the server keeps turned on, the password is in none of
-them (invariant 15, ``02-mariadb-privileges.md`` §6).
+them (invariant 15, ``02-mariadb-privileges.md`` §6). The session's
+`verify_password` checks it by a login that confirms the account (§7).
 """
 
 from __future__ import annotations
@@ -16,7 +18,18 @@ from typing import Any
 import pytest
 
 from sopuli.config.model import ExpandedTarget, Target, TargetMysql
-from sopuli.driver.protocol import OLD_RETAIN, Credential, DriverError, Timeouts
+from sopuli.driver.protocol import (
+    FAIL,
+    OLD_RETAIN,
+    PASS,
+    UNAVAILABLE,
+    VERIFY_BOTH,
+    VERIFY_HASH,
+    Credential,
+    DriverError,
+    Timeouts,
+    UnsupportedCapabilityError,
+)
 from sopuli.driver.registry import NotWrittenError
 from sopuli.secrets import Secret
 
@@ -182,3 +195,70 @@ def test_a_rollover_is_not_written_yet(live_mariadb: Any, session: Any, user: st
 
     with pytest.raises(NotWrittenError):
         session.set_password(f"{user}@%", Secret("Acme-not-sent-1"), old_password=OLD_RETAIN)
+
+
+@pytest.mark.parametrize("plugin", ["mysql_native_password", "ed25519"])
+def test_a_set_password_verifies_and_a_wrong_one_fails(
+    live_mariadb: Any, session: Any, user: str, plugin: str
+) -> None:
+    """The account is `user@%` and the user's only one, and the target
+    requires TLS, so a refusal is the password's (§7)."""
+    _create(live_mariadb, user, plugin)
+    password = f"Acme-{uuid.uuid4().hex[:12]}"
+    session.set_password(f"{user}@%", Secret(password))
+
+    right = session.verify_password(f"{user}@%", Secret(password))
+    wrong = session.verify_password(f"{user}@%", Secret("Acme-wrong-password-1"))
+
+    assert right.result == PASS
+    assert wrong.result == FAIL
+
+
+def test_a_missing_account_is_unavailable_without_a_login(session: Any) -> None:
+    result = session.verify_password("acme_nobody@%", Secret("Acme-not-sent-1"))
+
+    assert result.result == UNAVAILABLE
+    assert "no account" in (result.detail or "")
+
+
+def test_another_account_of_the_user_makes_a_refusal_unavailable(
+    live_mariadb: Any, session: Any, user: str
+) -> None:
+    """The user also exists at a host the tool does not connect from. A login
+    still reaches `user@%`, and passes where `CURRENT_USER()` names it
+    (decision 8). A refusal says nothing: another account could have sent it.
+    The other account's own password reaches `user@%` and is refused, which
+    says nothing about the other account either."""
+    other = "192.0.2.%"
+    password, theirs = f"Acme-{uuid.uuid4().hex[:12]}", f"Acme-{uuid.uuid4().hex[:12]}"
+    _root(live_mariadb, "create user %s@'%%' identified by %s", (user, password))
+    _root(live_mariadb, "create user %s@%s identified by %s", (user, other, theirs))
+    try:
+        right = session.verify_password(f"{user}@%", Secret(password))
+        wrong = session.verify_password(f"{user}@%", Secret("Acme-wrong-password-1"))
+        elsewhere = session.verify_password(f"{user}@{other}", Secret(theirs))
+    finally:
+        _root(live_mariadb, "drop user if exists %s@%s", (user, other))
+
+    assert right.result == PASS
+    assert wrong.result == UNAVAILABLE
+    assert f"{user}@{other}" in (wrong.detail or "")
+    assert elsewhere.result == UNAVAILABLE
+
+
+@pytest.mark.parametrize("method", [VERIFY_HASH, VERIFY_BOTH])
+def test_a_check_by_the_stored_value_is_refused_by_capability(
+    live_mariadb: Any, session: Any, user: str, method: str
+) -> None:
+    # The account exists, so the refusal cannot be for a missing one.
+    _create(live_mariadb, user, "mysql_native_password")
+
+    with pytest.raises(UnsupportedCapabilityError):
+        session.verify_password(f"{user}@%", Secret("Acme-not-sent-1"), method=method)
+
+
+def test_a_check_of_another_plugin_is_refused(live_mariadb: Any, session: Any, user: str) -> None:
+    _root(live_mariadb, "create user %s@'%%' identified via unix_socket", (user,))
+
+    with pytest.raises(accounts_module.OtherPluginError):
+        session.verify_password(f"{user}@%", Secret("Acme-not-sent-1"))

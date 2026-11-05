@@ -31,7 +31,7 @@ import logging
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
-from typing import Any, NoReturn, TypeVar
+from typing import Any, ClassVar, NoReturn, TypeVar
 
 import pymysql
 
@@ -146,6 +146,14 @@ class MariadbSession(ClosesConnection):
     :class:`~sopuli.driver.protocol.Session` methods `doctor` uses, and those
     the module docstring names; every other one refuses with
     ``SOPULI-20006``."""
+
+    #: ``creds apply`` and ``creds rotate`` do not log in before a change, as
+    #: on MySQL (#1270, decision 4). During a rotation that login fails once,
+    #: and a failure counts toward ``max_password_errors``, which the tool
+    #: cannot read. Whether a new password clears the block it sets (``4150``)
+    #: is not measured. So the login after a change is the only one a change
+    #: makes. Not on the protocol: a driver without it logs in.
+    verifies_before_change: ClassVar[bool] = False
 
     connection: Any
     target: ExpandedTarget
@@ -426,14 +434,18 @@ class MariadbSession(ClosesConnection):
         :meth:`require_verifier` refuses them at plan time, and this refuses
         them again.
 
-        A login passes only where ``CURRENT_USER()`` is the declared account
-        (#1267, decision 8). An answer that comes before it can be read counts
-        only where no other account can answer the login
-        (:func:`~sopuli.driver.mariadb.verification.competitor`). An account
-        that does not exist is :data:`~sopuli.driver.protocol.UNAVAILABLE`
-        without a login. The tool cannot read MariaDB's count of failed logins,
-        so ``lockout_margin`` and ``attempts`` have nothing to guard, and the
-        detail says so.
+        The tool logs in only where no other account can answer the login
+        (:func:`~sopuli.driver.mariadb.verification.competitor`), as on MySQL.
+        Any other account is :data:`~sopuli.driver.protocol.UNAVAILABLE`
+        without a login, as is one that does not exist: a failed login counts
+        toward ``max_password_errors`` on the account it reaches, and `creds
+        check` and `creds apply` repeat (#1270, decision 3). The login after
+        a change follows the same rule. TODO(#1316): once per staged
+        ``pending``, that login may reach further (#1267, decision 8).
+
+        The tool cannot read MariaDB's count of failed logins, so
+        ``lockout_margin`` and ``attempts`` have nothing to guard, and the
+        detail of every login says so.
         """
         if method in (VERIFY_HASH, VERIFY_BOTH):
             self.require_verifier(account, secret)
@@ -459,11 +471,20 @@ class MariadbSession(ClosesConnection):
             raise accounts_module.OtherPluginError(
                 declared.name, declared.plugin, target=self.target.name
             )
+        competing = verification.competitor(declared, found[user], found[""])
+        if competing is not None:
+            return VerifyResult(
+                method=VERIFY_LOGIN,
+                result=UNAVAILABLE,
+                detail=f"no login was attempted, because {competing}",
+            )
         return verification.login(
             self.target,
             declared,
             secret,
-            competing=verification.competitor(declared, found[user], found[""]),
+            # Always None here. TODO(#1316): the reaching login passes the
+            # competitor, and `verification` judges what comes back by it.
+            competing=None,
             correlation_id=self.correlation_id,
             timeouts=self.timeouts,
         )

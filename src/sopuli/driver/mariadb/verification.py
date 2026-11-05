@@ -130,6 +130,19 @@ def _accepted(declared: Account, competing: str | None, why: str, number: int) -
     )
 
 
+#: PyMySQL 1.2.3's own error, with no number, when the server asks for a
+#: second authentication: for the second method of an ``ed25519`` ``OR``, which
+#: a rollover sets, and for a wrong password on such an account
+#: (``11_rollover_expiry_probe.py``, RE1 and RE2, #1271).
+MULTIPLE_SWITCHES = "received multiple auth switch requests"
+
+#: What a login that met :data:`MULTIPLE_SWITCHES` says.
+SECOND_METHOD = (
+    "PyMySQL cannot finish a login the server asks to authenticate twice, which it does "
+    "for the second method of an ed25519 `OR` (a rollover in progress) and for a wrong "
+    "password on such an account, so this says nothing about the password"
+)
+
 #: Why a refusal over a session that need not be TLS says nothing.
 NOT_OVER_TLS = (
     "the target's `mariadb.ssl_mode` does not require TLS, and an account that "
@@ -237,6 +250,13 @@ def _ended(
 ) -> VerifyResult:
     """The result for a login that ended in ``error``, at connect or after."""
     latency = _ms(started) if latency is None else latency
+    if connecting and tuple(getattr(error, "args", ())) == (MULTIPLE_SWITCHES,):
+        # Unavailable wherever no other account can answer too: a wrong
+        # password and a right second method fail the same way here.
+        LOG.debug("login as %s: PyMySQL met a second auth switch", declared.name)
+        return VerifyResult(
+            method=VERIFY_LOGIN, result=UNAVAILABLE, latency_ms=latency, detail=SECOND_METHOD
+        )
     failure = from_error(error, connecting=connecting)
     LOG.debug("login as %s ended with %s in %.3fs", declared.name, failure.code, latency / 1000)
     result = outcome(declared, failure.number, competing, tls=tls) if failure.number else None

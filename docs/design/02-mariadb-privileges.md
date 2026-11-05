@@ -391,7 +391,12 @@ named host. The MySQL driver logs in only there
 ([#1223](../decisions/log.md#1223)). Elsewhere the result is `unavailable`, and
 the detail names the other account. `1045` is a `fail` only where the target's
 `ssl_mode` requires TLS. `4150` answers any password, so it is `unavailable`
-everywhere. `sopuli/driver/mariadb/verification.py` holds the rule.
+everywhere. On an `ed25519` account with `OR`, a rollover in progress, PyMySQL
+1.2.3 logs in only with the first method: the server asks for a second
+authentication for the second method, and for a wrong password, and PyMySQL
+fails itself with "received multiple auth switch requests" (#1271). That
+login is `unavailable` too. `sopuli/driver/mariadb/verification.py` holds the
+rule.
 
 A failed verification login counts toward `max_password_errors` on the account
 it reaches. That is an accepted cost of decision 8.

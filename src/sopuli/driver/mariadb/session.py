@@ -16,8 +16,8 @@ declared account, with the privileges guardrail 9 checks and the roles it
 holds, sets its password by the value its plugin stores and verifies it by
 login (#1270). It resolves a role and lists its members, suspends an account,
 resets its password and expires it (#1272). Every other method refuses with
-``SOPULI-20006``, and the registry lists no command but `doctor`: the rest of
-UC-1 is #1270, and registering UC-2's verbs is #1272.
+``SOPULI-20006``. The registry lists `doctor` and UC-2's four verbs; UC-1's
+are #1270.
 
 The session claims no server identity: MariaDB has no ``server_uuid``, and
 11.8.9 shows no ``server_uid`` status either, so two targets on one server are

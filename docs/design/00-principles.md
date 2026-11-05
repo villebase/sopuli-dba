@@ -259,9 +259,9 @@ entry lists UC-1's `creds generate`, `apply`, `check`, `rotate`, `status` and
 `reset-password`, `suspend` and `expire-password` (#1225): every command that
 connects to a target, as for PostgreSQL. The config accepts `type: mariadb`
 too, and PyMySQL with PyNaCl comes with `sopuli-dba[mariadb]`. `doctor`
-connects to a MariaDB server and reports the scope, `server` (#1268). The
-MariaDB entry lists no other command yet, so every other command refuses a
-MariaDB target with `SOPULI-20006` (UC-1 is #1270, UC-2 #1272). What
+connects to a MariaDB server and reports the scope, `server` (#1268), and
+UC-2's commands run against it (#1272). UC-1's commands refuse a MariaDB
+target with `SOPULI-20006` until #1270 registers them. What
 PostgreSQL lacks, such as a rollover window, a profile, or a forced password
 change at next login, is refused at plan time by capability, not by product. A libpq older than 16 is a property of the client,
 not of the target, and is refused per account during the run: the one accepted

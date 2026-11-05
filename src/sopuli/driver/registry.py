@@ -226,8 +226,10 @@ DRIVERS: dict[str, DatabaseDriver] = {
     # EXPIRE` in one statement, never unlocks, and refuses `--keep-rollover` by
     # capability; `account suspend`, by `ACCOUNT LOCK` on every run; and
     # `account expire-password`, by `PASSWORD EXPIRE` alone. Guardrail 9
-    # refuses an administrator in all three that change an account, and
-    # `account list` says so (`guardrails.every_verb`). UC-1 is #1270.
+    # refuses an administrator in all three that change an account, except a
+    # reset of the tool's own account, which guardrail 7 refuses unless
+    # `--force`; `account list` says which (`guardrails.every_verb`). UC-1 is
+    # #1270.
     "mariadb": DatabaseDriver(
         module="sopuli.driver.mariadb.session",
         extra="mariadb",

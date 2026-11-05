@@ -1934,7 +1934,7 @@ personal_accounts:
 ```
 
 `CREATE ROLE` grants the role to the account that created it, so the rule
-admits root too, and check 9 refuses root for every verb:
+admits root too, and on MariaDB check 9 refuses root for every verb:
 
 ```
 $ sopuli --config mariadb.yaml account list
@@ -1946,7 +1946,7 @@ root@localhost          mariadb-dev  role 'acme_dev_team'  OPEN    -            
 3 declared accounts, 3 on the selected targets
 
 2 notes:
-  root@localhost on mariadb-dev: a mutating verb refuses this account at plan time: check 9 (the account holds ALTER ON *.*, ALTER ROUTINE ON *.*, BINLOG MONITOR ON *.*, CREATE ON *.*, CREATE ROUTINE ON *.* and 26 more grants). no flag overrides check 9, and on MariaDB it refuses every verb, `account suspend` included
+  root@localhost on mariadb-dev: a mutating verb refuses this account at plan time: check 9 (the account holds ALTER ON *.*, ALTER ROUTINE ON *.*, BINLOG MONITOR ON *.*, CREATE ON *.*, CREATE ROUTINE ON *.* and 26 more grants). no flag overrides check 9, so no verb will act on this account
   mariadb-dev: DB_PW_CHANGED is empty for 3 accounts: MariaDB keeps the time of a password change beside the stored value, which the tool does not read
 ...
 ```

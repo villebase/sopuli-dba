@@ -223,9 +223,7 @@ def cross_declared(
     return None
 
 
-def guardrail_refusal(
-    state: UserState, *, admitted: bool, target_type: str | None = None
-) -> str | None:
+def guardrail_refusal(state: UserState, *, admitted: bool, target_type: str) -> str | None:
     """Why a mutating verb would refuse this listed account, or ``None`` (#1207).
 
     A predicate can admit an account that a guardrail refuses: a member of
@@ -249,8 +247,10 @@ def guardrail_refusal(
 
     Where :func:`~sopuli.driver.guardrails.every_verb` says check 9 refuses
     every verb on ``target_type``, MariaDB, the review runs as `account
-    suspend` runs it there: the tool's own account is not exempt, and the
-    remedy says no verb acts on the account (#1272). ``None`` is that safe side.
+    suspend` runs it there, and the remedy says no verb acts on the account
+    (#1272). The tool's own account is the exception: a reset of it still
+    exempts it from check 9, so only check 7 refuses that, and `--force`
+    waives it.
     """
     declared = (state.name,) if admitted else ()
     every = guardrails.every_verb(target_type)
@@ -270,6 +270,14 @@ def guardrail_refusal(
                 "; `account suspend` and `account expire-password` need `--force` for the "
                 "rest, and the override is recorded"
             )
+    elif fixed is not None and fixed.check == guardrails.GLOBAL_PRIVILEGE and state.session_account:
+        # The verbs that set no password refuse it by check 9; a reset is
+        # refused only by check 7, which `--force` waives (#1222, #1272).
+        remedy = (
+            "no flag overrides check 9 for `account suspend` and `account expire-password`; "
+            "`account reset-password` needs `--force` for check 7, and the override is "
+            "recorded"
+        )
     elif fixed is not None:
         remedy = (
             f"no flag overrides check {guardrails.NUMBERS[fixed.check]}, so no verb will "

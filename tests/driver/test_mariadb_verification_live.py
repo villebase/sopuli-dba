@@ -25,6 +25,8 @@ from sopuli.driver.mariadb import accounts  # noqa: E402
 from sopuli.driver.mariadb.verification import competitor, login  # noqa: E402
 
 PASSWORD = "Acme-Vfy-pw1"
+#: A rollover's second password, beside PASSWORD.
+SECOND_PASSWORD = "Acme-Vfy-pw2"
 
 
 @dataclass
@@ -174,14 +176,14 @@ def test_an_ed25519_rollover_s_second_method_says_nothing(stage: Stage) -> None:
     from sopuli.driver.mariadb.password import ed25519_value
 
     stage.create("%")
-    first, second = (ed25519_value(Secret(p)).reveal() for p in (PASSWORD, "Acme-Vfy-pw2"))
+    first, second = (ed25519_value(Secret(p)).reveal() for p in (PASSWORD, SECOND_PASSWORD))
     stage.root(
         f"ALTER USER %s@'%%' IDENTIFIED VIA ed25519 USING '{first}' OR ed25519 USING '{second}'",
         (stage.user,),
     )
 
     assert stage.verify("%", PASSWORD).result == PASS
-    for password in ("Acme-Vfy-pw2", "Not-the-pw9"):
+    for password in (SECOND_PASSWORD, "Not-the-pw9"):
         result = stage.verify("%", password)
         assert result.result == UNAVAILABLE
         assert "authenticate twice" in str(result.detail)

@@ -38,13 +38,14 @@ from dataclasses import dataclass
 from sopuli.config.delivery import IMPLEMENTED, MANUAL
 from sopuli.config.errors import ArgumentError
 from sopuli.config.model import Config, Delivery, ExpandedTarget
-from sopuli.config.targets import MYSQL
+from sopuli.config.targets import MARIADB, MYSQL
 from sopuli.driver.guardrails import Review, review
 from sopuli.driver.oracle.accounts import deliberately_locked
 from sopuli.driver.protocol import (
     EXPIRE_PASSWORD,
     KEEP_ROLLOVER,
     KEPT_WINDOW_UNREADABLE,
+    KEPT_WINDOW_UNREADABLE_MARIADB,
     SEEN_NEEDS_EXPIRY,
     Scope,
     UnsupportedCapabilityError,
@@ -183,26 +184,25 @@ def refuse_kept_window(delivery: Delivery, *, keep_rollover: bool) -> None:
 
 
 def refuse_kept_window_on_mysql(targets: Iterable[ExpandedTarget], *, keep_rollover: bool) -> None:
-    """Refuse ``--keep-rollover`` where a target is MySQL, at plan time, exit 5
-    (#1225, decision 2).
+    """Refuse ``--keep-rollover`` where a target is MySQL or MariaDB, at plan
+    time, exit 5 (#1225, decision 2; #1272).
 
-    A reset there discards the old password: a password kept with ``RETAIN
-    CURRENT PASSWORD`` cannot be read back, so nothing could say whether the
-    window is open or when it ends. Refused by capability, naming the first
-    MySQL target, on either path and under ``--dry-run`` too, for
+    A reset there ends any second password: on MySQL a password kept with
+    ``RETAIN CURRENT PASSWORD``, and on MariaDB a second method joined by
+    ``OR`` (#1267, decision 3). Neither can be read back, so nothing could say
+    whether the window is open or when it ends. Refused by capability, naming
+    the first such target, on either path and under ``--dry-run`` too, for
     :func:`refuse_kept_window`'s reason. Knowable from the file, so it needs no
     connection, and the whole run is refused, as
     :func:`~sopuli.cli._refuse_a_bare_mysql_name` refuses it.
     """
     if not keep_rollover:
         return
+    hints = {MYSQL: KEPT_WINDOW_UNREADABLE, MARIADB: KEPT_WINDOW_UNREADABLE_MARIADB}
     for expanded in targets:
-        # MySQL only. A MariaDB rollover cannot be read back either (#1267,
-        # decision 3); #1272 extends this when it writes the reset there.
-        if expanded.target.type == MYSQL:
-            raise UnsupportedCapabilityError(
-                KEEP_ROLLOVER, target=expanded.name, hint=KEPT_WINDOW_UNREADABLE
-            )
+        hint = hints.get(expanded.target.type)
+        if hint is not None:
+            raise UnsupportedCapabilityError(KEEP_ROLLOVER, target=expanded.name, hint=hint)
 
 
 def refuse_seen_path(

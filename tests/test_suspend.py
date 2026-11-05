@@ -14,6 +14,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
 from jsonschema import Draft202012Validator
 
 from sopuli.config.loading import build_config
@@ -236,6 +237,25 @@ def test_an_account_with_a_global_privilege_is_suspended() -> None:
 
     assert decision.proceed
     assert decision.state == LOCKED
+
+
+@pytest.mark.parametrize("force", [False, True])
+def test_on_mariadb_an_account_with_a_global_privilege_is_refused(force: bool) -> None:
+    """A `role:` rule there admits the account that created the role, often
+    root, so guardrail 9 runs for suspend too, and `--force` does not waive
+    it (#1272, option B)."""
+    decision = decide(
+        state(global_privileges=frozenset({"ALL PRIVILEGES ON *.*"})),
+        config=config({"accounts": ["jdoe"]}),
+        account="jdoe",
+        target="appdb-dev-alpha",
+        target_type="mariadb",
+        force=force,
+    )
+
+    assert not decision.proceed
+    assert decision.state == SKIPPED
+    assert "ALL PRIVILEGES ON *.*" in decision.detail
 
 
 def test_force_does_not_waive_the_whitelist() -> None:

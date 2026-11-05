@@ -87,6 +87,21 @@ def test_an_account_with_a_global_privilege_is_expired() -> None:
     assert decision.state == EXPIRED
 
 
+def test_on_mariadb_an_account_with_a_global_privilege_is_refused() -> None:
+    """Guardrail 9 runs for expiry on MariaDB, as for suspend (#1272)."""
+    decision = decide(
+        state(name="JDOE", global_privileges=frozenset({"ALL PRIVILEGES ON *.*"})),
+        config=config({"accounts": ["jdoe"]}),
+        account="jdoe",
+        target="appdb-dev-alpha",
+        target_type="mariadb",
+        force=True,
+    )
+
+    assert not decision.proceed
+    assert "ALL PRIVILEGES ON *.*" in decision.detail
+
+
 def test_an_undeclared_account_is_refused_even_under_force() -> None:
     """Invariant 5: `--force` never waives the whitelist, on this verb either."""
     decision = decide(

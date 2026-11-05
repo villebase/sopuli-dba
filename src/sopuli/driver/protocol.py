@@ -143,6 +143,14 @@ KEPT_WINDOW_UNREADABLE = (
     "window ends. Drop --keep-rollover"
 )
 
+#: The same refusal on MariaDB, where a rollover is a second method joined by
+#: ``OR`` (#1267, decision 3).
+KEPT_WINDOW_UNREADABLE_MARIADB = (
+    "a reset on a MariaDB server sets one login method, which ends a second one: "
+    "a rollover's second method, joined by OR, cannot be read back, so nothing "
+    "could say when the window ends. Drop --keep-rollover"
+)
+
 #: Lock state can be read and set.
 ACCOUNT_LOCK_STATE = "account_lock_state"
 

@@ -336,7 +336,10 @@ refused exactly as rotating it would be. `--force` waives checks 2 to 5 and 7, a
 checks 1, 6 and 8: the whitelist, a superuser, and a role the server reserves.
 Check 9, a global privilege, refuses `account reset-password` and does not apply
 to `suspend` or `expire-password`, which set no password: they may lock a
-departed DBA's account ([#1222](../decisions/log.md#1222)). A refusal exits **0**: `SKIPPED` means the guardrails worked, and
+departed DBA's account ([#1222](../decisions/log.md#1222)). On MariaDB check 9
+refuses those two as well. A `role:` rule there admits the account that
+created the role, often root, and nothing else marks root as the database's
+own (#1272). A refusal exits **0**: `SKIPPED` means the guardrails worked, and
 only an unreachable target sets exit 4. The action kind is `account_lock`. The
 run document carries `results[].account_status`, the state the database was in
 *before* anything was issued, because `state: LOCKED` with `changed: false`

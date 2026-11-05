@@ -342,8 +342,10 @@ def review(
     and `account expire-password` pass ``False``, and check 9 does not run for
     them: its reason is that the tool could log in with a password it set, and
     locking an account or expiring its password takes power away instead
-    (#1222). It defaults to ``True``, the safe side: a new verb that forgets it
-    refuses more, never less.
+    (#1222). On MariaDB they pass ``True``, because a `role:` rule there admits
+    the role's creator (:data:`sopuli.suspend.GUARDED_TYPES`, #1272). It
+    defaults to ``True``, the safe side: a new verb that forgets it refuses
+    more, never less.
 
     **A check with no input is neither**, and that is the third answer:
     it lands in :attr:`Review.caveats`, refuses nothing, and survives ``force``

@@ -1523,8 +1523,8 @@ def account_group() -> None:
     help=(
         "Waive guardrails 2 to 5 and 7. Nothing waives guardrails 1, 6 and 8: an "
         "account the config does not declare, a superuser, and a role the server "
-        "reserves. Guardrail 9, a global privilege, does not apply: this verb sets no "
-        "password."
+        "reserves. Guardrail 9, a global privilege, applies only on MariaDB: this verb "
+        "sets no password."
     ),
 )
 @global_options
@@ -1560,8 +1560,10 @@ def account_suspend(
 
     The command uses the same account guardrails as every mutating verb, so
     suspending DBSNMP is refused just as rotating it would be. `--force`
-    waives guardrails 2 to 5 and 7, never 1, 6 or 8. Guardrail 9 does not
-    apply, because suspending sets no password.
+    waives guardrails 2 to 5 and 7, never 1, 6 or 8. Guardrail 9 applies only
+    on MariaDB, because suspending sets no password: there a `role:` rule
+    declares the account that created the role, and nothing else stops it
+    locking root.
 
     An account that is already locked reports no change, and the command
     issues nothing. The driver reads the state first, because Oracle and
@@ -1733,7 +1735,12 @@ def _suspend_one(
             )
 
         decision = suspend.decide(
-            state, config=config, account=account, target=target.name, force=force
+            state,
+            config=config,
+            account=account,
+            target=target.name,
+            target_type=target.target.type,
+            force=force,
         )
         status = state.status if state is not None else None
         overridden = decision.review.overridden if decision.review is not None else ()
@@ -1823,8 +1830,8 @@ def _suspend_one(
     help=(
         "Waive guardrails 2 to 5 and 7. Nothing waives guardrails 1, 6 and 8: an "
         "account the config does not declare, a superuser, and a role the server "
-        "reserves. Guardrail 9, a global privilege, does not apply: this verb sets no "
-        "password."
+        "reserves. Guardrail 9, a global privilege, applies only on MariaDB: this verb "
+        "sets no password."
     ),
 )
 @global_options
@@ -1858,8 +1865,9 @@ def account_expire_password(
     `--account` names one account, and a profile or role rule in
     `personal_accounts:` never widens it, as for `account suspend`. The command
     uses the same account guardrails as every mutating verb. `--force` waives
-    guardrails 2 to 5 and 7, never 1, 6 or 8. Guardrail 9 does not apply,
-    because expiring sets no password.
+    guardrails 2 to 5 and 7, never 1, 6 or 8. Guardrail 9 applies only on
+    MariaDB, because expiring sets no password: there a `role:` rule declares
+    the account that created the role.
 
     An account that is already expired, with no window open, reports no
     change, and the command issues nothing. `EXPIRED(GRACE)` does not count as
@@ -2043,7 +2051,12 @@ def _expire_one(
             )
 
         decision = expire.decide(
-            state, config=config, account=account, target=target.name, force=force
+            state,
+            config=config,
+            account=account,
+            target=target.name,
+            target_type=target.target.type,
+            force=force,
         )
         status = state.status if state is not None else None
         overridden = decision.review.overridden if decision.review is not None else ()

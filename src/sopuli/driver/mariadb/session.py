@@ -139,6 +139,11 @@ CAPABILITIES = frozenset({ROLE_LOOKUP, EXPIRE_PASSWORD, PASSWORD_ROLLOVER})
 #: The server refused a read of a table (``1142``) or a column (``1143``).
 REFUSED_READ = frozenset({str(TABLE_ACCESS_DENIED), str(COLUMN_ACCESS_DENIED)})
 
+#: The answers to the password checks read (#1310) that leave
+#: ``password_value`` out rather than fail the session: a refused read, and
+#: an unknown system variable (``1193``) on a server without it.
+CHECKS_UNREADABLE = REFUSED_READ | {"1193"}
+
 #: The privileges MariaDB split from ``SUPER`` that set no column of the
 #: ``mysql.user`` view, as ``SHOW PRIVILEGES`` names them (SP1, SP2).
 UNSEEN_PRIVILEGES = (
@@ -238,6 +243,10 @@ class MariadbSession(ClosesConnection):
             try:
                 self._password_checks = self._read(read_password_checks)
             except DriverError as error:
+                # Only a refused read, or a variable this server lacks: a
+                # lost connection or a timeout is the run's fault to report.
+                if error.code not in CHECKS_UNREADABLE:
+                    raise
                 self._checks_unread = str(error)
             takes_value = self._password_checks == ()
             capabilities = observed.capabilities | CAPABILITIES
@@ -261,8 +270,13 @@ class MariadbSession(ClosesConnection):
         undeclared host. Where the survey's read fails, the audit stands and a
         line says why, as on MySQL. With any declared account, the last lines
         say what check 9 cannot see (:data:`CHECK_9_GAP`) and that a second
-        login method is not seen (:data:`OR_GAP`)."""
+        login method is not seen (:data:`OR_GAP`). Where the scope lacks
+        ``password_value``, a line says why, with or without declared accounts
+        (#1310)."""
         audit = self._read(privilege_audit)
+        refused = self._password_value_line()
+        if refused is not None:
+            audit = replace(audit, remedies=(*audit.remedies, refused))
         if not accounts:
             return audit
         try:
@@ -431,6 +445,24 @@ class MariadbSession(ClosesConnection):
             )
         LOG.debug("password set for %s on %s", found.name, self.target.name)
         return ChangeResult(changed=True, detail="password set", discarded=True)
+
+    def _password_value_line(self) -> str | None:
+        """`doctor`'s line for a scope without ``password_value``, or ``None``
+        where the server takes the value (#1310)."""
+        if self.scope().supports(PASSWORD_VALUE):
+            return None
+        if self._password_checks is None:
+            return (
+                "strict_password_validation and the password validation plugins could not "
+                f"be read ({self._checks_unread}), so the verbs that set a password refuse "
+                "this target"
+            )
+        return (
+            f"{', '.join(self._password_checks)} refuses every password value the tool "
+            "sends while strict_password_validation is ON, so the verbs that set a "
+            "password refuse this target; set strict_password_validation=OFF to manage "
+            "passwords here (02-mariadb-privileges.md section 6)"
+        )
 
     def _require_password_value(self) -> None:
         """Refuse before a value is sent where a password validation plugin

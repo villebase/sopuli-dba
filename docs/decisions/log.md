@@ -4629,10 +4629,11 @@ the register.
   with an error that does not say why, the same `1396` a missing account or a
   weak password gets. The tool account reads both conditions with the grants
   it has (PC4).
-- **Rejected:** B: no plan-time refusal, and a clearer error per account at
-  run time. Turning `strict_password_validation` off for the tool's own
-  statements, which needs a privilege the tool account does not hold and
-  would bypass the DBA's policy.
+- **Rejected:**
+  1. B: no plan-time refusal, and a clearer error per account at run time.
+  2. C: turning `strict_password_validation` off for the tool's own
+     statements, which needs a privilege the tool account does not hold and
+     would bypass the DBA's policy.
 - **Accepted cost:** such a server is managed only once a DBA sets
   `strict_password_validation` to `OFF`. The plugin then no longer checks the
   passwords the tool sets, which the tool's own policy governs instead.

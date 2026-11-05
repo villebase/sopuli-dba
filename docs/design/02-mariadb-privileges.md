@@ -149,9 +149,12 @@ them, so the tool never needs that.
 ### 2.3 What `doctor` reports
 
 `doctor` connects to the server and reports the scope, `server`: the release,
-whether it takes writes (`read_only` and the session's `tx_read_only`), and the
-session's encryption. A server whose version does not name MariaDB is refused,
-exit 9. `doctor --check-privileges` audits the tool account against §2.1 and
+whether it takes writes (`read_only` and the session's `tx_read_only`), the
+session's encryption, and the capabilities, `password_value` among them unless
+a password validation plugin refuses the value (§6, #1310). A server whose
+version does not name MariaDB is refused, exit 9. `doctor --check-privileges`
+says why a scope lacks `password_value`: the plugins that refuse the value, or
+that the settings could not be read. It audits the tool account against §2.1 and
 §3. It names a declared account that does not exist, and one on a plugin the
 tool does not change. Two targets on one server are not caught yet (#1286):
 MariaDB has no `server_uuid`. It warns, and never fails

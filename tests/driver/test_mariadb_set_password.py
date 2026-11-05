@@ -73,38 +73,31 @@ def user(live_mariadb: Any) -> Iterator[str]:
 
 
 def test_a_password_validation_plugin_takes_away_password_value(
-    live_mariadb: Any, user: str
+    live_mariadb: Any, session: Any, user: str
 ) -> None:
     """#1310: with `simple_password_check` active and
     `strict_password_validation` ON, the default, the server refuses every
     value the driver sends (`12_password_check_probe.py`, PC1). The scope
-    says so, and `set_password` refuses before it sends, naming the plugin."""
+    says so, `doctor`'s audit says why, and `set_password` refuses before it
+    sends, naming the plugin. The fixture's session reads its scope on first
+    use, which is after the install."""
     _root(live_mariadb, "create user %s@'%%' identified by 'Acme-Check-Old-pw1'", (user,))
-    _root(live_mariadb, "install soname 'simple_password_check'")
     try:
-        target = ExpandedTarget(
-            target=Target(
-                name="tier1-mariadb",
-                type="mariadb",
-                dsn=live_mariadb.dsn,
-                mariadb=TargetMysql(ssl_mode="REQUIRED"),
-            )
+        # IF NOT EXISTS, and IF EXISTS below: a run interrupted between the two
+        # leaves the plugin loaded, and the next run must still start clean.
+        _root(
+            live_mariadb,
+            "install plugin if not exists simple_password_check soname 'simple_password_check'",
         )
-        driver = session_module.MariadbDriver(correlation_id="tier1-check", timeouts=Timeouts())
-        checked = driver.connect(
-            target,
-            Credential(username=live_mariadb.tool_user, secret=Secret(live_mariadb.tool_password)),
-        )
-        try:
-            assert not checked.scope().supports(PASSWORD_VALUE)
-            with pytest.raises(UnsupportedCapabilityError) as caught:
-                checked.set_password(f"{user}@%", Secret("Acme-Check-New-pw2#"))
-        finally:
-            checked.close()
+        assert not session.scope().supports(PASSWORD_VALUE)
+        lines = session.privileges().remedies
+        with pytest.raises(UnsupportedCapabilityError) as caught:
+            session.set_password(f"{user}@%", Secret("Acme-Check-New-pw2#"))
     finally:
-        _root(live_mariadb, "uninstall soname 'simple_password_check'")
+        _root(live_mariadb, "uninstall plugin if exists simple_password_check")
 
     assert "simple_password_check" in str(caught.value.hint)
+    assert any("simple_password_check refuses every password value" in one for one in lines)
     assert _login(live_mariadb, user, "Acme-Check-Old-pw1"), "nothing was sent"
 
 

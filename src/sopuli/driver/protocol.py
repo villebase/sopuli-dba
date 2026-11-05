@@ -124,16 +124,21 @@ def password_value_hint(checks: tuple[str, ...] = ()) -> str:
     """The hint for a target without :data:`PASSWORD_VALUE`, given at plan
     time and by the driver alike (#1310). ``checks`` names the plugins where
     the caller read them; the plan's scope does not carry them."""
-    named = (
-        ", ".join(checks)
-        if checks
-        else "a password validation plugin (information_schema.PLUGINS names it)"
-    )
-    return (
-        f"the server has {named} active and strict_password_validation ON, so it "
-        "refuses the password value the tool computes, which it cannot check. A DBA "
-        "can set strict_password_validation=OFF, which leaves the plugin checking "
+    fix = (
+        "A DBA can set strict_password_validation=OFF, which leaves the plugin checking "
         "passwords sent in clear, or unload the plugin (02-mariadb-privileges.md §6)"
+    )
+    if checks:
+        return (
+            f"the server has {', '.join(checks)} active and strict_password_validation "
+            f"ON, so it refuses the password value the tool computes, which it cannot "
+            f"check. {fix}"
+        )
+    return (
+        "either a password validation plugin is active and strict_password_validation is "
+        "ON, so the server refuses the password value the tool computes, or the tool "
+        "account could not read those settings. `doctor --check-privileges` says which. "
+        f"{fix}"
     )
 
 

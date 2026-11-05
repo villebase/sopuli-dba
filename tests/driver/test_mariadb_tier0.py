@@ -27,6 +27,7 @@ from sopuli.driver.protocol import (
     PASSWORD_VALUE,
     SERVER,
     DriverError,
+    Scope,
     UnsupportedCapabilityError,
 )
 from sopuli.exit_codes import ExitCode
@@ -508,6 +509,9 @@ def test_doctor_names_both_gaps_whether_or_not_the_survey_read(
         timeouts=Timeouts(),
     )
     monkeypatch.setattr(session, "_read", read)
+    # A server that takes the value, so no `password_value` line (#1310).
+    takes_value = Scope(type=SERVER, capabilities=frozenset({PASSWORD_VALUE}))
+    monkeypatch.setattr(session, "scope", lambda: takes_value)
 
     remedies = session.privileges(accounts=("acme_app@%",)).remedies
 

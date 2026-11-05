@@ -557,8 +557,16 @@ row. Every account holds `PUBLIC`. A `profile:` rule is refused by the absent
 on every run and reports `changed: true`, because the lock cannot be read
 ([#1267](../decisions/log.md#1267), decision 2). For the same reason a
 MariaDB account's `status` is `OPEN` or `EXPIRED` from the view, and never
-says whether it is locked; the detail says so. These verbs are not yet
-registered for MariaDB (open: #1272).
+says whether it is locked; the detail says so. `account reset-password` never
+sends `ACCOUNT UNLOCK`: it cannot tell a suspension from a block after failed
+logins, so a locked or blocked account keeps its new password and stays
+locked, and a DBA unlocks it by hand after checking for a suspension
+([#1272](../decisions/log.md#1272), decision 1). The new value replaces every
+login method, so a second one joined by `OR` stops working. `account
+expire-password` sends `PASSWORD EXPIRE` alone and reads nothing from the
+vault. A second method someone added with `OR` survives it, and both
+passwords then log in, expired, only to set a new one (decision 2). These
+verbs are not yet registered for MariaDB (open: #1272).
 
 ---
 

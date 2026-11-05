@@ -15,7 +15,8 @@ scope: ``server``, whether it takes writes, its encryption, and
 (:mod:`~sopuli.driver.mariadb.accounts`). It describes a declared account,
 with the privileges guardrail 9 checks and the roles it holds, sets its password
 by the value its plugin stores and verifies it by login (#1270). It resolves a
-role and lists its members, and suspends an account (#1272). Every other method
+role and lists its members, suspends an account, resets its password and
+expires it (#1272). Every other method
 refuses with
 ``SOPULI-20006``, and the registry lists no command but `doctor`: the rest of
 UC-1 is #1270 and UC-2 #1272.
@@ -51,9 +52,14 @@ from sopuli.driver.mysql_family.encryption import read_encryption
 from sopuli.driver.mysql_family.errors import COLUMN_ACCESS_DENIED, TABLE_ACCESS_DENIED
 from sopuli.driver.protocol import (
     ACCOUNT_LOCK,
+    EXPIRE_PASSWORD,
+    KEEP_ROLLOVER,
+    KEPT_WINDOW_UNREADABLE_MARIADB,
     OFFLINE_VERIFY,
     OLD_DISCARD,
     OLD_PASSWORD_MODES,
+    PASSWORD_EXPIRE,
+    PASSWORD_SET,
     PROFILE_MANAGEMENT,
     ROLE_LOOKUP,
     UNAVAILABLE,
@@ -154,7 +160,12 @@ class MariadbSession(ClosesConnection):
             )
             # `role_lookup` always: a role is a row of the view, and its grants
             # are in mysql.roles_mapping, and §2.1 grants the tool account both.
-            self._scope = replace(observed, capabilities=observed.capabilities | {ROLE_LOOKUP})
+            # `expire_password` always: an account with only CREATE USER
+            # expires another on every supported release (10.11.19 to 12.3.3,
+            # `04_lock_expiry_probe.py`, LK3).
+            self._scope = replace(
+                observed, capabilities=observed.capabilities | {ROLE_LOOKUP, EXPIRE_PASSWORD}
+            )
             if LOG.isEnabledFor(logging.DEBUG):
                 LOG.debug(
                     "%s is a server, %s %s, encryption %s",
@@ -201,8 +212,8 @@ class MariadbSession(ClosesConnection):
             hint=(
                 "the MariaDB driver connects, reports the server for `doctor`, "
                 "describes an account, sets its password and verifies it by login, "
-                "resolves a role and suspends an account, and the rest of it is not "
-                "written yet (#1270, #1271, #1272)"
+                "resolves a role, and suspends, resets and expires an account; the rest "
+                "of it is not written yet (#1270, #1271)"
             ),
         )
 
@@ -320,17 +331,7 @@ class MariadbSession(ClosesConnection):
         account does not exist or uses another plugin.
         """
         require_read_write(self.scope(), target=self.target.name)
-        found = self._read_grants(
-            lambda cursor: accounts_module.read_one(cursor, account, target=self.target.name)
-        )
-        if found is None:
-            raise DriverError(
-                f'account "{account}" does not exist on target "{self.target.name}"',
-                hint=(
-                    "the tool does not create accounts (Q8); nothing is suspended, and the "
-                    "account name is worth checking against the server"
-                ),
-            )
+        found = self._existing(account, what="suspended")
         status = accounts_module.state_of(found).status
         self._read(lambda cursor: cursor.execute(account_statements.lock(found.user, found.host)))
         LOG.debug("ACCOUNT LOCK for %s on %s", found.name, self.target.name)
@@ -344,11 +345,120 @@ class MariadbSession(ClosesConnection):
             ),
         )
 
-    def reset_password(self, *args: Any, **kwargs: Any) -> NoReturn:
-        self._not_written("reset a password")
+    def _existing(self, account: str, *, what: str) -> accounts_module.Account:
+        """The account's row in the view, refused before anything is sent where
+        it does not exist or uses another plugin. ``what`` is the verb's
+        participle for the hint."""
+        found = self._read_grants(
+            lambda cursor: accounts_module.read_one(cursor, account, target=self.target.name)
+        )
+        if found is None:
+            raise DriverError(
+                f'account "{account}" does not exist on target "{self.target.name}"',
+                hint=(
+                    f"the tool does not create accounts (Q8); nothing is {what}, and the "
+                    "account name is worth checking against the server"
+                ),
+            )
+        return found
 
-    def expire_password(self, account: str) -> NoReturn:
-        self._not_written("expire a password")
+    def reset_password(
+        self, account: str, secret: Secret, *, expire: bool, keep_rollover: bool = False
+    ) -> tuple[AccountChange, ...]:
+        """UC-2 §4.1 on a MariaDB server: one statement, the value for the
+        account's own plugin with ``PASSWORD EXPIRE`` where ``expire``
+        (invariant 15, :func:`~sopuli.driver.mariadb.password.alter_user`).
+
+        The value names one method, which replaces every method the account
+        had (``03_dual_password_probe.py``, DP3), and ends an expiry
+        (``11_rollover_expiry_probe.py``). So no second password logs in
+        afterwards, whether a rollover's or one added by hand with ``OR``
+        (``02-mariadb-privileges.md`` §4).
+
+        **The lock is left as it is** (#1267, decision 9). It is not read, so
+        the reset cannot tell a suspension from a block after failed logins,
+        and an ``ACCOUNT UNLOCK`` could end a suspension (H4). A locked or
+        blocked account keeps its new password and stays locked; the row says
+        so.
+
+        **Refused before anything is sent:** ``keep_rollover``, by capability,
+        a password the server cannot take, a read-only session, an account
+        that does not exist, and one on another plugin. A failure of the
+        statement has ``password_sent`` set: what crossed is the value, which
+        still allows an offline guess.
+        """
+        if keep_rollover:
+            # The command refuses it at plan time; this is the driver's own line.
+            raise UnsupportedCapabilityError(
+                KEEP_ROLLOVER, target=self.target.name, hint=KEPT_WINDOW_UNREADABLE_MARIADB
+            )
+        password_module.admit(secret)
+        require_read_write(self.scope(), target=self.target.name)
+        found = self._existing(account, what="reset")
+        status = accounts_module.state_of(found).status
+        statement = password_module.alter_user(
+            found.user, found.host, found.plugin, secret, expire=expire
+        )
+        try:
+            self._read(lambda cursor: cursor.execute(statement), scrub=password_module.scrub)
+        except DriverError as failure:
+            failure.password_sent = True
+            raise
+        LOG.debug("password reset for %s on %s", found.name, self.target.name)
+        return (
+            AccountChange(
+                PASSWORD_SET,
+                changed=True,
+                status=status,
+                detail=(
+                    f"{'password set, expired' if expire else 'password set'}; it replaces "
+                    "every login method, so no second password logs in. Whether the account "
+                    "is locked cannot be read on MariaDB, and a reset does not unlock it"
+                ),
+            ),
+        )
+
+    def expire_password(self, account: str) -> tuple[AccountChange, ...]:
+        """``PASSWORD EXPIRE`` alone, where ``password_expired`` is ``N``;
+        nothing where it is ``Y`` (#1272).
+
+        **Keyed on the view's ``password_expired``** (invariant 9). Only
+        ``PASSWORD EXPIRE`` sets it (``04_lock_expiry_probe.py``, LK3), so a
+        second run reports ``changed: false``.
+
+        **No vault value is read.** ``PASSWORD EXPIRE`` does not end a second
+        method joined by ``OR``: both passwords keep logging in, expired
+        (``11_rollover_expiry_probe.py``). The tool makes no rollover on a
+        personal account, because a name cannot be declared twice, so only an
+        ``OR`` added by hand survives this, with both its passwords expired
+        (UC-2, decided on #1272). ``CREATE USER`` is enough (LK1 to LK3).
+        """
+        require_read_write(self.scope(), target=self.target.name)
+        found = self._existing(account, what="expired")
+        status = accounts_module.state_of(found).status
+        if found.expired:
+            return (
+                AccountChange(
+                    PASSWORD_EXPIRE,
+                    changed=False,
+                    status=status,
+                    detail="the password is already expired",
+                ),
+            )
+        statement = account_statements.expire(found.user, found.host)
+        self._read(lambda cursor: cursor.execute(statement))
+        LOG.debug("PASSWORD EXPIRE for %s on %s", found.name, self.target.name)
+        return (
+            AccountChange(
+                PASSWORD_EXPIRE,
+                changed=True,
+                status=status,
+                detail=(
+                    "password expired; a second login method added by hand with OR, which "
+                    "the tool cannot see, is expired too and still logs in to set a password"
+                ),
+            ),
+        )
 
     def audit_coverage(self, account: str) -> NoReturn:
         self._not_written("read audit coverage")

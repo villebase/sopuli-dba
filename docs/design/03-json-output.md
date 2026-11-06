@@ -774,6 +774,12 @@ on that account, and a nightly rotation that exited 4 forever because one
 account holds `DBA` would be more disruptive than the mistake the guardrail
 catches.
 
+One `SKIPPED` row does make the run partial: a `creds finish-rollover` close
+that §4's checks turned away, on a product whose close sets a password, which
+is MariaDB. The skip leaves the old password working, and a MariaDB window
+never elapses, so the run exits 4 ([#1352](../decisions/log.md#1352)). The row
+stays `SKIPPED`, because the tool still chose not to act.
+
 ### `invocation.selection`
 
 `invocation.selection` records what the run was narrowed to, as the selectors

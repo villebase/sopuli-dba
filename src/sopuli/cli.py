@@ -12244,7 +12244,7 @@ def creds_finish_rollover(
     ]
     states = [record.outcome.state for record in finished]
     closed = sum(1 for record in finished if record.changed)
-    document.finish(check_states.exit_code_for(states), summarise_finish(states, changed=closed))
+    document.finish(_finish_exit_code(finished), summarise_finish(states, changed=closed))
 
     header = "\n".join(
         [
@@ -12270,6 +12270,23 @@ def creds_finish_rollover(
         rows, would_close=sum(1 for one in finished if one.would_close) if run.dry_run else None
     )
     return f"{header}\n\n{body}"
+
+
+def _finish_exit_code(finished: Sequence[_Finished]) -> int:
+    """`creds finish-rollover`'s exit code: the rows' own, except that a close
+    §4's checks turned away inside a broad selection is exit 4 (#1352).
+
+    That row is `SKIPPED`, which elsewhere leaves the run at 0. Here it leaves
+    the old password working, and on MariaDB, the one product whose close is
+    guarded, a window never elapses on its own. A scheduled run judged by its
+    exit code must not report success while that is so. Where `--account` named
+    the account the row is `ERROR`, which is exit 1 already. A preview exits as
+    the run would, as it does for an unreachable target.
+    """
+    code = check_states.exit_code_for([record.outcome.state for record in finished])
+    if code == ExitCode.SUCCESS and any(record.turned_away for record in finished):
+        return ExitCode.PARTIAL
+    return code
 
 
 @dataclass(frozen=True)

@@ -4758,3 +4758,26 @@ the register.
 - **Rejected:** "running again finishes it", which the first draft said. It is
   false after a lock takeover, which exits 4 and where re-running is the one
   thing not to do while another run holds the lock.
+
+## #1352
+
+- **Decided:** 2026-11-06, #1352
+- **Question:** on MariaDB, `creds finish-rollover` runs UC-1 §4's
+  unwaivable checks before its close ([#1344](#1344)). An account they refuse
+  inside a broad selection is `SKIPPED`, and UC-1 §4 leaves such a run at
+  exit 0. The skip
+  leaves the old password working, and a MariaDB window never elapses. Should
+  the run still exit 0?
+- **Decision:** A, the maintainer's choice: exit 4. The row stays `SKIPPED`.
+  It applies only to a close that sets a password, which is MariaDB's, so it
+  is an exception to UC-1 §4's rule for this verb alone. A run where every close
+  was refused also exits 4, as `creds rotate --finish-rollover` does
+  ([#1347](#1347)). Where `--account` named the account, the row is `ERROR`
+  and the run exits 1, as before.
+- **Why:** a scheduled run is judged by its exit code. Exit 0 would report
+  success while an old password keeps working with no end date. Exit 4 matches
+  `creds rotate --finish-rollover` for the same unmade close, and the exit
+  table's 4: some of what the run was asked to do did not happen.
+- **Rejected:** B, keeping exit 0 and telling operators to alert on
+  `SKIPPED` rows or the log line. It leaves every schedule that watches only
+  the exit code reporting success.

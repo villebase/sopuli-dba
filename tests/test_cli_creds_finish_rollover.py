@@ -321,7 +321,7 @@ def test_a_target_that_refuses_the_value_is_refused_before_the_question(
     ("selector", "state", "code"),
     [
         (("--account", "acme_web_user"), "ERROR", ExitCode.FAILURE),
-        (("--select", "tenant=alpha"), "SKIPPED", ExitCode.SUCCESS),
+        (("--select", "tenant=alpha"), "SKIPPED", ExitCode.PARTIAL),
     ],
     ids=["named", "selected"],
 )
@@ -337,8 +337,9 @@ def test_a_close_that_sets_a_password_runs_the_account_checks(
 ) -> None:
     """#1344: where the close sends a password, as on MariaDB, an account §4
     refuses keeps its window, with no login and nothing sent: `ERROR` where
-    `--account` named it, `SKIPPED` otherwise, as in `creds apply`. The fake
-    is Oracle-shaped, so Oracle is made such a product here."""
+    `--account` named it, `SKIPPED` otherwise, as in `creds apply`. The
+    `SKIPPED` row exits 4, not 0, because the old password still works
+    (#1352). The fake is Oracle-shaped, so Oracle is made such a product here."""
     monkeypatch.setattr("sopuli.cli.CLOSE_SETS_PASSWORD_TYPES", frozenset({"oracle"}))
     harness = estate(
         users={"ACME_WEB_USER": in_rollover(global_privileges=frozenset({"SUPER ON *.*"}))}

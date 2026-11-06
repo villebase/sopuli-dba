@@ -67,6 +67,7 @@ from sopuli.lock import Holder, LockDeniedError, LockKey, LockRecord, lock_path
 from sopuli.output.document import SCHEMA_VERSION
 from sopuli.output.emit import EVENT_SCHEMA_VERSION
 from sopuli.plan import BlastRadius
+from sopuli.safety import RefusedError
 from sopuli.secrets import Secret
 from sopuli.store import MemoryStore, SecretStore, StoreError
 from sopuli.store.protocol import Stored
@@ -1670,12 +1671,14 @@ def test_a_dry_run_refuses_a_policy_over_the_products_fixed_limit_before_any_log
     assert harness["sessions"] == []
 
 
-def test_a_target_the_selectors_leave_out_holds_the_policy_to_its_limit_before_any_login(
-    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+@pytest.mark.parametrize("dry_run", [True, False], ids=["dry run", "run"])
+def test_a_rotation_that_leaves_out_a_sharing_target_is_refused_as_narrow_before_any_login(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness, dry_run: bool
 ) -> None:
-    """`appdb-pg` reads the password `--target appdb-alpha` would rotate, so a
-    policy PostgreSQL cannot hold is refused at plan time, `--dry-run`
-    included, and nothing logs in to either target (#1351)."""
+    """`appdb-pg` reads the password `--target appdb-alpha` would rotate. The
+    refusal is decision #406's, which says to widen the selection, and not
+    PostgreSQL's limit, whose hint to lower `length:` would leave the run
+    refused all the same. Nothing logs in and nothing is written (#1351)."""
     config = (
         CONFIG.replace("length: 24", "length: 1100")
         .replace("apps/acme/{target}#", "apps/acme/shared#")
@@ -1698,11 +1701,12 @@ def test_a_target_the_selectors_leave_out_holds_the_policy_to_its_limit_before_a
         documents={"apps/acme/shared": {"DB_CREDENTIALS": {"acme_web_user": LIVE}}},
     )
     before = harness["store"].read("apps/acme/shared").version
-    result = run(runner, write_config(config), "--target", "appdb-alpha", "--dry-run")
+    flags = ["--dry-run"] if dry_run else []
+    result = run(runner, write_config(config), "--target", "appdb-alpha", *flags)
 
-    assert result.exit_code != ExitCode.SUCCESS
+    assert isinstance(result.exception, RefusedError), result.exception
+    assert "narrower than the promotion" in str(result.exception)
     assert "appdb-pg" in str(result.exception)
-    assert "1024" in str(result.exception)
     assert harness["sessions"] == []
     assert harness["store"].read("apps/acme/shared").version == before
 

@@ -4868,6 +4868,7 @@ def test_a_redraw_a_left_out_target_cannot_hold_reports_rather_than_raising(
     ]
     assert "appdb-pg" in declined["message"]
     assert "1024" in declined["message"]
+    assert "\n" not in declined["message"], "the hint has no field in a diagnostic"
 
 
 # ------------------------------------------------------------- --repair ---

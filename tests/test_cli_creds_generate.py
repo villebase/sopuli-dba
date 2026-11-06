@@ -861,6 +861,34 @@ def test_a_limit_known_from_the_config_is_refused_before_any_target_login(
     assert store.read(PATH) is None
 
 
+def test_a_supplied_password_is_refused_once_for_every_violation(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    store: MemoryStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A supplied password is checked once, after the reading, so the refusal
+    names the policy's violation and the one the target's character set adds,
+    not one of them per run (#1351)."""
+    monkeypatch.setattr(
+        "sopuli.cli._open_session", lambda target, invocation, config: _Session(ASCII_128)
+    )
+    result = run(
+        runner,
+        write_config(_with_postgres("[appdb-alpha, appdb-pg]")),
+        "--target",
+        "appdb-alpha",
+        "--from-stdin",
+        stdin="Supplied2026Pässword\n",
+    )
+
+    assert isinstance(result.exception, ConfigError), result.exception
+    hint = result.exception.hint or ""
+    assert "length" in hint
+    assert "encoding" in hint
+    assert store.read(PATH) is None
+
+
 def test_a_quote_is_not_waived_for_an_oracle_target_the_selectors_leave_out(
     runner: CliRunner, write_config: Callable[[str], Path], store: MemoryStore
 ) -> None:

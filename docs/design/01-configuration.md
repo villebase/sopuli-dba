@@ -3241,8 +3241,10 @@ Independent of charset:
   character set**, not in characters. `length:` counts *characters*, so the two
   are separate numbers and the byte limit travels with the encoding it was counted
   in — 30 bytes is 30 characters in `WE8MSWIN1252` and as few as 7 in `AL32UTF8`.
-  Where no target could be reached there is no byte limit to apply, and the run
-  says so rather than assuming one (UC-1 §4)
+  Where no target could be reached, an Oracle target has no byte limit to
+  apply, and the run says so rather than assuming one (UC-1 §4). On
+  PostgreSQL, MySQL and MariaDB the limit is the product's, so it applies
+  without a connection
 - passwords containing `"` are rejected outright — Oracle quoted identifiers have
   no escape for it (see `02-oracle-privileges.md` §4) — as are control characters,
   `CHR(0)` included

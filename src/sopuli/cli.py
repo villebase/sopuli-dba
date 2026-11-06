@@ -6423,9 +6423,8 @@ def creds_generate(
         emitter.event(document, "constraints.resolved", data=document.constraints)
     # Once per password, not per binding: an account on several targets that
     # share its ref is one password (`sopuli.generate`'s docstring).
-    # Every product the one supplied password is staged for, so a driver that
-    # refuses it on any of them is not waived for the others (#1327).
-    products = frozenset(target.target.type for target in staged_on)
+    # `_candidate` adds every product the password is staged for, so a driver
+    # that refuses it on one of them is not waived for the others (#1327).
     candidates = staging.draw_once(
         bindings,
         lambda binding: _candidate(
@@ -6435,7 +6434,6 @@ def creds_generate(
             supplied=supplied,
             enforce=not no_policy_check,
             readings=limits.bounds,
-            products=products,
         ),
     )
     candidates, skipped = _split_reserved(candidates, reserved)
@@ -6629,31 +6627,49 @@ def _candidate(
     before the file's chain is consulted -- so it wins over an application entry
     and still goes through the same dangling-name check every policy name gets.
 
-    ``readings`` is every limit the password is held to
+    ``readings`` is what the run read from the targets
     (:attr:`~sopuli.constraints.Constraints.bounds`), resolved once for the run
     by :func:`_constraints_for` and passed in rather than read here: they are a
     property of the *targets*, not of the binding, and a function called once per
-    account is the wrong place to open a connection. Empty is the documented
-    fallback -- no target gave a limit and no product has one -- and the
-    policy's declared length then governs, which is what
-    :func:`sopuli.generate.candidate_for` already does with it.
+    account is the wrong place to open a connection.
 
-    ``products`` is every product a supplied password is staged for, and
-    defaults to this binding's target's.
+    **Every selected target that shares the password is added here**, because
+    each of them reads the one value that is staged (:func:`_sharing_targets`).
+    Each one's product limit is added where
+    ``readings`` has no reading for it, so every verb that draws is held to
+    them without passing them. ``products`` is those targets' products, unless
+    given, and :func:`~sopuli.driver.registry.refused_password_rules` reads it
+    (#1327). With no limit at all the policy's declared length governs, which is
+    what :func:`sopuli.generate.candidate_for` does with an empty ``readings``.
     """
     effective = binding if name is None else replace(binding, policy=name)
     chosen, policy = staging.policy_for(config, effective)
+    sharing = _sharing_targets(config, binding)
     if products is None:
-        products = frozenset({_expanded(config, binding.target).target.type})
+        products = frozenset(target.target.type for target in sharing)
+    read = {target for target, _ in readings}
+    fixed = [pair for pair in _product_limits(sharing) if pair[0] not in read]
     return staging.candidate_for(
         binding,
         policy,
         name=chosen,
-        readings=readings,
+        readings=(*readings, *fixed),
         supplied=supplied,
         enforce=enforce,
         products=products,
     )
+
+
+def _sharing_targets(config: Config, binding: Binding) -> list[ExpandedTarget]:
+    """Every target in ``config`` whose binding reads ``binding``'s password.
+
+    ``config`` is the one the verb narrowed to its selection, so a target the
+    selectors left out is not here.
+    """
+    key = staging.password_key(binding)
+    if key is None:
+        return _targets_of(config, [binding])
+    return _targets_of(config, [one for one in config.bindings if staging.password_key(one) == key])
 
 
 def _product_limits(targets: Sequence[ExpandedTarget]) -> list[tuple[str, ByteLimit]]:
@@ -12731,6 +12747,14 @@ def creds_rotate(
             )
             if one.due
         }
+    # A policy that a target sharing a password cannot hold is known from the
+    # config, so it is refused before any target login, `--dry-run` included
+    # (invariant 4). Only what is due is drawn, as the run draws. The draw is
+    # pure and its values are thrown away: the run draws again after the survey.
+    staging.draw_once(
+        [binding for binding in bindings if due is None or _lock_key(binding) in due],
+        lambda binding: _candidate(binding, config, name=None, supplied=None, enforce=True),
+    )
     # Refused here, not warned: the stage is written before the guardrail pass
     # and the databases change before the promotion, so a promotion the store
     # refuses would leave the rotation half done.
@@ -13116,16 +13140,11 @@ def _rotate_estate(
     # sets it again without ending the window this run opens on MySQL. Only a
     # driver that keeps a second password on request reads the mark's effect.
     marked = strategy == strategies.ROLLOVER
-    # A rotation reads no limit from a target, but a product's fixed limit
-    # holds without one.
-    fixed = _product_limits(_targets_of(config, drawn))
     writes = staging.group(
         replace(candidate, rollover=marked)
         for candidate in staging.draw_once(
             drawn,
-            lambda binding: _candidate(
-                binding, config, name=None, supplied=None, enforce=True, readings=fixed
-            ),
+            lambda binding: _candidate(binding, config, name=None, supplied=None, enforce=True),
         )
     )
     for write in writes:

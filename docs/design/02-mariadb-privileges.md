@@ -4,9 +4,9 @@ Depends on: `00-principles.md`, `01-configuration.md`, `02-mysql-privileges.md`
 
 This document says what the tool account is granted on a MariaDB server, what
 it reads, what it never reads, and what it must not hold. It is the
-specification for the MariaDB driver. The driver is not built yet: each part
-names the issue that builds it. The decisions are in the decision log
-([#1267](../decisions/log.md#1267)), and the probes are in `sql/mariadb/`.
+specification for the MariaDB driver, which is in `src/sopuli/driver/mariadb/`.
+The decisions are in the decision log ([#1267](../decisions/log.md#1267) and
+the entries after it), and the probes are in `sql/mariadb/`.
 
 The supported releases are 10.11 and later
 ([#1267](../decisions/log.md#1267), decision 6). Each probe ran on 10.11.19,
@@ -179,7 +179,7 @@ It warns, and never fails ([P5](../decisions/log.md#p5)), about:
   that MariaDB split from `SUPER`, so it cannot fully check the managed
   accounts, and the line names the nine
   ([#1267](../decisions/log.md#1267), decision 4). Check 9 itself refuses
-  once the driver changes passwords (open: #1270);
+  what it can read, in every verb (§5);
 - the second login method that §4 describes, on the same condition: the view
   shows one method of an account that has two, and a password change ends the
   other ([#1301](../decisions/log.md#1301)).
@@ -293,9 +293,10 @@ any of these:
 - any `PROXY` grant.
 
 `sopuli.driver.mariadb.admin` reads them, and the driver reads them whenever it
-describes an account. The refusal applies once a verb that changes a password
-runs on MariaDB (open: #1270). Unlike on MySQL, it also applies to `account
-suspend` and `account expire-password`, which set no password, and to the
+describes an account. The refusal applies to every verb that changes a
+password ([#1270](../decisions/log.md#1270)). Unlike on MySQL, it also
+applies to `account suspend` and `account expire-password`, which set no
+password, and to the
 session's own account for those two: a `role:` rule admits a role's creator
 (§4), and this is what stops one locking root or the tool account. It also
 refuses an administrator declared by name; such an account is locked by hand

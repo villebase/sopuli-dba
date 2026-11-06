@@ -82,7 +82,7 @@ TARGETS = "targets"
 POLICY = "policy"
 
 #: No target answered, and the product of at least one has a fixed limit, which
-#: holds without a connection (#1338). PostgreSQL, MySQL and MariaDB have one
+#: holds without a connection. PostgreSQL, MySQL and MariaDB have one
 #: (:attr:`sopuli.driver.registry.DatabaseDriver.fixed_limit`).
 PRODUCTS = "products"
 

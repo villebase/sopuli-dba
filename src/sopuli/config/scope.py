@@ -3,8 +3,8 @@
 An ``oci`` store serves application credentials (UC-1) and not personal
 accounts (UC-2). UC-2 needs reset records, which are written per account and
 read back by ``account list``, and its unseen delivery ``vault_wrapped`` uses
-HashiCorp's response wrapping, which OCI has no equivalent of. Putting UC-2 on
-OCI is later work (#1138).
+HashiCorp's response wrapping, which OCI has no equivalent of. #1138 decided
+the refusal.
 
 Two places apply the rule. :func:`sopuli.config.references.check_references`
 refuses a ``reset_records:`` store or a delivery method's own ``vault:`` that is

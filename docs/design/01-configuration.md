@@ -2304,7 +2304,7 @@ A closed list. Anything else is a validation error.
 |---|---|
 | `vault` | which named store to use, by name |
 | `vaults.<name>.*` | how to *reach* a named store — everything except the three below. This is what lets a profile say "token from a laptop, AppRole from CI" without re-declaring the store. Not `type`, and not `non_production` or `locking` — see below (C13) |
-| `safety.*` | any key of a `safety:` block (§3a): `max_targets`, `confirm_environments`, `readonly`, `delivery.allowed_methods` |
+| `safety.*` | any key of a `safety:` block (§3a): `max_targets`, `confirm_environments`, `readonly`, `delivery.allowed_methods`, `require_encryption` |
 | `locking.break_expired` | may an unattended run take over an expired lock? The profile is where this belongs: it is a property of running without anybody watching |
 | `confirm` | whether interactive confirmation is possible at all. `false` makes every gate that would prompt refuse with exit 8 instead, even at a terminal; `--confirm` still answers in advance, except for the seen reset, which then cannot run. Unset means "ask if stdin is a terminal" |
 | `output` | `text` \| `json` \| `jsonl` |

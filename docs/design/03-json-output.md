@@ -244,6 +244,10 @@ traceback where the finding is made, under the area `finding`.
 
 Each part of the tool writes these lines:
 
+- **`run`**: the version of the tool and of Python, and the platform. The
+  command, the config files, and each setting that does not have its built-in
+  value, with where it came from. The type of an exception that ends the run,
+  with its traceback.
 - **`oracle`**: each connection, with the target and the user. Each statement
   the driver sends, on one line, with the time it took. The capabilities the
   probe found. Each verification login and its result. A statement that carries
@@ -258,6 +262,12 @@ Each part of the tool writes these lines:
   verification login and its result. Each `ALTER ROLE` the server accepted,
   with its verifier written as `<SCRAM-SHA-256 verifier>`. It does not write
   a refused `ALTER ROLE`, or the other statements it sends.
+- **`mysql`** and **`mariadb`**: each connection, with the target, the user
+  and the time it took, or the code it failed with. The server the session
+  found, with its encryption. Each verification login and its result. Each
+  change the server accepted, named by what it did, such as `password set` or
+  `ACCOUNT LOCK`, with the account and the target. Never a statement: a
+  statement carries the hash or the plugin's value.
 - **`plan`**: why a unit is in the run or not. Each declared target that a
   selector left out, and each account left out on a target that stays, with the
   flag that left it out, such as `--select`, `--account` or `--repair`. Each
@@ -274,6 +284,9 @@ Each part of the tool writes these lines:
 - **`yopass`**: each request to the Yopass server, with its method, path, and
   status or the error it failed with, and its time. Never a body: the body
   holds the encrypted password.
+- **`onepassword`**: each call to 1Password's SDK, by what it does, with `ok`
+  or the type of the error it raised, and its time. Never what it sends or
+  gets back.
 - **`webhook`**: the host only. The rest of a webhook URL can be its token.
 
 These lines are from `sopuli creds rotate --confirm --debug` against the tier-1
@@ -637,8 +650,9 @@ These properties of the object are decisions:
   identity, and neither can be layered: a store that is HashiCorp from a laptop
   and OCI from CI is two stores ([C13](../decisions/log.md#c13)).
   `non_production` and `locking` are absent: both are guardrails set only by
-  declaration, `declared` carries them as written, and `doctor` reports the
-  second as `lock.mode`. Adding either later is a minor change.
+  declaration, and `declared` carries them as written. The verbs that take a
+  lock, and `lock status` and `lock break`, report the second as `lock.mode`.
+  Adding either later is a minor change.
 - **A key that no layer wrote is absent**, not `null`. A store with no namespace
   has no provenance for one, and a `null` would invite a consumer to branch on a
   field that is almost always empty.

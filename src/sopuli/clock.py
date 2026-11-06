@@ -1,8 +1,8 @@
 """Time, in the two forms the tool writes it and the one it reads back.
 
 RFC 3339 with a trailing ``Z``, always UTC. That is what the run schema's
-``timestamp`` type says, and it is now also what a lock record carries -- which
-is why these three moved here out of :mod:`sopuli.output.document`. A timestamp
+``timestamp`` type says, and it is also what a lock record carries -- which is
+why these three live here and not in :mod:`sopuli.output.document`. A timestamp
 format is not an output concern once something other than output writes one, and
 a lock record whose ``expires_at`` were formatted by a second copy of the same
 two lines is a lock record that can disagree with the document describing it.

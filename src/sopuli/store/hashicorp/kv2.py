@@ -1,6 +1,7 @@
 """KV v2 -- P2's reference implementation of the store interface.
 
-The four methods of :mod:`sopuli.store.protocol` against Vault's KV v2 API:
+The core methods of :mod:`sopuli.store.protocol`, and the KV v2 request each
+one makes:
 
 ======================== =====================================================
 ``read(path, version)``  ``GET  /v1/<mount>/data/<path>[?version=N]``

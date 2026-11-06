@@ -2275,7 +2275,8 @@ Exit 2.
 
 ### A lock somebody else holds
 
-Every command that changes a password first takes a lock in the vault. To see a
+`creds generate`, `apply` and `rotate` first take a lock in the vault, and so
+does `account reset-password` where `reset_records:` is declared. To see a
 held lock, write one by hand. Save this as `held.json`, with an `expires_at` in
 the future:
 
@@ -2386,8 +2387,8 @@ Scripts can branch on these. P5 in
 | 1 | failure | `doctor` with no admin password (§7); a named account the guardrails refuse (§10) |
 | 2 | the command line is wrong; no JSON document | `--account nosuch` (§10); `--output jsonl` on `config show` (§11) |
 | 3 | `check` found drift | §8.5 |
-| 4 | partial: some of what the run was asked to do happened, some did not | not shown |
-| 5 | a target lacks a capability the command needs | not shown |
+| 4 | partial: some of what the run was asked to do happened, some did not | `creds apply` on MariaDB where one login does not confirm (§7) |
+| 5 | a target lacks a capability the command needs | `account expire-password` on PostgreSQL (§9); a Yopass `ttl` the server does not accept (§9) |
 | 6 | authentication failed | a token the vault rejects (§6) |
 | 7 | a lock is held | §10 |
 | 8 | aborted, or confirmation declined | `rotate` with nobody to confirm (§8.6) |

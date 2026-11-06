@@ -322,23 +322,23 @@ def _from_file(
 def strip_one_newline(text: str) -> str:
     """Remove exactly one trailing newline, and nothing else.
 
-        **Public because there is more than one caller, and a second copy drifted.**
-        `creds generate --from-stdin` reimplemented this rule, stripped only ``
-    ``,
-        and left a ``
-    `` on every password piped in on Windows -- which is exactly
-        where P4 demands identical behaviour. The rule is subtle enough to be worth
-        stating once (below) and subtle enough that restating it goes wrong.
+    **Public because there is more than one caller, and a second copy drifted.**
+    `creds generate --from-stdin` reimplemented this rule, stripped only
+    ``\\n``, and left a ``\\r`` on every password piped in on Windows -- which is
+    exactly where P4 demands identical behaviour. The rule is subtle enough to be
+    worth stating once (below) and subtle enough that restating it goes wrong.
 
-        ``~/.vault-token`` is the case that makes this load-bearing: Vault's own CLI
-        writes it without a trailing newline and every text editor adds one, and a
-        token with ``\\n`` on the end fails authentication with a 403 that says
-        nothing whatever about whitespace.
+    ``~/.vault-token`` is the case that makes this load-bearing: Vault's own CLI
+    writes it without a trailing newline and every text editor adds one, and a
+    token with ``\\n`` on the end fails authentication with a 403 that says
+    nothing whatever about whitespace.
 
-        Not ``.strip()``. Leading whitespace in a secret is somebody's real secret,
-        and a generated password may legitimately begin or end with a space in a
-        charset that allows one -- silently trimming it is a bug that surfaces once,
-        much later, as a password that works nowhere.
+    Not ``.strip()``. Leading whitespace in a secret is somebody's real secret,
+    and a generated password may legitimately begin or end with a space in a
+    charset that allows one -- silently trimming it is a bug that surfaces once,
+    much later, as a password that works nowhere. One line break, not every one:
+    a pipe that adds a second leaves a line break in the text, and a password
+    that keeps one is refused where it is checked (#1327).
     """
     if text.endswith("\r\n"):
         return text[:-2]

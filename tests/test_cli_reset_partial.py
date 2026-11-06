@@ -372,6 +372,96 @@ def test_a_mariadb_target_that_refuses_the_value_is_refused_at_plan_time(
     assert server.resets == []
 
 
+@pytest.mark.parametrize("product", ["mariadb", "oracle"])
+def test_a_mariadb_reset_warns_of_a_login_method_it_cannot_see(
+    runner: CliRunner,
+    write_config: WriteConfig,
+    monkeypatch: pytest.MonkeyPatch,
+    product: str,
+) -> None:
+    """#1317: on MariaDB the reset sets one login method, which ends a second
+    one the tool cannot see, so the plan warns, `SOPULI-W065`, before anything
+    connects and under `--dry-run`. Oracle has no such method."""
+    config, account = WRAPPED, ACCOUNT
+    if product == "mariadb":
+        account = f"{ACCOUNT}@%"
+        config = (
+            WRAPPED.replace("type: oracle", "type: mariadb")
+            .replace("192.0.2.10:1521/ALPHA", "192.0.2.10:3306")
+            .replace(f"[{ACCOUNT}]", f"['{account}']")
+        )
+
+    def unreachable(*_: Any) -> Any:
+        raise DriverError("not reached in this test")
+
+    monkeypatch.setattr("sopuli.cli._open_session", unreachable)
+    result = runner.invoke(
+        cli,
+        [
+            "--config",
+            str(write_config(config)),
+            "account",
+            "reset-password",
+            "--account",
+            account,
+            "--dry-run",
+            "--output",
+            "json",
+        ],
+    )
+
+    document = json.loads(result.stdout)
+    warned = [one for one in document.get("diagnostics", []) if one.get("code") == "SOPULI-W065"]
+    if product == "mariadb":
+        assert [one["target"] for one in warned] == [TARGET]
+        assert "unix_socket" in warned[0]["message"]
+    else:
+        assert warned == []
+
+
+def test_a_real_mariadb_reset_warns_with_the_plan_before_the_change_connects(
+    runner: CliRunner,
+    write_config: WriteConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#1317: on a real run the warning goes to stderr with the plan, before
+    the connection that changes the password, so it comes before any change.
+    The plan's read of the scope (#1310) connects first; it changes nothing."""
+    account = f"{ACCOUNT}@%"
+    config = (
+        WRAPPED.replace("type: oracle", "type: mariadb")
+        .replace("192.0.2.10:1521/ALPHA", "192.0.2.10:3306")
+        .replace(f"[{ACCOUNT}]", f"['{account}']")
+    )
+    seen_before: list[bool] = []
+
+    def unreachable(*_: Any) -> Any:
+        # Asked of the run's stderr so far: was the warning already printed?
+        seen_before.append("unix_socket" in result_stderr())
+        raise DriverError("not reached in this test")
+
+    captured: list[str] = []
+    monkeypatch.setattr("sopuli.cli._echo_err", lambda text, **_: captured.append(text))
+    monkeypatch.setattr("sopuli.invocation.echo_err", lambda text, **_: captured.append(text))
+
+    def result_stderr() -> str:
+        return "\n".join(captured)
+
+    monkeypatch.setattr("sopuli.cli._open_session", unreachable)
+    monkeypatch.setattr(
+        "sopuli.cli._delivery_backends",
+        lambda run, config, delivery, reached, account, **_: {TARGET: FakeBackend()},
+    )
+    result = runner.invoke(
+        cli,
+        ["--config", str(write_config(config)), "account", "reset-password", "--account", account],
+    )
+
+    # Two connections: the plan's scope read, then the reset's own.
+    assert len(seen_before) == 2, result.output
+    assert seen_before[-1], "the warning came after the change's connection"
+
+
 # ------------------------------------------- the set committed, the close not ---
 
 

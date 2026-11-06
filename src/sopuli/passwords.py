@@ -32,11 +32,13 @@ one (UC-1 §4 step 2).
 from __future__ import annotations
 
 import secrets as csprng  # the standard library's, not `sopuli.secrets` beside it
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 from sopuli.config import charsets
 from sopuli.config.errors import ConfigError
 from sopuli.config.model import PasswordPolicy
+from sopuli.config.targets import ORACLE
 from sopuli.secrets import Secret
 
 #: The only source of randomness this module uses -- P5 and UC-1 §4 step 3 both
@@ -63,6 +65,27 @@ REQUIRE = "require"
 LENGTH = "length"
 BYTE_LENGTH = "byte_length"
 ENCODING = "encoding"
+
+#: The rules ``--no-policy-check`` cannot waive on a target of each product
+#: (#1327). They are not policy: the product's driver refuses a password that
+#: breaks them, so a password staged past them is one ``creds apply`` refuses
+#: there. Every driver refuses a control character. Only Oracle's refuses ``"``
+#: (invariant 11): a quoted identifier has no escape for it. The other rules
+#: are what the config's policy asks for, and an external system may dictate a
+#: password that breaks them and that the database still accepts. An empty
+#: password is refused before any rule runs, where stdin is read.
+_EVERY_DRIVER_REFUSES = frozenset({CONTROL})
+_ORACLE_REFUSES = frozenset({CONTROL, FORBIDDEN})
+
+
+def unwaivable(products: Iterable[str]) -> frozenset[str]:
+    """The rules ``--no-policy-check`` cannot waive for a password staged for
+    targets of ``products``: every rule one of their drivers refuses."""
+    found = _EVERY_DRIVER_REFUSES
+    for product in products:
+        if product == ORACLE:
+            found = found | _ORACLE_REFUSES
+    return found
 
 
 class PasswordPolicyError(ConfigError):
@@ -243,6 +266,16 @@ def check(
 
     found.extend(_byte_violations(text, limit, target))
     return tuple(found)
+
+
+def ends_in_line_break(candidate: Secret) -> bool:
+    """Whether ``candidate`` ends in ``\\r`` or ``\\n``.
+
+    A refusal may say this, because it names a class of problem and its usual
+    cause, not a character of the password: a pipe that added a second line
+    break, which :func:`sopuli.material.strip_one_newline` does not remove.
+    """
+    return candidate.reveal().endswith(("\r", "\n"))
 
 
 def _starts_with_a_letter(text: str) -> bool:

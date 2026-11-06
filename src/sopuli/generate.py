@@ -53,7 +53,7 @@ one won, and the run announced eleven draws for one stored password.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Collection, Iterable, Sequence
 from dataclasses import dataclass, replace
 from typing import Any
 
@@ -63,8 +63,16 @@ from sopuli.config.password_keys import PasswordKey, declared_password_key
 from sopuli.config.references import dangling
 from sopuli.config.secret_refs import SecretRef
 from sopuli.config.sharing import STAGE_COLLISION_HINT, colliding_stages
+from sopuli.config.targets import ORACLE
 from sopuli.lock.keys import LockKey
-from sopuli.passwords import ByteLimit, PasswordPolicyError, Violation, check
+from sopuli.passwords import (
+    ByteLimit,
+    PasswordPolicyError,
+    Violation,
+    check,
+    ends_in_line_break,
+    unwaivable,
+)
 from sopuli.passwords import generate as draw_password
 from sopuli.payload import (
     GENERATED,
@@ -477,6 +485,7 @@ def candidate_for(
     readings: Sequence[tuple[str, ByteLimit]] = (),
     supplied: Secret | None = None,
     enforce: bool = True,
+    products: Collection[str] = (ORACLE,),
 ) -> Candidate:
     """Draw a password for one account, or validate one that was supplied.
 
@@ -498,7 +507,13 @@ def candidate_for(
     audit event, because "the flag was passed" does not say what it let through.
     It has no effect on a generated password -- there is nothing to override when
     the tool drew the value itself, and a flag that silently changed the
-    generator would be a different feature wearing this one's name.
+    generator would be a different feature wearing this one's name. It cannot
+    waive what a driver of ``products`` refuses
+    (:func:`~sopuli.passwords.unwaivable`): that password would stage a
+    ``pending`` that every ``creds apply`` there refuses (#1327). ``products``
+    is every product the password is staged for, not only this binding's,
+    because :func:`draw_once` gives the other bindings of the password this
+    candidate unchecked. The default is Oracle, whose driver refuses the most.
 
     ``readings`` is every answered target's limit, paired with the target so a
     refusal can name it, and the two paths use it differently for a reason
@@ -524,8 +539,16 @@ def candidate_for(
         )
 
     violations = _every_violation(supplied, policy, readings)
-    if violations and enforce:
-        raise _refused(binding, name, violations)
+    refused = unwaivable(products)
+    unusable = tuple(one for one in violations if one.rule in refused)
+    if violations and (enforce or unusable):
+        raise _refused(
+            binding,
+            name,
+            violations,
+            unusable=unusable,
+            line_break=bool(unusable) and ends_in_line_break(supplied),
+        )
     return Candidate(
         binding=binding,
         value=supplied,
@@ -552,19 +575,45 @@ def _no_policy(binding: Binding) -> ConfigError:
     )
 
 
-def _refused(binding: Binding, name: str, violations: Sequence[Violation]) -> PasswordPolicyError:
+def _refused(
+    binding: Binding,
+    name: str,
+    violations: Sequence[Violation],
+    *,
+    unusable: Sequence[Violation] = (),
+    line_break: bool = False,
+) -> PasswordPolicyError:
     """Why a supplied password was not accepted.
 
     Counts and rule names only, never characters or positions -- which is
     :class:`~sopuli.passwords.Violation`'s own rule, and the reason its ``detail``
     is safe to put in a message at all. Naming the offending characters would put
     part of a credential into whatever reads this.
+
+    Every violation is named, so fixing one does not uncover the next. Where
+    some are ``unusable``, which the target's driver refuses, the hint says
+    ``--no-policy-check`` cannot waive those, and does not offer the flag. A
+    trailing line break also gets its usual cause, a pipe that added one.
     """
     described = "; ".join(f"{one.rule} ({one.detail})" for one in violations)
-    return PasswordPolicyError(
-        f"the supplied password for {binding.account!r} violates policy {name!r}",
-        hint=(
+    if not unusable:
+        hint = (
             f"{described} -- fix the password, or pass `--no-policy-check`, "
             f"which records in the audit event what it let through"
-        ),
+        )
+    else:
+        rules = ", ".join(dict.fromkeys(one.rule for one in unusable))
+        hint = (
+            f"{described} -- fix the password: a driver of the targets it is for refuses "
+            f"{rules}, and `--no-policy-check` cannot waive that"
+        )
+        if line_break:
+            hint += (
+                ". The password ends in a line break; a pipe may have added one. The tool "
+                "strips one line break. In PowerShell, `Get-Content` without `-Raw` sends "
+                "one, and `-Raw` sends the file's own as well"
+            )
+    return PasswordPolicyError(
+        f"the supplied password for {binding.account!r} violates policy {name!r}",
+        hint=hint,
     )

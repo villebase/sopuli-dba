@@ -170,6 +170,7 @@ from sopuli.diagnostics import (
     reset_record_unwritten,
     rollback_reuse,
     rollover_caveat,
+    second_method_unseen,
     unaddressable_lock_paths,
     unlistable_for_orphans,
     unlistable_stores,
@@ -2371,6 +2372,13 @@ def account_reset_password(
     # (#1214): a yes followed by a refusal means nothing, and teaches people to
     # answer without reading. The cost is that the checks' logins to each target,
     # and the password prompt of a target with `auth: prompt`, come before it.
+    #
+    # #1317: on MariaDB the reset ends a second login method the tool cannot
+    # see. A warning in text goes out with the plan, so the operator reads it
+    # before the question and before the change, `--dry-run` included.
+    for target in reached:
+        if target.target.type == MARIADB:
+            run.document.warn_in_text(second_method_unseen(target.name))
     _ask_environments(plan, run, demand, action=action, noun="account")
 
     # **The delivery backend**, after the question, so that an operator who
@@ -6389,6 +6397,9 @@ def creds_generate(
         emitter.event(document, "constraints.resolved", data=document.constraints)
     # Once per password, not per binding: an account on several targets that
     # share its ref is one password (`sopuli.generate`'s docstring).
+    # Every product the one supplied password is staged for, so a driver that
+    # refuses it on any of them is not waived for the others (#1327).
+    products = frozenset(target.target.type for target in _targets_of(config, bindings))
     candidates = staging.draw_once(
         bindings,
         lambda binding: _candidate(
@@ -6398,6 +6409,7 @@ def creds_generate(
             supplied=supplied,
             enforce=not no_policy_check,
             readings=limits.readings,
+            products=products,
         ),
     )
     candidates, skipped = _split_reserved(candidates, reserved)
@@ -6581,6 +6593,7 @@ def _candidate(
     supplied: Secret | None,
     enforce: bool,
     readings: Sequence[tuple[str, ByteLimit]] = (),
+    products: frozenset[str] | None = None,
 ) -> Candidate:
     """One account's password, drawn or validated against its policy.
 
@@ -6597,11 +6610,22 @@ def _candidate(
     fallback -- no target answered, or none was asked -- and the policy's declared
     length then governs, which is what
     :func:`sopuli.generate.candidate_for` already does with it.
+
+    ``products`` is every product a supplied password is staged for, and
+    defaults to this binding's target's.
     """
     effective = binding if name is None else replace(binding, policy=name)
     chosen, policy = staging.policy_for(config, effective)
+    if products is None:
+        products = frozenset({_expanded(config, binding.target).target.type})
     return staging.candidate_for(
-        binding, policy, name=chosen, readings=readings, supplied=supplied, enforce=enforce
+        binding,
+        policy,
+        name=chosen,
+        readings=readings,
+        supplied=supplied,
+        enforce=enforce,
+        products=products,
     )
 
 

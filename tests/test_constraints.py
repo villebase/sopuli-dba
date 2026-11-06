@@ -187,6 +187,24 @@ def test_the_product_limit_warning_names_where_it_holds_and_where_the_policy_doe
     assert "the policy's declared length governs on ora" in warning.message
 
 
+def test_a_product_limit_is_kept_only_for_a_target_that_did_not_answer() -> None:
+    """A pair for a target in neither list would count toward the draw with no
+    entry in the section to show it."""
+    found = survey([], unreachable=("pg",), product_limits=[("pg", FIXED), ("other", LEGACY)])
+
+    assert found.product_limits == (("pg", FIXED),)
+
+
+def test_a_target_that_answered_its_limit_and_then_failed_is_not_unbounded() -> None:
+    """Its limit was read, so the policy does not govern there, and nothing in
+    the estate is unknown."""
+    found = survey([("ora", MODERN)], unreachable=("ora",))
+    [warning] = constraint_diagnostics(found)
+
+    assert found.unbounded == ()
+    assert "strictest" not in warning.message
+
+
 def test_a_partial_estate_whose_unread_targets_all_have_product_limits_is_not_doubtful() -> None:
     """Every target gave a count, so the limit used is the estate's strictest."""
     found = survey([("ora", MODERN)], unreachable=("pg",), product_limits=[("pg", FIXED)])

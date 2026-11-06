@@ -1139,7 +1139,8 @@ def constraint_diagnostics(found: Constraints, *, supplied: bool = False) -> lis
 
 
 def _unread(found: Constraints) -> list[Diagnostic]:
-    """Say which of §4's two answers governed the draw.
+    """Say what governed the draw where a target was not read: the policy, or a
+    product's fixed limit.
 
     Silence is the one thing not on offer. A password drawn against the policy
     alone and one drawn against a database that answered are different claims

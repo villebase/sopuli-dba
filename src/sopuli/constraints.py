@@ -193,19 +193,18 @@ class Constraints:
     """What was learned about the estate, and from where.
 
     ``readings`` is every target that answered, paired with its limit, in the
-    order they were tried. It is the whole answer; :attr:`drawing_limit` and
-    :attr:`limits` are two views of it for the two questions a password gets
-    asked, and keeping the pairs means a message can name the target as well as
-    the number.
+    order they were tried. Keeping the pairs means a message can name the target
+    as well as the number.
 
     ``unreachable`` names the targets that did not answer. It is not an error
     list: a run that reached three of four targets used the three, and the fourth
     is a caveat on how strict the answer is rather than a reason to stop.
 
     ``product_limits`` is the fixed limit of each target that gave no reading,
-    where its product has one (#1338). It holds without a connection, so
-    `--offline` has it too. :attr:`bounds` is the readings and these together,
-    and every question a password is asked reads that.
+    where its product has one. It holds without a connection, so `--offline`
+    has it too. :attr:`bounds` is the readings and these together, and is the
+    whole answer: :attr:`drawing_limit` and :attr:`limits` are two views of it
+    for the two questions a password gets asked.
     """
 
     readings: tuple[tuple[str, ByteLimit], ...] = ()
@@ -234,9 +233,13 @@ class Constraints:
 
     @property
     def unbounded(self) -> tuple[str, ...]:
-        """The unreachable targets with no product limit: the policy governs there."""
-        fixed = set(self.fixed_on)
-        return tuple(target for target in self.unreachable if target not in fixed)
+        """The unreachable targets with no limit at all: the policy governs there.
+
+        A target that answered its limit and then failed a later read is in
+        :attr:`unreachable` too, and is not counted here.
+        """
+        known = {*self.fixed_on, *self.read}
+        return tuple(target for target in self.unreachable if target not in known)
 
     @property
     def bounds(self) -> tuple[tuple[str, ByteLimit], ...]:
@@ -321,9 +324,10 @@ def survey(
     draw, and folding the two together would put a verify function next to a
     byte limit as though a run could act on both.
 
-    ``product_limits`` is the fixed limit of each target in ``unreachable``
-    whose product has one. A pair for a target that answered is dropped, since
-    its reading is the answer.
+    ``product_limits`` is the fixed limit of each target whose product has one.
+    Only the pairs of targets in ``unreachable`` that gave no reading are kept:
+    a reading is the answer. A target can be in both lists when it answered its
+    limit and a later read on the connection failed.
 
     Named for what it does rather than for what the caller wants out of it. A
     function that promised a single strictest answer would have to invent one;
@@ -333,7 +337,9 @@ def survey(
     unreached = tuple(unreachable)
     read_accounts = tuple(accounts)
     answered = {target for target, _ in seen}
-    fixed = tuple(pair for pair in product_limits if pair[0] not in answered)
+    fixed = tuple(
+        pair for pair in product_limits if pair[0] in unreached and pair[0] not in answered
+    )
 
     if seen:
         source = TARGETS

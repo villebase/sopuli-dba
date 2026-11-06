@@ -6407,7 +6407,10 @@ def creds_generate(
     if demand is not None:
         _show_plan(plan, run, noun="generation")
     supplied = _password_from_stdin() if from_stdin else None
-    limits, unanswered, reserved = _constraints_for(bindings, run, config, offline=offline)
+    staged_on = _targets_of(config, bindings)
+    limits, unanswered, reserved = _constraints_for(
+        bindings, run, config, offline=offline, fixed=_product_limits(staged_on)
+    )
     document.constraints = build_constraints(limits, unanswered)
     notices = constraint_diagnostics(limits, supplied=supplied is not None)
     document.diagnostics.extend(notices)
@@ -6422,7 +6425,7 @@ def creds_generate(
     # share its ref is one password (`sopuli.generate`'s docstring).
     # Every product the one supplied password is staged for, so a driver that
     # refuses it on any of them is not waived for the others (#1327).
-    products = frozenset(target.target.type for target in _targets_of(config, bindings))
+    products = frozenset(target.target.type for target in staged_on)
     candidates = staging.draw_once(
         bindings,
         lambda binding: _candidate(
@@ -6653,8 +6656,8 @@ def _candidate(
     )
 
 
-def _product_limits(config: Config, bindings: Sequence[Binding]) -> list[tuple[str, ByteLimit]]:
-    """The fixed limit of each target of ``bindings`` whose product has one (#1338).
+def _product_limits(targets: Sequence[ExpandedTarget]) -> list[tuple[str, ByteLimit]]:
+    """The fixed limit of each of ``targets`` whose product has one.
 
     On PostgreSQL, MySQL and MariaDB the limit is a fact about the product, so
     `--offline` or an unreachable target still knows it, and a password over it
@@ -6662,7 +6665,7 @@ def _product_limits(config: Config, bindings: Sequence[Binding]) -> list[tuple[s
     """
     return [
         (target.name, limit)
-        for target in _targets_of(config, bindings)
+        for target in targets
         if (limit := DRIVERS[target.target.type].fixed_limit) is not None
     ]
 
@@ -6673,6 +6676,7 @@ def _constraints_for(
     config: Config,
     *,
     offline: bool,
+    fixed: Sequence[tuple[str, ByteLimit]] = (),
 ) -> tuple[Constraints, dict[str, Error], dict[tuple[str, str], str]]:
     """What the selected targets say a password may be (UC-1 §4 step 2), why
     each target that did not answer did not, and each ``(target, account)``
@@ -6698,10 +6702,9 @@ def _constraints_for(
     a preview that skipped the constraint would be previewing a different draw
     from the one the real run makes.
 
-    A target that gave no reading still has its product's fixed limit, where
-    the product has one, `--offline` included (:func:`_product_limits`).
+    ``fixed`` is each target's product limit (:func:`_product_limits`). A
+    target that gave no reading keeps it, `--offline` included.
     """
-    fixed = _product_limits(config, bindings)
     if offline:
         return (
             Constraints(source=constraint_source.UNREAD, product_limits=tuple(fixed)),
@@ -13113,11 +13116,16 @@ def _rotate_estate(
     # sets it again without ending the window this run opens on MySQL. Only a
     # driver that keeps a second password on request reads the mark's effect.
     marked = strategy == strategies.ROLLOVER
+    # A rotation reads no limit from a target, but a product's fixed limit
+    # holds without one.
+    fixed = _product_limits(_targets_of(config, drawn))
     writes = staging.group(
         replace(candidate, rollover=marked)
         for candidate in staging.draw_once(
             drawn,
-            lambda binding: _candidate(binding, config, name=None, supplied=None, enforce=True),
+            lambda binding: _candidate(
+                binding, config, name=None, supplied=None, enforce=True, readings=fixed
+            ),
         )
     )
     for write in writes:

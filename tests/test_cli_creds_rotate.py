@@ -1634,6 +1634,23 @@ applications:
 """
 
 
+def test_a_rotation_is_held_to_the_products_fixed_limit(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """A 300-character policy cannot be drawn for MySQL, whose limit of 256
+    bytes is the product's, so nothing is staged (#1338)."""
+    harness = estate(
+        documents={"apps/acme/mysql-alpha": {"DB_CREDENTIALS": {"acme_web_user": LIVE}}},
+        users={"ACME_WEB_USER@%": user("acme_web_user@%")},
+    )
+    before = harness["store"].read("apps/acme/mysql-alpha").version
+    result = run(runner, write_config(MYSQL_CONFIG.replace("length: 24", "length: 300")))
+
+    assert result.exit_code != ExitCode.SUCCESS
+    assert "256" in str(result.exception)
+    assert harness["store"].read("apps/acme/mysql-alpha").version == before
+
+
 def test_an_error_after_a_retain_still_says_both_passwords_work(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:

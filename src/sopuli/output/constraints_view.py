@@ -98,9 +98,12 @@ def _answered(target: str, limit: ByteLimit) -> dict[str, Any]:
     collapse into one and a section that showed only the winner would be hiding
     the ones a supplied password still has to satisfy.
     """
-    entry: dict[str, Any] = {
-        "target": target,
-        "reachable": True,
+    return {"target": target, "reachable": True, **_limit_fields(limit)}
+
+
+def _limit_fields(limit: ByteLimit) -> dict[str, Any]:
+    """A limit's count, codec and character set, as both entry shapes carry them."""
+    fields: dict[str, Any] = {
         "max_password_bytes": limit.max_bytes,
         # The codec the count was measured in, which is not always implied by the
         # character set: `limits.py` falls back to ASCII for a character set it
@@ -109,8 +112,8 @@ def _answered(target: str, limit: ByteLimit) -> dict[str, Any]:
         "measured_as": limit.encoding,
     }
     if limit.charset is not None:
-        entry["character_set"] = limit.charset
-    return entry
+        fields["character_set"] = limit.charset
+    return fields
 
 
 def _unanswered(target: str, error: Error | None, fixed: ByteLimit | None) -> dict[str, Any]:
@@ -119,7 +122,7 @@ def _unanswered(target: str, error: Error | None, fixed: ByteLimit | None) -> di
     The reason is the server's code and message. Without it, a wrong admin
     account and a listener that is down read the same.
 
-    ``fixed`` is the product's own limit, where it has one (#1338). It goes in
+    ``fixed`` is the product's own limit, where it has one. It goes in
     ``product_limit`` rather than ``max_password_bytes``, which stays the
     count a target answered with.
     """
@@ -127,13 +130,7 @@ def _unanswered(target: str, error: Error | None, fixed: ByteLimit | None) -> di
     if error is not None:
         entry["error"] = error.to_dict()
     if fixed is not None:
-        limit: dict[str, Any] = {
-            "max_password_bytes": fixed.max_bytes,
-            "measured_as": fixed.encoding,
-        }
-        if fixed.charset is not None:
-            limit["character_set"] = fixed.charset
-        entry["product_limit"] = limit
+        entry["product_limit"] = _limit_fields(fixed)
     return entry
 
 
@@ -166,7 +163,8 @@ def render_constraints(found: Constraints, errors: Mapping[str, Error] = _NO_ERR
 
     Deliberately a line and not a table. The section carries a row per target and
     a row per account; what an operator reading a terminal needs before they look
-    at the write table is which of §4's two answers this run got, and the
+    at the write table is what bound this run's draw: the targets, their
+    products' fixed limits, or the policy. The
     caveats print themselves as warnings.
 
     Under the line, each target that did not answer gets a line with its
@@ -194,6 +192,9 @@ def render_constraints(found: Constraints, errors: Mapping[str, Error] = _NO_ERR
             + ", ".join(found.unreachable)
             + f"); {limit.max_bytes} bytes in {limit.described}, from {where}'s product"
         )
+        if found.unbounded:
+            # W015 says this too, but the text view does not print W015.
+            line += "; the policy's declared length governs on " + ", ".join(found.unbounded)
         return _with_reasons(line, found.unreachable, errors)
     where = found.strictest_target or ", ".join(found.read)
     if where in fixed:

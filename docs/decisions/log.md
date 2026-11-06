@@ -4668,8 +4668,8 @@ the register.
 ## #1286
 
 - **Decided:** 2026-11-06, #1286
-- **Question:** Two targets that reach one server are refused on Oracle,
-  PostgreSQL and MySQL (`SOPULI-20008`). MariaDB has no `server_uuid`. Which
+- **Question:** Two targets that reach one server are refused on PostgreSQL
+  and MySQL (`SOPULI-20008`). MariaDB has no `server_uuid`. Which
   value identifies a MariaDB server?
 - **Decision:** D: `@@server_uid`, compared within one run, as MySQL's
   `server_uuid` is. Any account reads it. It differed between every pair of
@@ -4781,3 +4781,32 @@ the register.
 - **Rejected:** B, keeping exit 0 and telling operators to alert on
   `SKIPPED` rows or the log line. It leaves every schedule that watches only
   the exit code reporting success.
+
+## #1346
+
+- **Decided:** 2026-11-06, #1346
+- **Question:** a Galera cluster's nodes share their accounts, but each has
+  its own `@@server_uid`, so two targets on two nodes of one cluster are not
+  refused by [#1286](#1286)'s check. Which value, if any, identifies the
+  cluster?
+- **Decision:** A, the maintainer's choice. On a Galera node that is
+  `Synced`, the MariaDB driver gives the cluster's `wsrep_cluster_state_uuid`
+  as its identity, and the refusal names a `Galera cluster`. Any other server,
+  and a node in any other state, keeps `@@server_uid`.
+- **Why:** `14_galera_identity_probe.py` found the UUID shared by every node
+  of a cluster, different between two clusters started from empty data, and
+  the same after a node's restart and the whole cluster's, on every supported
+  release. An account with only `CREATE USER` reads it, and a server without
+  Galera answers it empty. Only the `Synced` state was measured, so a joining
+  node falls back to `@@server_uid`: that can let two targets through, and
+  never refuses two that are separate.
+- **Rejected:**
+  1. B: keeping `@@server_uid` and the documented gap. It leaves the case the
+     check exists for unrefused on every Galera estate.
+  2. `@@wsrep_cluster_name`. It was the default `my_wsrep_cluster` on both
+     clusters and on a server without Galera.
+  3. `mysql.wsrep_cluster.cluster_uuid`. The tool account is refused it,
+     `1142`.
+- **Known cost:** a cluster started from a copy of another cluster's data is
+  expected to keep that cluster's UUID, which was not measured. The two would
+  be refused as one, and the hint says how to run them apart.

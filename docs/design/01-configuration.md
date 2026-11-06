@@ -1791,10 +1791,10 @@ so do UC-2's commands (#1272) and `finish-rollover` (#1271). Two targets that
 reach one server are refused with `SOPULI-20008`, as on MySQL. MariaDB has no
 `server_uuid`, so the tool knows a server by its `@@server_uid`, which changes
 at each restart and identifies a server only within one run
-([#1286](../decisions/log.md#1286)). A replica has its own. So does each
-node of a Galera cluster, although the nodes share their accounts, so two
-targets on two nodes of one cluster are not caught. Declare one target for
-the cluster.
+([#1286](../decisions/log.md#1286)). A replica has its own. A Galera
+cluster is known by the cluster instead, and refused as one
+([`02-mariadb-privileges.md`](02-mariadb-privileges.md) §2.3). Declare one
+target for the cluster.
 
 **Each product's keys stay on its own targets.** These are refused, each
 naming the target and the key:

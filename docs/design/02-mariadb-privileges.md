@@ -165,14 +165,18 @@ primary's hostname, port and datadir; `server_id`, `port`, `datadir` and
 `gtid_domain_id` keep their defaults unless a DBA sets them
 (`13_server_identity_probe.py`). The tool compares identities only within one
 run, so a server that restarts during a run can let two targets on it through.
-A Galera cluster's nodes share their accounts, but each node has its own
-`@@server_uid`, so two targets on two nodes of one cluster are not caught
-(`14_galera_identity_probe.py`). The status variable
-`wsrep_cluster_state_uuid` is shared by one cluster's nodes, differs between
-clusters, survives a node's restart and the cluster's, and any account reads
-it. The tool does not use it yet
-([#1346](https://github.com/villebase/sopuli-dba/issues/1346)).
-It warns, and never fails ([P5](../decisions/log.md#p5)), about:
+A Galera cluster's nodes share their accounts, and each node has its own
+`@@server_uid`. So on a Galera node the tool knows the cluster instead, by
+the status variable `wsrep_cluster_state_uuid`. One cluster's nodes shared
+it, two clusters started from empty data had different ones, it survived a
+node's restart and the whole cluster's, and an account with only `CREATE
+USER` read it (`14_galera_identity_probe.py`). Two targets on nodes of one
+cluster are refused as one Galera cluster. A node that is not `Synced`, such
+as one still joining, is known by its `@@server_uid`, because no other state
+was measured. A cluster started from a copy of another cluster's data was not
+measured: it is expected to keep that cluster's UUID, and the two would then
+be refused as one ([#1346](../decisions/log.md#1346)).
+`doctor` warns, and never fails ([P5](../decisions/log.md#p5)), about:
 
 - each declared user name that also exists at a host the config does not
   declare, as on MySQL ([`02-mysql-privileges.md`](02-mysql-privileges.md) §4).

@@ -114,9 +114,38 @@ def test_the_mariadb_session_names_its_server() -> None:
     assert session.identity_caveat is None
 
 
-def test_the_mariadb_session_reads_the_server_uid() -> None:
-    """The statement and the reader, without a server: the isinstance check
-    above sees only that the names exist."""
+GALERA_UUID = "ed105c80-da14-11f1-8404-db003b3a7fb6"
+SERVER_UID = "vmGAk3HDOBZm5rKnJnCGDtplUwQ="
+
+
+@pytest.mark.parametrize(
+    ("wsrep", "identity", "kind", "key"),
+    [
+        # Without Galera the UUID is empty (probe 14, GI6).
+        ({"wsrep_cluster_state_uuid": ""}, SERVER_UID, "MariaDB server", "server_uid"),
+        (
+            {"Wsrep_cluster_state_uuid": GALERA_UUID, "Wsrep_local_state_comment": "Synced"},
+            GALERA_UUID,
+            "Galera cluster",
+            "wsrep_cluster_state_uuid",
+        ),
+        # A node still joining was not measured, so it is known by its server.
+        (
+            {"wsrep_cluster_state_uuid": GALERA_UUID, "wsrep_local_state_comment": "Joining"},
+            SERVER_UID,
+            "MariaDB server",
+            "server_uid",
+        ),
+    ],
+    ids=["no-galera", "synced-node", "joining-node"],
+)
+def test_the_mariadb_session_reads_its_identity(
+    wsrep: dict[str, str], identity: str, kind: str, key: str
+) -> None:
+    """The statements and the reader, without a server: the isinstance check
+    above sees only that the names exist. A Galera node that is `Synced` is
+    known by its cluster (#1346), any other server by `@@server_uid`
+    (#1286)."""
     session_module = pytest.importorskip("sopuli.driver.mariadb.session")
     from sopuli.config.model import ExpandedTarget, Target
     from sopuli.driver.protocol import Timeouts
@@ -134,7 +163,10 @@ def test_the_mariadb_session_reads_the_server_uid() -> None:
             executed.append(statement)
 
         def fetchone(self) -> tuple[str]:
-            return ("vmGAk3HDOBZm5rKnJnCGDtplUwQ=",)
+            return (SERVER_UID,)
+
+        def fetchall(self) -> list[tuple[str, str]]:
+            return list(wsrep.items())
 
     class _Connection:
         def cursor(self) -> _Cursor:
@@ -145,8 +177,10 @@ def test_the_mariadb_session_reads_the_server_uid() -> None:
         connection=_Connection(), target=target, correlation_id="run", timeouts=Timeouts()
     )
 
-    assert session.cluster_identity() == "vmGAk3HDOBZm5rKnJnCGDtplUwQ="
-    assert executed == ["select @@global.server_uid"]
+    assert session.cluster_identity() == identity
+    assert (session.identity_kind, session.identity_key) == (kind, key)
+    assert executed[0] == session_module.WSREP_STATE
+    assert executed[1:] == ([] if identity == GALERA_UUID else ["select @@global.server_uid"])
 
 
 def test_two_targets_on_one_mysql_server_are_refused_by_name() -> None:

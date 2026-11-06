@@ -6,7 +6,8 @@ names, so the second is refused, as a name declared twice is
 (``01-configuration.md`` §*``postgres:`` on a target*).
 
 A MySQL server is one set of accounts too, known by its ``server_uuid``, and
-so is a MariaDB server, known by its ``@@server_uid`` (#1286).
+so is a MariaDB server, known by its ``@@server_uid`` (#1286), and a Galera
+cluster, known by its ``wsrep_cluster_state_uuid`` (#1346).
 
 A session that can say which cluster it reached has ``cluster_identity()``,
 ``identity_caveat`` and the words for its refusal (:class:`ClusterIdentity`).

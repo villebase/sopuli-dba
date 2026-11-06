@@ -65,12 +65,13 @@ RESULTS -- the same on every release; RECORDED below holds each value
   GI7  no login failed: a password set on a1 logged in on a2 and on a3 at
        once, 20 times out of 20 on each node
 
-  So wsrep_cluster_state_uuid is the value one cluster shares and another
-  does not, and it survives a node's restart and the cluster's. An account
-  with only CREATE USER reads it, and a server without Galera answers it
-  empty, which tells the two apart. wsrep_cluster_name tells nothing apart
-  where it is left at its default. A cluster bootstrapped again from new data
-  was not measured; it would be expected to get a new UUID.
+  So wsrep_cluster_state_uuid is the value one cluster shares and another,
+  started from empty data, does not, and it survives a node's restart and
+  the cluster's. An account with only CREATE USER reads it, and a server
+  without Galera answers it empty, which tells the two apart.
+  wsrep_cluster_name tells nothing apart where it is left at its default. A
+  cluster started from a copy of another cluster's data was not measured; it
+  would be expected to keep that cluster's UUID.
 
 HOW TO RUN, from the repo root, with the images of test/compose.yaml profile
 mariadb-matrix pulled:
@@ -149,7 +150,10 @@ class Release:
 
     def __init__(self, image: str) -> None:
         self.image = image
-        self.tag = image.split(":")[1].replace(".", "")
+        # The tag is after the last ':' of the last path part, so a registry's
+        # port is not taken for it. Only letters and digits go into a name.
+        _, _, tag = image.rsplit("/", 1)[-1].partition(":")
+        self.tag = re.sub(r"[^0-9a-z]", "", tag.lower()) or "latest"
         self.network = f"sopuli-galera-{self.tag}"
 
     def name(self, node: str) -> str:
@@ -194,9 +198,11 @@ class Release:
 
 
 def wait_for(what: str, ready: Callable[[], bool], seconds: int = 180) -> None:
-    """Ask `ready` once a second. A step that fails while a server starts
-    counts as not ready yet."""
-    for _ in range(seconds):
+    """Ask `ready` about once a second until `seconds` have passed, by the
+    clock, not by the number of tries. A step that fails while a server
+    starts counts as not ready yet."""
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
         try:
             if ready():
                 return
@@ -206,14 +212,28 @@ def wait_for(what: str, ready: Callable[[], bool], seconds: int = 180) -> None:
     raise StepError(f"{what}: not ready after {seconds} s")
 
 
-def status(release: Release, node: str, name: str) -> str:
-    ok, out = release.sql(node, "root", ROOT_PASSWORD, f"SHOW GLOBAL STATUS LIKE '{name}'")
-    return out.split("\t")[-1] if ok and out else ""
+def status_rows(
+    release: Release, node: str, user: str, password: str, *names: str
+) -> tuple[bool, str, dict[str, str]]:
+    """The named status variables in one statement, by exact name: `LIKE`
+    would read each `_` as a wildcard. Returns whether it ran, its error, and
+    the rows by name."""
+    listed = ", ".join(f"'{name}'" for name in names)
+    ok, out = release.sql(
+        node, user, password, f"SHOW GLOBAL STATUS WHERE Variable_name IN ({listed})"
+    )
+    if not ok:
+        return False, out, {}
+    rows = (line.split("\t", 1) for line in out.splitlines() if line)
+    return True, "", {row[0].lower(): row[1] if len(row) > 1 else "" for row in rows}
 
 
 def synced(release: Release, node: str, size: int) -> bool:
-    return status(release, node, "wsrep_local_state_comment") == "Synced" and status(
-        release, node, "wsrep_cluster_size"
+    _ok, _err, rows = status_rows(
+        release, node, "root", ROOT_PASSWORD, "wsrep_local_state_comment", "wsrep_cluster_size"
+    )
+    return rows.get("wsrep_local_state_comment") == "Synced" and rows.get(
+        "wsrep_cluster_size"
     ) == str(size)
 
 
@@ -269,15 +289,14 @@ def values(release: Release, node: str) -> dict[str, str]:
     for name in VARIABLES:
         ok, out = release.sql(node, TOOL, TOOL_PASSWORD, f"SELECT @@global.{name}")
         found[name] = (out or "empty") if ok else refusal(out)
+    ok, error, rows = status_rows(release, node, TOOL, TOOL_PASSWORD, *STATUS)
     for name in STATUS:
-        ok, out = release.sql(node, TOOL, TOOL_PASSWORD, f"SHOW GLOBAL STATUS LIKE '{name}'")
         if not ok:
-            found[name] = refusal(out)
-        elif not out:
+            found[name] = refusal(error)
+        elif name not in rows:
             found[name] = "no row"
         else:
-            found[name] = out.split("\t", 1)[1] if "\t" in out else "empty"
-            found[name] = found[name] or "empty"
+            found[name] = rows[name] or "empty"
     ok, out = release.sql(node, TOOL, TOOL_PASSWORD, "SELECT cluster_uuid FROM mysql.wsrep_cluster")
     found[TABLE] = (out or "no row") if ok else refusal(out)
     return found
@@ -340,14 +359,20 @@ def full_restart(release: Release) -> None:
 def propagation(release: Release) -> dict[str, int]:
     """GI7: ALTER USER on a1, then a login on the other node at once, both
     from inside that node's container, so no `docker exec` start lies between
-    them. The root and new passwords go by the environment."""
+    them. The passwords reach the container by the environment, and the
+    statement reaches the client on stdin from the shell's `printf`, a
+    builtin, so neither is in a process's argv.
+
+    Only a failed login counts. A failed ALTER USER exits 3, which is a step
+    that could not be made, not a result."""
     release.root(
         "a1",
         f"DROP USER IF EXISTS '{APP}'@'%';CREATE USER '{APP}'@'%' IDENTIFIED BY 'Acme-App-pw0'",
     )
     script = (
-        'MYSQL_PWD="$ROOT_PW" mariadb -h a1 -uroot -e "ALTER USER \'' + APP + "'@'%' "
-        'IDENTIFIED BY \'$NEW_PW\'" && MYSQL_PWD="$NEW_PW" mariadb -u' + APP + ' -N -e "SELECT 1"'
+        f"printf \"ALTER USER '{APP}'@'%%' IDENTIFIED BY '%s'\" \"$NEW_PW\""
+        ' | MYSQL_PWD="$ROOT_PW" mariadb -h a1 -uroot || exit 3; '
+        f'MYSQL_PWD="$NEW_PW" mariadb -u{APP} -N -e "SELECT 1"'
     )
     failed: dict[str, int] = {}
     for node in ("a2", "a3"):
@@ -364,9 +389,9 @@ def propagation(release: Release) -> dict[str, int]:
                 text=True,
                 env={**os.environ, "ROOT_PW": ROOT_PASSWORD, "NEW_PW": new},
             )  # fmt: skip
+            if done.returncode == 3 or (done.returncode != 0 and "1045" not in done.stderr):
+                raise StepError(f"GI7 {node}: {done.stderr.strip()}")
             if done.returncode != 0:
-                if "1045" not in done.stderr:
-                    raise StepError(f"GI7 {node}: {done.stderr.strip()}")
                 failed[node] += 1
     return failed
 

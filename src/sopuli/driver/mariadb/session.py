@@ -206,6 +206,27 @@ def _server_uid(cursor: Any) -> str:
     return str(cursor.fetchone()[0])
 
 
+#: A Galera node's cluster, for the same check (#1346). Each node has its own
+#: ``@@server_uid``, and ``wsrep_cluster_state_uuid`` is the value one cluster's
+#: nodes share; an account with only ``CREATE USER`` reads it, and a server
+#: without Galera answers it empty (probe 14, GI1 to GI6).
+WSREP_STATE = (
+    "show global status where variable_name in "
+    "('wsrep_cluster_state_uuid', 'wsrep_local_state_comment')"
+)
+
+
+def _galera_cluster(cursor: Any) -> str | None:
+    """The cluster's UUID on a Galera node that is `Synced`, otherwise
+    ``None``. A node still joining was not measured, so it is known by its
+    server instead: that can miss two targets on one cluster, and never
+    refuses two that are not."""
+    cursor.execute(WSREP_STATE)
+    found = {str(name).lower(): str(value) for name, value in cursor.fetchall()}
+    cluster = found.get("wsrep_cluster_state_uuid", "")
+    return cluster if cluster and found.get("wsrep_local_state_comment") == "Synced" else None
+
+
 @dataclass
 class MariadbSession(ClosesConnection):
     """One open connection to a MariaDB server. Implements the
@@ -240,8 +261,10 @@ class MariadbSession(ClosesConnection):
     _checks_unread: str | None = field(default=None, init=False, repr=False)
     #: The words for two targets that are one server
     #: (:class:`~sopuli.driver.clusters.ClusterIdentity`), as on MySQL. Not
-    #: fields. ``identity_caveat`` is always ``None``: any account reads
-    #: ``@@server_uid`` (probe 13, SI1).
+    #: fields. :meth:`cluster_identity` replaces the last three on a Galera
+    #: node. ``identity_caveat`` is always ``None``: an account with only
+    #: ``CREATE USER`` reads ``@@server_uid`` and ``wsrep_cluster_state_uuid``
+    #: (probe 13, SI1; probe 14, GI1).
     identity_caveat = None
     identity_kind = "MariaDB server"
     identity_key = "server_uid"
@@ -251,15 +274,35 @@ class MariadbSession(ClosesConnection):
     )
 
     def cluster_identity(self) -> str | None:
-        """The server's ``@@server_uid``, which the CLI uses to refuse two
-        targets that are one server (#1286). Any account reads it. It differed
-        on every server measured, a replica and its primary included, even
-        one with the primary's hostname (probe 13, SI3 to SI5).
+        """What the CLI uses to refuse two targets that are one set of
+        accounts: on a Galera node, the cluster's ``wsrep_cluster_state_uuid``
+        (#1346), and otherwise the server's ``@@server_uid`` (#1286).
 
-        It changes when the server restarts (SI2). The CLI compares identities
-        only within one run, so a restart during a run can miss two targets
-        on one server."""
-        return self._read(_server_uid)
+        A Galera cluster's nodes share their accounts, and each has its own
+        ``@@server_uid``. The cluster's UUID was shared by every node, differed
+        between two clusters started from empty data, and survived a node's
+        restart and the whole cluster's (probe 14, GI2 to GI5). A cluster
+        started from a copy of another's data was not measured, and would be
+        expected to keep its UUID: that refuses two targets, never lets two
+        through.
+
+        ``@@server_uid`` differed on every server measured, a replica and its
+        primary included, even one with the primary's hostname (probe 13, SI3
+        to SI5). It changes when the server restarts (SI2). The CLI compares
+        identities only within one run, so a restart during a run can miss two
+        targets on one server."""
+        cluster = self._read(_galera_cluster)
+        if cluster is None:
+            return self._read(_server_uid)
+        self.identity_kind = "Galera cluster"
+        self.identity_key = "wsrep_cluster_state_uuid"
+        self.identity_hint = (
+            "declare each cluster once: its nodes share their accounts, so one "
+            "target covers them all. If they are two clusters, one started from a "
+            "copy of the other's data, they can share the UUID: give each its own "
+            "secret and run one of them per run with --target"
+        )
+        return cluster
 
     def scope(self) -> Scope:
         """What this session is: a server, read-write or not, and its

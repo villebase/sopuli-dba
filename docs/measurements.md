@@ -310,7 +310,9 @@ checks their headers against the table below in the same way.
 | `11.8.9` | The `mariadb:11.8` image, the same profile, as pulled on 2026-11-04. 11.8 is a long-term support release |
 | `12.3.3` | The `mariadb:12.3` image, the same profile, as pulled on 2026-11-01. 12.3 is the current long-term support release |
 
-Not measured: every other release, Galera, and every managed service.
+Not measured: every other release, and every managed service. Galera is
+measured only as `14_galera_identity_probe.py` runs it, on the image's own
+library in docker.
 
 ## MariaDB scripts
 
@@ -369,3 +371,7 @@ Not measured: every other release, Galera, and every managed service.
 | `13_server_identity_probe.py` | `11.4.13` | 2026-11-06 | #1286 | As on 10.11.19 |
 | `13_server_identity_probe.py` | `11.8.9` | 2026-11-06 | #1286 | As on 10.11.19 |
 | `13_server_identity_probe.py` | `12.3.3` | 2026-11-06 | #1286 | As on 10.11.19 |
+| `14_galera_identity_probe.py` | `10.11.19` | 2026-11-06 | #1346 | **`wsrep_cluster_state_uuid` is shared by one Galera cluster's nodes and differs between two clusters started from empty data.** On a cluster of three nodes and another of one, both started with the image's own Galera library, an account with only `CREATE USER` reads it with `SHOW GLOBAL STATUS`. It is the same after one node restarts and rejoins, and after the whole cluster stops and starts again. `@@server_uid` and `wsrep_gcomm_uuid` differ per node and change at each restart. `@@wsrep_cluster_name` is `my_wsrep_cluster`, the default, on both clusters and on a server without Galera. `mysql.wsrep_cluster` is refused, `1142`. The same account reads `wsrep_local_state_comment`, `Synced`, and `Donor/Desynced` on a node desynced with `wsrep_desync`, which keeps the UUID. Without Galera, `wsrep_on` is `0`, `wsrep_cluster_state_uuid` is empty, and `wsrep_local_state_comment` has no row. A password set on one node logged in on the others at once, 20 times out of 20 on each |
+| `14_galera_identity_probe.py` | `11.4.13` | 2026-11-06 | #1346 | As on 10.11.19 |
+| `14_galera_identity_probe.py` | `11.8.9` | 2026-11-06 | #1346 | As on 10.11.19 |
+| `14_galera_identity_probe.py` | `12.3.3` | 2026-11-06 | #1346 | As on 10.11.19 |

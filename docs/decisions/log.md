@@ -4668,8 +4668,8 @@ the register.
 ## #1286
 
 - **Decided:** 2026-11-06, #1286
-- **Question:** Two targets that reach one server are refused on Oracle,
-  PostgreSQL and MySQL (`SOPULI-20008`). MariaDB has no `server_uuid`. Which
+- **Question:** Two targets that reach one server are refused on PostgreSQL
+  and MySQL (`SOPULI-20008`). MariaDB has no `server_uuid`. Which
   value identifies a MariaDB server?
 - **Decision:** D: `@@server_uid`, compared within one run, as MySQL's
   `server_uuid` is. Any account reads it. It differed between every pair of
@@ -4781,3 +4781,39 @@ the register.
 - **Rejected:** B, keeping exit 0 and telling operators to alert on
   `SKIPPED` rows or the log line. It leaves every schedule that watches only
   the exit code reporting success.
+
+## #1346
+
+- **Decided:** 2026-11-06, #1346
+- **Question:** a Galera cluster's nodes share their accounts, but each has
+  its own `@@server_uid`, so two targets on two nodes of one cluster are not
+  refused by [#1286](#1286)'s check. Which value, if any, identifies the
+  cluster?
+- **Decision:** A, the maintainer's choice. On a Galera node that is
+  `Synced`, the MariaDB driver gives the cluster's `wsrep_cluster_state_uuid`
+  as a second identity, beside the server's `@@server_uid`, and a refusal on
+  it names a `Galera cluster`. The CLI refuses a target that shares either
+  with another. A node in another state gives no cluster, and `doctor` notes
+  it. The server is always claimed, so the cluster only adds refusals: two
+  targets on one node are refused whatever its state, as before.
+- **Why:** `14_galera_identity_probe.py` found the UUID shared by every node
+  of a cluster, different between two clusters started from empty data, and
+  the same after a node's restart and the whole cluster's, on every supported
+  release. An account with only `CREATE USER` reads it, and a server without
+  Galera answers it empty. A desynced node read `Donor/Desynced` and kept the
+  UUID, but only `Synced` is trusted, so another state can let two targets
+  on two nodes through, and never refuses two that are separate.
+- **Rejected in review:** giving the cluster's UUID instead of the server's
+  `@@server_uid`. Two targets on one node could then claim different values
+  if the node changed state between their reads, and #1286's refusal would
+  be lost.
+- **Rejected:**
+  1. B: keeping `@@server_uid` and the documented gap. It leaves the case the
+     check exists for unrefused on every Galera estate.
+  2. `@@wsrep_cluster_name`. It was the default `my_wsrep_cluster` on both
+     clusters and on a server without Galera.
+  3. `mysql.wsrep_cluster.cluster_uuid`. The tool account is refused it,
+     `1142`.
+- **Known cost:** a cluster started from a copy of another cluster's data is
+  expected to keep that cluster's UUID, which was not measured. The two would
+  be refused as one, and the hint says how to run them apart.

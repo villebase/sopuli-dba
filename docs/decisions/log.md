@@ -4612,3 +4612,24 @@ the register.
   ends an expiry without verifying the vault's `current`.
   On `ed25519`, a PyMySQL client still on the old password cannot log in
   during the rollover, so for it the rollover gives no grace.
+
+## #1317
+
+- **Decided:** 2026-11-05, #1317
+- **Question:** On MariaDB, `account reset-password` sends one login method,
+  which ends a second one joined by `OR`, such as a DBA's own `unix_socket`
+  login. [#1301](#1301) accepted this for application accounts because such
+  a method is rare there. Is it accepted for personal accounts too, where it
+  is more likely?
+- **Decision:** A: keep [#1301](#1301)'s decision for UC-2. The reset is not
+  refused. It warns at plan time, `SOPULI-W065` once per MariaDB target,
+  `--dry-run` included, and its row says the same: any other method, such as
+  `unix_socket`, stops working.
+- **Why:** The tool still cannot see the second method without reading every
+  stored value, which [#1267](#1267) decision 3 refused. A refusal that the
+  operator lifts with a flag would be asked on every MariaDB reset, and an
+  operator who added a socket login knows it is there.
+- **Rejected:** B: refusing the reset on MariaDB unless a flag confirms the
+  account has no second method.
+- **Accepted cost:** a reset ends a person's socket login. The run warns
+  before the change, but it cannot say whether the account had one.

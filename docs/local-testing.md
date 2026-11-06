@@ -2153,7 +2153,11 @@ Plan: 1 account x 1 target = 1 account   [dev]
 
 ACCOUNT           TARGET       INTENT        SECRET
 acme_dev_alice@%  mariadb-dev  password_set  -
-
+2 warnings:
+  targets[0].mariadb.ssl_mode: target 'mariadb-dev' does not verify the server (`ssl_mode: REQUIRED`)
+    hint: anything between this run and the server can present its own certificate and read the password a run sets. Use `ssl_mode: VERIFY_IDENTITY` (the default), with `ssl_ca` naming the CA that issued the server's certificate
+  mariadb-dev: where the account is reset, the password is set as the only login method. Any other method it has, such as unix_socket, stops working, and the tool cannot see one
+...
 ACCOUNT           TARGET       STATE  WAS   DETAIL
 acme_dev_alice@%  mariadb-dev  RESET  OPEN  declared by role 'acme_dev_team'
 
@@ -2165,12 +2169,14 @@ hand this to acme_dev_alice@% for mariadb-dev; it unwraps once:
 ...
 ```
 
-The password in the token logs in. A reset never sends `ACCOUNT UNLOCK`,
-because the tool cannot tell a suspension from a block after failed logins:
-a locked account keeps its new password and still answers `4151`, and the
-JSON row's `actions[].detail` says the lock cannot be read. Unlock by hand,
-after checking that nobody suspended the account. `--keep-rollover` is refused
-with exit 5.
+The second warning is `SOPULI-W065`. It is printed with the plan, before the
+reset, and `--dry-run` prints it too: a DBA's own `unix_socket` login ends
+with the reset. The password in the token logs in.
+A reset never sends `ACCOUNT UNLOCK`, because the tool cannot tell a
+suspension from a block after failed logins: a locked account keeps its new
+password and still answers `4151`, and the JSON row's `actions[].detail` says
+the lock cannot be read. Unlock by hand, after checking that nobody suspended
+the account. `--keep-rollover` is refused with exit 5.
 
 `expire-password` sends `PASSWORD EXPIRE` alone, and a second run changes
 nothing:

@@ -105,6 +105,8 @@ def test_a_reset_sets_and_expires_by_one_statement(
     assert change.action == PASSWORD_SET
     assert change.changed
     assert "password set, expired" in change.detail
+    # #1317: the row says a second method the tool cannot see stops working.
+    assert "such as unix_socket, stops working" in change.detail
     assert _expired(live_mariadb, user) == "Y"
     assert _login(live_mariadb, user, NEW) == MUST_CHANGE_PASSWORD
     assert _login(live_mariadb, user, OLD) == ACCESS_DENIED
@@ -149,6 +151,7 @@ def test_a_reset_leaves_a_lock_in_place(live_mariadb: Any, session: Any, user: s
     (change,) = session.reset_password(f"{user}@%", Secret(NEW), expire=False)
 
     assert "a reset does not unlock it" in change.detail
+    assert "such as unix_socket, stops working" in change.detail, "#1317, without expire"
     assert _login(live_mariadb, user, NEW) == ACCOUNT_LOCKED
 
 

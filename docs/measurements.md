@@ -361,6 +361,10 @@ Not measured: every other release, Galera, and every managed service.
 | `11_rollover_expiry_probe.py` | `11.4.13` | 2026-11-05 | #1271 | As on 10.11.19 |
 | `11_rollover_expiry_probe.py` | `11.8.9` | 2026-11-05 | #1271 | As on 10.11.19 |
 | `11_rollover_expiry_probe.py` | `12.3.3` | 2026-11-05 | #1271 | As on 10.11.19 |
+| `12_password_check_probe.py` | `10.11.19` | 2026-11-05 | #1310 | **`simple_password_check` and `password_reuse_check` make the server refuse the value the driver sends.** With `simple_password_check` or `password_reuse_check` loaded and `strict_password_validation` `ON`, its default, `ALTER USER … IDENTIFIED VIA <plugin> USING '<value>'` from an account with only `CREATE USER` is refused on `mysql_native_password` and `ed25519` with `1396`, "Operation ALTER USER failed", the same answer a weak password gets. With it `OFF` the value is accepted and no plugin checks it, `password_reuse_check` included, while `IDENTIFIED BY` is still checked. That account reads `@@strict_password_validation` and the loaded validation plugins from `information_schema.PLUGINS`. `cracklib_password_check` is not in the image (`1126`) |
+| `12_password_check_probe.py` | `11.4.13` | 2026-11-05 | #1310 | As on 10.11.19 |
+| `12_password_check_probe.py` | `11.8.9` | 2026-11-05 | #1310 | As on 10.11.19 |
+| `12_password_check_probe.py` | `12.3.3` | 2026-11-05 | #1310 | As on 10.11.19 |
 | `13_server_identity_probe.py` | `10.11.19` | 2026-11-06 | #1286 | **No value the server sets is both per server and stable.** An account with only `CREATE USER` reads `@@server_id`, `@@hostname`, `@@port`, `@@datadir`, `@@gtid_domain_id` and `@@server_uid`. `@@server_uid` differs between servers and **changes at each restart**. `server_id` (`1`), `port` (`3306`), `datadir` and `gtid_domain_id` (`0`) are the defaults on every server, and `hostname` differs only because each container has its own. `SHOW GLOBAL STATUS LIKE 'server_uid'` returns no row. A replica was not measured |
 | `13_server_identity_probe.py` | `11.4.13` | 2026-11-06 | #1286 | As on 10.11.19 |
 | `13_server_identity_probe.py` | `11.8.9` | 2026-11-06 | #1286 | As on 10.11.19 |

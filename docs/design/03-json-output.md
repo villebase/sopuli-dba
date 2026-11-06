@@ -768,11 +768,15 @@ on. A fourth state for it would put "not attempted" in the same vocabulary as
 **An account a guardrail refused is `SKIPPED`, with its reason.** `SKIPPED` is
 the schema's word for something the tool declined to do, as against something it
 tried and could not do; `creds finish-rollover` uses it the same way. It is not
-a failure, it does not make the run partial, and the exit code ignores it.
-`02-oracle-privileges.md` §4 has the reasoning: the run was never going to act
-on that account, and a nightly rotation that exited 4 forever because one
-account holds `DBA` would be more disruptive than the mistake the guardrail
-catches.
+a failure, and in every verb but one it does not make the run partial: the exit
+code ignores it. `02-oracle-privileges.md` §4 has the reasoning: the run was
+never going to act on that account, and a nightly rotation that exited 4
+forever because one account holds `DBA` would be more disruptive than the
+mistake the guardrail catches. The one verb is `creds finish-rollover` on
+MariaDB, whose close sets a password and so runs the account checks. A close
+they turn away leaves the old password working, and a MariaDB window never
+elapses, so the run exits 4 and `SOPULI-W043` names the account
+([#1352](../decisions/log.md#1352)).
 
 ### `invocation.selection`
 
@@ -2350,7 +2354,7 @@ not contract and may improve.
 | `SOPULI-W040` | `creds status --max-age-days`: the vault last rotated this credential longer ago than the threshold. One entry per result over it. The age is the vault's (Q9). `password_age_days` is the database's, so the two are never one field |
 | `SOPULI-W041` | `account list` admitted an account the database reports as its own, so a mutating verb refuses it at plan time (guardrail 2). A `role:` predicate can reach one, because creating a role grants it to the creator: on the tier-1 stack that was `SYSTEM`. The text output prints it as a note under the table |
 | `SOPULI-W042` | `account list` admitted an account that an application also declares, so the whitelist is ambiguous about which guarantee applies ([H1](../decisions/log.md#h1)). Only a predicate can reach this, because an enumerated name in both sections is refused when the file loads (`01-configuration.md` §10). A separate code from `SOPULI-W041`, because the fix is in the file, not in the database. The text output prints it as a note under the table |
-| `SOPULI-W043` | `creds rotate --finish-rollover` left a rollover window open, because the vault may not serve the new password. Run `creds finish-rollover` once `current` holds it; where the promotion did not happen, `creds apply` promotes it first. It also names a window the close itself left open, saying why, such as §4's checks refusing the account or a `current` the database refused: run `creds finish-rollover` once that is resolved (from #1344). A run with any `SOPULI-W043` entry, of either kind, exits 4 where it would otherwise exit 0 (from #1347). **One entry per account and target**, each with `account` and `target`, so a consumer reads which windows are open without parsing the message. Each message names its own pair. The text output prints one note that names every pair the vault kept open, and one note for each window the close left open. Reasons: [#825](../decisions/log.md#825), [#1344](../decisions/log.md#1344), [#1347](../decisions/log.md#1347) |
+| `SOPULI-W043` | `creds rotate --finish-rollover` left a rollover window open, because the vault may not serve the new password. Run `creds finish-rollover` once `current` holds it; where the promotion did not happen, `creds apply` promotes it first. It also names a window the close itself left open, saying why, such as §4's checks refusing the account or a `current` the database refused: run `creds finish-rollover` once that is resolved (from #1344). `creds finish-rollover` raises it too, on MariaDB, for each close §4's checks turned away (from #1352). A run with any `SOPULI-W043` entry, of any kind, exits 4 where it would otherwise exit 0 (from #1347 and #1352). **One entry per account and target**, each with `account` and `target`, so a consumer reads which windows are open without parsing the message. Each message names its own pair. The text output prints one note that names every pair the vault kept open, and one note for each window the close left open. Reasons: [#825](../decisions/log.md#825), [#1344](../decisions/log.md#1344), [#1347](../decisions/log.md#1347), [#1352](../decisions/log.md#1352) |
 | `SOPULI-W044` | The pre-flight could not read the privilege audit for a target, so it established nothing about the target's grants, either way. A finding of the `privileges` check that does **not** block: an estate that will not grant the audit view could otherwise never run a pre-flight. Each pre-flight check that can warn has its own code. A blocking finding is an `error` diagnostic with no code, because `error.category` already tells it apart |
 | `SOPULI-W045` | The pre-flight could not establish whether the profile an account would move to exists. A finding of the `profile` check that does not block, for `SOPULI-W044`'s reason. The driver asks the same question again before its own statement and refuses that account, so what is lost is the early warning |
 | `SOPULI-W046` | `creds generate --overwrite-pending` replaced a `pending` password that was already staged, on a staging run or a `--promote`. Anything holding the old one is now stale. The message names the document version replaced. In `results[].warnings[]` |

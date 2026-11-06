@@ -1633,7 +1633,12 @@ account keeps, so the tool keeps the old password by sending its value again.
   has just described ([#1344](../decisions/log.md#1344)). An account that
   gained, for example, a global privilege since its window opened keeps the
   window, and no login is spent: the row is `ERROR` where `--account` named
-  it, and `SKIPPED` otherwise. `--dry-run` shows the same. The checks a flag
+  it, and `SKIPPED` otherwise. A `SKIPPED` row of this kind makes the run exit
+  4, not 0, although §4 leaves a run with a skipped account at 0 for every
+  other verb. Here the skip leaves the old password working, and the window
+  never elapses, so a scheduled run must not report success. Each such close
+  is a `SOPULI-W043` warning ([#1352](../decisions/log.md#1352)). `--dry-run`
+  shows the same. The checks a flag
   waives are not run again: a MariaDB window never elapses, so one that
   `creds rotate --force` waived when the window opened must not keep it open
   for good. `creds rotate --finish-rollover` runs the same checks, and warns

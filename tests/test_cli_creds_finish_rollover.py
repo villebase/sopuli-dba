@@ -321,7 +321,7 @@ def test_a_target_that_refuses_the_value_is_refused_before_the_question(
     ("selector", "state", "code"),
     [
         (("--account", "acme_web_user"), "ERROR", ExitCode.FAILURE),
-        (("--select", "tenant=alpha"), "SKIPPED", ExitCode.SUCCESS),
+        (("--select", "tenant=alpha"), "SKIPPED", ExitCode.PARTIAL),
     ],
     ids=["named", "selected"],
 )
@@ -337,8 +337,9 @@ def test_a_close_that_sets_a_password_runs_the_account_checks(
 ) -> None:
     """#1344: where the close sends a password, as on MariaDB, an account §4
     refuses keeps its window, with no login and nothing sent: `ERROR` where
-    `--account` named it, `SKIPPED` otherwise, as in `creds apply`. The fake
-    is Oracle-shaped, so Oracle is made such a product here."""
+    `--account` named it, `SKIPPED` otherwise, as in `creds apply`. The
+    `SKIPPED` row exits 4, not 0, because the old password still works
+    (#1352). The fake is Oracle-shaped, so Oracle is made such a product here."""
     monkeypatch.setattr("sopuli.cli.CLOSE_SETS_PASSWORD_TYPES", frozenset({"oracle"}))
     harness = estate(
         users={"ACME_WEB_USER": in_rollover(global_privileges=frozenset({"SUPER ON *.*"}))}
@@ -352,9 +353,69 @@ def test_a_close_that_sets_a_password_runs_the_account_checks(
     assert all("SUPER ON *.*" in row["actions"][0]["detail"] for row in rows)
     assert all(row["actions"][0]["applied"] is False for row in rows)
     assert all(row["changed"] is False for row in rows)
+    # Said whatever the exit code, so a run that exits 1 or 3 for another
+    # reason still names the window that will not end (#1352).
+    left_open = [
+        (one["account"], one["target"])
+        for one in document(result)["diagnostics"]
+        if one["code"] == "SOPULI-W043"
+    ]
+    assert left_open == [("acme_web_user", row["target"]) for row in rows]
     for session in harness["sessions"]:
         assert session.attempts == []
         assert session.closed == []
+
+
+TWO_ACCOUNTS = CONFIG.replace(
+    "accounts: [acme_web_user]", "accounts: [acme_web_user, acme_batch_user]"
+)
+
+
+def test_a_refused_close_beside_a_made_one_exits_4(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#1352: one window closed and one turned away is partial: some of what
+    the run was asked to do happened, and the old password of the other still
+    works."""
+    monkeypatch.setattr("sopuli.cli.CLOSE_SETS_PASSWORD_TYPES", frozenset({"oracle"}))
+    documents = {
+        "apps/acme/appdb-alpha": {
+            "DB_CREDENTIALS": {"acme_web_user": LIVE, "acme_batch_user": LIVE}
+        }
+    }
+    harness = estate(
+        documents=documents,
+        users={
+            "ACME_WEB_USER": in_rollover(),
+            "ACME_BATCH_USER": in_rollover(
+                "ACME_BATCH_USER", global_privileges=frozenset({"SUPER ON *.*"})
+            ),
+        },
+    )
+    result = run(
+        runner,
+        write_config(TWO_ACCOUNTS),
+        "--select",
+        "tenant=alpha",
+        "--output",
+        "json",
+        "--confirm",
+    )
+
+    assert result.exit_code == ExitCode.PARTIAL, result.output
+    states = {row["account"]: row["state"] for row in document(result)["results"]}
+    assert states == {"acme_web_user": "IN_SYNC", "acme_batch_user": "SKIPPED"}
+
+    # The text says why the run exited 4, under the table.
+    monkeypatch.setattr("sopuli.cli.CLOSE_SETS_PASSWORD_TYPES", frozenset({"oracle"}))
+    text = run(runner, write_config(TWO_ACCOUNTS), "--select", "tenant=alpha", "--confirm")
+    assert text.exit_code == ExitCode.PARTIAL, text.output
+    assert "1 note:" in text.output
+    assert "the rollover window stays open for acme_batch_user on appdb-alpha" in text.output
+    assert harness["sessions"][0].closed == ["ACME_WEB_USER"]
 
 
 def test_a_check_a_flag_waives_does_not_keep_a_window_open(
@@ -588,7 +649,8 @@ def test_a_database_that_cannot_close_early_is_skipped(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:
     """Not an error: the window elapses on its own, which is what would have
-    happened anyway."""
+    happened anyway. So exit 0, unlike a close the account checks turned away
+    (#1352)."""
     harness = estate(capabilities=frozenset())
     result = run(runner, write_config(CONFIG), "--select", "tenant=alpha")
 

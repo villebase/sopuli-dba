@@ -1061,9 +1061,10 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "reach this: an enumerated name in both is refused when the file loads."
         ),
         ROLLOVER_LEFT_OPEN: (
-            "`creds rotate --finish-rollover` left a rollover window open, because the vault "
-            "may not serve the new password. Run `creds finish-rollover` once `current` holds "
-            "it. One entry per account and target."
+            "A rollover window was left open. `creds rotate --finish-rollover` raises it where "
+            "the vault may not serve the new password, or where the close was not made. "
+            "`creds finish-rollover` raises it where the account checks refused the close, on "
+            "MariaDB. One entry per account and target."
         ),
         PRIVILEGE_AUDIT_UNREAD: (
             "The pre-flight could not read the privilege audit for a target, so it "

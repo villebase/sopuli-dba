@@ -13,9 +13,11 @@ inside the Oracle driver:
 **The rule is product-neutral; the facts are the driver's.** "Refuse an account
 the driver reports as vendor-maintained, or as holding administrative
 privileges" is a sentence about credentials, not about Oracle. So this module
-reads :class:`~sopuli.driver.protocol.UserState`, which the Oracle driver fills
-from `DBA_USERS` and the PostgreSQL driver from `pg_roles` and `pg_auth_members`
-(:mod:`sopuli.driver.postgres.roles`), and neither reimplements the reasoning.
+reads :class:`~sopuli.driver.protocol.UserState`, which each driver fills from
+its own catalog: the Oracle driver from `DBA_USERS`, the PostgreSQL driver from
+`pg_roles` and `pg_auth_members` (:mod:`sopuli.driver.postgres.roles`), and the
+MySQL and MariaDB drivers from `mysql.user` and the grant tables. None of them
+reimplements the reasoning.
 Which roles count as administrative, and which names the product supplies, are
 the driver's lists: it reports them as ``admin_roles`` and ``supplied_name``,
 and this module holds no product's names.
@@ -47,11 +49,13 @@ the command layer applies.
    PostgreSQL, a role in supautils' ``reserved_roles``. Never waived, like
    check 6 (#1111).
 9. **holds a global privilege**, a privilege beyond the account's own data
-   that the driver reports in ``global_privileges``: on MySQL, any privilege
-   ``ON *.*`` but ``USAGE``, any on the ``mysql`` schema, and any ``PROXY``
-   grant, held or reached through a role. Never waived (#1222). It runs only
-   for a verb that sets a password, and not on the session's own account,
-   which check 7 covers.
+   that the driver reports in ``global_privileges``: on MySQL and MariaDB, any
+   privilege ``ON *.*`` but ``USAGE``, any on the ``mysql`` schema, and any
+   ``PROXY`` grant, held or reached through a role. Never waived (#1222). On
+   MySQL it runs only for a verb that sets a password, and not on the
+   session's own account, which check 7 covers. On MariaDB it runs for every
+   verb, and on the session's own account for a verb that sets no password
+   (:data:`GUARDED_TYPES`).
 
 ### Refused, permitted, or *could not establish*
 

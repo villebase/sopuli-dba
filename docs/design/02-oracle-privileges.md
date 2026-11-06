@@ -884,13 +884,18 @@ Before any `ALTER USER`, the tool refuses when the target account:
    PostgreSQL driver reports one: a role in supautils' `reserved_roles`, as on
    Supabase;
 9. holds or can activate a global privilege: a privilege beyond its own data.
-   Only the MySQL driver reports one: any privilege `ON *.*` except `USAGE`,
-   any privilege on the `mysql` schema, or any `PROXY` grant, held directly or
-   through a role. The refusal names the first five and counts the rest. It
-   applies only to a verb that sets a password: `account suspend` and `account
-   expire-password` take power away, and may act on such an account. The
-   account the session is connected as is exempt, because the tool already has
-   its power; check 7 still refuses it unless `--force` waives that.
+   Only the MySQL and MariaDB drivers report one: any privilege `ON *.*`
+   except `USAGE`, any privilege on the `mysql` schema, or any `PROXY` grant,
+   held directly or through a role (`02-mariadb-privileges.md` §5 has
+   MariaDB's sources). The refusal names the first five and counts the rest.
+   On MySQL it applies only to a verb that sets a password: `account suspend`
+   and `account expire-password` take power away, and may act on such an
+   account. The account the session is connected as is exempt, because the
+   tool already has its power; check 7 still refuses it unless `--force`
+   waives that. On MariaDB it also refuses `creds finish-rollover`, and
+   `account suspend` and `account expire-password` even on the session's own
+   account, because a `role:` rule there admits the account that created the
+   role, often root ([#1272](../decisions/log.md#1272)).
 
 `--force` overrides checks 2 to 5 and 7, for a DBA who deliberately manages an
 unusual account, or rotates the tool's own password

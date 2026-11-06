@@ -1499,8 +1499,8 @@ product's own words.
 **A PostgreSQL target's `scope.type` is `cluster`**, from run schema 1.62.
 `container` and `db_unique_name` are null. `open_mode` is `READ WRITE`,
 `READ ONLY` where `default_transaction_read_only` is on, or `IN RECOVERY` on a
-standby, and `read_write` is false for the last two. `capabilities` is empty,
-because the PostgreSQL driver does none of what a capability names yet. The
+standby, and `read_write` is false for the last two. `capabilities` is
+`["role_lookup"]`. The
 encryption comes from the session's own row in `pg_stat_ssl`: `tls` or `none`,
 with `protocol` `tcp`. `error.code` is the SQLSTATE (§2, `error`).
 
@@ -1508,7 +1508,9 @@ with `protocol` `tcp`. `error.code` is the SQLSTATE (§2, `error`).
 `container` and `db_unique_name` are null. `open_mode` is `READ WRITE`, or
 `READ ONLY` where the server's `read_only` or `super_read_only`, or the
 session's `transaction_read_only`, is on, and `read_write` is false then.
-`db_version` is `VERSION()` up to its first `-`. `capabilities` is empty. The
+`db_version` is `VERSION()` up to its first `-`. `capabilities` holds
+`role_lookup`, and `expire_password` and `password_rollover` too where the
+server has `caching_sha2_password_digest_rounds`. The
 encryption comes from the session's own `Ssl_version` status: `tls`, `none`
 where it is empty, or `unknown` where there is no such row, with `protocol`
 `tcp`. A server whose version names MariaDB or TiDB is refused, a `config`
@@ -1596,7 +1598,7 @@ ADR-006's E6, and it sets the whole shape of the section:
 > evidence as often as it is a diagnostic; a section that appears only when
 > something is wrong cannot be quoted as proof that nothing was.
 
-From `doctor --output json` against the tier-1 stack, with a config that
+From `doctor --output json` with `examples/single-application.yaml`, which
 declares one Oracle target and one HashiCorp store, laid out one row to a line:
 
 ```json
@@ -1608,6 +1610,8 @@ declares one Oracle target and one HashiCorp store, laid out one row to a line:
     { "name": "oci",       "status": "installed",       "vaults": [] }
   ],
   "drivers": [
+    { "name": "mariadb",    "status": "installed", "targets": 0 },
+    { "name": "mysql",      "status": "installed", "targets": 0 },
     { "name": "oracle",     "status": "installed", "targets": 1 },
     { "name": "postgresql", "status": "installed", "targets": 0 }
   ]

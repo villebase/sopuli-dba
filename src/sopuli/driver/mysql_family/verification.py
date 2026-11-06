@@ -4,9 +4,11 @@ On MySQL and on MariaDB the server picks the account a login reaches from the
 client's host, so a login as ``acme_app`` may reach an account other than the
 declared one. Only a ``user@%`` account that is the user's only account, with
 no anonymous account at a named host, is reached by every login as its user.
-The MySQL driver logs in only there (#1223); the MariaDB driver logs in
-anywhere and trusts an answer it cannot pin to an account only there
-(#1267, decision 8). Each says why in its own words.
+Both drivers log in to verify a password only there (#1223, #1270). The
+MariaDB driver makes one exception: once per staged ``pending``, the login
+after a change may reach another account, and it passes only when
+``CURRENT_USER()`` is the declared one (CLAUDE.md invariant 5). Each driver
+says why in its own words.
 """
 
 from __future__ import annotations

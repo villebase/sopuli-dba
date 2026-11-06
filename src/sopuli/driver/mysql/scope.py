@@ -9,10 +9,10 @@ the server's version (invariant 3); it is read to report it, and to tell MySQL
 from MariaDB, which answers the same protocol and has a driver of its own
 (#1202, decision 2).
 
-**No capability is read here.** The session adds ``password_rollover``
-(:meth:`~sopuli.driver.mysql.session.MysqlSession.scope`), and the other
-capabilities in P1's table name things this build of the MySQL driver does not
-do yet.
+**No capability is read here.** The session adds them
+(:meth:`~sopuli.driver.mysql.session.MysqlSession.scope`): ``role_lookup``
+always, and ``password_rollover`` and ``expire_password`` where the server has
+``caching_sha2_password_digest_rounds``.
 """
 
 from __future__ import annotations

@@ -1,4 +1,4 @@
-"""Database drivers (P1): Oracle and PostgreSQL.
+"""Database drivers (P1): Oracle, PostgreSQL, MySQL and MariaDB.
 
 :mod:`sopuli.driver.protocol` is the interface every command touching a database
 goes through. No command contains vendor SQL, and no product gets a privileged

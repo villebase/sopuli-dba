@@ -12,10 +12,13 @@ It is written in plain language on purpose. The precise versions live in
 reader who is outside the project.
 
 A note on the current state before anything else: this is alpha software.
-This document describes Oracle. PostgreSQL is supported for the
-application-credential commands, and the personal-account commands refuse it.
-[`design/02-postgres-privileges.md`](design/02-postgres-privileges.md) says what
-differs there. The largest difference: on PostgreSQL 13 to 15, the `CREATEROLE`
+This document describes Oracle. PostgreSQL, MySQL and MariaDB are supported
+too. On PostgreSQL, what a cluster lacks is refused before anything changes:
+`account expire-password`, and the seen path of `account reset-password`.
+[`design/02-postgres-privileges.md`](design/02-postgres-privileges.md),
+[`design/02-mysql-privileges.md`](design/02-mysql-privileges.md) and
+[`design/02-mariadb-privileges.md`](design/02-mariadb-privileges.md) say what
+differs on each. The largest difference: on PostgreSQL 13 to 15, the `CREATEROLE`
 attribute the tool account needs can change the password of every role that is
 not a superuser, so there the tool account is close to a superuser and only the
 tool enforces the config's whitelist. From 16 the server enforces it too. The

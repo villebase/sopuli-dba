@@ -9153,13 +9153,26 @@ def _turned_away(
     did. Fell inside a broader selection: skipped, and the run does the rest of
     its job.
     """
+    turned_away = _turned_away_outcome(binding, review, selection=selection)
+    return _Applied(binding, source, turned_away, changed=False, duration_ms=_elapsed(started))
+
+
+def _turned_away_outcome(
+    binding: Binding,
+    review: guardrails.Review,
+    *,
+    selection: Selection,
+) -> check_states.Outcome:
+    """`REFUSED` where `--account` named the account, `SKIPPED` otherwise, with
+    the reason, logged as left alone. `creds apply`'s rows and `creds
+    finish-rollover`'s (#1344) both use it."""
     named = selection.names(binding.account)
     turned_away = check_states.Outcome(
         apply_states.REFUSED if named else apply_states.SKIPPED,
         guardrails_reason(review, named=named),
     )
     _left_alone(binding.account, binding.target, turned_away.state, turned_away.detail)
-    return _Applied(binding, source, turned_away, changed=False, duration_ms=_elapsed(started))
+    return turned_away
 
 
 def _refused_row(
@@ -10304,6 +10317,11 @@ def _require_encryption(
 #: The products whose driver reports whether the server takes the password
 #: value it computes (:data:`~sopuli.driver.protocol.PASSWORD_VALUE`, #1310).
 PASSWORD_VALUE_TYPES = frozenset({MARIADB})
+
+#: The products whose rollover close sends a password value, so it changes the
+#: account's login, and `finish-rollover` runs UC-1 §4's checks first, as `creds
+#: apply` does (#1344). Oracle's and MySQL's close sets no password.
+CLOSE_SETS_PASSWORD_TYPES = frozenset({MARIADB})
 
 
 def _require_password_value(
@@ -12153,7 +12171,14 @@ def creds_finish_rollover(
         documents = _read_documents(keys, stores, run=run)
     sources = _sources(bindings, documents)
 
-    finished = _finish_estate(sources, run, config, margin=lockout_margin, preview=run.dry_run)
+    finished = _finish_estate(
+        sources,
+        run,
+        config,
+        margin=lockout_margin,
+        preview=run.dry_run,
+        guard=_FinishGuard(declared=_declared_accounts(run), selection=selection),
+    )
 
     document.results = [
         build_finish_result(
@@ -12221,6 +12246,9 @@ class _Finished:
     #: Whether the window could not be read, on MySQL (#1224): the table says
     #: so rather than "none open".
     unknown_window: bool = False
+    #: Whether §4's checks refused the close (#1344), which keeps the window
+    #: open. A `SKIPPED` row is otherwise one whose window elapses on its own.
+    turned_away: bool = False
 
 
 def _finish_estate(
@@ -12231,8 +12259,12 @@ def _finish_estate(
     margin: int,
     preview: bool,
     manager: LockManager | None = None,
+    guard: _FinishGuard | None = None,
 ) -> list[_Finished]:
     """Every account, target by target, one connection each. `check`'s grouping.
+
+    ``guard`` is what §4's checks need, on a target whose close sets a password
+    (:data:`CLOSE_SETS_PASSWORD_TYPES`, #1344). It is built once per run.
 
     ``manager`` is ``None`` for `creds finish-rollover`, which takes no lock at
     all -- it writes to no store, so there is nothing for the advisory lock to
@@ -12253,7 +12285,14 @@ def _finish_estate(
     for name, work in grouped.items():
         found.extend(
             _finish_target(
-                by_target[name], work, run, config, margin=margin, preview=preview, manager=manager
+                by_target[name],
+                work,
+                run,
+                config,
+                margin=margin,
+                preview=preview,
+                manager=manager,
+                guard=guard if by_target[name].target.type in CLOSE_SETS_PASSWORD_TYPES else None,
             )
         )
     return found
@@ -12268,6 +12307,7 @@ def _finish_target(
     margin: int,
     preview: bool,
     manager: LockManager | None = None,
+    guard: _FinishGuard | None = None,
 ) -> list[_Finished]:
     """One target's worth of accounts, over one connection.
 
@@ -12295,7 +12335,13 @@ def _finish_target(
 
         rows = [
             _finish_one(
-                binding, session, source=source, margin=margin, preview=preview, manager=manager
+                binding,
+                session,
+                source=source,
+                margin=margin,
+                preview=preview,
+                manager=manager,
+                guard=guard,
             )
             for binding, source in work
         ]
@@ -12311,6 +12357,17 @@ def _finish_target(
                 session.close()
 
 
+@dataclass(frozen=True)
+class _FinishGuard:
+    """What §4's checks need on a target whose close sets a password (#1344):
+    the declared accounts, and the selection that says whether `--account`
+    named one. The close runs only the checks no flag waives, so no `--force`
+    reaches it."""
+
+    declared: Collection[str]
+    selection: Selection
+
+
 def _finish_one(
     binding: Binding,
     session: Any,
@@ -12319,8 +12376,16 @@ def _finish_one(
     margin: int,
     preview: bool,
     manager: LockManager | None = None,
+    guard: _FinishGuard | None = None,
 ) -> _Finished:
     """One account: read the window, decide, and close it or say why not.
+
+    **With ``guard``, §4's checks run first** (#1344): on MariaDB the close
+    sends the current password's value, which changes the account's login, so
+    an account `creds apply` would refuse is refused here too. As in
+    :func:`_apply_one`, on the account `describe_user` already read, before the
+    login and before a preview says what it would do. A refused account keeps
+    its window: `ERROR` where `--account` named it, `SKIPPED` otherwise.
 
     ``attempts=1`` is the whole budget. This verb makes one login per account per
     run and never a second -- UC-1 section 7 mitigation 1 -- and it is declared to
@@ -12355,6 +12420,25 @@ def _finish_one(
             # Unreachable: `settled_before_closing` answers both. Restated so a
             # fall-through cannot decide a mutation on a value nobody checked.
             raise ValueError(f"no window to end for {binding.account!r} and no reason given")
+
+        if guard is not None:
+            # Only the checks no flag waives (#1344). A MariaDB window never
+            # elapses, so a check `creds rotate --force` waived when it opened
+            # must not keep it open for good.
+            found = guardrails.review(user, declared=guard.declared)
+            review = replace(
+                found, refusals=tuple(one for one in found.refusals if not one.overridable)
+            )
+            if not review.permitted:
+                turned_away = _turned_away_outcome(binding, review, selection=guard.selection)
+                return _Finished(
+                    binding,
+                    turned_away,
+                    changed=False,
+                    user=user,
+                    duration_ms=_elapsed(started),
+                    turned_away=True,
+                )
 
         unknown = windows.window_unknown(user, session.scope())
         if preview:
@@ -13106,7 +13190,7 @@ def _rotate_estate(
                 for account, target in left
             )
         try:
-            into.closed = _close_windows(
+            finished = _close_windows(
                 settled,
                 run,
                 config,
@@ -13115,6 +13199,25 @@ def _rotate_estate(
                 documents={**documents, **promoted},
                 margin=margin,
                 manager=manager,
+                selection=selection,
+            )
+            into.closed = sum(1 for record in finished if record.changed)
+            # A close that did not happen leaves the old password working, so
+            # it is said, and its pair is no longer counted as closing (#1344).
+            kept = _not_closed(finished)
+            into.closing = into.closing - {(target, account) for account, target, _ in kept}
+            into.caveats.extend(
+                _not_closed_note(account, target, reason) for account, target, reason in kept
+            )
+            document.diagnostics.extend(
+                Diagnostic(
+                    level="warning",
+                    message=_not_closed_note(account, target, reason),
+                    code=ROLLOVER_LEFT_OPEN,
+                    account=account,
+                    target=target,
+                )
+                for account, target, reason in kept
             )
         except LockStolenError as lost:
             # Every window this run had already closed stays closed, which is why
@@ -13267,6 +13370,31 @@ def _left_open_note(pairs: str) -> str:
     )
 
 
+def _not_closed(finished: Sequence[_Finished]) -> list[tuple[str, str, str]]:
+    """The windows `--finish-rollover` tried to close and did not, as account,
+    target and the row's reason. Not one whose window had already closed,
+    `IN_SYNC`, nor one this database cannot end early and that elapses on its
+    own, `SKIPPED`. A `SKIPPED` row that §4's checks turned away is one."""
+    return [
+        (record.binding.account, record.binding.target, record.outcome.detail or "")
+        for record in finished
+        if not record.changed
+        and (
+            record.turned_away
+            or record.outcome.state not in (check_states.IN_SYNC, windows.SKIPPED)
+        )
+    ]
+
+
+def _not_closed_note(account: str, target: str, reason: str) -> str:
+    """`SOPULI-W043`'s message for a window the close itself left open (#1344)."""
+    return (
+        f"--finish-rollover left the rollover window open for {account} on {target}, "
+        f"because the close was not made: {reason}. Run `sopuli creds finish-rollover` "
+        "once that is resolved"
+    )
+
+
 def _data_at(key: LockKey, documents: Mapping[LockKey, Any]) -> Any:
     stored = documents.get(key)
     return None if stored is None else stored.data
@@ -13280,8 +13408,11 @@ def _close_windows(
     documents: Mapping[LockKey, Any],
     margin: int,
     manager: LockManager,
-) -> int:
+    selection: Selection,
+) -> list[_Finished]:
     """`--finish-rollover`: end every window this run opened, once it is over.
+    One row per window it tried to close; the caller counts the closes and
+    reports the ones that did not happen (:func:`_not_closed`).
 
     **At the end of the run rather than per target**, which is the difference
     between this and `--strategy direct`. Direct closes each window as it opens
@@ -13316,16 +13447,16 @@ def _close_windows(
         and (record.rollover is None or record.rollover.get("active") is True)
     ]
     if not confirmed:
-        return 0
-    finished = _finish_estate(
+        return []
+    return _finish_estate(
         _sources(confirmed, documents),
         run,
         config,
         margin=margin,
         preview=False,
         manager=manager,
+        guard=_FinishGuard(declared=_declared_accounts(run), selection=selection),
     )
-    return sum(1 for record in finished if record.changed)
 
 
 def _unconfirmed(accounts: Sequence[str], unread: Mapping[LockKey, Error]) -> Diagnostic:

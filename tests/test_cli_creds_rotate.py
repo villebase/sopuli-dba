@@ -1704,6 +1704,96 @@ def test_finish_rollover_closes_windows_at_the_end_of_the_run(
     assert "closed 2 rollover windows" in result.output
 
 
+def _after_both_changes(harness: dict[str, Any], event: str) -> bool:
+    """Whether this is a `describe_user` that comes after both targets'
+    password changes: the close's own, at the end of the run."""
+    seen = harness.setdefault("changes", [])
+    if event == "set_password":
+        seen.append(event)
+    return event == "describe_user" and len(seen) >= 2
+
+
+def test_a_close_the_guardrails_refuse_is_warned_and_not_counted(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#1344: where the close sets a password, as on MariaDB, §4's checks run
+    before it. An account that gains a global privilege after its change keeps
+    its window, and the run says so per pair, `SOPULI-W043` with the reason,
+    instead of counting it closed. The fake is Oracle-shaped, so Oracle is made
+    such a product here."""
+    monkeypatch.setattr("sopuli.cli.CLOSE_SETS_PASSWORD_TYPES", frozenset({"oracle"}))
+
+    def gain_a_privilege(harness: dict[str, Any], event: str) -> None:
+        if _after_both_changes(harness, event):
+            for database in harness["databases"].values():
+                database.declared["ACME_WEB_USER"] = user(
+                    rollover_enabled=True, global_privileges=frozenset({"SUPER ON *.*"})
+                )
+
+    harness = estate(
+        users={"ACME_WEB_USER": user(rollover_enabled=True)},
+        capabilities=frozenset({PASSWORD_ROLLOVER, EXPIRE_PASSWORD}),
+        on_call=gain_a_privilege,
+    )
+    result = run(runner, write_config(CONFIG), "--finish-rollover", "--output", "json")
+
+    assert finished(harness) == []
+    body = document(result)
+    left = [one for one in body["diagnostics"] if one.get("code") == ROLLOVER_LEFT_OPEN]
+    assert sorted(one["target"] for one in left) == ["appdb-alpha", "appdb-beta"]
+    assert all("SUPER ON *.*" in one["message"] for one in left)
+    assert all("close was not made" in one["message"] for one in left)
+
+
+def test_a_close_that_fails_its_login_is_warned_too(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+) -> None:
+    """A close `_finish_one` declines for another reason, here a `current` the
+    database refuses, was dropped without a word before #1344. It is warned
+    the same way."""
+
+    def drift(harness: dict[str, Any], event: str) -> None:
+        if _after_both_changes(harness, event):
+            for database in harness["databases"].values():
+                database.passwords["ACME_WEB_USER"] = "Someone-Else-Changed-It-1"
+
+    estate(
+        users={"ACME_WEB_USER": user(rollover_enabled=True)},
+        capabilities=frozenset({PASSWORD_ROLLOVER, EXPIRE_PASSWORD}),
+        on_call=drift,
+    )
+    result = run(runner, write_config(CONFIG), "--finish-rollover", "--output", "json")
+
+    body = document(result)
+    left = [one for one in body["diagnostics"] if one.get("code") == ROLLOVER_LEFT_OPEN]
+    assert left, body["diagnostics"]
+    assert all("close was not made" in one["message"] for one in left)
+
+
+def test_a_window_that_elapses_on_its_own_is_not_warned(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+) -> None:
+    """A database that cannot end a window early leaves it to elapse, and the
+    close's `SKIPPED` row says so. Running `creds finish-rollover` would not
+    change that, so it is no `SOPULI-W043` (#1344)."""
+    estate(
+        users={"ACME_WEB_USER": user(rollover_enabled=True)},
+        capabilities=frozenset({PASSWORD_ROLLOVER}),
+    )
+    result = run(runner, write_config(CONFIG), "--finish-rollover", "--output", "json")
+
+    body = document(result)
+    left = [one for one in body.get("diagnostics", []) if one.get("code") == ROLLOVER_LEFT_OPEN]
+    assert left == []
+
+
 def test_without_the_flag_no_window_is_closed(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:

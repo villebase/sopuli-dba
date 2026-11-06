@@ -542,8 +542,8 @@ such as "from 16", means the one release of it that was measured.
 
 ### MySQL
 
-These entries are measured before a MySQL driver is designed (#1202). The
-probes are in `sql/mysql/`, and the matrix of 8.0, 8.4 and 9 is the
+The first entries were measured before the MySQL driver was designed (#1202).
+The probes are in `sql/mysql/`, and the matrix of 8.0, 8.4 and 9 is the
 `mysql-matrix` profile of `test/compose.yaml`.
 [measurements.md](measurements.md) names each release in full.
 
@@ -647,12 +647,12 @@ probes are in `sql/mysql/`, and the matrix of 8.0, 8.4 and 9 is the
 
 ### MariaDB
 
-These entries are measured before the MySQL driver is built, so that its
-capabilities assume nothing MariaDB breaks (#1220). MariaDB gets a driver of
-its own after MySQL (decision 2 of #1202). The probes are in `sql/mariadb/`,
-and the matrix of 10.11, 11.4, 11.8 and 12.3 is the `mariadb-matrix` profile of
-`test/compose.yaml`. [measurements.md](measurements.md) names each release in
-full.
+The first entries were measured before the MySQL driver was built, so that its
+capabilities assume nothing MariaDB breaks (#1220). MariaDB has a driver of
+its own (decision 2 of #1202; [#1267](decisions/log.md#1267)). The probes are
+in `sql/mariadb/`, and the matrix of 10.11, 11.4, 11.8 and 12.3 is the
+`mariadb-matrix` profile of `test/compose.yaml`.
+[measurements.md](measurements.md) names each release in full.
 
 - `verified` `mariadb-password-text` (#1220) — **What does MariaDB keep of the
   text of a password change?**
@@ -673,8 +673,8 @@ full.
   USER` sets them with `IDENTIFIED VIA … USING`, and the password logs in. A
   malformed value is refused with the plain `1396`. Only
   `mysql_native_password` is loaded by default: `ed25519` must be installed,
-  and `parsec` too, on 11.8 and 12.3 only. `caching_sha2_password` does not exist.
-  Whether PyMySQL logs in on `ed25519` and `parsec` was not measured.
+  and `parsec` too, on 11.8 and 12.3 only. `caching_sha2_password` does not
+  exist. Whether PyMySQL logs in on each plugin is `mariadb-pymysql-login`.
   `sql/mariadb/02_client_hash_probe.py` measures it.
 - `verified` `mariadb-dual-password` (#1220) — **Does MariaDB have a rollover
   window?**

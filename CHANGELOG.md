@@ -1,5 +1,47 @@
 # Changelog
 
+## [0.85.0](https://github.com/villebase/sopuli-dba/compare/v0.84.0...v0.85.0) (2026-11-06)
+
+
+### Features
+
+* **apply:** make MariaDB's reaching login once per staged pending ([#1316](https://github.com/villebase/sopuli-dba/issues/1316)) ([#1320](https://github.com/villebase/sopuli-dba/issues/1320)) ([76d5359](https://github.com/villebase/sopuli-dba/commit/76d5359aa3f5a5ff8f730acb405129b7f5aa6093))
+* **config:** declare a MariaDB target ([#1268](https://github.com/villebase/sopuli-dba/issues/1268)) ([#1283](https://github.com/villebase/sopuli-dba/issues/1283)) ([32e7a0c](https://github.com/villebase/sopuli-dba/commit/32e7a0ca79e9eac65fd0f62c3941a374208ff84e))
+* **doctor:** say what guardrail 9 cannot see on a MariaDB target ([#1269](https://github.com/villebase/sopuli-dba/issues/1269)) ([#1298](https://github.com/villebase/sopuli-dba/issues/1298)) ([d16b5bc](https://github.com/villebase/sopuli-dba/commit/d16b5bc8fecb3c46c5ce03adc50e60316159c6dc))
+* **driver:** compute the values MariaDB stores for a password ([#1268](https://github.com/villebase/sopuli-dba/issues/1268)) ([#1289](https://github.com/villebase/sopuli-dba/issues/1289)) ([b00c70c](https://github.com/villebase/sopuli-dba/commit/b00c70c3d30f5a98b4a971faf3e2da664d2e79e0))
+* **driver:** connect to MariaDB and serve doctor ([#1268](https://github.com/villebase/sopuli-dba/issues/1268)) ([#1287](https://github.com/villebase/sopuli-dba/issues/1287)) ([c352076](https://github.com/villebase/sopuli-dba/commit/c352076c2fc746c604063657bfd245374f688a33))
+* **driver:** describe a MariaDB account, with what check 9 reads ([#1270](https://github.com/villebase/sopuli-dba/issues/1270)) ([#1299](https://github.com/villebase/sopuli-dba/issues/1299)) ([18ba8f7](https://github.com/villebase/sopuli-dba/commit/18ba8f79369c79bd988841ee1d53c5aff04dd4f4))
+* **driver:** limit a MariaDB password to 1024 bytes ([#1270](https://github.com/villebase/sopuli-dba/issues/1270)) ([#1309](https://github.com/villebase/sopuli-dba/issues/1309)) ([d9a56d4](https://github.com/villebase/sopuli-dba/commit/d9a56d45e273dc5755e2f16044cd1f2ad231df2f))
+* **driver:** log in for MariaDB only where nothing else answers ([#1270](https://github.com/villebase/sopuli-dba/issues/1270)) ([#1312](https://github.com/villebase/sopuli-dba/issues/1312)) ([0932f1d](https://github.com/villebase/sopuli-dba/commit/0932f1d549054d554bf0499c2cdeb901dc0e77b5))
+* **driver:** open and finish a MariaDB rollover ([#1271](https://github.com/villebase/sopuli-dba/issues/1271)) ([#1324](https://github.com/villebase/sopuli-dba/issues/1324)) ([8ba38d5](https://github.com/villebase/sopuli-dba/commit/8ba38d5f7e7b2602f00c54507baadbeca55fcb17))
+* **driver:** pass the old and the kept password to the driver ([#1271](https://github.com/villebase/sopuli-dba/issues/1271)) ([#1325](https://github.com/villebase/sopuli-dba/issues/1325)) ([62127de](https://github.com/villebase/sopuli-dba/commit/62127de7d64d00b7141fe49ef42089427e783308))
+* **driver:** read what makes a MariaDB account one check 9 refuses ([#1269](https://github.com/villebase/sopuli-dba/issues/1269)) ([#1294](https://github.com/villebase/sopuli-dba/issues/1294)) ([d673c2a](https://github.com/villebase/sopuli-dba/commit/d673c2aee3cf4b1f1a6c5d03437a682a8c154c8d))
+* **driver:** refuse two targets on one MariaDB server by server_uid ([#1286](https://github.com/villebase/sopuli-dba/issues/1286)) ([#1342](https://github.com/villebase/sopuli-dba/issues/1342)) ([aa11caf](https://github.com/villebase/sopuli-dba/commit/aa11cafc1000e3ff23f44d06dc348ce45badc9bf))
+* **driver:** reset and expire a MariaDB password ([#1272](https://github.com/villebase/sopuli-dba/issues/1272)) ([#1315](https://github.com/villebase/sopuli-dba/issues/1315)) ([534d6c7](https://github.com/villebase/sopuli-dba/commit/534d6c7deb0df1141185063296a624b24812a94c))
+* **driver:** resolve MariaDB roles and build the suspend and expire statements ([#1272](https://github.com/villebase/sopuli-dba/issues/1272)) ([#1302](https://github.com/villebase/sopuli-dba/issues/1302)) ([cc27f18](https://github.com/villebase/sopuli-dba/commit/cc27f1879802f65b3b72cfd0e62916c243afeef2))
+* **driver:** resolve MariaDB roles and suspend an account through the session ([#1272](https://github.com/villebase/sopuli-dba/issues/1272)) ([#1307](https://github.com/villebase/sopuli-dba/issues/1307)) ([c8d567f](https://github.com/villebase/sopuli-dba/commit/c8d567fc2e28b02ab3ba9fc92a588303ea6f474f))
+* **driver:** set a MariaDB password by its plugin's value ([#1270](https://github.com/villebase/sopuli-dba/issues/1270)) ([#1303](https://github.com/villebase/sopuli-dba/issues/1303)) ([88480ea](https://github.com/villebase/sopuli-dba/commit/88480ea73cfd81ab547369cfff6fb4028536c91f))
+* **driver:** verify a MariaDB password by a login that confirms its account ([#1270](https://github.com/villebase/sopuli-dba/issues/1270)) ([#1300](https://github.com/villebase/sopuli-dba/issues/1300)) ([635275b](https://github.com/villebase/sopuli-dba/commit/635275b2c337868e0aeb2d50349c491efa98aa35))
+* **driver:** verify a MariaDB password through the session ([#1270](https://github.com/villebase/sopuli-dba/issues/1270)) ([#1305](https://github.com/villebase/sopuli-dba/issues/1305)) ([ba8c3ed](https://github.com/villebase/sopuli-dba/commit/ba8c3ede8b0bcf0dd5a366e6ff94cb2d004cd6c5))
+* refuse a MariaDB target whose validation plugin refuses the value ([#1310](https://github.com/villebase/sopuli-dba/issues/1310)) ([#1337](https://github.com/villebase/sopuli-dba/issues/1337)) ([de0eca4](https://github.com/villebase/sopuli-dba/commit/de0eca4b7c44f2e7d85b638b39df680898a1920b))
+* register the UC-2 verbs for MariaDB ([#1272](https://github.com/villebase/sopuli-dba/issues/1272)) ([#1319](https://github.com/villebase/sopuli-dba/issues/1319)) ([ac48718](https://github.com/villebase/sopuli-dba/commit/ac487186c79c60383898755704df46d188db6a6d))
+* **registry:** run the UC-1 commands on MariaDB ([#1270](https://github.com/villebase/sopuli-dba/issues/1270)) ([#1321](https://github.com/villebase/sopuli-dba/issues/1321)) ([b5be86c](https://github.com/villebase/sopuli-dba/commit/b5be86ca34171563295eca58e9aac995a00fdf10))
+* run guardrail 9 for suspend and expire on MariaDB, and refuse a kept window there ([#1272](https://github.com/villebase/sopuli-dba/issues/1272)) ([#1314](https://github.com/villebase/sopuli-dba/issues/1314)) ([9ed1680](https://github.com/villebase/sopuli-dba/commit/9ed168038da6614e782b022c96979ab44658cb3d))
+* **store:** keep a reaching-login mark beside a staged pending ([#1316](https://github.com/villebase/sopuli-dba/issues/1316)) ([#1318](https://github.com/villebase/sopuli-dba/issues/1318)) ([9a0e7fa](https://github.com/villebase/sopuli-dba/commit/9a0e7fa4cfea427e17d409816ebca945f62ac3b5))
+* warn of a MariaDB ed25519 rollover in the plan and the row ([#1271](https://github.com/villebase/sopuli-dba/issues/1271)) ([#1331](https://github.com/villebase/sopuli-dba/issues/1331)) ([37e5961](https://github.com/villebase/sopuli-dba/commit/37e5961a50eb42b5ed8bf6a71cf945a9e78039fd))
+* warn that a MariaDB reset ends a login method it cannot see ([#1317](https://github.com/villebase/sopuli-dba/issues/1317)) ([#1333](https://github.com/villebase/sopuli-dba/issues/1333)) ([fa061d2](https://github.com/villebase/sopuli-dba/commit/fa061d2ec43266cc8b763c665224d43fe085711b))
+
+
+### Bug Fixes
+
+* **apply:** say which document a target held back, and that pending is staged ([#1328](https://github.com/villebase/sopuli-dba/issues/1328)) ([#1340](https://github.com/villebase/sopuli-dba/issues/1340)) ([b1e2101](https://github.com/villebase/sopuli-dba/commit/b1e2101c1e99926f22f1fba5f1fc1520fa75de2a))
+* **config:** count personal accounts as managing a target ([#1326](https://github.com/villebase/sopuli-dba/issues/1326)) ([#1330](https://github.com/villebase/sopuli-dba/issues/1330)) ([7fa207f](https://github.com/villebase/sopuli-dba/commit/7fa207fd6562139db13c389cbe547c57cbedd504))
+* **driver:** give PyMySQL the password as UTF-8 bytes ([#1285](https://github.com/villebase/sopuli-dba/issues/1285)) ([#1290](https://github.com/villebase/sopuli-dba/issues/1290)) ([1d96e21](https://github.com/villebase/sopuli-dba/commit/1d96e21f6e65b6d72292b4e21fc6ebb0c0446ca2))
+* **driver:** read PyMySQL's second-auth-switch failure as unavailable ([#1270](https://github.com/villebase/sopuli-dba/issues/1270)) ([#1306](https://github.com/villebase/sopuli-dba/issues/1306)) ([c274e9e](https://github.com/villebase/sopuli-dba/commit/c274e9e967dda8e2a6d1dc0bce285b3890be9ac8))
+* **generate:** refuse a password a target cannot store under --no-policy-check ([#1335](https://github.com/villebase/sopuli-dba/issues/1335)) ([#1336](https://github.com/villebase/sopuli-dba/issues/1336)) ([109cb37](https://github.com/villebase/sopuli-dba/commit/109cb3793edcbf4a468c535b0db6f75fcb40acf0))
+* **generate:** refuse a password no driver accepts under --no-policy-check ([#1327](https://github.com/villebase/sopuli-dba/issues/1327)) ([#1332](https://github.com/villebase/sopuli-dba/issues/1332)) ([1d1379f](https://github.com/villebase/sopuli-dba/commit/1d1379f39e466f9b366046b3220c5fd7419e59b7))
+* run the account guardrails before a MariaDB rollover close ([#1344](https://github.com/villebase/sopuli-dba/issues/1344)) ([#1345](https://github.com/villebase/sopuli-dba/issues/1345)) ([e1f255f](https://github.com/villebase/sopuli-dba/commit/e1f255fb9bf16c47698016364e8bf5a5aebd97d3))
+
 ## [0.84.0](https://github.com/villebase/sopuli-dba/compare/v0.83.0...v0.84.0) (2026-11-03)
 
 

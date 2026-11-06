@@ -4664,3 +4664,27 @@ the register.
   account has no second method.
 - **Accepted cost:** a reset ends a person's socket login. The run warns
   before the change, but it cannot say whether the account had one.
+
+## #1286
+
+- **Decided:** 2026-11-06, #1286
+- **Question:** Two targets that reach one server are refused on Oracle,
+  PostgreSQL and MySQL (`SOPULI-20008`). MariaDB has no `server_uuid`. Which
+  value identifies a MariaDB server?
+- **Decision:** D: `@@server_uid`, compared within one run, as MySQL's
+  `server_uuid` is. Any account reads it, and it differs between servers, a
+  replica and its primary included (`13_server_identity_probe.py`, SI1, SI3
+  and SI4).
+- **Why:** The check compares identities only within one run and stores
+  none, so a value that changes at each restart (SI2) still serves. When a
+  server restarts during a run, the check can miss two targets on it, and it
+  never takes two servers for one.
+- **Rejected:**
+  1. A: the server's `@@hostname` and `@@port`. Two servers can share both,
+     such as cloned hosts or pods with one name in two clusters, and the
+     second would be refused with no way round it.
+  2. B: an identity declared in the config. It catches only what the
+     operator already knows.
+  3. C: keeping the gap documented.
+- **Accepted cost:** a restart during a run, between two targets' logins,
+  lets two targets on one server through for that run.

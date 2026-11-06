@@ -203,3 +203,29 @@ def test_a_wrong_password_is_an_authentication_failure(live_mariadb: Any, tmp_pa
     (target,) = document["targets"]
     assert target["reachable"] is False
     assert target["error"]["code"] == "1045"
+
+
+def test_two_targets_on_one_server_are_refused(live_mariadb: Any, tmp_path: Path) -> None:
+    """#1286: the second target that reaches the server is refused, naming
+    both and the server's `@@server_uid`, and doctor exits 9."""
+    config = _config(tmp_path / "c.yaml", live_mariadb, [])
+    text = config.read_text(encoding="utf-8")
+    block = text[text.index("  - name: tier1-mariadb") :]
+    config.write_text(text + block.replace("tier1-mariadb", "tier1-again"), encoding="utf-8")
+
+    result = CliRunner().invoke(
+        cli,
+        ["--config", str(config), "doctor", "--output", "json"],
+        env={PASSWORD_ENV: live_mariadb.tool_password},
+    )
+
+    assert result.exit_code == 9, result.output
+    first, second = json.loads(result.stdout)["targets"]
+    assert first.get("error") is None
+    assert first["scope"]["type"] == "server"
+    assert second["reachable"] is True
+    assert second["error"]["code"] == "SOPULI-20008"
+    assert second["error"]["category"] == "config"
+    assert second["error"]["message"].startswith(
+        'targets "tier1-mariadb" and "tier1-again" are one MariaDB server (server_uid '
+    )

@@ -98,6 +98,22 @@ def test_the_mysql_session_names_its_server() -> None:
     assert (session.identity_kind, session.identity_key) == ("MySQL server", "server_uuid")
 
 
+def test_the_mariadb_session_names_its_server() -> None:
+    """For the same reason, on MariaDB, by ``@@server_uid`` (#1286)."""
+    session_module = pytest.importorskip("sopuli.driver.mariadb.session")
+    from sopuli.config.model import ExpandedTarget, Target
+    from sopuli.driver.protocol import Timeouts
+
+    target = ExpandedTarget(target=Target(name="mariadb-dev", type="mariadb", dsn="h:3306"))
+    session = session_module.MariadbSession(
+        connection=None, target=target, correlation_id="run", timeouts=Timeouts()
+    )
+
+    assert isinstance(session, ClusterIdentity)
+    assert (session.identity_kind, session.identity_key) == ("MariaDB server", "server_uid")
+    assert session.identity_caveat is None
+
+
 def test_two_targets_on_one_mysql_server_are_refused_by_name() -> None:
     class _Mysql(_Session):
         identity_kind = "MySQL server"

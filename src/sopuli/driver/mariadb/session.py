@@ -43,7 +43,7 @@ from sopuli.driver.mariadb import roles, verification
 from sopuli.driver.mariadb.errors import from_error
 from sopuli.driver.mariadb.limits import LIMIT
 from sopuli.driver.mariadb.privileges import audit as privilege_audit
-from sopuli.driver.mariadb.scope import observe, require_read_write
+from sopuli.driver.mariadb.scope import observe, read_password_checks, require_read_write
 from sopuli.driver.mysql_family import account_statements
 from sopuli.driver.mysql_family.accounts import Principal, current_user, split
 from sopuli.driver.mysql_family.client import client_lines
@@ -62,6 +62,7 @@ from sopuli.driver.protocol import (
     PASSWORD_EXPIRE,
     PASSWORD_ROLLOVER,
     PASSWORD_SET,
+    PASSWORD_VALUE,
     PROFILE_MANAGEMENT,
     ROLE_LOOKUP,
     UNAVAILABLE,
@@ -82,6 +83,7 @@ from sopuli.driver.protocol import (
     UnsupportedCapabilityError,
     UserState,
     VerifyResult,
+    password_value_hint,
     require_capability,
 )
 from sopuli.driver.registry import NotWrittenError
@@ -136,6 +138,11 @@ CAPABILITIES = frozenset({ROLE_LOOKUP, EXPIRE_PASSWORD, PASSWORD_ROLLOVER})
 
 #: The server refused a read of a table (``1142``) or a column (``1143``).
 REFUSED_READ = frozenset({str(TABLE_ACCESS_DENIED), str(COLUMN_ACCESS_DENIED)})
+
+#: The answers to the password checks read (#1310) that leave
+#: ``password_value`` out rather than fail the session: a refused read, and
+#: an unknown system variable (``1193``) on a server without it.
+CHECKS_UNREADABLE = REFUSED_READ | {"1193"}
 
 #: The privileges MariaDB split from ``SUPER`` that set no column of the
 #: ``mysql.user`` view, as ``SHOW PRIVILEGES`` names them (SP1, SP2).
@@ -215,15 +222,37 @@ class MariadbSession(ClosesConnection):
     #: ``CURRENT_USER()``, read on the first :meth:`describe_user`. It does
     #: not change for the life of a connection.
     _session_user: str | None = field(default=None, init=False, repr=False)
+    #: The password validation plugins that refuse the driver's value, read
+    #: with the scope (#1310); ``None`` where that read failed.
+    _password_checks: tuple[str, ...] | None = field(default=None, init=False, repr=False)
+    #: Why that read failed, for the refusal's hint.
+    _checks_unread: str | None = field(default=None, init=False, repr=False)
 
     def scope(self) -> Scope:
         """What this session is: a server, read-write or not, and its
-        encryption. Probed on the first call and cached (invariant 3)."""
+        encryption. Probed on the first call and cached (invariant 3).
+
+        ``password_value`` is added where :func:`read_password_checks` finds
+        no plugin that would refuse the value. That read is apart from the
+        rest: where it fails, the capability is absent, so only the verbs that
+        send a password are refused, and the others run (#1310)."""
         if self._scope is None:
             observed = self._read(
                 lambda cursor: observe(cursor, target=self.target.name, encryption=self.encryption)
             )
-            self._scope = replace(observed, capabilities=observed.capabilities | CAPABILITIES)
+            try:
+                self._password_checks = self._read(read_password_checks)
+            except DriverError as error:
+                # Only a refused read, or a variable this server lacks: a
+                # lost connection or a timeout is the run's fault to report.
+                if error.code not in CHECKS_UNREADABLE:
+                    raise
+                self._checks_unread = str(error)
+            takes_value = self._password_checks == ()
+            capabilities = observed.capabilities | CAPABILITIES
+            if takes_value:
+                capabilities |= {PASSWORD_VALUE}
+            self._scope = replace(observed, capabilities=capabilities)
             if LOG.isEnabledFor(logging.DEBUG):
                 LOG.debug(
                     "%s is a server, %s %s, encryption %s",
@@ -241,8 +270,13 @@ class MariadbSession(ClosesConnection):
         undeclared host. Where the survey's read fails, the audit stands and a
         line says why, as on MySQL. With any declared account, the last lines
         say what check 9 cannot see (:data:`CHECK_9_GAP`) and that a second
-        login method is not seen (:data:`OR_GAP`)."""
+        login method is not seen (:data:`OR_GAP`). Where the scope lacks
+        ``password_value``, a line says why, with or without declared accounts
+        (#1310)."""
         audit = self._read(privilege_audit)
+        refused = self._password_value_line()
+        if refused is not None:
+            audit = replace(audit, remedies=(*audit.remedies, refused))
         if not accounts:
             return audit
         try:
@@ -320,8 +354,10 @@ class MariadbSession(ClosesConnection):
         protocol: ``creds generate`` asks it of a driver that has it.
 
         MariaDB has no profiles, and an account's reuse history is not read.
-        Whether a password check plugin refuses the value the driver sends is
-        not measured yet (#1310)."""
+        A password validation plugin does not shape the draw either: it sees no
+        password, only the value, and under strict validation it refuses the
+        value whatever the password, which the scope reports as a missing
+        ``password_value`` (#1310)."""
 
     def set_password(
         self,
@@ -378,6 +414,7 @@ class MariadbSession(ClosesConnection):
         if keeps_old and previous is not None:
             password_module.admit(previous)
         require_read_write(self.scope(), target=self.target.name)
+        self._require_password_value()
         found = self._existing(
             account,
             hint=(
@@ -408,6 +445,42 @@ class MariadbSession(ClosesConnection):
             )
         LOG.debug("password set for %s on %s", found.name, self.target.name)
         return ChangeResult(changed=True, detail="password set", discarded=True)
+
+    def _password_value_line(self) -> str | None:
+        """`doctor`'s line for a scope without ``password_value``, or ``None``
+        where the server takes the value (#1310)."""
+        if self.scope().supports(PASSWORD_VALUE):
+            return None
+        if self._password_checks is None:
+            return (
+                "strict_password_validation and the password validation plugins could not "
+                f"be read ({self._checks_unread}), so the verbs that set a password refuse "
+                "this target"
+            )
+        return (
+            f"{', '.join(self._password_checks)} refuses every password value the tool "
+            "sends while strict_password_validation is ON, so the verbs that set a "
+            "password refuse this target; set strict_password_validation=OFF to manage "
+            "passwords here (02-mariadb-privileges.md section 6)"
+        )
+
+    def _require_password_value(self) -> None:
+        """Refuse before a value is sent where a password validation plugin
+        would refuse it (#1310). The command refuses the target at plan time;
+        this is the driver's own line, on the connection that sends."""
+        scope = self.scope()
+        if scope.supports(PASSWORD_VALUE):
+            return
+        hint = (
+            password_value_hint(self._password_checks)
+            if self._password_checks is not None
+            else (
+                "strict_password_validation and the password validation plugins could not "
+                f"be read ({self._checks_unread}), so nothing says the server takes the "
+                "value the tool computes"
+            )
+        )
+        require_capability(scope, PASSWORD_VALUE, target=self.target.name, hint=hint)
 
     def suspend_account(self, account: str) -> AccountChange:
         """``ALTER USER … ACCOUNT LOCK``, sent every time (#1267, decision 2).
@@ -484,6 +557,7 @@ class MariadbSession(ClosesConnection):
             )
         password_module.admit(secret)
         require_read_write(self.scope(), target=self.target.name)
+        self._require_password_value()
         found = self._existing(account, hint=_nothing("reset"))
         status = accounts_module.state_of(found).status
         statement = password_module.alter_user(
@@ -736,6 +810,7 @@ class MariadbSession(ClosesConnection):
             raise self._not_passed("current", account)
         password_module.admit(current)
         require_read_write(self.scope(), target=self.target.name)
+        self._require_password_value()
         found = self._existing(account, hint=_nothing("changed"))
         statement = password_module.alter_user(found.user, found.host, found.plugin, current)
         try:

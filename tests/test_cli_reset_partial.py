@@ -314,6 +314,64 @@ def test_a_failure_before_anything_committed_is_an_ordinary_failure(
     assert TOKEN not in result.output
 
 
+class _ValidatingServer:
+    """A MariaDB session whose scope lacks `password_value`: a password
+    validation plugin under strict validation (#1310). Nothing else is asked."""
+
+    def __init__(self) -> None:
+        self.resets: list[str] = []
+
+    def scope(self) -> Scope:
+        return Scope(type="server", read_write=True, encryption=Encryption(method=ENCRYPTION_TLS))
+
+    def reset_password(self, account: str, *_: Any, **__: Any) -> Any:
+        self.resets.append(account)
+        raise AssertionError("nothing may be sent")
+
+    def close(self) -> None:
+        pass
+
+
+@pytest.mark.parametrize("dry_run", [False, True], ids=["run", "dry-run"])
+def test_a_mariadb_target_that_refuses_the_value_is_refused_at_plan_time(
+    runner: CliRunner,
+    write_config: WriteConfig,
+    monkeypatch: pytest.MonkeyPatch,
+    dry_run: bool,
+) -> None:
+    """#1310, decided A: exit 5 naming `password_value` and the setting,
+    before any password is drawn or sent, `--dry-run` included."""
+    account = f"{ACCOUNT}@%"
+    config = (
+        WRAPPED.replace("type: oracle", "type: mariadb")
+        .replace("192.0.2.10:1521/ALPHA", "192.0.2.10:3306")
+        .replace(f"[{ACCOUNT}]", f"['{account}']")
+    )
+    server = _ValidatingServer()
+    monkeypatch.setattr("sopuli.cli._open_session", lambda *_, **__: server)
+    flags = ["--dry-run"] if dry_run else []
+    result = runner.invoke(
+        cli,
+        [
+            "--config",
+            str(write_config(config)),
+            "account",
+            "reset-password",
+            "--account",
+            account,
+            *flags,
+            "--output",
+            "json",
+        ],
+    )
+
+    assert getattr(result.exception, "exit_code", None) == ExitCode.UNSUPPORTED_CAPABILITY
+    error = json.loads(result.stdout)["error"]
+    assert error["target_capability"] == "password_value"
+    assert "strict_password_validation" in error["hint"]
+    assert server.resets == []
+
+
 @pytest.mark.parametrize("product", ["mariadb", "oracle"])
 def test_a_mariadb_reset_warns_of_a_login_method_it_cannot_see(
     runner: CliRunner,
@@ -361,13 +419,14 @@ def test_a_mariadb_reset_warns_of_a_login_method_it_cannot_see(
         assert warned == []
 
 
-def test_a_real_mariadb_reset_warns_with_the_plan_before_anything_connects(
+def test_a_real_mariadb_reset_warns_with_the_plan_before_the_change_connects(
     runner: CliRunner,
     write_config: WriteConfig,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """#1317: on a real run the warning goes to stderr with the plan, before
-    the first connection, so it comes before any change."""
+    the connection that changes the password, so it comes before any change.
+    The plan's read of the scope (#1310) connects first; it changes nothing."""
     account = f"{ACCOUNT}@%"
     config = (
         WRAPPED.replace("type: oracle", "type: mariadb")
@@ -398,8 +457,9 @@ def test_a_real_mariadb_reset_warns_with_the_plan_before_anything_connects(
         ["--config", str(write_config(config)), "account", "reset-password", "--account", account],
     )
 
-    assert seen_before, result.output
-    assert all(seen_before), "the warning came after the first connection"
+    # Two connections: the plan's scope read, then the reset's own.
+    assert len(seen_before) == 2, result.output
+    assert seen_before[-1], "the warning came after the change's connection"
 
 
 # ------------------------------------------- the set committed, the close not ---

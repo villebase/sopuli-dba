@@ -149,9 +149,12 @@ them, so the tool never needs that.
 ### 2.3 What `doctor` reports
 
 `doctor` connects to the server and reports the scope, `server`: the release,
-whether it takes writes (`read_only` and the session's `tx_read_only`), and the
-session's encryption. A server whose version does not name MariaDB is refused,
-exit 9. `doctor --check-privileges` audits the tool account against §2.1 and
+whether it takes writes (`read_only` and the session's `tx_read_only`), the
+session's encryption, and the capabilities, `password_value` among them unless
+a password validation plugin refuses the value (§6, #1310). A server whose
+version does not name MariaDB is refused, exit 9. `doctor --check-privileges`
+says why a scope lacks `password_value`: the plugins that refuse the value, or
+that the settings could not be read. It audits the tool account against §2.1 and
 §3. It names a declared account that does not exist, and one on a plugin the
 tool does not change. Two targets on one server are not caught yet (#1286):
 MariaDB has no `server_uuid`. It warns, and never fails
@@ -370,9 +373,15 @@ change fails with the plain `1396`, the answer a weak password gets
 and neither plugin checks it (PC2, PC3). `cracklib_password_check` and other
 plugins were not measured. An account with only `CREATE USER` reads
 `@@strict_password_validation` and the loaded plugins from
-`information_schema.PLUGINS` (PC4). Until the driver reads them and refuses
-such a target at plan time, every change there fails during the run with that
-`1396`, which breaks invariant 4 (#1310).
+`information_schema.PLUGINS` (PC4), and the session reads them with its scope.
+Where an active plugin would refuse the value, the scope lacks
+`password_value`, and `creds apply`, `creds rotate`, `creds finish-rollover`
+and `account reset-password` refuse the target at plan time, exit 5, naming
+the capability and the setting ([#1310](../decisions/log.md#1310)). The
+driver asks again before it sends, and its refusal names the plugins. A DBA
+who wants the tool to manage passwords on such a server sets
+`strict_password_validation` to `OFF`. The plugin then still checks every
+password sent in clear, and no longer refuses a value it cannot check.
 
 **The value is sensitive.** A `mysql_native_password` value is an unsalted
 SHA-1 hash. It allows an offline guess, and with one captured login handshake

@@ -6,9 +6,10 @@ the server's version (invariant 3); it is read to report it, and to tell
 MariaDB from MySQL, which answers the same protocol and has a driver of its own
 (#1202, decision 2).
 
-No capability is read here. The session adds ``role_lookup``, which §2.1's
-grants always give it; the other capabilities in P1's table name things the
-MariaDB driver does not do.
+No capability is read in :func:`observe`. The session adds the ones it always
+has (:data:`~sopuli.driver.mariadb.session.CAPABILITIES`), and
+``password_value`` from :func:`read_password_checks`, read on its own so that
+a failed read refuses only the verbs that send a password (#1310).
 """
 
 from __future__ import annotations
@@ -36,6 +37,16 @@ READ_ONLY_SETTINGS = "select @@global.read_only, @@session.tx_read_only"
 
 #: How `read_only` reads when it is off, as a number or as 12.3's word.
 OFF = frozenset({"0", "OFF"})
+
+#: The server's `strict_password_validation`, a global variable only (a
+#: session read is `1238`), and the password validation plugins the server has
+#: active. The tool account reads both with only `CREATE USER`
+#: (`12_password_check_probe.py`, PC4, #1310).
+PASSWORD_CHECKS = (
+    "select @@global.strict_password_validation, (select group_concat(plugin_name "
+    "order by plugin_name) from information_schema.plugins where plugin_type = "
+    "'PASSWORD VALIDATION' and plugin_status = 'ACTIVE')"
+)
 
 #: The word ``VERSION()`` carries on every MariaDB release measured, as in
 #: ``11.8.9-MariaDB-ubu2404-log``.
@@ -67,6 +78,16 @@ def writable(read_only: object, tx_read_only: object) -> bool:
 
 def _off(value: object) -> bool:
     return text(value).strip().upper() in OFF
+
+
+def refusing_checks(strict: object, plugins: object) -> tuple[str, ...]:
+    """The password validation plugins that refuse the value the driver
+    sends: every active one while ``strict_password_validation`` is on, and
+    none while it is off (PC1 to PC3). Pure. A setting that is not plainly
+    off counts as on."""
+    if _off(strict) or plugins is None:
+        return ()
+    return tuple(name for name in text(plugins).split(",") if name)
 
 
 def observe(cursor: Cursor, *, target: str, encryption: Encryption | None = None) -> Scope:
@@ -105,6 +126,14 @@ def observe(cursor: Cursor, *, target: str, encryption: Encryption | None = None
         read_write=can_write,
         encryption=encryption,
     )
+
+
+def read_password_checks(cursor: Cursor) -> tuple[str, ...]:
+    """The active password validation plugins that refuse the value the
+    driver sends, by name, or none (:func:`refusing_checks`)."""
+    cursor.execute(PASSWORD_CHECKS)
+    strict, plugins = cursor.fetchone()
+    return refusing_checks(strict, plugins)
 
 
 def require_read_write(scope: Scope, *, target: str) -> None:

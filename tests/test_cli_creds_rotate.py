@@ -1508,6 +1508,26 @@ def test_no_caveat_is_warned_for_a_window_the_run_closes(
     assert ROLLOVER_CAVEAT not in codes
 
 
+@pytest.mark.parametrize("dry_run", [True, False])
+def test_a_target_that_refuses_the_value_is_refused_at_plan_time(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+    dry_run: bool,
+) -> None:
+    """#1310: as in `apply`, a target whose scope lacks `password_value` is
+    refused before anything is staged or sent, exit 5. The fake is
+    Oracle-shaped, so Oracle is made such a product here."""
+    monkeypatch.setattr("sopuli.cli.PASSWORD_VALUE_TYPES", frozenset({"oracle"}))
+    harness = estate()
+    flags = ["--dry-run"] if dry_run else []
+    result = run(runner, write_config(CONFIG), *flags)
+
+    assert getattr(result.exception, "exit_code", None) == ExitCode.UNSUPPORTED_CAPABILITY
+    assert changed(harness) == []
+
+
 @pytest.mark.parametrize(("strategy", "mark"), [("rollover", "retaining"), ("staged", None)])
 def test_a_held_rollover_leaves_its_pending_marked(
     runner: CliRunner,

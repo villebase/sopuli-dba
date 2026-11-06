@@ -296,6 +296,26 @@ def test_a_window_that_cannot_be_read_is_discarded_without_a_login(
         assert harness["sessions"][0].closed == ["ACME_WEB_USER"]
 
 
+@pytest.mark.parametrize("dry_run", [True, False])
+def test_a_target_that_refuses_the_value_is_refused_before_the_question(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+    dry_run: bool,
+) -> None:
+    """#1310: a target whose product reports `password_value`, and whose scope
+    lacks it, is refused at plan time, exit 5, and no window is closed. The
+    fake is Oracle-shaped, so Oracle is made such a product here."""
+    monkeypatch.setattr("sopuli.cli.PASSWORD_VALUE_TYPES", frozenset({"oracle"}))
+    harness = estate(capabilities=frozenset({PASSWORD_ROLLOVER}))
+    flags = ["--dry-run"] if dry_run else ["--confirm"]
+    result = run(runner, write_config(CONFIG), "--select", "tenant=alpha", *flags)
+
+    assert getattr(result.exception, "exit_code", None) == ExitCode.UNSUPPORTED_CAPABILITY
+    assert all(session.closed == [] for session in harness["sessions"])
+
+
 @pytest.mark.parametrize(("dry_run", "active"), [(True, None), (False, False)])
 def test_the_json_says_active_only_where_it_is_known(
     runner: CliRunner,

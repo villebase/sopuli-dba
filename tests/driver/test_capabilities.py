@@ -43,6 +43,7 @@ from sopuli.driver.protocol import (
     ENCRYPTION_NATIVE,
     OFFLINE_VERIFY,
     PASSWORD_ROLLOVER,
+    PASSWORD_VALUE,
     UNKNOWN,
     Scope,
 )
@@ -94,8 +95,12 @@ def test_every_capability_is_either_probed_or_declared_structural() -> None:
 
     A capability added to the document and not here — or the reverse — fails
     rather than drifts, and a new one has to choose a side deliberately.
+
+    ``password_value`` is the one Oracle neither probes nor assumes: only the
+    MariaDB driver reports it, and only a MariaDB target is asked for it
+    (#1310). P1's table says "not reported" in Oracle's column.
     """
-    assert PROBED_OR_STRUCTURAL == CAPABILITIES
+    assert CAPABILITIES - {PASSWORD_VALUE} == PROBED_OR_STRUCTURAL
 
 
 def test_nothing_is_both_probed_and_assumed() -> None:

@@ -362,8 +362,17 @@ sent. It also refuses an empty password, control characters, and text that
 cannot be encoded as UTF-8, as the other drivers do. The server refuses a
 malformed value with the plain `1396` (CH3). A new server loads only
 `mysql_native_password`; `ed25519` must be installed with `INSTALL SONAME
-'auth_ed25519'` (CH4). Whether a password check plugin, such as
-`simple_password_check`, refuses the value is not measured (#1310).
+'auth_ed25519'` (CH4). **With `simple_password_check` or
+`password_reuse_check` loaded, the server refuses every value the driver
+sends** while `strict_password_validation` is `ON`, which is its default. The
+change fails with the plain `1396`, the answer a weak password gets
+(`12_password_check_probe.py`, PC1, PC3). With it `OFF` the value is accepted
+and neither plugin checks it (PC2, PC3). `cracklib_password_check` and other
+plugins were not measured. An account with only `CREATE USER` reads
+`@@strict_password_validation` and the loaded plugins from
+`information_schema.PLUGINS` (PC4). Until the driver reads them and refuses
+such a target at plan time, every change there fails during the run with that
+`1396`, which breaks invariant 4 (#1310).
 
 **The value is sensitive.** A `mysql_native_password` value is an unsalted
 SHA-1 hash. It allows an offline guess, and with one captured login handshake

@@ -144,6 +144,7 @@ from sopuli.diagnostics import (
     PASSWORD_NOT_REDRAWN,
     PASSWORD_REDRAWN,
     PRIVILEGE_AUDIT_UNREAD,
+    PRODUCT_LIMIT_USED,
     PROFILE_UNREAD,
     ROLLOVER_LEFT_OPEN,
     ROTATION_UNCONFIRMED,
@@ -6407,7 +6408,10 @@ def creds_generate(
     if demand is not None:
         _show_plan(plan, run, noun="generation")
     supplied = _password_from_stdin() if from_stdin else None
-    limits, unanswered, reserved = _constraints_for(bindings, run, config, offline=offline)
+    staged_on = _targets_of(config, bindings)
+    limits, unanswered, reserved = _constraints_for(
+        bindings, run, config, offline=offline, fixed=_product_limits(staged_on)
+    )
     document.constraints = build_constraints(limits, unanswered)
     notices = constraint_diagnostics(limits, supplied=supplied is not None)
     document.diagnostics.extend(notices)
@@ -6420,13 +6424,8 @@ def creds_generate(
         emitter.event(document, "constraints.resolved", data=document.constraints)
     # Once per password, not per binding: an account on several targets that
     # share its ref is one password (`sopuli.generate`'s docstring).
-    # Every product the one supplied password is staged for, so a driver that
-    # refuses it on any of them is not waived for the others (#1327).
-    staged_on = _targets_of(config, bindings)
-    products = frozenset(target.target.type for target in staged_on)
-    readings = (
-        limits.readings if supplied is None else _with_fixed_limits(limits.readings, staged_on)
-    )
+    # `_candidate` adds every product the password is staged for, so a driver
+    # that refuses it on one of them is not waived for the others (#1327).
     candidates = staging.draw_once(
         bindings,
         lambda binding: _candidate(
@@ -6435,8 +6434,7 @@ def creds_generate(
             name=policy_name,
             supplied=supplied,
             enforce=not no_policy_check,
-            readings=readings,
-            products=products,
+            readings=limits.bounds,
         ),
     )
     candidates, skipped = _split_reserved(candidates, reserved)
@@ -6478,7 +6476,12 @@ def creds_generate(
         # shapes that code covers. The code exists so a JSON consumer can branch
         # on it, and printing the sentence twice under a heading that says
         # "notes" would teach a reader that the block repeats itself.
-        told = [one.message for one in notices if one.code != CONSTRAINTS_UNREAD]
+        # `SOPULI-W067` likewise: the line names the product limits.
+        told = [
+            one.message
+            for one in notices
+            if one.code not in (CONSTRAINTS_UNREAD, PRODUCT_LIMIT_USED)
+        ]
         lines.extend([read, *render_notices(told), ""])
     table = (
         render_promotion_table(writes, held)
@@ -6630,51 +6633,63 @@ def _candidate(
     before the file's chain is consulted -- so it wins over an application entry
     and still goes through the same dangling-name check every policy name gets.
 
-    ``readings`` is every answered target's limit, resolved once for the run by
-    :func:`_constraints_for` and passed in rather than read here: they are a
+    ``readings`` is what the run read from the targets
+    (:attr:`~sopuli.constraints.Constraints.bounds`), resolved once for the run
+    by :func:`_constraints_for` and passed in rather than read here: they are a
     property of the *targets*, not of the binding, and a function called once per
-    account is the wrong place to open a connection. Empty is the documented
-    fallback -- no target answered, or none was asked -- and the policy's declared
-    length then governs, which is what
-    :func:`sopuli.generate.candidate_for` already does with it.
+    account is the wrong place to open a connection.
 
-    ``products`` is every product a supplied password is staged for, and
-    defaults to this binding's target's.
+    **Every selected target that shares the password is added here**, because
+    each of them reads the one value that is staged (:func:`_sharing_targets`).
+    Each one's product limit is added where
+    ``readings`` has no reading for it, so every verb that draws is held to
+    them without passing them. ``products`` is those targets' products, unless
+    given, and :func:`~sopuli.driver.registry.refused_password_rules` reads it
+    (#1327). With no limit at all the policy's declared length governs, which is
+    what :func:`sopuli.generate.candidate_for` does with an empty ``readings``.
     """
     effective = binding if name is None else replace(binding, policy=name)
     chosen, policy = staging.policy_for(config, effective)
+    sharing = _sharing_targets(config, binding)
     if products is None:
-        products = frozenset({_expanded(config, binding.target).target.type})
+        products = frozenset(target.target.type for target in sharing)
+    read = {target for target, _ in readings}
+    fixed = [pair for pair in _product_limits(sharing) if pair[0] not in read]
     return staging.candidate_for(
         binding,
         policy,
         name=chosen,
-        readings=readings,
+        readings=(*readings, *fixed),
         supplied=supplied,
         enforce=enforce,
         products=products,
     )
 
 
-def _with_fixed_limits(
-    readings: Sequence[tuple[str, ByteLimit]], targets: Sequence[ExpandedTarget]
-) -> tuple[tuple[str, ByteLimit], ...]:
-    """``readings``, and the product's fixed limit for each target that gave none.
+def _sharing_targets(config: Config, binding: Binding) -> list[ExpandedTarget]:
+    """Every target in ``config`` whose binding reads ``binding``'s password.
 
-    For a **supplied** password only (#1335). On PostgreSQL, MySQL and MariaDB the
-    limit is a fact about the product, so `--offline` or an unreachable target
-    still knows it, and a password over it is one every `creds apply` there
-    refuses. A drawn password keeps the readings alone: it is ASCII, and the
-    policy's length governs it where no target answered.
+    ``config`` is the one the verb narrowed to its selection, so a target the
+    selectors left out is not here.
     """
-    answered = {target for target, _ in readings}
-    fixed = [
+    key = staging.password_key(binding)
+    if key is None:
+        return _targets_of(config, [binding])
+    return _targets_of(config, [one for one in config.bindings if staging.password_key(one) == key])
+
+
+def _product_limits(targets: Sequence[ExpandedTarget]) -> list[tuple[str, ByteLimit]]:
+    """The fixed limit of each of ``targets`` whose product has one.
+
+    On PostgreSQL, MySQL and MariaDB the limit is a fact about the product, so
+    `--offline` or an unreachable target still knows it, and a password over it
+    is one every `creds apply` there refuses.
+    """
+    return [
         (target.name, limit)
         for target in targets
-        if target.name not in answered
-        and (limit := DRIVERS[target.target.type].fixed_limit) is not None
+        if (limit := DRIVERS[target.target.type].fixed_limit) is not None
     ]
-    return (*readings, *fixed)
 
 
 def _constraints_for(
@@ -6683,6 +6698,7 @@ def _constraints_for(
     config: Config,
     *,
     offline: bool,
+    fixed: Sequence[tuple[str, ByteLimit]] = (),
 ) -> tuple[Constraints, dict[str, Error], dict[tuple[str, str], str]]:
     """What the selected targets say a password may be (UC-1 §4 step 2), why
     each target that did not answer did not, and each ``(target, account)``
@@ -6707,9 +6723,16 @@ def _constraints_for(
     `--dry-run` still reads. The plan is a claim about what would be staged, and
     a preview that skipped the constraint would be previewing a different draw
     from the one the real run makes.
+
+    ``fixed`` is each target's product limit (:func:`_product_limits`). A
+    target that gave no reading keeps it, `--offline` included.
     """
     if offline:
-        return Constraints(source=constraint_source.UNREAD), {}, {}
+        return (
+            Constraints(source=constraint_source.UNREAD, product_limits=tuple(fixed)),
+            {},
+            {},
+        )
 
     readings: list[tuple[str, ByteLimit]] = []
     accounts: list[tuple[str, AccountConstraints]] = []
@@ -6729,7 +6752,9 @@ def _constraints_for(
             if session is not None:
                 with suppress(Exception):
                     session.close()
-    found = constraint_source.survey(readings, unreachable=list(errors), accounts=accounts)
+    found = constraint_source.survey(
+        readings, unreachable=list(errors), accounts=accounts, product_limits=fixed
+    )
     return found, errors, reserved
 
 
@@ -12728,6 +12753,14 @@ def creds_rotate(
             )
             if one.due
         }
+    # A policy that a target sharing a password cannot hold is known from the
+    # config, so it is refused before any target login, `--dry-run` included
+    # (invariant 4). Only what is due is drawn, as the run draws. The draw is
+    # pure and its values are thrown away: the run draws again after the survey.
+    staging.draw_once(
+        [binding for binding in bindings if due is None or _lock_key(binding) in due],
+        lambda binding: _candidate(binding, config, name=None, supplied=None, enforce=True),
+    )
     # Refused here, not warned: the stage is written before the guardrail pass
     # and the databases change before the promotion, so a promotion the store
     # refuses would leave the rotation half done.

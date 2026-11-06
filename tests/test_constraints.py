@@ -18,6 +18,7 @@ from sopuli.constraints import (
     NAMED,
     NONE,
     POLICY,
+    PRODUCTS,
     TARGETS,
     UNKNOWN,
     UNREAD,
@@ -26,7 +27,9 @@ from sopuli.constraints import (
     survey,
 )
 from sopuli.diagnostics import (
+    CONSTRAINTS_UNREAD,
     PASSWORD_REUSE_ENFORCED,
+    PRODUCT_LIMIT_USED,
     VERIFY_FUNCTION_UNCHECKABLE,
     WARNINGS,
     constraint_diagnostics,
@@ -141,6 +144,84 @@ def test_the_default_constraints_claim_nothing() -> None:
     assert Constraints().limits == ()
     assert Constraints().source == UNREAD
     assert Constraints().partial is False
+
+
+# ------------------------------------------------------ product limits (#1338) ---
+
+FIXED = ByteLimit(max_bytes=1024, encoding="utf-8", charset="UTF8")
+
+
+def test_a_product_limit_with_no_reading_is_its_own_source() -> None:
+    found = survey([], unreachable=("pg", "ora"), product_limits=[("pg", FIXED)])
+
+    assert found.source == PRODUCTS
+    assert found.bounds == (("pg", FIXED),)
+    assert found.drawing_limit == FIXED
+    assert found.fixed_on == ("pg",)
+    assert found.unbounded == ("ora",)
+
+
+def test_a_reading_wins_over_the_product_limit_of_the_same_target() -> None:
+    """The reading is the answer, and the limit is not held twice."""
+    found = survey([("pg", FIXED)], product_limits=[("pg", FIXED)])
+
+    assert found.source == TARGETS
+    assert found.product_limits == ()
+    assert found.limits == (FIXED,)
+
+
+def test_a_product_limit_counts_toward_the_draw_and_the_strictest_target() -> None:
+    found = survey([("ora", MODERN)], unreachable=("pg",), product_limits=[("pg", LEGACY)])
+
+    assert found.source == TARGETS
+    assert found.drawing_limit == LEGACY
+    assert found.strictest_target == "pg"
+    assert found.limits == (MODERN, LEGACY)
+
+
+def test_a_product_limit_and_the_policy_each_get_their_own_code() -> None:
+    """W015 means the policy governed, so it names only where it did."""
+    found = survey([], unreachable=("pg", "ora"), product_limits=[("pg", FIXED)])
+    policy, product = constraint_diagnostics(found)
+
+    assert policy.code == CONSTRAINTS_UNREAD
+    assert policy.message.endswith("governs: ora")
+    assert product.code == PRODUCT_LIMIT_USED
+    assert "could not be read from pg," in product.message
+
+
+def test_only_product_limits_raise_no_w015() -> None:
+    found = survey([], unreachable=("pg",), product_limits=[("pg", FIXED)])
+
+    assert [one.code for one in constraint_diagnostics(found)] == [PRODUCT_LIMIT_USED]
+
+
+def test_offline_raises_neither_code() -> None:
+    assert constraint_diagnostics(Constraints(product_limits=(("pg", FIXED),))) == []
+
+
+def test_a_product_limit_is_kept_only_for_a_target_that_did_not_answer() -> None:
+    """A pair for a target in neither list would count toward the draw with no
+    entry in the section to show it."""
+    found = survey([], unreachable=("pg",), product_limits=[("pg", FIXED), ("other", LEGACY)])
+
+    assert found.product_limits == (("pg", FIXED),)
+
+
+def test_a_target_that_answered_its_limit_and_then_failed_is_not_unbounded() -> None:
+    """Its limit was read, so the policy does not govern there, and nothing in
+    the estate is unknown."""
+    found = survey([("ora", MODERN)], unreachable=("ora",))
+
+    assert found.unbounded == ()
+    assert constraint_diagnostics(found) == []
+
+
+def test_a_partial_estate_whose_unread_targets_all_have_product_limits_is_not_doubtful() -> None:
+    """Every target gave a count, so the limit used is the estate's strictest."""
+    found = survey([("ora", MODERN)], unreachable=("pg",), product_limits=[("pg", FIXED)])
+
+    assert [one.code for one in constraint_diagnostics(found)] == [PRODUCT_LIMIT_USED]
 
 
 # -------------------------------------------------- what cannot bind anything ---

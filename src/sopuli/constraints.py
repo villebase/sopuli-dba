@@ -65,6 +65,7 @@ __all__ = [
     "NAMED",
     "NONE",
     "POLICY",
+    "PRODUCTS",
     "TARGETS",
     "UNKNOWN",
     "UNLIMITED",
@@ -79,6 +80,11 @@ TARGETS = "targets"
 #: No target answered, so the policy's declared length governs. §4's fallback,
 #: and the reason :attr:`Constraints.drawing_limit` may be ``None``.
 POLICY = "policy"
+
+#: No target answered, and the product of at least one has a fixed limit, which
+#: holds without a connection. PostgreSQL, MySQL and MariaDB have one
+#: (:attr:`sopuli.driver.registry.DatabaseDriver.fixed_limit`).
+PRODUCTS = "products"
 
 #: Nothing was asked. ``--offline``, and a distinct value from :data:`POLICY`
 #: because "we could not find out" and "we did not look" are answers a report
@@ -187,19 +193,24 @@ class Constraints:
     """What was learned about the estate, and from where.
 
     ``readings`` is every target that answered, paired with its limit, in the
-    order they were tried. It is the whole answer; :attr:`drawing_limit` and
-    :attr:`limits` are two views of it for the two questions a password gets
-    asked, and keeping the pairs means a message can name the target as well as
-    the number.
+    order they were tried. Keeping the pairs means a message can name the target
+    as well as the number.
 
     ``unreachable`` names the targets that did not answer. It is not an error
     list: a run that reached three of four targets used the three, and the fourth
     is a caveat on how strict the answer is rather than a reason to stop.
+
+    ``product_limits`` is the fixed limit of each target that gave no reading,
+    where its product has one. It holds without a connection, so `--offline`
+    has it too. :attr:`bounds` is the readings and these together, and is the
+    whole answer: :attr:`drawing_limit` and :attr:`limits` are two views of it
+    for the two questions a password gets asked.
     """
 
     readings: tuple[tuple[str, ByteLimit], ...] = ()
     source: str = UNREAD
     unreachable: tuple[str, ...] = ()
+    product_limits: tuple[tuple[str, ByteLimit], ...] = ()
     #: One pair per account that answered, target first -- the same arrangement
     #: as ``readings`` and for the same reason: the target is not a property of
     #: the account, it is where the account was read, and a report names both.
@@ -216,6 +227,30 @@ class Constraints:
         return tuple(target for target, _ in self.readings)
 
     @property
+    def fixed_on(self) -> tuple[str, ...]:
+        """The targets that gave no reading and whose product's limit holds."""
+        return tuple(target for target, _ in self.product_limits)
+
+    @property
+    def unbounded(self) -> tuple[str, ...]:
+        """The unreachable targets with no limit at all: the policy governs there.
+
+        A target that answered its limit and then failed a later read is in
+        :attr:`unreachable` too, and is not counted here.
+        """
+        known = {*self.fixed_on, *self.read}
+        return tuple(target for target in self.unreachable if target not in known)
+
+    @property
+    def bounds(self) -> tuple[tuple[str, ByteLimit], ...]:
+        """Every limit a password is held to, each paired with its target.
+
+        The readings, then the product limits. A supplied password is checked
+        against all of them, and a drawn one against the smallest count.
+        """
+        return (*self.readings, *self.product_limits)
+
+    @property
     def limits(self) -> tuple[ByteLimit, ...]:
         """Every limit that must be satisfied.
 
@@ -224,7 +259,7 @@ class Constraints:
         another's, and that is independent of which target had the smallest
         count.
         """
-        return tuple(limit for _, limit in self.readings)
+        return tuple(limit for _, limit in self.bounds)
 
     @property
     def drawing_limit(self) -> ByteLimit | None:
@@ -243,21 +278,21 @@ class Constraints:
         the policy's declared length governs, which is §4's fallback written as a
         default rather than as a branch.
         """
-        if not self.readings:
+        if not self.bounds:
             return None
         return min(self.limits, key=lambda limit: limit.max_bytes)
 
     @property
     def strictest_target(self) -> str | None:
-        """The target whose count decided the draw, where more than one answered.
+        """The target whose count decided the draw, where more than one gave one.
 
-        ``None`` for a single reading, because there was nothing to be strictest
-        *than* and naming a winner of a one-horse race invites a reader to think
-        an estate was surveyed.
+        A product limit counts as a target's count. ``None`` for a single count,
+        because there was nothing to be strictest *than* and naming a winner of a
+        one-horse race invites a reader to think an estate was surveyed.
         """
-        if len(self.readings) < 2:
+        if len(self.bounds) < 2:
             return None
-        return min(self.readings, key=lambda pair: pair[1].max_bytes)[0]
+        return min(self.bounds, key=lambda pair: pair[1].max_bytes)[0]
 
     @property
     def partial(self) -> bool:
@@ -275,6 +310,7 @@ def survey(
     *,
     unreachable: Sequence[str] = (),
     accounts: Iterable[tuple[str, AccountConstraints]] = (),
+    product_limits: Iterable[tuple[str, ByteLimit]] = (),
 ) -> Constraints:
     """What the estate reported, with where it came from.
 
@@ -288,6 +324,11 @@ def survey(
     draw, and folding the two together would put a verify function next to a
     byte limit as though a run could act on both.
 
+    ``product_limits`` is the fixed limit of each target whose product has one.
+    Only the pairs of targets in ``unreachable`` that gave no reading are kept:
+    a reading is the answer. A target can be in both lists when it answered its
+    limit and a later read on the connection failed.
+
     Named for what it does rather than for what the caller wants out of it. A
     function that promised a single strictest answer would have to invent one;
     this collects, and :class:`Constraints` answers the two questions separately.
@@ -295,16 +336,21 @@ def survey(
     seen = tuple(readings)
     unreached = tuple(unreachable)
     read_accounts = tuple(accounts)
+    answered = {target for target, _ in seen}
+    fixed = tuple(
+        pair for pair in product_limits if pair[0] in unreached and pair[0] not in answered
+    )
 
-    if not seen:
-        return Constraints(
-            source=POLICY if unreached else UNREAD,
-            unreachable=unreached,
-            accounts=read_accounts,
-        )
+    if seen:
+        source = TARGETS
+    elif fixed:
+        source = PRODUCTS
+    else:
+        source = POLICY if unreached else UNREAD
     return Constraints(
         readings=seen,
-        source=TARGETS,
+        source=source,
         unreachable=unreached,
         accounts=read_accounts,
+        product_limits=fixed,
     )

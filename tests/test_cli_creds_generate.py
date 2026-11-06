@@ -789,6 +789,135 @@ def test_offline_still_refuses_a_password_over_a_fixed_limit(
     assert store.read(PATH) is None
 
 
+#: `CONFIG` with a PostgreSQL target beside the Oracle one, and the policy's
+#: length raised past PostgreSQL's 1024 bytes where the test asks (#1338).
+def _with_postgres(targets: str, length: int = 24) -> str:
+    return (
+        CONFIG.replace("targets: [appdb-alpha]", f"targets: {targets}")
+        .replace("length: 24", f"length: {length}")
+        .replace(
+            "applications:",
+            "  - name: appdb-pg\n"
+            "    type: postgresql\n"
+            "    dsn: pg.example.com:5432\n"
+            "    environment: dev\n"
+            "    postgres: { database: acme }\n"
+            "    vault: vault-prod\n"
+            "applications:",
+        )
+    )
+
+
+@pytest.mark.parametrize("offline", [True, False], ids=["offline", "unreachable"])
+def test_a_drawn_password_is_held_to_a_fixed_limit_with_no_reading(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    store: MemoryStore,
+    offline: bool,
+) -> None:
+    """A 1100-byte policy cannot be drawn for PostgreSQL, whose limit is the
+    product's, whether the target was not asked or did not answer (#1338)."""
+    flags = ["--offline"] if offline else []
+    result = run(runner, write_config(_with_postgres("[appdb-pg]", length=1100)), *flags)
+
+    assert result.exit_code != 0
+    assert "1024" in str(result.exception) + (getattr(result.exception, "hint", "") or "")
+    assert store.read(PATH) is None
+
+
+def test_offline_draws_within_a_fixed_limit_and_still_emits_no_section(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    store: MemoryStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`--offline` asks nothing, so the section stays absent, and a policy the
+    fixed limit allows is drawn as before."""
+
+    def explode(target: Any, invocation: Any, config: Any) -> Any:
+        raise AssertionError("--offline connected to a target")
+
+    monkeypatch.setattr("sopuli.cli._open_session", explode)
+    found = document(
+        run(runner, write_config(_with_postgres("[appdb-pg]")), "--offline", "--output", "json")
+    )
+
+    assert found["exit_code"] == ExitCode.SUCCESS
+    assert "constraints" not in found
+    assert len(staged(store)["acme_web_user"]) == 24
+
+
+def test_an_unreachable_estate_with_a_fixed_limit_says_the_product_governs(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    store: MemoryStore,
+    validator: Draft202012Validator,
+) -> None:
+    """No target answers. PostgreSQL's limit still holds, so `source` is
+    `products`, and Oracle's entry has no product limit (#1338)."""
+    result = run(
+        runner, write_config(_with_postgres("[appdb-alpha, appdb-pg]")), "--output", "json"
+    )
+    found = document(result)
+    validator.validate(found)
+    section = found["constraints"]
+
+    assert found["exit_code"] == ExitCode.SUCCESS
+    assert section["source"] == "products"
+    assert section["max_password_bytes"] == 1024
+    assert "strictest_target" not in section
+    entries = {entry["target"]: entry for entry in section["targets"]}
+    assert entries["appdb-pg"]["reachable"] is False
+    assert entries["appdb-pg"]["product_limit"] == {
+        "max_password_bytes": 1024,
+        "measured_as": "utf-8",
+        "character_set": "UTF8",
+    }
+    assert "max_password_bytes" not in entries["appdb-pg"]
+    assert "product_limit" not in entries["appdb-alpha"]
+    # Two codes, because W015 means the policy governed, and here it did only
+    # on the Oracle target.
+    [policy] = [one for one in found["diagnostics"] if one.get("code") == "SOPULI-W015"]
+    [product] = [one for one in found["diagnostics"] if one.get("code") == "SOPULI-W067"]
+    assert policy["message"].endswith("the policy's declared length governs: appdb-alpha")
+    assert product["message"] == (
+        "password constraints could not be read from appdb-pg, so the product's fixed "
+        "limit governs there"
+    )
+    # The text view does not print W015, so its line says the same.
+    output = run(runner, write_config(_with_postgres("[appdb-alpha, appdb-pg]")), "--dry-run")
+    assert (
+        "constraints: no target answered (appdb-alpha, appdb-pg); 1024 bytes in UTF8, "
+        "from appdb-pg's product; the policy's declared length governs on appdb-alpha"
+    ) in output.output
+
+
+def test_a_reading_and_a_product_limit_are_both_held_and_the_smaller_named(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    store: MemoryStore,
+    monkeypatch: pytest.MonkeyPatch,
+    validator: Draft202012Validator,
+) -> None:
+    """Oracle answers with 2000 bytes, PostgreSQL does not answer: its 1024
+    bytes are the smaller count, and the text line says where it came from."""
+    wide = ByteLimit(max_bytes=2000, encoding="ascii", charset="US7ASCII")
+    _reachable(monkeypatch, {"appdb-alpha": wide})
+    config = write_config(_with_postgres("[appdb-alpha, appdb-pg]"))
+
+    found = document(run(runner, config, "--output", "json"))
+    validator.validate(found)
+    output = run(runner, config, "--dry-run").output
+
+    assert found["constraints"]["source"] == "targets"
+    assert found["constraints"]["max_password_bytes"] == 1024
+    assert found["constraints"]["strictest_target"] == "appdb-pg"
+    assert (
+        "constraints: 1024 bytes in UTF8, from appdb-pg's product; "
+        "not read from appdb-pg (its product's fixed limit holds)"
+    ) in output
+
+
 def test_an_empty_stdin_is_refused(
     runner: CliRunner, write_config: Callable[[str], Path], store: MemoryStore
 ) -> None:

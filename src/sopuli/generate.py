@@ -459,8 +459,8 @@ def _every_violation(
     """Every way ``supplied`` fails the policy at *any* target, each reported once.
 
     With no readings this is one ordinary :func:`sopuli.passwords.check` -- the
-    policy's own rules, and no byte rule to apply, which is the offline and
-    unreachable case.
+    policy's own rules, and no byte rule to apply, which is the case where no
+    target gave a limit and no product has one.
 
     "Once" is per distinct violation, and a byte violation names its target,
     so two targets that cannot hold the password report twice -- each
@@ -516,8 +516,9 @@ def candidate_for(
     because :func:`draw_once` gives the other bindings of the password this
     candidate unchecked. The default is Oracle, whose driver refuses the most.
 
-    ``readings`` is every answered target's limit, paired with the target so a
-    refusal can name it, and the two paths use it differently for a reason
+    ``readings`` is every limit the password is held to, each a target's answer
+    or its product's fixed limit, paired with the target so a refusal can name
+    it, and the two paths use it differently for a reason
     :mod:`sopuli.constraints` sets out: a **drawn** password is ASCII by §8, so only
     the smallest byte count can bind it, while a **supplied** one is whatever an
     external system dictated and has to satisfy every target it will be applied to.

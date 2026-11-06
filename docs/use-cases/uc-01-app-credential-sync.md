@@ -338,7 +338,9 @@ sopuli creds generate --application acme [--account acme_web_user]
    governs the draw. The constraints that cannot govern anything are read on the
    same connection and reported. If no target is reachable, fall back to the
    policy's declared limits and say so in the output. `--offline` skips this
-   step.
+   step. On PostgreSQL, MySQL and MariaDB the limit is the product's, so a
+   target of those that is not reached, or not asked under `--offline`, still
+   has it, and a drawn or supplied password is held to it (#1338).
 
    The same connection describes each account. An account that guardrail
    check 6 (a superuser), check 8 (a role the server reserves) or check 9 (a

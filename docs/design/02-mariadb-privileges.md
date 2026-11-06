@@ -258,8 +258,12 @@ show it, and the tool account reads neither (§2.2, §3). Measured by hand on
 So the plugin check admits such an account. A password change sends one
 method, which ends the other: a login by `unix_socket` stops working. No grant
 closes the gap without reading every stored value. `doctor --check-privileges`
-says so for any target with declared accounts, and the DBA checks `SHOW CREATE
-USER` for the accounts the tool manages.
+says so for a target that an application's `accounts:` are bound to, and the
+DBA checks `SHOW CREATE USER` for the accounts the tool manages. The gap is
+accepted for personal accounts too ([#1317](../decisions/log.md#1317)), where
+a DBA's own socket login is the likely case. `account reset-password` warns
+of it at plan time, `SOPULI-W065`, `--dry-run` included, and the row says the
+same.
 
 **A user name at an undeclared host is reported** by `doctor` (§2.3).
 

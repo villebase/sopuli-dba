@@ -12242,6 +12242,20 @@ def creds_finish_rollover(
         )
         for record in finished
     ]
+    # A close §4's checks turned away leaves the old password working with no
+    # end date, so it is said whatever the exit code, as `rotate
+    # --finish-rollover` says it (#1352).
+    document.diagnostics.extend(
+        Diagnostic(
+            level="warning",
+            message=_refused_close_note(record),
+            code=ROLLOVER_LEFT_OPEN,
+            account=record.binding.account,
+            target=record.binding.target,
+        )
+        for record in finished
+        if record.turned_away
+    )
     states = [record.outcome.state for record in finished]
     closed = sum(1 for record in finished if record.changed)
     document.finish(_finish_exit_code(finished), summarise_finish(states, changed=closed))
@@ -12287,6 +12301,18 @@ def _finish_exit_code(finished: Sequence[_Finished]) -> int:
     if code == ExitCode.SUCCESS and any(record.turned_away for record in finished):
         return ExitCode.PARTIAL
     return code
+
+
+def _refused_close_note(record: _Finished) -> str:
+    """`SOPULI-W043`'s message, from `creds finish-rollover`, for a close §4's
+    checks turned away (#1352)."""
+    return (
+        f"the rollover window stays open for {record.binding.account} on "
+        f"{record.binding.target}, because the account checks refused the close: "
+        f"{record.outcome.detail or 'no reason given'}. The old password works until "
+        "the window is closed. Resolve the refusal, then run `sopuli creds finish-rollover` "
+        "again"
+    )
 
 
 @dataclass(frozen=True)

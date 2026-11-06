@@ -353,9 +353,62 @@ def test_a_close_that_sets_a_password_runs_the_account_checks(
     assert all("SUPER ON *.*" in row["actions"][0]["detail"] for row in rows)
     assert all(row["actions"][0]["applied"] is False for row in rows)
     assert all(row["changed"] is False for row in rows)
+    # Said whatever the exit code, so a run that exits 1 or 3 for another
+    # reason still names the window that will not end (#1352).
+    left_open = [
+        (one["account"], one["target"])
+        for one in document(result)["diagnostics"]
+        if one["code"] == "SOPULI-W043"
+    ]
+    assert left_open == [("acme_web_user", row["target"]) for row in rows]
     for session in harness["sessions"]:
         assert session.attempts == []
         assert session.closed == []
+
+
+TWO_ACCOUNTS = CONFIG.replace(
+    "accounts: [acme_web_user]", "accounts: [acme_web_user, acme_batch_user]"
+)
+
+
+def test_a_refused_close_beside_a_made_one_exits_4(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#1352: one window closed and one turned away is partial: some of what
+    the run was asked to do happened, and the old password of the other still
+    works."""
+    monkeypatch.setattr("sopuli.cli.CLOSE_SETS_PASSWORD_TYPES", frozenset({"oracle"}))
+    documents = {
+        "apps/acme/appdb-alpha": {
+            "DB_CREDENTIALS": {"acme_web_user": LIVE, "acme_batch_user": LIVE}
+        }
+    }
+    harness = estate(
+        documents=documents,
+        users={
+            "ACME_WEB_USER": in_rollover(),
+            "ACME_BATCH_USER": in_rollover(
+                "ACME_BATCH_USER", global_privileges=frozenset({"SUPER ON *.*"})
+            ),
+        },
+    )
+    result = run(
+        runner,
+        write_config(TWO_ACCOUNTS),
+        "--select",
+        "tenant=alpha",
+        "--output",
+        "json",
+        "--confirm",
+    )
+
+    assert result.exit_code == ExitCode.PARTIAL, result.output
+    states = {row["account"]: row["state"] for row in document(result)["results"]}
+    assert states == {"acme_web_user": "IN_SYNC", "acme_batch_user": "SKIPPED"}
+    assert harness["sessions"][0].closed == ["ACME_WEB_USER"]
 
 
 def test_a_check_a_flag_waives_does_not_keep_a_window_open(
@@ -589,7 +642,8 @@ def test_a_database_that_cannot_close_early_is_skipped(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:
     """Not an error: the window elapses on its own, which is what would have
-    happened anyway."""
+    happened anyway. So exit 0, unlike a close the account checks turned away
+    (#1352)."""
     harness = estate(capabilities=frozenset())
     result = run(runner, write_config(CONFIG), "--select", "tenant=alpha")
 

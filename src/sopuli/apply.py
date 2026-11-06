@@ -901,8 +901,11 @@ def exit_code_for(states: Sequence[str], *, promoted: bool, promotable: bool) ->
     the run does the rest of its job. Counting it as unconfirmed would exit 4 --
     "some of it worked, run `apply --repair`" -- on a run where everything the
     tool was willing to do succeeded and re-running would skip the same account
-    again, every night, forever. `creds finish-rollover` already takes this
-    reading of the same word: its `SKIPPED` exits 0.
+    again, every night, forever. `creds finish-rollover` takes the same reading
+    of the word, except for a MariaDB close the account checks turned away,
+    which exits 4: that skip leaves an old password working with no end date
+    (#1352). An account `apply` skips keeps its old password, and nothing is
+    left working that should not be.
 
     A run whose accounts were *all* skipped therefore exits 0, which is the same
     answer an empty selection already gives. Nothing was eligible, and the table

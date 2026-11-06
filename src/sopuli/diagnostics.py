@@ -45,7 +45,14 @@ from sopuli.config.codes import (
     UNVERIFIED_DATABASE,
     UNVERIFIED_TRANSPORT,
 )
-from sopuli.constraints import NAMED, POLICY, UNKNOWN, AccountConstraints, Constraints
+from sopuli.constraints import (
+    NAMED,
+    POLICY,
+    PRODUCTS,
+    UNKNOWN,
+    AccountConstraints,
+    Constraints,
+)
 from sopuli.driver.guardrails import PASSWORD_FILE, Caveat
 from sopuli.driver.oracle.wallet import AUTO_LOGIN, WalletReport
 from sopuli.driver.protocol import ENCRYPTION_NONE, Encryption, UserState
@@ -831,7 +838,8 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
         ),
         CONSTRAINTS_UNREAD: (
             "`creds generate` could not read a target's password constraints, so the "
-            "policy's declared length governed the draw. The fallback is legitimate -- "
+            "policy's declared length governed the draw there, or the product's fixed "
+            "limit where it has one (#1338). The fallback is legitimate -- "
             "staging a password for an estate that is down is a thing operators do -- and "
             "the run staged one; what the code says is that the draw was never checked "
             "against a database. `--offline` emits nothing, because there the operator "
@@ -1152,20 +1160,28 @@ def _unread(found: Constraints) -> list[Diagnostic]:
                 ),
             )
         ]
+    if found.source == PRODUCTS:
+        message = (
+            "no target could be reached to read password constraints: "
+            + ", ".join(found.unreachable)
+            + "; the product's fixed limit holds on "
+            + ", ".join(found.fixed_on)
+        )
+        if found.unbounded:
+            message += ", and the policy's declared length governs on " + ", ".join(found.unbounded)
+        return [Diagnostic(level="warning", code=CONSTRAINTS_UNREAD, message=message)]
     if found.partial:
-        return [
-            Diagnostic(
-                level="warning",
-                code=CONSTRAINTS_UNREAD,
-                message=(
-                    "password constraints were read from "
-                    + ", ".join(found.read)
-                    + " and could not be read from "
-                    + ", ".join(found.unreachable)
-                    + "; the limit used may not be the estate's strictest"
-                ),
-            )
-        ]
+        message = (
+            "password constraints were read from "
+            + ", ".join(found.read)
+            + " and could not be read from "
+            + ", ".join(found.unreachable)
+        )
+        if found.fixed_on:
+            message += "; the product's fixed limit holds on " + ", ".join(found.fixed_on)
+        if found.unbounded:
+            message += "; the limit used may not be the estate's strictest"
+        return [Diagnostic(level="warning", code=CONSTRAINTS_UNREAD, message=message)]
     return []
 
 

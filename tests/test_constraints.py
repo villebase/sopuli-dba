@@ -18,6 +18,7 @@ from sopuli.constraints import (
     NAMED,
     NONE,
     POLICY,
+    PRODUCTS,
     TARGETS,
     UNKNOWN,
     UNREAD,
@@ -26,6 +27,7 @@ from sopuli.constraints import (
     survey,
 )
 from sopuli.diagnostics import (
+    CONSTRAINTS_UNREAD,
     PASSWORD_REUSE_ENFORCED,
     VERIFY_FUNCTION_UNCHECKABLE,
     WARNINGS,
@@ -141,6 +143,57 @@ def test_the_default_constraints_claim_nothing() -> None:
     assert Constraints().limits == ()
     assert Constraints().source == UNREAD
     assert Constraints().partial is False
+
+
+# ------------------------------------------------------ product limits (#1338) ---
+
+FIXED = ByteLimit(max_bytes=1024, encoding="utf-8", charset="UTF8")
+
+
+def test_a_product_limit_with_no_reading_is_its_own_source() -> None:
+    found = survey([], unreachable=("pg", "ora"), product_limits=[("pg", FIXED)])
+
+    assert found.source == PRODUCTS
+    assert found.bounds == (("pg", FIXED),)
+    assert found.drawing_limit == FIXED
+    assert found.fixed_on == ("pg",)
+    assert found.unbounded == ("ora",)
+
+
+def test_a_reading_wins_over_the_product_limit_of_the_same_target() -> None:
+    """The reading is the answer, and the limit is not held twice."""
+    found = survey([("pg", FIXED)], product_limits=[("pg", FIXED)])
+
+    assert found.source == TARGETS
+    assert found.product_limits == ()
+    assert found.limits == (FIXED,)
+
+
+def test_a_product_limit_counts_toward_the_draw_and_the_strictest_target() -> None:
+    found = survey([("ora", MODERN)], unreachable=("pg",), product_limits=[("pg", LEGACY)])
+
+    assert found.source == TARGETS
+    assert found.drawing_limit == LEGACY
+    assert found.strictest_target == "pg"
+    assert found.limits == (MODERN, LEGACY)
+
+
+def test_the_product_limit_warning_names_where_it_holds_and_where_the_policy_does() -> None:
+    found = survey([], unreachable=("pg", "ora"), product_limits=[("pg", FIXED)])
+    [warning] = constraint_diagnostics(found)
+
+    assert warning.code == CONSTRAINTS_UNREAD
+    assert "the product's fixed limit holds on pg" in warning.message
+    assert "the policy's declared length governs on ora" in warning.message
+
+
+def test_a_partial_estate_whose_unread_targets_all_have_product_limits_is_not_doubtful() -> None:
+    """Every target gave a count, so the limit used is the estate's strictest."""
+    found = survey([("ora", MODERN)], unreachable=("pg",), product_limits=[("pg", FIXED)])
+    [warning] = constraint_diagnostics(found)
+
+    assert "the product's fixed limit holds on pg" in warning.message
+    assert "strictest" not in warning.message
 
 
 # -------------------------------------------------- what cannot bind anything ---

@@ -34,7 +34,7 @@ from collections.abc import Mapping
 from types import MappingProxyType
 from typing import Any
 
-from sopuli.constraints import NAMED, POLICY, UNREAD, AccountConstraints, Constraints
+from sopuli.constraints import NAMED, POLICY, PRODUCTS, UNREAD, AccountConstraints, Constraints
 from sopuli.output.document import Error
 from sopuli.passwords import ByteLimit
 
@@ -76,9 +76,13 @@ def build_constraints(
             section["character_set"] = limit.charset
     if found.strictest_target is not None:
         section["strictest_target"] = found.strictest_target
+    fixed = dict(found.product_limits)
     section["targets"] = [
         *(_answered(target, limit) for target, limit in found.readings),
-        *(_unanswered(target, errors.get(target)) for target in found.unreachable),
+        *(
+            _unanswered(target, errors.get(target), fixed.get(target))
+            for target in found.unreachable
+        ),
     ]
     accounts = [_account(target, one) for target, one in found.accounts]
     if accounts:
@@ -109,15 +113,27 @@ def _answered(target: str, limit: ByteLimit) -> dict[str, Any]:
     return entry
 
 
-def _unanswered(target: str, error: Error | None) -> dict[str, Any]:
+def _unanswered(target: str, error: Error | None, fixed: ByteLimit | None) -> dict[str, Any]:
     """One target that did not answer, with the reason where the run has one.
 
     The reason is the server's code and message. Without it, a wrong admin
     account and a listener that is down read the same.
+
+    ``fixed`` is the product's own limit, where it has one (#1338). It goes in
+    ``product_limit`` rather than ``max_password_bytes``, which stays the
+    count a target answered with.
     """
     entry: dict[str, Any] = {"target": target, "reachable": False}
     if error is not None:
         entry["error"] = error.to_dict()
+    if fixed is not None:
+        limit: dict[str, Any] = {
+            "max_password_bytes": fixed.max_bytes,
+            "measured_as": fixed.encoding,
+        }
+        if fixed.charset is not None:
+            limit["character_set"] = fixed.charset
+        entry["product_limit"] = limit
     return entry
 
 
@@ -168,12 +184,26 @@ def render_constraints(found: Constraints, errors: Mapping[str, Error] = _NO_ERR
         )
         return _with_reasons(line, found.unreachable, errors)
     limit = found.drawing_limit
-    if limit is None:  # pragma: no cover - `source` is TARGETS only with readings
+    if limit is None:  # pragma: no cover - TARGETS and PRODUCTS each have a count
         return None
+    fixed = set(found.fixed_on)
+    if found.source == PRODUCTS:
+        where = found.strictest_target or ", ".join(found.fixed_on)
+        line = (
+            "constraints: no target answered ("
+            + ", ".join(found.unreachable)
+            + f"); {limit.max_bytes} bytes in {limit.described}, from {where}'s product"
+        )
+        return _with_reasons(line, found.unreachable, errors)
     where = found.strictest_target or ", ".join(found.read)
+    if where in fixed:
+        where += "'s product"
     line = f"constraints: {limit.max_bytes} bytes in {limit.described}, from {where}"
     if found.partial:
-        line += "; not read from " + ", ".join(found.unreachable)
+        line += "; not read from " + ", ".join(
+            f"{target} (its product's fixed limit holds)" if target in fixed else target
+            for target in found.unreachable
+        )
         return _with_reasons(line, found.unreachable, errors)
     return line
 

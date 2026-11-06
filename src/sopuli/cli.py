@@ -6422,11 +6422,7 @@ def creds_generate(
     # share its ref is one password (`sopuli.generate`'s docstring).
     # Every product the one supplied password is staged for, so a driver that
     # refuses it on any of them is not waived for the others (#1327).
-    staged_on = _targets_of(config, bindings)
-    products = frozenset(target.target.type for target in staged_on)
-    readings = (
-        limits.readings if supplied is None else _with_fixed_limits(limits.readings, staged_on)
-    )
+    products = frozenset(target.target.type for target in _targets_of(config, bindings))
     candidates = staging.draw_once(
         bindings,
         lambda binding: _candidate(
@@ -6435,7 +6431,7 @@ def creds_generate(
             name=policy_name,
             supplied=supplied,
             enforce=not no_policy_check,
-            readings=readings,
+            readings=limits.bounds,
             products=products,
         ),
     )
@@ -6630,12 +6626,13 @@ def _candidate(
     before the file's chain is consulted -- so it wins over an application entry
     and still goes through the same dangling-name check every policy name gets.
 
-    ``readings`` is every answered target's limit, resolved once for the run by
-    :func:`_constraints_for` and passed in rather than read here: they are a
+    ``readings`` is every limit the password is held to
+    (:attr:`~sopuli.constraints.Constraints.bounds`), resolved once for the run
+    by :func:`_constraints_for` and passed in rather than read here: they are a
     property of the *targets*, not of the binding, and a function called once per
     account is the wrong place to open a connection. Empty is the documented
-    fallback -- no target answered, or none was asked -- and the policy's declared
-    length then governs, which is what
+    fallback -- no target gave a limit and no product has one -- and the
+    policy's declared length then governs, which is what
     :func:`sopuli.generate.candidate_for` already does with it.
 
     ``products`` is every product a supplied password is staged for, and
@@ -6656,25 +6653,18 @@ def _candidate(
     )
 
 
-def _with_fixed_limits(
-    readings: Sequence[tuple[str, ByteLimit]], targets: Sequence[ExpandedTarget]
-) -> tuple[tuple[str, ByteLimit], ...]:
-    """``readings``, and the product's fixed limit for each target that gave none.
+def _product_limits(config: Config, bindings: Sequence[Binding]) -> list[tuple[str, ByteLimit]]:
+    """The fixed limit of each target of ``bindings`` whose product has one (#1338).
 
-    For a **supplied** password only (#1335). On PostgreSQL, MySQL and MariaDB the
-    limit is a fact about the product, so `--offline` or an unreachable target
-    still knows it, and a password over it is one every `creds apply` there
-    refuses. A drawn password keeps the readings alone: it is ASCII, and the
-    policy's length governs it where no target answered.
+    On PostgreSQL, MySQL and MariaDB the limit is a fact about the product, so
+    `--offline` or an unreachable target still knows it, and a password over it
+    is one every `creds apply` there refuses.
     """
-    answered = {target for target, _ in readings}
-    fixed = [
+    return [
         (target.name, limit)
-        for target in targets
-        if target.name not in answered
-        and (limit := DRIVERS[target.target.type].fixed_limit) is not None
+        for target in _targets_of(config, bindings)
+        if (limit := DRIVERS[target.target.type].fixed_limit) is not None
     ]
-    return (*readings, *fixed)
 
 
 def _constraints_for(
@@ -6707,9 +6697,17 @@ def _constraints_for(
     `--dry-run` still reads. The plan is a claim about what would be staged, and
     a preview that skipped the constraint would be previewing a different draw
     from the one the real run makes.
+
+    A target that gave no reading still has its product's fixed limit, where
+    the product has one, `--offline` included (:func:`_product_limits`).
     """
+    fixed = _product_limits(config, bindings)
     if offline:
-        return Constraints(source=constraint_source.UNREAD), {}, {}
+        return (
+            Constraints(source=constraint_source.UNREAD, product_limits=tuple(fixed)),
+            {},
+            {},
+        )
 
     readings: list[tuple[str, ByteLimit]] = []
     accounts: list[tuple[str, AccountConstraints]] = []
@@ -6729,7 +6727,9 @@ def _constraints_for(
             if session is not None:
                 with suppress(Exception):
                     session.close()
-    found = constraint_source.survey(readings, unreachable=list(errors), accounts=accounts)
+    found = constraint_source.survey(
+        readings, unreachable=list(errors), accounts=accounts, product_limits=fixed
+    )
     return found, errors, reserved
 
 

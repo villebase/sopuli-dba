@@ -6,8 +6,8 @@ for text output that keep it consistent with both.
 `sopuli/output/` produces them, and CI validates the output against the
 published schemas.
 
-Schemas: [`../schemas/sopuli-run-1.79.schema.json`](../schemas/sopuli-run-1.79.schema.json),
-[`../schemas/sopuli-event-1.22.schema.json`](../schemas/sopuli-event-1.22.schema.json)
+Schemas: [`../schemas/sopuli-run-1.80.schema.json`](../schemas/sopuli-run-1.80.schema.json),
+[`../schemas/sopuli-event-1.23.schema.json`](../schemas/sopuli-event-1.23.schema.json)
 Examples, each from a real run:
 [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json),
 [`../schemas/example-creds-status-rollover.json`](../schemas/example-creds-status-rollover.json)
@@ -1915,11 +1915,22 @@ answers with its function's name. `DEFAULT`, which is common, answers `NULL`. So
 the unreadable case is a user-created common profile seen from a PDB, and
 treating every PDB as unknowable would refuse to report the ordinary case.
 
-**`source` has two values.** `targets` means at least one database answered.
-`policy` means none did, and the policy's declared length governed, which UC-1
-§4 makes a legitimate fallback, not a failure. A run that asked nothing
-(`--offline`) omits the section, because "we could not find out" and "we did not
-look" are answers a report must never merge. Absence is the third value.
+**`source` has three values.** `targets` means at least one database answered.
+`products` means none did, and the product of at least one has a fixed limit,
+which holds without a connection: PostgreSQL, MySQL and MariaDB (#1338, run
+schema 1.80). `policy` means none did, no product has a fixed limit, and the
+policy's declared length governed, which UC-1 §4 makes a legitimate fallback,
+not a failure. A run that asked nothing (`--offline`) omits the section, because
+"we could not find out" and "we did not look" are answers a report must never
+merge. Absence is the fourth value. The run still holds the password to the
+fixed limits there.
+
+**A target that did not answer has its product's limit, where it has one**, in
+`product_limit`, not in `max_password_bytes`, which is only ever a count a
+target answered with. It counts toward the top-level `max_password_bytes` and
+`strictest_target`, so those can name a target that did not answer. The text
+line says `from appdb-pg's product` for one, and marks it in the list of
+targets not read.
 
 **It is present even when nothing answered**, as `install` is and `wallet` is
 not. The section is evidence that the estate was consulted, and one that appeared
@@ -2309,7 +2320,7 @@ not contract and may improve.
 | `SOPULI-W012` | A rotation promoted a secret document and then read a different password back out of it, or could not read it back (UC-1 §8 step 8). The message names the accounts, and the store's message for a document it could not read. Every database took the new password and the vault acknowledged the promotion, so nothing needs undoing, and `apply` converges what is left. But until the vault serves what it accepted, an application that fetches `current` may get the old password. It has its own code for `SOPULI-W011`'s reason: the run exits 4, as a run with half its targets failed does, and the two need opposite responses. Here the *databases* are converged and the vault is not confirmed, so the reader looks at the store. For a stale read, replication lag on a mount with read replicas is the usual cause. For a failed read, the store's message says why. An account a guardrail skipped is not compared, because its staged password stays in `pending`, so it does not raise this code, from run schema 1.56 and event schema 1.17 (#1000) |
 | `SOPULI-W013` | An account's password is in its grace period: past `PASSWORD_LIFE_TIME`, inside the window `PASSWORD_GRACE_TIME` allows, and **still working** (UC-1 §6.4). It is on `results[].warnings[]` beside the state, not a state of its own, because `state` is one field and the account may be `IN_SYNC` or may have drifted. A value of its own would hide the answer the reader came for. It is read from `DBA_USERS.ACCOUNT_STATUS`, so it is reported even on a run with no login. It is not read from `ORA-28002`, which 26ai does not send |
 | `SOPULI-W014` | A login **succeeded**, and the server attached a diagnostic to the connection without raising. A password in its grace period is the usual cause: the login works, and Oracle puts the notice on the connection. The verification passed. The message is carried verbatim with its vendor code. The code is *data* and is never matched against a list, because the same condition is `ORA-28098` or `ORA-28011` on one release, depending on the profile. It can appear beside `SOPULI-W013` for one account. Those are two sources, what `ACCOUNT_STATUS` says and what the server said on this login, and they are reported side by side, not deduplicated, because telling them apart would need the code list this refuses to keep |
-| `SOPULI-W015` | `creds generate` could not read a target's password constraints, so the policy's declared length governed the draw (UC-1 §4 step 2). It is a **warning**, not an error, because UC-1 §4 makes the fallback legitimate: operators do stage a password for an estate that is down. The run may not stay quiet about it, because a password drawn against a policy alone and one drawn against a database that answered are different claims, and nothing in the password tells them apart. One code covers both cases, no target answered and some did, because the remedy is the same and the message names the targets. `--offline` emits nothing: the operator has said they know, and a warning that fires because a flag was passed teaches readers to filter it |
+| `SOPULI-W015` | `creds generate` could not read a target's password constraints, so the policy's declared length governed the draw there, or the product's fixed limit where it has one (UC-1 §4 step 2, #1338). The message names the targets whose product's limit holds. It is a **warning**, not an error, because UC-1 §4 makes the fallback legitimate: operators do stage a password for an estate that is down. The run may not stay quiet about it, because a password drawn against a policy alone and one drawn against a database that answered are different claims, and nothing in the password tells them apart. One code covers both cases, no target answered and some did, because the remedy is the same and the message names the targets. `--offline` emits nothing: the operator has said they know, and a warning that fires because a flag was passed teaches readers to filter it |
 | `SOPULI-W016` | An account's profile names a password verify function, or the run could not establish whether it names one: a common profile read from inside a PDB answers `FROM ROOT` (UC-1 §4 step 2). **Reported and never acted on.** The function is arbitrary PL/SQL that cannot be consulted before the statement is issued (invariants 13 and 14), so this does not predict that the password will be refused, and `creds apply` draws again if it is. It says that something other than the policy will judge this password. The not-knowing case shares the code because the consequence is the same, and the message says which case it is. It must never report the unreadable case as "no verify function", which reads as a guarantee. One per target and profile, because that is where the function lives: forty accounts on one profile are one fact |
 | `SOPULI-W017` | An account's profile restricts password reuse, and the run was given a password instead of drawing one. **Only under `--from-stdin`**, so it is not part of `SOPULI-W016`. A fresh random password cannot collide with a hashed history, so a reuse warning on an ordinary draw would fire on every run and mean nothing. A supplied password is whatever an external system dictated, and that can be the one it had last year. The two resource values are carried and not interpreted: they interact, and the run measured neither the interaction nor the history |
 | `SOPULI-W018` | One of `02-oracle-privileges.md` §4's account guardrails could not run against a target, because the run could not read the fact it checks. The run **went ahead** and applied the other checks. In this build it is always check 3, the password file: `V$PWFILE_USERS` is outside that document's default grant set on purpose, so the code appears on a correctly installed estate, and the optional grant removes it. Without the code, nothing in the exit code, the states or `results[].overridden` would say that one check contributed nothing. **Not a refusal**, because the estate that cannot answer is the correctly installed one, and refusing would change nothing anywhere. **One per target and check**, because a missing grant is a property of the database. **Printed as well as serialised**, because a warning nobody sees in the default output has not been reported. `creds apply` and `creds rotate` emit it, and `account suspend`, `account expire-password` and `account reset-password` from run schema 1.53 and event schema 1.14 (#971) |

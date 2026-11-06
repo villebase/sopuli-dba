@@ -809,6 +809,139 @@ def _with_postgres(targets: str, length: int = 24) -> str:
 
 
 @pytest.mark.parametrize("offline", [True, False], ids=["offline", "unreachable"])
+def test_a_target_the_selectors_leave_out_still_holds_the_draw_to_its_limit(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    store: MemoryStore,
+    offline: bool,
+) -> None:
+    """`--target appdb-alpha` stages the password `appdb-pg` reads too, so a
+    policy PostgreSQL cannot hold is refused, though `appdb-pg` is not
+    selected and nothing logs in to it (#1351)."""
+    flags = ["--offline"] if offline else []
+    result = run(
+        runner,
+        write_config(_with_postgres("[appdb-alpha, appdb-pg]", length=1100)),
+        "--target",
+        "appdb-alpha",
+        *flags,
+    )
+
+    assert isinstance(result.exception, ConfigError), result.exception
+    assert "appdb-pg" in str(result.exception)
+    assert "1024" in str(result.exception) + (result.exception.hint or "")
+    assert store.read(PATH) is None
+
+
+def test_a_limit_known_from_the_config_is_refused_before_any_target_login(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    store: MemoryStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`appdb-pg`'s limit needs no connection, so the run refuses before it
+    logs in to `appdb-alpha` to read its constraints (invariant 4, #1351)."""
+    calls: list[str] = []
+
+    def counting(target: Any, invocation: Any, config: Any) -> _Session:
+        calls.append(target.name)
+        return _Session(ASCII_128)
+
+    monkeypatch.setattr("sopuli.cli._open_session", counting)
+    result = run(
+        runner,
+        write_config(_with_postgres("[appdb-alpha, appdb-pg]", length=1100)),
+        "--target",
+        "appdb-alpha",
+    )
+
+    assert isinstance(result.exception, ConfigError), result.exception
+    assert "appdb-pg" in str(result.exception)
+    assert calls == []
+    assert store.read(PATH) is None
+
+
+def test_a_supplied_password_is_refused_once_for_every_violation(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    store: MemoryStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A supplied password is checked once, after the reading, so the refusal
+    names the policy's violation and the one the target's character set adds,
+    not one of them per run (#1351)."""
+    monkeypatch.setattr(
+        "sopuli.cli._open_session", lambda target, invocation, config: _Session(ASCII_128)
+    )
+    result = run(
+        runner,
+        write_config(_with_postgres("[appdb-alpha, appdb-pg]")),
+        "--target",
+        "appdb-alpha",
+        "--from-stdin",
+        stdin="Supplied2026Pässword\n",
+    )
+
+    assert isinstance(result.exception, ConfigError), result.exception
+    hint = result.exception.hint or ""
+    assert "length" in hint
+    assert "encoding" in hint
+    assert store.read(PATH) is None
+
+
+def test_a_quote_is_not_waived_for_an_oracle_target_the_selectors_leave_out(
+    runner: CliRunner, write_config: Callable[[str], Path], store: MemoryStore
+) -> None:
+    """Oracle refuses a `"`, and `appdb-alpha` reads the password staged for
+    `appdb-pg`, so `--no-policy-check` cannot waive it there (#1327, #1351)."""
+    result = run(
+        runner,
+        write_config(_with_postgres("[appdb-pg, appdb-alpha]")),
+        "--target",
+        "appdb-pg",
+        "--from-stdin",
+        "--no-policy-check",
+        "--offline",
+        stdin='SuppliedPassword2026"abcd\n',
+    )
+
+    assert isinstance(result.exception, ConfigError), result.exception
+    assert "`--no-policy-check` cannot waive that" in (result.exception.hint or "")
+    assert store.read(PATH) is None
+
+
+def test_a_left_out_target_whose_store_is_not_known_yet_still_holds_the_draw(
+    runner: CliRunner, write_config: Callable[[str], Path], store: MemoryStore
+) -> None:
+    """`appdb-pg` names no store, so its binding has none in this run. It reads
+    the same path and place, and its store could be the same one, so its limit
+    counts: the safe way to be wrong (#1351)."""
+    config = _with_postgres("[appdb-alpha, appdb-pg]", length=1100).replace(
+        "    postgres: { database: acme }\n    vault: vault-prod\n",
+        "    postgres: { database: acme }\n",
+    )
+    result = run(runner, write_config(config), "--target", "appdb-alpha", "--offline")
+
+    assert isinstance(result.exception, ConfigError), result.exception
+    assert "appdb-pg" in str(result.exception)
+    assert store.read(PATH) is None
+
+
+def test_a_target_that_reads_another_password_does_not_hold_the_draw(
+    runner: CliRunner, write_config: Callable[[str], Path], store: MemoryStore
+) -> None:
+    """A target outside the selection counts only where it reads the same
+    password: with a ref per target, PostgreSQL's limit is not this draw's."""
+    config = _with_postgres("[appdb-alpha, appdb-pg]", length=1100).replace(
+        "apps/acme/dev#", "apps/acme/{target}#"
+    )
+    result = run(runner, write_config(config), "--target", "appdb-alpha", "--offline")
+
+    assert result.exit_code == 0, result.output
+    assert store.read("apps/acme/appdb-alpha") is not None
+
+
+@pytest.mark.parametrize("offline", [True, False], ids=["offline", "unreachable"])
 def test_a_drawn_password_is_held_to_a_fixed_limit_with_no_reading(
     runner: CliRunner,
     write_config: Callable[[str], Path],

@@ -72,6 +72,7 @@ from sopuli.passwords import (
     Violation,
     check,
     ends_in_line_break,
+    require_feasible,
 )
 from sopuli.passwords import generate as draw_password
 from sopuli.payload import (
@@ -438,6 +439,18 @@ def policy_for(config: Config, binding: Binding) -> tuple[str, PasswordPolicy]:
     )
     found = next(policy for policy in config.policies if policy.name == chosen)
     return chosen, found.password
+
+
+def require_drawable(policy: PasswordPolicy, readings: Sequence[tuple[str, ByteLimit]]) -> None:
+    """Refuse a policy :func:`candidate_for` could not draw for under
+    ``readings``, and draw nothing.
+
+    The same refusal the draw makes, through
+    :func:`~sopuli.passwords.require_feasible`, against the same smallest
+    limit, so a caller that asks first gets the message the draw would give.
+    """
+    target, limit = _smallest(readings)
+    require_feasible(policy, limit=limit, target=target)
 
 
 def _smallest(

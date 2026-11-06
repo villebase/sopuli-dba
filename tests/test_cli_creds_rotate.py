@@ -67,6 +67,7 @@ from sopuli.lock import Holder, LockDeniedError, LockKey, LockRecord, lock_path
 from sopuli.output.document import SCHEMA_VERSION
 from sopuli.output.emit import EVENT_SCHEMA_VERSION
 from sopuli.plan import BlastRadius
+from sopuli.safety import RefusedError
 from sopuli.secrets import Secret
 from sopuli.store import MemoryStore, SecretStore, StoreError
 from sopuli.store.protocol import Stored
@@ -1668,6 +1669,46 @@ def test_a_dry_run_refuses_a_policy_over_the_products_fixed_limit_before_any_log
     assert result.exit_code != ExitCode.SUCCESS
     assert "256" in str(result.exception)
     assert harness["sessions"] == []
+
+
+@pytest.mark.parametrize("dry_run", [True, False], ids=["dry run", "run"])
+def test_a_rotation_that_leaves_out_a_sharing_target_is_refused_as_narrow_before_any_login(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness, dry_run: bool
+) -> None:
+    """`appdb-pg` reads the password `--target appdb-alpha` would rotate. The
+    refusal is decision #406's, which says to widen the selection, and not
+    PostgreSQL's limit, whose hint to lower `length:` would leave the run
+    refused all the same. Nothing logs in and nothing is written (#1351)."""
+    config = (
+        CONFIG.replace("length: 24", "length: 1100")
+        .replace("apps/acme/{target}#", "apps/acme/shared#")
+        .replace(
+            "applications:",
+            "  - name: appdb-pg\n"
+            "    type: postgresql\n"
+            "    dsn: pg.example.com:5432\n"
+            "    environment: prod\n"
+            "    postgres: { database: acme }\n"
+            "    vault: vault-prod\n"
+            "applications:",
+        )
+        .replace(
+            "accounts: [acme_web_user]",
+            "accounts: [acme_web_user]\n    targets: [appdb-alpha, appdb-pg]",
+        )
+    )
+    harness = estate(
+        documents={"apps/acme/shared": {"DB_CREDENTIALS": {"acme_web_user": LIVE}}},
+    )
+    before = harness["store"].read("apps/acme/shared").version
+    flags = ["--dry-run"] if dry_run else []
+    result = run(runner, write_config(config), "--target", "appdb-alpha", *flags)
+
+    assert isinstance(result.exception, RefusedError), result.exception
+    assert "narrower than the promotion" in str(result.exception)
+    assert "appdb-pg" in str(result.exception)
+    assert harness["sessions"] == []
+    assert harness["store"].read("apps/acme/shared").version == before
 
 
 def test_an_error_after_a_retain_still_says_both_passwords_work(

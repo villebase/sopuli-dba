@@ -340,7 +340,13 @@ sopuli creds generate --application acme [--account acme_web_user]
    policy's declared limits and say so in the output. `--offline` skips this
    step. On PostgreSQL, MySQL and MariaDB the limit is the product's, so a
    target of those that is not reached, or not asked under `--offline`, still
-   has it, and a drawn or supplied password is held to it (#1338).
+   has it, and a drawn or supplied password is held to it (#1338). A target
+   that the selectors leave out and that reads the same password counts too.
+   Nothing logs in to it: only its product's fixed limit and the characters
+   its driver refuses are used (#1351). A policy that cannot be drawn under
+   these fixed limits is refused before any target login. A supplied password
+   is checked once, after the reading, so that one refusal names every
+   violation, a selected target's character set included.
 
    The same connection describes each account. An account that guardrail
    check 6 (a superuser), check 8 (a role the server reserves) or check 9 (a
@@ -451,8 +457,9 @@ read does not change the argument.
   dictates the password. It checks the password against the policy and refuses
   on a violation, unless `--no-policy-check` is passed. The audit event records
   that flag and the violations it accepted. The flag cannot waive what a
-  driver of a target the password is staged for refuses, because the password
-  would be staged and then refused by every `creds apply` there (#1327, #1335).
+  driver of a target the password is staged for refuses, a target the
+  selectors leave out included, because the password would be staged and then
+  refused by every `creds apply` there (#1327, #1335, #1351).
   Every driver refuses a control character, a password longer than the
   target's byte limit, and one its character set cannot hold. The Oracle
   driver also refuses `"` (invariant 11). On PostgreSQL, MySQL and MariaDB
@@ -1875,14 +1882,17 @@ It is present only when there was one. It means "this row was applied more than
 once and reports the last attempt", not a failure. A redrawn account that ends
 `IN_SYNC` succeeded.
 
-**Two more refusals follow from the rules.** An account whose policy the file
+**Three more refusals follow from the rules.** An account whose policy the file
 does not declare cannot be drawn for, so it is reported and the run goes on. The
 run was applying the estate correctly, and a configuration error would complain
-about a file nothing had changed. A run that applies from `current` instead of
-`pending` never redraws, because `origin` describes a staged value, and `current`
-is what applications already hold. Replacing that during an apply would be a
-different and much worse operation. §3's rule that an absent `origin` blocks a
-redraw already covers it.
+about a file nothing had changed. The same holds for a policy that a target
+sharing the password cannot hold, such as a length past PostgreSQL's 1024
+bytes. That target counts even where the selectors left it out, because it
+reads the password the redraw stages (#1351). A run that applies from `current`
+instead of `pending` never redraws, because `origin` describes a staged value,
+and `current` is what applications already hold. Replacing that during an apply
+would be a different and much worse operation. §3's rule that an absent `origin`
+blocks a redraw already covers it.
 
 `sopuli/driver/oracle/errors.py` maps the codes, under these rules:
 

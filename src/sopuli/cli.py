@@ -112,7 +112,7 @@ from sopuli.config.bindings import check_oci_name
 from sopuli.config.errors import KeyPath
 from sopuli.config.expansion import declared_at
 from sopuli.config.model import Delivery, Notify, PersonalAccountRule
-from sopuli.config.password_keys import place_of
+from sopuli.config.password_keys import declared_password_key, place_of
 from sopuli.config.products import (
     account_key,
     account_matcher,
@@ -6408,6 +6408,15 @@ def creds_generate(
     if demand is not None:
         _show_plan(plan, run, noun="generation")
     supplied = _password_from_stdin() if from_stdin else None
+    # Every target that shares a password, a target the selectors left out
+    # included (#1351). Their fixed limits are known from the config, so a
+    # policy that cannot be drawn under them is refused here, before any target
+    # login (invariant 4), and nothing is drawn. Not a supplied password: it is
+    # checked once, after the reading, so one refusal names every violation.
+    estate = _declared_estate(run.config)
+    if supplied is None:
+        for binding in bindings:
+            _require_drawable(binding, config, estate=estate, name=policy_name)
     staged_on = _targets_of(config, bindings)
     limits, unanswered, reserved = _constraints_for(
         bindings, run, config, offline=offline, fixed=_product_limits(staged_on)
@@ -6424,13 +6433,15 @@ def creds_generate(
         emitter.event(document, "constraints.resolved", data=document.constraints)
     # Once per password, not per binding: an account on several targets that
     # share its ref is one password (`sopuli.generate`'s docstring).
-    # `_candidate` adds every product the password is staged for, so a driver
-    # that refuses it on one of them is not waived for the others (#1327).
+    # `_candidate` adds every product the password is staged for, a target the
+    # selectors left out included, so a driver that refuses it on one of them
+    # is not waived for the others (#1327, #1351).
     candidates = staging.draw_once(
         bindings,
         lambda binding: _candidate(
             binding,
             config,
+            estate=estate,
             name=policy_name,
             supplied=supplied,
             enforce=not no_policy_check,
@@ -6619,6 +6630,7 @@ def _candidate(
     binding: Binding,
     config: Config,
     *,
+    estate: Config,
     name: str | None,
     supplied: Secret | None,
     enforce: bool,
@@ -6639,18 +6651,19 @@ def _candidate(
     property of the *targets*, not of the binding, and a function called once per
     account is the wrong place to open a connection.
 
-    **Every selected target that shares the password is added here**, because
-    each of them reads the one value that is staged (:func:`_sharing_targets`).
-    Each one's product limit is added where
-    ``readings`` has no reading for it, so every verb that draws is held to
-    them without passing them. ``products`` is those targets' products, unless
-    given, and :func:`~sopuli.driver.registry.refused_password_rules` reads it
-    (#1327). With no limit at all the policy's declared length governs, which is
-    what :func:`sopuli.generate.candidate_for` does with an empty ``readings``.
+    **Every target that shares the password is added here**, because each of
+    them reads the one value that is staged (:func:`_sharing_targets`). That
+    includes a target the selectors left out, so ``estate`` is the config before
+    they narrowed it (:func:`_declared_estate`). Nothing logs in to such a
+    target: only its product's fixed limit and its product's refused rules are
+    used. Each target's product limit is added where ``readings`` has no reading
+    for it, so every verb that draws is held to them without passing them.
+    ``products`` is those targets' products, unless given, and
+    :func:`~sopuli.driver.registry.refused_password_rules` reads it (#1327).
+    With no limit at all the policy's declared length governs, which is what
+    :func:`sopuli.generate.candidate_for` does with an empty ``readings``.
     """
-    effective = binding if name is None else replace(binding, policy=name)
-    chosen, policy = staging.policy_for(config, effective)
-    sharing = _sharing_targets(config, binding)
+    chosen, policy, sharing = _draw_inputs(binding, config, estate=estate, name=name)
     if products is None:
         products = frozenset(target.target.type for target in sharing)
     read = {target for target, _ in readings}
@@ -6666,16 +6679,63 @@ def _candidate(
     )
 
 
-def _sharing_targets(config: Config, binding: Binding) -> list[ExpandedTarget]:
-    """Every target in ``config`` whose binding reads ``binding``'s password.
+def _require_drawable(
+    binding: Binding, config: Config, *, estate: Config, name: str | None
+) -> None:
+    """Refuse a policy that no password could be drawn for, under the fixed
+    limits of every target in ``estate`` that shares ``binding``'s password,
+    and draw nothing.
 
-    ``config`` is the one the verb narrowed to its selection, so a target the
-    selectors left out is not here.
+    The refusal :func:`_candidate` would make for a drawn password with no
+    reading, through :func:`sopuli.generate.require_drawable`, so a caller can
+    ask before any target login without making a password it throws away. Both
+    take their policy and targets from :func:`_draw_inputs`, so they cannot
+    disagree about which limits hold.
+    """
+    _, policy, sharing = _draw_inputs(binding, config, estate=estate, name=name)
+    staging.require_drawable(policy, _product_limits(sharing))
+
+
+def _draw_inputs(
+    binding: Binding, config: Config, *, estate: Config, name: str | None
+) -> tuple[str, PasswordPolicy, list[ExpandedTarget]]:
+    """The policy's name, the policy, and the targets that share the password:
+    what :func:`_candidate` and :func:`_require_drawable` both draw from.
+
+    ``name`` is `--policy`, which overrides the binding's own name before the
+    file's chain is consulted.
+    """
+    effective = binding if name is None else replace(binding, policy=name)
+    chosen, policy = staging.policy_for(config, effective)
+    return chosen, policy, _sharing_targets(estate, binding)
+
+
+def _sharing_targets(estate: Config, binding: Binding) -> list[ExpandedTarget]:
+    """``binding``'s target and every target in ``estate`` whose binding reads
+    the same password.
+
+    ``estate`` is the whole config, so a target the selectors left out is here.
+    ``binding``'s own target is named directly as well as found by its key. That
+    is defensive: a selected binding that reaches a draw has its store, and its
+    copy in the estate has the same key.
+
+    **A binding with no store yet counts where its path and place match.** Its
+    store would come from a profile or ``SOPULI_VAULT``, so it may be the same
+    one. Counting it can only add a limit, which is the safe way to be wrong,
+    and it is how :func:`_left_out` treats such a binding.
     """
     key = staging.password_key(binding)
-    if key is None:
-        return _targets_of(config, [binding])
-    return _targets_of(config, [one for one in config.bindings if staging.password_key(one) == key])
+    sharing = [binding]
+    if key is not None:
+        for one in estate.bindings:
+            declared = declared_password_key(one)
+            if declared is None:
+                continue
+            if declared == key or (
+                declared.store is None and (declared.path, declared.place) == (key.path, key.place)
+            ):
+                sharing.append(one)
+    return _targets_of(estate, sharing)
 
 
 def _product_limits(targets: Sequence[ExpandedTarget]) -> list[tuple[str, ByteLimit]]:
@@ -7952,6 +8012,7 @@ def creds_apply(
                     stores,
                     run,
                     config,
+                    estate=estate,
                     manager=manager,
                     margin=lockout_margin,
                     strategy=strategy,
@@ -11069,6 +11130,7 @@ def _redraw_estate(
     run: Invocation,
     config: Config,
     *,
+    estate: Config,
     manager: LockManager,
     margin: int,
     strategy: str | None,
@@ -11116,13 +11178,17 @@ def _redraw_estate(
     # writes secrets should not depend for its termination on arithmetic done
     # three functions away.
     for _ in range(apply_states.DRAW_LIMIT):
-        wanted, declined = _wants_redraw(applied, documents, config, reported=reported)
+        wanted, declined = _wants_redraw(
+            applied, documents, config, estate=estate, reported=reported
+        )
         diagnostics.extend(declined)
         if not wanted:
             return applied, None
 
         try:
-            restaged = _restage(wanted, documents, stores, config, manager=manager, run=run)
+            restaged = _restage(
+                wanted, documents, stores, config, estate=estate, manager=manager, run=run
+            )
         except LockStolenError as taken:
             # Named apart from `stolen` below: `except ... as` unbinds its target
             # at the end of the block, so reusing the name would leave the
@@ -11158,6 +11224,7 @@ def _wants_redraw(
     documents: Mapping[LockKey, Any],
     config: Config,
     *,
+    estate: Config,
     reported: set[tuple[str, LockKey]],
 ) -> tuple[list[_Applied], list[Diagnostic]]:
     """The records to draw again for, and the diagnostics for those refused.
@@ -11176,11 +11243,12 @@ def _wants_redraw(
     account declines again every time round and a run that said so three times
     would read as three separate refusals.
 
-    **An account with no password policy declines here rather than raising.**
-    Drawing needs a policy and §8 refuses to invent one, but this run was applying
-    happily until the server refused a value -- turning that into a configuration
-    error would replace a report of what the estate did with a complaint about
-    the file, on a run where nothing about the file had changed.
+    **An account that cannot be drawn for declines here rather than raising**
+    (:func:`_cannot_draw`): one with no password policy, and one whose policy a
+    target sharing the password cannot hold. This run was applying happily until
+    the server refused a value -- turning that into a configuration error would
+    replace a report of what the estate did with a complaint about the file, part
+    way through a run that has already changed databases.
     """
     wanted: list[_Applied] = []
     declined: list[Diagnostic] = []
@@ -11198,7 +11266,11 @@ def _wants_redraw(
             _origin_of(record.binding, documents.get(key)),
             drawn=record.redraws + 1,
         )
-        reason = decision.reason if not decision.allowed else _no_policy_for(config, record.binding)
+        reason = (
+            decision.reason
+            if not decision.allowed
+            else _cannot_draw(config, estate, record.binding)
+        )
         if record.source is not None and record.source.stage == PREVIOUS:
             # Ahead of whatever `may_redraw` said, which asks about `pending`'s
             # origin and so would answer a rollback with "no record of where that
@@ -11224,19 +11296,25 @@ def _wants_redraw(
     return wanted, declined
 
 
-def _no_policy_for(config: Config, binding: Binding) -> str | None:
+def _cannot_draw(config: Config, estate: Config, binding: Binding) -> str | None:
     """Why this account cannot be drawn for, or ``None`` when it can.
 
-    :func:`sopuli.generate.policy_for` is the same chain `creds generate` walks
-    and it *raises* where there is nothing to draw against -- which is right for
-    a command whose whole job is drawing, and wrong here, where the run is
-    already part way through an estate. So the refusal is caught and becomes one
-    more reason a password was not replaced.
+    :func:`sopuli.generate.policy_for` and :func:`_candidate` are what `creds
+    generate` uses, and they *raise* where nothing can be drawn -- which is
+    right for a command whose whole job is drawing, and wrong here, where the
+    run is already part way through an estate. So the refusal is caught and
+    becomes one more reason a password was not replaced.
+
+    :func:`_require_drawable` draws nothing. It refuses a policy that a target
+    sharing the password cannot hold, a target the selectors left out included
+    (#1351), and a policy the chain cannot find. The reason is the refusal's own
+    message and hint, on one line: a diagnostic has no field for the hint.
     """
     try:
-        staging.policy_for(config, binding)
-    except ConfigError:
-        return "this account has no password policy to draw from"
+        _require_drawable(binding, config, estate=estate, name=None)
+    except ConfigError as refused:
+        reason = f"no password can be drawn for it: {refused.message}"
+        return f"{reason} -- {refused.hint}" if refused.hint else reason
     return None
 
 
@@ -11318,6 +11396,7 @@ def _restage(
     stores: Mapping[str, SecretStore],
     config: Config,
     *,
+    estate: Config,
     manager: LockManager,
     run: Invocation,
 ) -> _Restaged:
@@ -11345,7 +11424,9 @@ def _restage(
             replace(candidate, rollover=_marked(candidate.binding, stored))
             for candidate in staging.draw_once(
                 [record.binding for record in records],
-                lambda binding: _candidate(binding, config, name=None, supplied=None, enforce=True),
+                lambda binding: _candidate(
+                    binding, config, estate=estate, name=None, supplied=None, enforce=True
+                ),
             )
         )
         # Sent as each password is drawn, before the write that stages it, so a
@@ -11697,8 +11778,9 @@ def _left_out(
 def _declared_estate(config: Config) -> Config:
     """Every binding the file declares, with the stores that resolve without asking.
 
-    For the promotion gate only (decision #406), which needs the pairs a selector
-    left out. **It never refuses**: `binding_stores.complete` rejects a
+    For a check that needs the pairs a selector left out, such as the promotion
+    gate (decision #406) and the targets that share a drawn password (#1351).
+    **It never refuses**: `binding_stores.complete` rejects a
     `SOPULI_VAULT` that names an undeclared store, which is right for a run that
     needs the default and wrong for one that is refused over a binding it excluded.
     Where completing would refuse, the bindings are returned as loaded, and the ones
@@ -12799,12 +12881,17 @@ def creds_rotate(
         }
     # A policy that a target sharing a password cannot hold is known from the
     # config, so it is refused before any target login, `--dry-run` included
-    # (invariant 4). Only what is due is drawn, as the run draws. The draw is
-    # pure and its values are thrown away: the run draws again after the survey.
-    staging.draw_once(
-        [binding for binding in bindings if due is None or _lock_key(binding) in due],
-        lambda binding: _candidate(binding, config, name=None, supplied=None, enforce=True),
-    )
+    # (invariant 4). Only what is due is checked, as the run draws only that.
+    # Nothing is drawn. Only the selected targets count here: a target the
+    # selectors left out that shares a password is decision #406's refusal
+    # (`_refuse_narrow_rotation`), which says to widen the selection. Holding the
+    # policy to it first would refuse with a hint to lower `length:`, and the
+    # run would still be refused after that (#1351). So the narrowed config is
+    # passed as the estate here, and only here.
+    for binding in bindings:
+        if due is None or _lock_key(binding) in due:
+            _require_drawable(binding, config, estate=config, name=None)
+    estate = _declared_estate(run.config)
     # Refused here, not warned: the stage is written before the guardrail pass
     # and the databases change before the promotion, so a promotion the store
     # refuses would leave the rotation half done.
@@ -12831,6 +12918,7 @@ def creds_rotate(
             run,
             config,
             plan=plan,
+            estate=estate,
             documents=_read_documents(keys, stores, run=run),
             strategy=strategy,
             max_age_days=max_age_days,
@@ -12875,6 +12963,7 @@ def creds_rotate(
                 run,
                 config,
                 plan=plan,
+                estate=estate,
                 stores=stores,
                 keys=keys,
                 manager=manager,
@@ -13057,7 +13146,7 @@ def _refuse_staged_rotation(rotating: Sequence[Binding], documents: Mapping[Lock
 def _refuse_narrow_rotation(
     rotating: Sequence[Binding],
     documents: Mapping[LockKey, Any],
-    run: Invocation,
+    estate: Config,
 ) -> None:
     """Refuse a rotation that could not promote what it is about to stage (decision #406).
 
@@ -13074,9 +13163,7 @@ def _refuse_narrow_rotation(
     sibling with a `pending` of its own that is not due is exactly as unvisited as
     one a selector excluded.
     """
-    left_out = _left_out(
-        rotating, [(binding, True) for binding in rotating], documents, _declared_estate(run.config)
-    )
+    left_out = _left_out(rotating, [(binding, True) for binding in rotating], documents, estate)
     if not left_out:
         return
     named = "; ".join(
@@ -13136,6 +13223,7 @@ def _rotate_estate(
     config: Config,
     *,
     plan: Any,
+    estate: Config,
     stores: Mapping[str, SecretStore],
     keys: Sequence[LockKey],
     manager: LockManager,
@@ -13166,7 +13254,7 @@ def _rotate_estate(
     if not rotating:
         document.finish(ExitCode.SUCCESS, Summary(total=len(into.selections)))
         return _nothing_due(plan, into.selections, max_age_days)
-    _refuse_narrow_rotation(rotating, documents, run)
+    _refuse_narrow_rotation(rotating, documents, estate)
 
     # Step 3, and unconditional. Every account about to be rotated, rather than
     # only those the vault already holds something for: there is no `pending`
@@ -13193,12 +13281,18 @@ def _rotate_estate(
     # A rollover rotation marks what it stages (#1224), so a later `creds apply`
     # sets it again without ending the window this run opens on MySQL. Only a
     # driver that keeps a second password on request reads the mark's effect.
+    # `_refuse_narrow_rotation` has already ended a run that leaves out a
+    # target sharing a password, so `estate` adds nothing here today. It is
+    # passed all the same, so the draw does not depend on that refusal staying
+    # in front of it (#1351).
     marked = strategy == strategies.ROLLOVER
     writes = staging.group(
         replace(candidate, rollover=marked)
         for candidate in staging.draw_once(
             drawn,
-            lambda binding: _candidate(binding, config, name=None, supplied=None, enforce=True),
+            lambda binding: _candidate(
+                binding, config, estate=estate, name=None, supplied=None, enforce=True
+            ),
         )
     )
     for write in writes:
@@ -13669,6 +13763,7 @@ def _preview_rotation(
     config: Config,
     *,
     plan: Any,
+    estate: Config,
     documents: Mapping[LockKey, Any],
     strategy: str | None,
     max_age_days: int | None,
@@ -13705,7 +13800,7 @@ def _preview_rotation(
         document.finish(ExitCode.SUCCESS, Summary(total=len(selections)))
         return _nothing_due(plan, selections, max_age_days)
     # A refusal under `--dry-run` is still a refusal, as the pre-flight's is.
-    _refuse_narrow_rotation(rotating, documents, run)
+    _refuse_narrow_rotation(rotating, documents, estate)
 
     read: dict[tuple[str, str], UserState] = {}
     caveats: list[Diagnostic] = []

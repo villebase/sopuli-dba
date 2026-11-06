@@ -4699,16 +4699,25 @@ the register.
   the current password's value ([#1271](#1271)), which changes the account's
   login. It ran none of UC-1 §4's account guardrails, which `creds apply` and
   `creds rotate` run before they change an account. Should it?
-- **Decision:** A: run them, before the login and before a preview, on the
-  account it has just described. A refused account keeps its window: `ERROR`
-  where `--account` named it, `SKIPPED` otherwise, as in `creds apply`. Only
-  where the close sets a password, which is MariaDB; Oracle's and MySQL's
-  close sets none.
+- **Decision:** A: run the checks no flag waives (not declared, a superuser,
+  a role the server reserves, check 9's global privilege), before the login
+  and before a preview, on the account it has just described. A refused
+  account keeps its window: `ERROR` where `--account` named it, `SKIPPED`
+  otherwise, as in `creds apply`. Only where the close sets a password, which
+  is MariaDB; Oracle's and MySQL's close sets none. `creds rotate
+  --finish-rollover` warns `SOPULI-W043` for each window a close left open.
 - **Why:** the window was opened by a verb that ran the checks, but the
   account can have gained a privilege since, and the close changes its login
-  as `creds apply` would.
+  as `creds apply` would. Not the checks a flag waives: a MariaDB window never
+  elapses, so a check `creds rotate --force` waived when the window opened
+  would keep it open for good, since `finish-rollover` has no `--force`. The
+  second review of #1345 found this, and the maintainer chose it.
 - **Rejected:**
   1. B: accept the gap and document it.
   2. Leaving it for later.
+  3. Every check, with a `--force` on `finish-rollover`: a new flag on a verb
+     that runs unattended, and a waiver its rows would have to record.
 - **Accepted cost:** a refused close leaves the old password working until
-  the account's grants are fixed and the close is run again.
+  the account's grants are fixed and the close is run again. A condition a
+  flag waives that appears after the window opened, such as a new
+  administrative role, does not stop the close, as before #1344.

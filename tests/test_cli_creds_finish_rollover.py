@@ -357,31 +357,24 @@ def test_a_close_that_sets_a_password_runs_the_account_checks(
         assert session.closed == []
 
 
-def test_a_refused_close_does_not_name_a_flag_the_verb_lacks(
+def test_a_check_a_flag_waives_does_not_keep_a_window_open(
     runner: CliRunner,
     write_config: Callable[[str], Path],
     estate: Harness,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """#1344: a check `--force` waives elsewhere, here an administrative role,
-    still refuses a close, and the remedy does not send the operator to a
-    `--force` that `creds finish-rollover` does not have."""
+    """#1344: the close runs only the checks no flag waives. A MariaDB window
+    never elapses, so a check `creds rotate --force` waived when it opened,
+    here an administrative role, must not keep it open for good."""
     monkeypatch.setattr("sopuli.cli.CLOSE_SETS_PASSWORD_TYPES", frozenset({"oracle"}))
-    estate(users={"ACME_WEB_USER": in_rollover(admin_roles=frozenset({"DBA"}))})
-    result = run(
-        runner,
-        write_config(CONFIG),
-        "--account",
-        "acme_web_user",
-        "--output",
-        "json",
-        "--confirm",
-    )
+    harness = estate(users={"ACME_WEB_USER": in_rollover(admin_roles=frozenset({"DBA"}))})
+    result = run(runner, write_config(CONFIG), "--account", "acme_web_user", "--confirm")
 
-    assert result.exit_code == ExitCode.FAILURE, result.output
-    details = [row["actions"][0]["detail"] for row in document(result)["results"]]
-    assert all("this command has no --force" in detail for detail in details)
-    assert not any("pass --force" in detail for detail in details)
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert [session.closed for session in harness["sessions"]] == [
+        ["ACME_WEB_USER"],
+        ["ACME_WEB_USER"],
+    ]
 
 
 def test_a_close_that_sets_no_password_runs_no_account_checks(

@@ -9161,17 +9161,15 @@ def _turned_away_outcome(
     binding: Binding,
     review: guardrails.Review,
     *,
-    selection: Selection | None,
-    waivable: bool = True,
+    selection: Selection,
 ) -> check_states.Outcome:
     """`REFUSED` where `--account` named the account, `SKIPPED` otherwise, with
     the reason, logged as left alone. `creds apply`'s rows and `creds
-    finish-rollover`'s (#1344) both use it; ``waivable`` is ``False`` for a verb
-    with no `--force`."""
-    named = selection is not None and selection.names(binding.account)
+    finish-rollover`'s (#1344) both use it."""
+    named = selection.names(binding.account)
     turned_away = check_states.Outcome(
         apply_states.REFUSED if named else apply_states.SKIPPED,
-        guardrails_reason(review, named=named, waivable=waivable),
+        guardrails_reason(review, named=named),
     )
     _left_alone(binding.account, binding.target, turned_away.state, turned_away.detail)
     return turned_away
@@ -9953,9 +9951,7 @@ def _declared_accounts(run: Invocation) -> frozenset[str]:
     return frozenset(binding.account for binding in run.config.bindings)
 
 
-def guardrails_reason(
-    review: guardrails.Review, *, named: bool = False, waivable: bool = True
-) -> str:
+def guardrails_reason(review: guardrails.Review, *, named: bool = False) -> str:
     """Why an account was refused, in one line, naming every check that objected.
 
     Every refusal rather than the first: an operator clearing these is going to
@@ -9967,9 +9963,6 @@ def guardrails_reason(
     inside a broad selection needs no advice -- the run carried on and the row is
     informational -- while an operator who typed `--account DBSNMP` asked for
     this specific thing and is owed the sentence that says how to get it.
-
-    ``waivable`` is ``False`` for a verb with no `--force`, `creds
-    finish-rollover` (#1344), so the remedy does not name a flag it lacks.
     """
     reasons = "; ".join(refusal.reason for refusal in review.refusals)
     if not named:
@@ -9979,9 +9972,7 @@ def guardrails_reason(
     # order picks the remedy.
     remedy = next(
         (UNWAIVABLE_REMEDIES[one.check] for one in review.refusals if not one.overridable),
-        "pass --force to override, which is recorded"
-        if waivable
-        else "this command has no --force; resolve what the check names and run it again",
+        "pass --force to override, which is recorded",
     )
     return f"{reasons} -- you named this account, so the run stopped short: {remedy}"
 
@@ -12186,9 +12177,7 @@ def creds_finish_rollover(
         config,
         margin=lockout_margin,
         preview=run.dry_run,
-        guard=_FinishGuard(
-            declared=_declared_accounts(run), selection=selection, force=False, waivable=False
-        ),
+        guard=_FinishGuard(declared=_declared_accounts(run), selection=selection),
     )
 
     document.results = [
@@ -12257,6 +12246,9 @@ class _Finished:
     #: Whether the window could not be read, on MySQL (#1224): the table says
     #: so rather than "none open".
     unknown_window: bool = False
+    #: Whether §4's checks refused the close (#1344), which keeps the window
+    #: open. A `SKIPPED` row is otherwise one whose window elapses on its own.
+    turned_away: bool = False
 
 
 def _finish_estate(
@@ -12368,14 +12360,12 @@ def _finish_target(
 @dataclass(frozen=True)
 class _FinishGuard:
     """What §4's checks need on a target whose close sets a password (#1344):
-    the declared accounts, the selection that says whether `--account` named
-    one, the caller's `--force`, and whether the caller has that flag at all
-    (`creds finish-rollover` has none)."""
+    the declared accounts, and the selection that says whether `--account`
+    named one. The close runs only the checks no flag waives, so no `--force`
+    reaches it."""
 
     declared: Collection[str]
-    selection: Selection | None
-    force: bool
-    waivable: bool
+    selection: Selection
 
 
 def _finish_one(
@@ -12432,13 +12422,22 @@ def _finish_one(
             raise ValueError(f"no window to end for {binding.account!r} and no reason given")
 
         if guard is not None:
-            review = guardrails.review(user, declared=guard.declared, force=guard.force)
+            # Only the checks no flag waives (#1344). A MariaDB window never
+            # elapses, so a check `creds rotate --force` waived when it opened
+            # must not keep it open for good.
+            found = guardrails.review(user, declared=guard.declared)
+            review = replace(
+                found, refusals=tuple(one for one in found.refusals if not one.overridable)
+            )
             if not review.permitted:
-                turned_away = _turned_away_outcome(
-                    binding, review, selection=guard.selection, waivable=guard.waivable
-                )
+                turned_away = _turned_away_outcome(binding, review, selection=guard.selection)
                 return _Finished(
-                    binding, turned_away, changed=False, user=user, duration_ms=_elapsed(started)
+                    binding,
+                    turned_away,
+                    changed=False,
+                    user=user,
+                    duration_ms=_elapsed(started),
+                    turned_away=True,
                 )
 
         unknown = windows.window_unknown(user, session.scope())
@@ -13201,7 +13200,6 @@ def _rotate_estate(
                 margin=margin,
                 manager=manager,
                 selection=selection,
-                force=force,
             )
             into.closed = sum(1 for record in finished if record.changed)
             # A close that did not happen leaves the old password working, so
@@ -13374,12 +13372,17 @@ def _left_open_note(pairs: str) -> str:
 
 def _not_closed(finished: Sequence[_Finished]) -> list[tuple[str, str, str]]:
     """The windows `--finish-rollover` tried to close and did not, as account,
-    target and the row's reason. A row that changed nothing because the window
-    had already closed is `IN_SYNC`, and is not one of them."""
+    target and the row's reason. Not one whose window had already closed,
+    `IN_SYNC`, nor one this database cannot end early and that elapses on its
+    own, `SKIPPED`. A `SKIPPED` row that §4's checks turned away is one."""
     return [
         (record.binding.account, record.binding.target, record.outcome.detail or "")
         for record in finished
-        if not record.changed and record.outcome.state != check_states.IN_SYNC
+        if not record.changed
+        and (
+            record.turned_away
+            or record.outcome.state not in (check_states.IN_SYNC, windows.SKIPPED)
+        )
     ]
 
 
@@ -13406,7 +13409,6 @@ def _close_windows(
     margin: int,
     manager: LockManager,
     selection: Selection,
-    force: bool,
 ) -> list[_Finished]:
     """`--finish-rollover`: end every window this run opened, once it is over.
     One row per window it tried to close; the caller counts the closes and
@@ -13453,9 +13455,7 @@ def _close_windows(
         margin=margin,
         preview=False,
         manager=manager,
-        guard=_FinishGuard(
-            declared=_declared_accounts(run), selection=selection, force=force, waivable=True
-        ),
+        guard=_FinishGuard(declared=_declared_accounts(run), selection=selection),
     )
 
 

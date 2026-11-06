@@ -1775,6 +1775,25 @@ def test_a_close_that_fails_its_login_is_warned_too(
     assert all("close was not made" in one["message"] for one in left)
 
 
+def test_a_window_that_elapses_on_its_own_is_not_warned(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+) -> None:
+    """A database that cannot end a window early leaves it to elapse, and the
+    close's `SKIPPED` row says so. Running `creds finish-rollover` would not
+    change that, so it is no `SOPULI-W043` (#1344)."""
+    estate(
+        users={"ACME_WEB_USER": user(rollover_enabled=True)},
+        capabilities=frozenset({PASSWORD_ROLLOVER}),
+    )
+    result = run(runner, write_config(CONFIG), "--finish-rollover", "--output", "json")
+
+    body = document(result)
+    left = [one for one in body.get("diagnostics", []) if one.get("code") == ROLLOVER_LEFT_OPEN]
+    assert left == []
+
+
 def test_without_the_flag_no_window_is_closed(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:

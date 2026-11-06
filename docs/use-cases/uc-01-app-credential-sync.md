@@ -1620,15 +1620,18 @@ account keeps, so the tool keeps the old password by sending its value again.
   account, it still goes ahead, so it sets the vault's `current` unverified,
   replacing any password the account drifted to. That is the value `creds
   apply` would set, and the rotation confirmed it before it promoted.
-- Because the close sets a password, `creds finish-rollover` runs §4's
-  account guardrails first, as `creds apply` does, on the account it has just
-  described ([#1344](../decisions/log.md#1344)). An account that gained, for
-  example, a global privilege since its window opened keeps the window, and
-  no login is spent: the row is `ERROR` where `--account` named it, and
-  `SKIPPED` otherwise. `--dry-run` shows the same. The verb has no `--force`,
-  so nothing waives them here. `creds rotate --finish-rollover` runs them
-  too, with its own `--force`, and warns `SOPULI-W043` for each window a close
-  left open, whatever the reason, instead of counting it closed.
+- Because the close sets a password, `creds finish-rollover` first runs the
+  §4 checks that no flag waives: not declared, a superuser, a role the server
+  reserves, and check 9's global privilege. It runs them on the account it
+  has just described ([#1344](../decisions/log.md#1344)). An account that
+  gained, for example, a global privilege since its window opened keeps the
+  window, and no login is spent: the row is `ERROR` where `--account` named
+  it, and `SKIPPED` otherwise. `--dry-run` shows the same. The checks a flag
+  waives are not run again: a MariaDB window never elapses, so one that
+  `creds rotate --force` waived when the window opened must not keep it open
+  for good. `creds rotate --finish-rollover` runs the same checks, and warns
+  `SOPULI-W043` for each window a close left open, whatever the reason,
+  instead of counting it closed.
 
 ### `creds finish-rollover`, and what it refuses (decided in #263)
 

@@ -260,8 +260,8 @@ class MysqlSession(ClosesConnection):
             product="a MySQL server",
             what=what,
             hint=(
-                "the MySQL driver connects, reports the server and reads accounts, and "
-                "the rest of it is not written yet"
+                "the MySQL driver runs `doctor`, the `creds` commands and the `account` "
+                "commands, and applies no account attributes"
             ),
         )
 

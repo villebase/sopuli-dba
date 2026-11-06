@@ -50,8 +50,8 @@ the SQL in `sql/oracle/` by hand. The PostgreSQL tool role is created by hand in
 lists the others as `not_implemented`. A PostgreSQL target runs `doctor`, the
 `creds` commands (§7) and the `account` commands (§9). It refuses
 `account expire-password` and the seen reset, because PostgreSQL cannot make a
-role change its password at its next login. A MySQL target runs `doctor`, the
-`creds` commands (§7) and the `account` commands (§9).
+role change its password at its next login. A MySQL target and a MariaDB target
+each run `doctor`, the `creds` commands (§7) and the `account` commands (§9).
 
 ---
 
@@ -688,8 +688,7 @@ acme_batch_user  pg-dev  UNVERIFIABLE  7        0d   -              -        not
 The stack also runs MySQL 8.4 at `127.0.0.1:3306`, user `root`, password
 `sopuli-test`. `doctor` connects to it and reports what it found, and the UC-1
 commands run against it: `creds generate`, `apply`, `check`, `rotate`,
-`finish-rollover` and `status`. Of the `account` commands, only `account list`
-runs (§9).
+`finish-rollover` and `status`, and so do the `account` commands (§9).
 
 Connecting needs no privilege. Create the tool account as root, with a
 password of your own, and export the same password as

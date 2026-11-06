@@ -1,4 +1,4 @@
-"""The code the MySQL driver shares with the MariaDB driver to come. Tier 0.
+"""The code the MySQL driver shares with the MariaDB driver. Tier 0.
 
 MariaDB is a driver of its own (``docs/README.md``, ``mariadb-driver-shape``),
 and the two share what this package holds (#1267, decision D7):

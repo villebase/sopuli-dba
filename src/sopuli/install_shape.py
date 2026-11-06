@@ -125,7 +125,7 @@ def survey(
 
     The registries are parameters rather than read from the module globals, so
     that the disagreeing cases can be tested at all. The developer environment is
-    ``sopuli-dba[all]`` and three of the four backends are unwritten, so the two
+    ``sopuli-dba[all]`` and two of the four backends are unwritten, so the two
     states that actually matter -- configured and not installed, installed and
     not configured -- are unreachable from the real tables on the machine this is
     developed on, and a survey that could only ever be exercised in its healthy

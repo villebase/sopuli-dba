@@ -115,8 +115,8 @@ def render(shape: InstallShape) -> list[str]:
     """The text form: one table, backends above drivers.
 
     One table rather than two, because the reader's question spans both -- *can
-    this machine do what the file asks* -- and two tables of three rows each,
-    with identical headings, would be two places to look for one answer. The KIND
+    this machine do what the file asks* -- and two tables with identical
+    headings would be two places to look for one answer. The KIND
     column is what keeps them distinguishable, and it is also what makes the
     configured column readable while the two halves count different things.
     """

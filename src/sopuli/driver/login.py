@@ -1,10 +1,11 @@
 """Who a connection logs in as, checked the same way for every client-side
 driver. Tier 0.
 
-PostgreSQL's libpq and MySQL's PyMySQL both fill a missing username or
-password from the machine: the operating-system user, ``PGPASSWORD``,
-``~/.pgpass``, or an empty password. A run would then log in as someone the
-config does not name. One check, so the two drivers cannot drift apart on it.
+PostgreSQL's libpq and PyMySQL, which the MySQL and MariaDB drivers use, both
+fill a missing username or password from the machine: the operating-system
+user, ``PGPASSWORD``, ``~/.pgpass``, or an empty password. A run would then log
+in as someone the config does not name. One check, so the drivers cannot drift
+apart on it.
 """
 
 from __future__ import annotations

@@ -32,15 +32,16 @@ This is also why the matrix is keyed on capabilities, not versions (§3).
 | Environment | Image | Covers |
 |---|---|---|
 | Oracle 23ai/26ai Free | `gvenzl/oracle-free`, or `container-registry.oracle.com/database/free` | CDB and PDB, common users, password rollover, 128-byte passwords, schema privileges (the P7 test) |
-| Oracle 21c XE | `gvenzl/oracle-xe:21` | CDB and PDB on an older line, password rollover, unified auditing |
-| Oracle 18c XE | `gvenzl/oracle-xe:18` | no rollover, which makes it a negative case; passwords limited to 30 bytes |
+| Oracle 21c XE | `gvenzl/oracle-xe:21-slim` | CDB and PDB on an older line, password rollover, unified auditing |
+| Oracle 18c XE | `gvenzl/oracle-xe:18-slim` | no rollover, which makes it a negative case; passwords limited to 30 bytes |
 | Oracle 11g XE | `gvenzl/oracle-xe:11.2.0.2-slim` | non-CDB, 30-byte passwords, 10G and 11G verifiers, `DBA_AUDIT_TRAIL` |
 | PostgreSQL 13–18 | `postgres:16-alpine`; `postgres:13` to `postgres:18` | the PostgreSQL driver: tiers 0 and 1 use `postgres:16-alpine`, and the `postgres-matrix` profile starts 13 to 18 for the probes in `sql/postgres/`, which are run by hand |
-| MySQL 8.0, 8.4 and 9 | `mysql:8.0`, `mysql:8.4`, `mysql:9` | the probes in `sql/mysql/`, before a MySQL driver (#1202). The `mysql-matrix` profile starts them, and the probes are run by hand |
+| MySQL 8.0, 8.4 and 9 | `mysql:8.4`; `mysql:8.0`, `mysql:8.4`, `mysql:9` | the MySQL driver: tier 1 uses `mysql:8.4`, and the `mysql-matrix` profile starts all three for the probes in `sql/mysql/`, which are run by hand |
+| MariaDB 10.11 to 12.3 | `mariadb:11.8`; `mariadb:10.11`, `mariadb:11.4`, `mariadb:11.8`, `mariadb:12.3` | the MariaDB driver: tier 1 uses `mariadb:11.8`, and the `mariadb-matrix` profile starts all four for the probes in `sql/mariadb/`, which are run by hand |
 | Supabase's database | `supabase/postgres`, pinned | supautils and its `supautils.reserved_roles`, which guardrail check 8 reads; a `postgres` account that is not a superuser. Tier 1 runs it in a profile of its own, `supabase`, so that a local tier-1 stack does not pull its image (#1111) |
-| SQL Server 2019/2022 | `mcr.microsoft.com/mssql/server` | a third driver, later |
+| SQL Server 2019/2022 | `mcr.microsoft.com/mssql/server` | a fifth driver, later |
 | HashiCorp Vault | `hashicorp/vault` dev mode | KV v2 **and** KV v1, mounted side by side |
-| File / age backend | none needed | the non-production store |
+| File / age backend | none needed | the non-production store. This build has no code for it |
 
 `test/compose.yaml` has a service for each Oracle release, and
 [`../maintainer-environments.md`](../maintainer-environments.md) §1 says how to

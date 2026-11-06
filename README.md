@@ -12,8 +12,8 @@ hand them out to the applications that need them — and then makes the database
 agree with what the vault holds. The vault is always the source of truth for a
 password. The database never is.
 
-It supports Oracle, and PostgreSQL for application credentials. It is designed
-so that other database products can be added.
+It supports Oracle, PostgreSQL, MySQL and MariaDB. It is designed so that other
+database products can be added.
 
 ---
 

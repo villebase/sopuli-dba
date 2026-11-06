@@ -5,7 +5,7 @@ socket -- which is the property the section itself reports on and would be
 embarrassing to break while testing it.
 
 **The registries are injected, and that is the point of the parameters.** The
-developer environment is `sopuli-dba[all]` and three of the four backends are
+developer environment is `sopuli-dba[all]` and two of the four backends are
 unwritten, so the two states that matter most -- configured and not installed,
 installed and not configured -- cannot be produced from the real tables on the
 machine this is developed on. A survey exercised only in its healthy shape is a

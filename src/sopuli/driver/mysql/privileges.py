@@ -8,10 +8,12 @@ no grant of its own. It reports and never refuses: over-granting warns (P5).
 ``SYSTEM_USER`` never reaches it: the scope refuses such an account first.
 
 **Everything outside §2 is over-granted.** The tool account needs
-``CREATE USER`` and ``SELECT`` on seven columns of ``mysql.user``, and nothing
-else. So the audit has no list of dangerous privileges to keep current as
-MySQL adds dynamic ones: any privilege it does not need is reported, also one
-that comes through a role. §3 explains the ones that matter most.
+``CREATE USER``, ``SELECT`` on the columns of ``mysql.user`` in
+:data:`COLUMNS`, and ``SELECT`` on the grant tables in
+:data:`~sopuli.driver.mysql.admin.TABLES_READ`, and nothing else. So the audit
+has no list of dangerous privileges to keep current as MySQL adds dynamic ones:
+any privilege it does not need is reported, also one that comes through a role.
+§3 explains the ones that matter most.
 """
 
 from __future__ import annotations

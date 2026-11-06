@@ -1753,9 +1753,9 @@ full exchange over a plain connection (measured on 8.4.13).
 `doctor --check-privileges` also reads the accounts the config declares on
 the target, and names one that does not exist, one on another plugin, and a
 declared user name that also exists at a host the config does not declare
-([`02-mysql-privileges.md`](02-mysql-privileges.md) §4). UC-1's `creds
-generate`, `apply`, `check`, `rotate` and `status` run against a MySQL target
-([#1223](../decisions/log.md#1223)); every other command refuses it. Two
+([`02-mysql-privileges.md`](02-mysql-privileges.md) §4). UC-1's and UC-2's
+commands run against a MySQL target ([#1223](../decisions/log.md#1223),
+[#1225](../decisions/log.md#1225)). Two
 targets that reach one server, known by its `server_uuid`, are refused with
 `SOPULI-20008`, as two targets on one PostgreSQL cluster are. A replica has
 its own `server_uuid`, and while it is read-only a write to it is refused.

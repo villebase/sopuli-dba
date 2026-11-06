@@ -29,6 +29,7 @@ from sopuli.constraints import (
 from sopuli.diagnostics import (
     CONSTRAINTS_UNREAD,
     PASSWORD_REUSE_ENFORCED,
+    PRODUCT_LIMIT_USED,
     VERIFY_FUNCTION_UNCHECKABLE,
     WARNINGS,
     constraint_diagnostics,
@@ -178,13 +179,25 @@ def test_a_product_limit_counts_toward_the_draw_and_the_strictest_target() -> No
     assert found.limits == (MODERN, LEGACY)
 
 
-def test_the_product_limit_warning_names_where_it_holds_and_where_the_policy_does() -> None:
+def test_a_product_limit_and_the_policy_each_get_their_own_code() -> None:
+    """W015 means the policy governed, so it names only where it did."""
     found = survey([], unreachable=("pg", "ora"), product_limits=[("pg", FIXED)])
-    [warning] = constraint_diagnostics(found)
+    policy, product = constraint_diagnostics(found)
 
-    assert warning.code == CONSTRAINTS_UNREAD
-    assert "the product's fixed limit holds on pg" in warning.message
-    assert "the policy's declared length governs on ora" in warning.message
+    assert policy.code == CONSTRAINTS_UNREAD
+    assert policy.message.endswith("governs: ora")
+    assert product.code == PRODUCT_LIMIT_USED
+    assert "could not be read from pg," in product.message
+
+
+def test_only_product_limits_raise_no_w015() -> None:
+    found = survey([], unreachable=("pg",), product_limits=[("pg", FIXED)])
+
+    assert [one.code for one in constraint_diagnostics(found)] == [PRODUCT_LIMIT_USED]
+
+
+def test_offline_raises_neither_code() -> None:
+    assert constraint_diagnostics(Constraints(product_limits=(("pg", FIXED),))) == []
 
 
 def test_a_product_limit_is_kept_only_for_a_target_that_did_not_answer() -> None:
@@ -199,19 +212,16 @@ def test_a_target_that_answered_its_limit_and_then_failed_is_not_unbounded() -> 
     """Its limit was read, so the policy does not govern there, and nothing in
     the estate is unknown."""
     found = survey([("ora", MODERN)], unreachable=("ora",))
-    [warning] = constraint_diagnostics(found)
 
     assert found.unbounded == ()
-    assert "strictest" not in warning.message
+    assert constraint_diagnostics(found) == []
 
 
 def test_a_partial_estate_whose_unread_targets_all_have_product_limits_is_not_doubtful() -> None:
     """Every target gave a count, so the limit used is the estate's strictest."""
     found = survey([("ora", MODERN)], unreachable=("pg",), product_limits=[("pg", FIXED)])
-    [warning] = constraint_diagnostics(found)
 
-    assert "the product's fixed limit holds on pg" in warning.message
-    assert "strictest" not in warning.message
+    assert [one.code for one in constraint_diagnostics(found)] == [PRODUCT_LIMIT_USED]
 
 
 # -------------------------------------------------- what cannot bind anything ---

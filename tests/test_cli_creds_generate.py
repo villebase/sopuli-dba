@@ -875,9 +875,15 @@ def test_an_unreachable_estate_with_a_fixed_limit_says_the_product_governs(
     }
     assert "max_password_bytes" not in entries["appdb-pg"]
     assert "product_limit" not in entries["appdb-alpha"]
-    [warning] = [one for one in found["diagnostics"] if one.get("code") == "SOPULI-W015"]
-    assert "the product's fixed limit holds on appdb-pg" in warning["message"]
-    assert "the policy's declared length governs on appdb-alpha" in warning["message"]
+    # Two codes, because W015 means the policy governed, and here it did only
+    # on the Oracle target.
+    [policy] = [one for one in found["diagnostics"] if one.get("code") == "SOPULI-W015"]
+    [product] = [one for one in found["diagnostics"] if one.get("code") == "SOPULI-W067"]
+    assert policy["message"].endswith("the policy's declared length governs: appdb-alpha")
+    assert product["message"] == (
+        "password constraints could not be read from appdb-pg, so the product's fixed "
+        "limit governs there"
+    )
     # The text view does not print W015, so its line says the same.
     output = run(runner, write_config(_with_postgres("[appdb-alpha, appdb-pg]")), "--dry-run")
     assert (

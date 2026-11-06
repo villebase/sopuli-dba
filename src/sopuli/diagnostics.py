@@ -49,7 +49,9 @@ from sopuli.constraints import (
     NAMED,
     POLICY,
     PRODUCTS,
+    TARGETS,
     UNKNOWN,
+    UNREAD,
     AccountConstraints,
     Constraints,
 )
@@ -587,6 +589,11 @@ SECOND_METHOD_UNSEEN = "SOPULI-W065"
 #: document and the targets that held it, which no single row can see.
 PROMOTION_UNCONFIRMED = "SOPULI-W066"
 
+#: `creds generate` could not read a target's password constraints, and the
+#: target's product has a fixed limit, which governed the draw there. Apart
+#: from `SOPULI-W015`, which says the policy's declared length governed.
+PRODUCT_LIMIT_USED = "SOPULI-W067"
+
 #: ``SOPULI-W004`` and ``SOPULI-W034`` to ``SOPULI-W039`` -- imported above
 #: rather than defined here. They are raised in the config layer, which cannot
 #: import this module, so they are defined in :mod:`sopuli.config.codes` and
@@ -836,10 +843,17 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "rotate` alike: run before the fix, it holds the promotion again. One entry per "
             "document."
         ),
+        PRODUCT_LIMIT_USED: (
+            "`creds generate` could not read the password constraints of one or more "
+            "targets whose product has a fixed limit (PostgreSQL, MySQL, MariaDB), so "
+            "that limit governed the draw there (#1338). The limit holds without a "
+            "connection, so the draw was checked against it, and the message names the "
+            "targets. Where a target with no such limit was not read either, "
+            "`SOPULI-W015` is raised for it as well. `--offline` emits nothing."
+        ),
         CONSTRAINTS_UNREAD: (
             "`creds generate` could not read a target's password constraints, so the "
-            "policy's declared length governed the draw there, or the product's fixed "
-            "limit where it has one (#1338). The fallback is legitimate -- "
+            "policy's declared length governed the draw. The fallback is legitimate -- "
             "staging a password for an estate that is down is a thing operators do -- and "
             "the run staged one; what the code says is that the draw was never checked "
             "against a database. `--offline` emits nothing, because there the operator "
@@ -1150,40 +1164,45 @@ def _unread(found: Constraints) -> list[Diagnostic]:
     feature exists to produce and a diagnostic on the happy path is noise a
     consumer learns to filter.
     """
-    if found.source == POLICY:
-        return [
+    notices: list[Diagnostic] = []
+    if found.source in (POLICY, PRODUCTS) and found.unbounded:
+        notices.append(
             Diagnostic(
                 level="warning",
                 code=CONSTRAINTS_UNREAD,
                 message=(
                     "no target could be reached to read password constraints, so the "
-                    "policy's declared length governs: " + ", ".join(found.unreachable)
+                    "policy's declared length governs: " + ", ".join(found.unbounded)
                 ),
             )
-        ]
-    if found.source == PRODUCTS:
-        message = (
-            "no target could be reached to read password constraints: "
-            + ", ".join(found.unreachable)
-            + "; the product's fixed limit holds on "
-            + ", ".join(found.fixed_on)
         )
-        if found.unbounded:
-            message += ", and the policy's declared length governs on " + ", ".join(found.unbounded)
-        return [Diagnostic(level="warning", code=CONSTRAINTS_UNREAD, message=message)]
-    if found.partial:
-        message = (
-            "password constraints were read from "
-            + ", ".join(found.read)
-            + " and could not be read from "
-            + ", ".join(found.unreachable)
+    elif found.source == TARGETS and found.unbounded:
+        notices.append(
+            Diagnostic(
+                level="warning",
+                code=CONSTRAINTS_UNREAD,
+                message=(
+                    "password constraints were read from "
+                    + ", ".join(found.read)
+                    + " and could not be read from "
+                    + ", ".join(found.unbounded)
+                    + "; the limit used may not be the estate's strictest"
+                ),
+            )
         )
-        if found.fixed_on:
-            message += "; the product's fixed limit holds on " + ", ".join(found.fixed_on)
-        if found.unbounded:
-            message += "; the limit used may not be the estate's strictest"
-        return [Diagnostic(level="warning", code=CONSTRAINTS_UNREAD, message=message)]
-    return []
+    if found.source != UNREAD and found.fixed_on:
+        notices.append(
+            Diagnostic(
+                level="warning",
+                code=PRODUCT_LIMIT_USED,
+                message=(
+                    "password constraints could not be read from "
+                    + ", ".join(found.fixed_on)
+                    + ", so the product's fixed limit governs there"
+                ),
+            )
+        )
+    return notices
 
 
 def _profile_notices(found: Constraints, *, supplied: bool) -> list[Diagnostic]:

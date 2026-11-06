@@ -144,6 +144,7 @@ from sopuli.diagnostics import (
     PASSWORD_NOT_REDRAWN,
     PASSWORD_REDRAWN,
     PRIVILEGE_AUDIT_UNREAD,
+    PRODUCT_LIMIT_USED,
     PROFILE_UNREAD,
     ROLLOVER_LEFT_OPEN,
     ROTATION_UNCONFIRMED,
@@ -6475,7 +6476,12 @@ def creds_generate(
         # shapes that code covers. The code exists so a JSON consumer can branch
         # on it, and printing the sentence twice under a heading that says
         # "notes" would teach a reader that the block repeats itself.
-        told = [one.message for one in notices if one.code != CONSTRAINTS_UNREAD]
+        # `SOPULI-W067` likewise: the line names the product limits.
+        told = [
+            one.message
+            for one in notices
+            if one.code not in (CONSTRAINTS_UNREAD, PRODUCT_LIMIT_USED)
+        ]
         lines.extend([read, *render_notices(told), ""])
     table = (
         render_promotion_table(writes, held)

@@ -365,3 +365,7 @@ Not measured: every other release, Galera, and every managed service.
 | `12_password_check_probe.py` | `11.4.13` | 2026-11-05 | #1310 | As on 10.11.19 |
 | `12_password_check_probe.py` | `11.8.9` | 2026-11-05 | #1310 | As on 10.11.19 |
 | `12_password_check_probe.py` | `12.3.3` | 2026-11-05 | #1310 | As on 10.11.19 |
+| `13_server_identity_probe.py` | `10.11.19` | 2026-11-06 | #1286 | **No value the server sets is both per server and stable.** An account with only `CREATE USER` reads `@@server_id`, `@@hostname`, `@@port`, `@@datadir`, `@@gtid_domain_id` and `@@server_uid`. `@@server_uid` differs between servers and **changes at each restart**. `server_id` (`1`), `port` (`3306`), `datadir` and `gtid_domain_id` (`0`) are the defaults on every server, and `hostname` differs only because each container has its own. `SHOW GLOBAL STATUS LIKE 'server_uid'` returns no row. A replica was not measured |
+| `13_server_identity_probe.py` | `11.4.13` | 2026-11-06 | #1286 | As on 10.11.19 |
+| `13_server_identity_probe.py` | `11.8.9` | 2026-11-06 | #1286 | As on 10.11.19 |
+| `13_server_identity_probe.py` | `12.3.3` | 2026-11-06 | #1286 | As on 10.11.19 |

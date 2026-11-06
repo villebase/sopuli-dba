@@ -157,7 +157,10 @@ says why a scope lacks `password_value`: the plugins that refuse the value, or
 that the settings could not be read. It audits the tool account against §2.1 and
 §3. It names a declared account that does not exist, and one on a plugin the
 tool does not change. Two targets on one server are not caught yet (#1286):
-MariaDB has no `server_uuid`. It warns, and never fails
+MariaDB has no `server_uuid`, and no value the server sets is both per server
+and stable. `@@server_uid` changes at each restart, and `server_id`, `port`,
+`datadir` and `gtid_domain_id` keep their defaults unless a DBA sets them
+(`13_server_identity_probe.py`). It warns, and never fails
 ([P5](../decisions/log.md#p5)), about:
 
 - each declared user name that also exists at a host the config does not

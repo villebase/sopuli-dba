@@ -4672,13 +4672,16 @@ the register.
   PostgreSQL and MySQL (`SOPULI-20008`). MariaDB has no `server_uuid`. Which
   value identifies a MariaDB server?
 - **Decision:** D: `@@server_uid`, compared within one run, as MySQL's
-  `server_uuid` is. Any account reads it, and it differs between servers, a
-  replica and its primary included (`13_server_identity_probe.py`, SI1, SI3
-  and SI4).
+  `server_uuid` is. Any account reads it. It differed between every pair of
+  servers measured, a replica and its primary included, even a replica with
+  the primary's hostname, port and datadir (`13_server_identity_probe.py`,
+  SI1, SI3, SI4 and SI5).
 - **Why:** The check compares identities only within one run and stores
   none, so a value that changes at each restart (SI2) still serves. When a
-  server restarts during a run, the check can miss two targets on it, and it
-  never takes two servers for one.
+  server restarts during a run, the check can miss two targets on it. Taking
+  two servers for one would need two servers to compute the same value,
+  which no measurement showed; two started in the same instant were not
+  measured.
 - **Rejected:**
   1. A: the server's `@@hostname` and `@@port`. Two servers can share both,
      such as cloned hosts or pods with one name in two clusters, and the

@@ -252,13 +252,13 @@ class MariadbSession(ClosesConnection):
 
     def cluster_identity(self) -> str | None:
         """The server's ``@@server_uid``, which the CLI uses to refuse two
-        targets that are one server (#1286). Any account reads it, and it
-        differs between servers, a replica and its primary included (probe 13,
-        SI3 and SI4).
+        targets that are one server (#1286). Any account reads it. It differed
+        on every server measured, a replica and its primary included, even
+        one with the primary's hostname (probe 13, SI3 to SI5).
 
         It changes when the server restarts (SI2). The CLI compares identities
         only within one run, so a restart during a run can miss two targets
-        on one server, and never refuses two that are apart."""
+        on one server."""
         return self._read(_server_uid)
 
     def scope(self) -> Scope:

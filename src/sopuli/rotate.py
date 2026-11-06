@@ -166,7 +166,8 @@ def exit_code_for(
     apply a document it failed to stage into. So the state afterwards is the
     table's row 4 exactly: nothing changed in any database, a ``pending`` may
     exist, and re-running is the remedy. Exit 1 rather than 4, because 4 says
-    *part of the run happened* and here no target was attempted.
+    *some of the run's work reached its targets* and here no target was
+    attempted.
 
     **A read-back disagreement is exit 4** (row 8). The databases hold the new
     password and the promotion was acknowledged, so the estate is not broken --

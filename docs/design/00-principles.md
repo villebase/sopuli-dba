@@ -1072,7 +1072,7 @@ tool safe to run from a scheduler.
 | 1 | generic failure |
 | 2 | usage error — argv did not resolve to a valid command and options |
 | 3 | drift detected (`check` found a mismatch) — distinct so schedulers can alert |
-| 4 | partial success — part of what the run was asked to do did not happen, such as some targets succeeding and some failing, and running again finishes it |
+| 4 | partial success — some of what the run was asked to do happened and some did not, such as some targets succeeding and some failing; the output names what is left |
 | 5 | capability not supported by target/driver |
 | 6 | authentication failure (vault or database) |
 | 7 | lock held by another process |

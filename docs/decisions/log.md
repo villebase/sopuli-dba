@@ -321,7 +321,8 @@ the register.
 - **Decision:** Run context, not target selection. A profile changes how the
   tool behaves (prompts, verification method, output, logging), never which
   targets or accounts are in scope. A profile may contain only a fixed list of
-  keys.
+  keys. [#629](#629) and [#787](#787) later removed the logging and
+  verification keys; `01-configuration.md` §5 lists the keys a profile takes.
 - **Why:** The same configuration runs from a laptop, a CI job and a scheduler,
   and those need different behaviour. Without profiles, that lives in
   environment variables scattered across workflow files, where nobody reviews
@@ -4317,7 +4318,8 @@ the register.
      Where the login reaches another account, or none, the account is not
      verified, and its `pending` is not promoted.
   9. `account reset-password` never sends `ACCOUNT UNLOCK` unless the operator
-     passes `--unlock`.
+     passes `--unlock`. [#1272](#1272) later replaced this decision: the verb
+     has no `--unlock` flag.
 - **Why:**
   1. PyMySQL 1.2.3 logs in on `mysql_native_password`, and on `ed25519` with
      PyNaCl, and has no client for `parsec`, `2059` (#1274). `creds check`
@@ -4389,7 +4391,7 @@ the register.
   login cannot be rotated from that host: its rotation stays pending. A
   failed verification login counts toward `max_password_errors` on the
   account it reaches. A blocked owner stays blocked after a reset unless the
-  operator adds `--unlock`.
+  operator adds `--unlock` (replaced by [#1272](#1272)).
 
 ## #1270
 

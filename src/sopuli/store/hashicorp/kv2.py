@@ -1,18 +1,23 @@
 """KV v2 -- P2's reference implementation of the store interface.
 
-The four methods of :mod:`sopuli.store.protocol` against Vault's KV v2 API:
+The methods of :mod:`sopuli.store.protocol` that read and write a path, and the
+KV v2 request each one makes:
 
 ======================== =====================================================
 ``read(path, version)``  ``GET  /v1/<mount>/data/<path>[?version=N]``
 ``write(path, …)``       ``POST /v1/<mount>/data/<path>`` with ``options.cas``
 ``metadata(path)``       ``GET  /v1/<mount>/metadata/<path>``
+``require_cas(path)``    ``POST /v1/<mount>/metadata/<path>`` with
+                         ``cas_required: true``
 ``list(prefix)``         ``LIST /v1/<mount>/metadata/<prefix>``, walked
 ``patch(path, …)``       ``PATCH /v1/<mount>/data/<path>``, merge-patch JSON
 ``supports()``           ``{cas, list, merge_patch, versioning}``, without
                          ``merge_patch`` when the entry says ``merge_patch: false``
 ======================== =====================================================
 
-Three things the advisory lock depends on, and which are the reason this module
+``health()`` asks ``sys/health``, which is not per mount.
+
+These are the things the advisory lock depends on, and which are the reason this module
 is worth reading rather than skimming. Each was checked against a real Vault.
 
 **A 404 means "nothing to read" and nothing else.** A path that was never

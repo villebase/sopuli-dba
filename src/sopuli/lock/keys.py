@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from sopuli.config.secret_refs import SecretRef, normalise_path
 
 #: ``normalise_path`` is re-exported deliberately, and is why this list exists.
-#: It moved to :mod:`sopuli.config.secret_refs` with the rule it enforces,
+#: It lives in :mod:`sopuli.config.secret_refs` with the rule it enforces,
 #: and the lock layer is the place that *applies* it -- :func:`lock_key` and
 #: :func:`parse_lock_key` both do -- so a caller building keys still reaches for
 #: it here. Naming it keeps that a decision rather than an implicit re-export

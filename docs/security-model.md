@@ -193,9 +193,13 @@ from.
 
 ### Locking: two people cannot rotate the same credential at once
 
-Before changing anything, a run takes a *lock* — a marker saying "this credential
-is mine for the moment". The lock lives in the vault, next to the secret it
-guards, so two operators on two laptops, or two scheduled jobs, see the same one.
+Before `creds generate`, `creds apply` or `creds rotate` changes anything, it
+takes a *lock* — a marker saying "this credential is mine for the moment".
+`account reset-password` takes one too where a `reset_records:` block is
+declared. `creds finish-rollover`, `account suspend` and `account
+expire-password` write nothing to the vault and take none. The lock lives in
+the vault, next to the secret it guards, so two operators on two laptops, or
+two scheduled jobs, see the same one.
 
 Three details make it survivable rather than merely present:
 
@@ -206,9 +210,11 @@ Three details make it survivable rather than merely present:
 - **The lock is guarded by compare-and-set.** Compare-and-set is a safe way to
   update something only if nobody else changed it first: you say which version
   you read, and the write is rejected if the stored version has moved on. The
-  tool always writes the lock this way, and requires the vault path to demand it
-  of everyone else too — otherwise somebody with a vault command line could
-  replace the lock record without one.
+  tool always writes the lock this way. On HashiCorp Vault it also requires the
+  vault path to demand it of everyone else — otherwise somebody with a vault
+  command line could replace the lock record without one. OCI Vault has no such
+  setting, so there only its IAM policy keeps other writers off the lock, and
+  the run says so with `SOPULI-W019`.
 - **The lock carries a fencing token, re-checked before every change.** The token
   is the version number the vault returned when the lock was taken. It is read
   again before each vault write and each `ALTER USER`. If another run took the

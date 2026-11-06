@@ -40,7 +40,7 @@ Session
   accounts_matching(profile, role) -> str[]     # UC-2 §2 predicates
   verify_password(account, secret, method, lockout_margin, attempts) -> VerifyResult
   require_verifier(account, secret) -> None     # refuses, or returns
-  require_rollover(account) -> None             # refuses, or returns
+  require_rollover(account) -> str | None       # refuses, or returns a caveat or None
   finish_rollover(account, current) -> ChangeResult
   close()
 ```
@@ -74,10 +74,13 @@ The interface has this shape for these reasons:
   dictionary's spelling may reach a statement (`02-oracle-privileges.md` §4).
   UC-1 §8's pre-flight uses `resolve_profile` to check that a profile exists
   before anything is written.
-- **A `require_*` method raises or returns nothing.** The tool calls it at plan
+- **A `require_*` method refuses by raising.** The tool calls it at plan
   time, before any account is changed, so a run that cannot be done fails before
-  it starts (invariant 4). It raises instead of returning a value, so a caller
-  cannot ignore the answer.
+  it starts (invariant 4). It raises instead of returning a refusal, so a caller
+  cannot ignore a refusal. `require_rollover` may also return a caveat when it
+  allows the strategy: one sentence about what the window will not do for the
+  account. The pre-flight collects it, and the run reports it as
+  `SOPULI-W064`.
 - **A method exists only when something calls it.** Each method is a demand on
   every driver, so the protocol does not declare a method that no verb uses.
 

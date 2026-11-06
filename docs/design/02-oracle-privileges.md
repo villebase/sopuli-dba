@@ -1544,7 +1544,7 @@ each header says what it creates and leaves behind.
 |---|---|---|
 | ~~P1~~ | ~~Common `C##` service user or per-PDB local, as the documented default?~~ | **decided** (#615): common, with per-PDB documented for multi-tenant ownership. Reasons: [P1](../decisions/log.md#p1) |
 | ~~P2~~ | ~~Grant `SELECT ON SYS.USER$` by default, to enable hash mode and the `LCOUNT` guard?~~ | **decided: no** (#86). An optional, capability-probed grant (§2); a narrower alternative was not adopted (#124). Reasons: [P2](../decisions/log.md#p2) |
-| ~~P3~~ | ~~Should `--force` exist at all?~~ | **decided: yes — one flag** (#89). On an account it overrides checks 2 to 5 of §4, and check 7 since #1059; it never overrides check 1, check 6, check 8 or check 9. Its other use is `lock break --force` (§4). It is not a setting. Reasons: [P3](../decisions/log.md#p3) |
+| ~~P3~~ | ~~Should `--force` exist at all?~~ | **decided: yes — one flag** (#89). On an account it overrides checks 2 to 5 and 7 of §4; it never overrides check 1, check 6, check 8 or check 9. Its other use is `lock break --force` (§4). It is not a setting. Reasons: [P3](../decisions/log.md#p3) |
 | ~~P4~~ | ~~One service account per database, or per application?~~ | **decided** (#615): per database; the config's declared accounts provide the finer scoping. Reasons: [P4](../decisions/log.md#p4) |
 | ~~P5~~ | ~~Does `doctor` fail or warn on over-granted privileges?~~ | **decided: warn** (#213); `scope.over_granted` is populated and the exit code is unchanged. Reasons: [P5](../decisions/log.md#p5) |
 | ~~P6~~ | ~~11.2 support — worth the `DBA_AUDIT_TRAIL` and `ORACLE_MAINTAINED` special cases?~~ | **decided** (#615): keep for now, drop if it starts costing real complexity. Reasons: [P6](../decisions/log.md#p6) |

@@ -1874,9 +1874,9 @@ Reasons: [H6](../decisions/log.md#h6).
 | # | Invariant | Here |
 |---|---|---|
 | 1 | no secret in `argv` | applies unchanged, including every store credential |
-| 2 | redaction at the serialiser | applies. §3's metadata record is inside it, not an exception to it: it holds no password in any form, not a hash and not a verifier. A **Vault** write is already a permitted plaintext site, so the Vault methods need no widening. The other stores are not automatically permitted. `one_time_link` sends only ciphertext, and its encryption call is its store write (§6.6, decided in #445). `onepassword_share` and `smtp_encrypted` each say how they keep the invariant when they are built. **The seen path's display is the invariant's fourth exception** (decided in #439), under §6.5's five guards. It is allowed because the exposure is deliberate, witnessed and expired, not because it is harmless; harmlessness is the third exception's argument and does not apply here. The retrieval credential an unseen delivery returns is the fifth (§6.6): the wrapping token, or `one_time_link`'s full link or key |
+| 2 | redaction at the serialiser | applies. §3's metadata record is inside it, not an exception to it: it holds no password in any form, not a hash and not a verifier. A **Vault** write is already a permitted plaintext site, so the Vault methods need no widening. The other stores are not automatically permitted. `one_time_link` sends only ciphertext, and its encryption call is its store write (§6.6, decided in #445). `onepassword_share` passes the password to 1Password's SDK in the process, and that call is its store write (§6.6, decided in #446). `smtp_encrypted` says how it keeps the invariant when it is built. **The seen path's display is the invariant's fourth exception** (decided in #439), under §6.5's five guards. It is allowed because the exposure is deliberate, witnessed and expired, not because it is harmless; harmlessness is the third exception's argument and does not apply here. The retrieval credential an unseen delivery returns is the fifth (§6.6): the wrapping token, or `one_time_link`'s full link or key |
 | 3 | branch on capability, not version | applies: rollover (§4.3) is a capability |
-| 4 | unavailable capability fails at plan time | applies: §4.4's guardrails, and `vault_path`'s store-capability check (§6.6). §4.3's seen-path refusal and §4.2's byte limit are asked on each target before any DDL, and a `--dry-run` asks them too ([#671](../decisions/log.md#671)). §3.4's absences are deliberately **not** on that list: a reset needs none of them to do what it is for |
+| 4 | unavailable capability fails at plan time | applies: §4.4's guardrails, and `vault_path`'s store-capability check (§6.6). §4.2's byte limit is asked on each target before any DDL, and a `--dry-run` asks it too ([#671](../decisions/log.md#671)). §4.3's refusal of `--keep-rollover` on the seen path comes before anything connects, and so does its refusal on a MySQL or MariaDB target, where a kept window cannot be read (exit 5). §3.4's absences are deliberately **not** on that list: a reset needs none of them to do what it is for |
 | 5 | the config is the whitelist | applies, with H1's addition: a personal account is declared in `personal_accounts:` by name or by predicate, and a predicate never widens what a mutating verb may touch. Selectors still cannot extend the declared set (§2) |
 | 6 | vault is master | nothing to govern, because there is no master (§1). H2 makes the database authoritative for **when** a password last changed. That does not break this invariant: invariant 6 governs the value, and a timestamp about the account is not the value (§3.2) |
 | 7 | never promote before confirmation | nothing to govern: there is no promotion (§1) |
@@ -1910,8 +1910,9 @@ A test must show:
   `PASSWORD EXPIRE`. The password appears in no output of the tool at all.
 - **seen:** the reset does not run without confirmation. Afterwards,
   `DBA_USERS.ACCOUNT_STATUS` has the `EXPIRED` component, and for an account
-  that is not locked, a logon with the password is forced to change it. A
-  rollover profile is refused before any DDL (§4.3). The password is emitted
+  that is not locked, a logon with the password is forced to change it. On a
+  rollover profile the reset closes the window, and `--keep-rollover` is
+  refused before anything connects (§4.3). The password is emitted
   exactly once, to stdout, and nowhere else. **Each of §6.5's five guards is its
   own test, and all five are tier 0**, because none needs a database: the reveal
   site is unreachable for any delivery method other than `manual`;

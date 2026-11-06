@@ -929,8 +929,10 @@ own.
 **The tool assigns a profile. It never creates or alters one** (Q4, decided in
 #88). `ALTER PROFILE` edits a shared object, so it reaches accounts nobody
 selected. `02-oracle-privileges.md` §3 keeps that privilege off the service
-account. `creds finish-rollover` follows the same rule: it *reports* the
-`ALTER PROFILE` an operator would run, and never issues it. Creating and
+account. Where `--strategy rollover` needs a profile with a rollover time, the
+tool *reports* the `ALTER PROFILE` an operator would run, and never issues it.
+`creds finish-rollover` alters no profile either: on Oracle it ends the window
+with `ALTER USER … EXPIRE PASSWORD ROLLOVER PERIOD`. Creating and
 altering profiles belongs to UC-4, provisioning (see the roadmap in
 `docs/README.md`). There a profile is part of making an account exist. Whether
 UC-4 alters profiles is open there; Q4 does not decide it.
@@ -1554,7 +1556,7 @@ What the tool does:
 - `--strategy rollover`, the default where the capability exists, checks that
   the profile has a non-zero `PASSWORD_ROLLOVER_TIME`. Where it has not, the tool
   **reports the exact `ALTER PROFILE` an operator would run, and issues none**
-  (Q4, decided in #88). `finish-rollover` takes the same position. A profile is
+  (Q4, decided in #88). `finish-rollover` alters no profile either. A profile is
   shared, so editing one reaches accounts nobody selected. Invariant 5 cannot
   limit that, because the config whitelists accounts, not profiles. So enabling
   rollover where a site has not got it is a DBA change outside the tool. What the
@@ -2344,9 +2346,9 @@ guarantee it has not checked.
 **On a path with no metadata at all, the pre-flight sets it.** That is the normal
 state before the first lock. Setting it first is safe: configuring a path creates
 no version, so the `cas: 0` write that a first acquisition makes still succeeds
-(measured on Vault 2.0.4). Two runs of this tool racing for a new lock always had
-exactly one winner, because a `cas: 0` write succeeds only on a path with no
-history. The setting makes the **store** enforce the same rule on every other
+(measured on Vault 2.0.4). Two runs of this tool racing for a new lock have
+exactly one winner without the setting, because a `cas: 0` write succeeds only
+on a path with no history. The setting makes the **store** enforce the same rule on every other
 writer.
 
 Where the store refuses the setting, the run goes ahead and reports

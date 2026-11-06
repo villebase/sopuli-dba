@@ -1508,7 +1508,7 @@ session's `transaction_read_only`, is on, and `read_write` is false then.
 encryption comes from the session's own `Ssl_version` status: `tls`, `none`
 where it is empty, or `unknown` where there is no such row, with `protocol`
 `tcp`. A server whose version names MariaDB or TiDB is refused, a `config`
-error, before anything else is read: MariaDB gets a driver of its own, and
+error, before anything else is read: MariaDB has a driver of its own, and
 neither handles passwords as MySQL does.
 
 **`asserted` is absent when the target asserts nothing**, not present with

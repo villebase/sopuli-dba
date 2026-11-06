@@ -179,7 +179,7 @@ It warns, and never fails ([P5](../decisions/log.md#p5)), about:
   that MariaDB split from `SUPER`, so it cannot fully check the managed
   accounts, and the line names the nine
   ([#1267](../decisions/log.md#1267), decision 4). Check 9 itself refuses
-  what it can read, in every verb (§5);
+  what it can read, in the verbs that change an account (§5);
 - the second login method that §4 describes, on the same condition: the view
   shows one method of an account that has two, and a password change ends the
   other ([#1301](../decisions/log.md#1301)).
@@ -293,14 +293,15 @@ any of these:
 - any `PROXY` grant.
 
 `sopuli.driver.mariadb.admin` reads them, and the driver reads them whenever it
-describes an account. The refusal applies to every verb that changes a
-password ([#1270](../decisions/log.md#1270)). Unlike on MySQL, it also
-applies to `account suspend` and `account expire-password`, which set no
-password, and to the
-session's own account for those two: a `role:` rule admits a role's creator
-(§4), and this is what stops one locking root or the tool account. It also
-refuses an administrator declared by name; such an account is locked by hand
-(#1272). Each finding
+describes an account. The refusal applies to `creds apply`, `creds rotate` and
+`account reset-password`, except on the session's own account, which check 7
+refuses instead
+([#1270](../decisions/log.md#1270)). Unlike on MySQL, it also applies to
+`account suspend` and `account expire-password`, which set no password, and
+to the session's own account for those two: a `role:` rule admits a role's
+creator (§4), and this is what stops one locking root or the tool account. It
+also refuses an administrator declared by name; such an account is locked by
+hand (#1272). `creds check` and `doctor` refuse nothing by it. Each finding
 names the privilege and its object, and the role it comes through, such as
 `PROCESS ON *.* through PUBLIC`.
 

@@ -232,7 +232,7 @@ bare ORA error.
 ### Adding a second product later
 
 Intended order after Oracle: PostgreSQL, MySQL, MariaDB, SQL Server
-([#1202](../decisions/log.md#1202)). MariaDB gets a driver of its own, not a
+([#1202](../decisions/log.md#1202)). MariaDB has a driver of its own, not a
 variant of MySQL's, because the two differ in how they store and change a
 password. What they share is in `sopuli/driver/mysql_family/`: the arguments
 of a PyMySQL connection, TLS included; an account as a user name and a host,

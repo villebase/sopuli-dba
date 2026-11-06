@@ -6,7 +6,7 @@ settings, and the session's own TLS version. An account that can use
 ``SYSTEM_USER`` is refused after the version, before anything else is read
 (``02-mysql-privileges.md`` §1). Nothing here branches on
 the server's version (invariant 3); it is read to report it, and to tell MySQL
-from MariaDB, which answers the same protocol and gets a driver of its own
+from MariaDB, which answers the same protocol and has a driver of its own
 (#1202, decision 2).
 
 **No capability is read here.** The session adds ``password_rollover``
@@ -50,7 +50,7 @@ READ_ONLY_SETTINGS = (
 )
 
 #: Products that speak MySQL's protocol and are not MySQL, as their
-#: ``VERSION()`` names them. MariaDB gets a driver of its own (#1202, decision
+#: ``VERSION()`` names them. MariaDB has a driver of its own (#1202, decision
 #: 2). TiDB's version names it, as `8.0.11-TiDB-v7.5.0`, and it is not measured.
 OTHER_PRODUCTS = {"mariadb": "MariaDB", "tidb": "TiDB"}
 

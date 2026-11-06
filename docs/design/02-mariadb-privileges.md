@@ -160,8 +160,9 @@ tool does not change. Two targets on one server are not caught yet (#1286):
 MariaDB has no `server_uuid`, and no value the server sets is both per server
 and stable. `@@server_uid` changes at each restart, and `server_id`, `port`,
 `datadir` and `gtid_domain_id` keep their defaults unless a DBA sets them.
-Within one run, while no server restarts, `@@server_uid` tells every server
-apart, a replica from its primary included (`13_server_identity_probe.py`). It warns, and never fails
+Between restarts, `@@server_uid` differed on every server measured, a replica
+from its primary included, even one with the primary's hostname, port and
+datadir (`13_server_identity_probe.py`). It warns, and never fails
 ([P5](../decisions/log.md#p5)), about:
 
 - each declared user name that also exists at a host the config does not

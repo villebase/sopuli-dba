@@ -1180,7 +1180,8 @@ The first three rows are what the flag would be for, and they need no flag. A
 failure that belongs to one target, one account or one document stays confined
 to it.
 
-The sample below is from an estate of two targets, with the unreachable one
+The sample below is from an estate of two targets, each with its own document
+(`secret_template: "vault-dev:acme/{target}#…"`), with the unreachable one
 **first**, against Oracle Free 26ai 23.26.2.0.0 and a dev-mode Vault:
 
 ```
@@ -1192,8 +1193,8 @@ acme_web_user  appdb-alpha  IN_SYNC  changed and verified by login
 ```
 
 It exits 4. The target that could not be reached did not end the run, the one
-after it was applied, and only the failed account's document was held back from
-promotion. The same estate under `--preflight` refuses instead, with exit 1 and
+after it was applied, and only the unreachable target's document was held back
+from promotion. The same estate under `--preflight` refuses instead, with exit 1 and
 `nothing was written`.
 
 The other rows are the stops a `--continue-on-error` flag would have to override,
@@ -1332,9 +1333,12 @@ run spends one login on each converged pair and promotes. A repair from
 finishes in one run.
 
 **Exit 4 prints the command that repairs it.** A partial run's closing line says
-what to type. It is narrowed the way the run was narrowed, and it carries
-`--config`, `--profile`, `--source` and `--strategy`, so the repair resolves and
-acts the way the run did:
+what to type. It is narrowed to the same selection as the run, spelled as
+`--select` pairs, `--target`, `--account`, `--group` and `--application`, and it
+carries `--config`, `--profile`, `--source` and `--strategy`, so the repair
+resolves and acts the way the run did. A run whose promotion was withheld
+because it was too narrow (§5) is repaired by a wider one, so its line carries
+no selector:
 
 ```
 1 changed, 1 not confirmed

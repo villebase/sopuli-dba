@@ -606,12 +606,7 @@ def describe_selection(selection: Selection) -> str | None:
     configuration already declares.
     """
     parts = [f"{key}={value}" for key, value in selection.select]
-    for flag, names in (
-        ("target", selection.targets),
-        ("account", selection.accounts),
-        ("group", selection.groups),
-        ("application", selection.applications),
-    ):
+    for flag, names in selection.flags():
         parts.extend(f"{flag}={name}" for name in names)
     return ", ".join(parts) or None
 
@@ -8065,7 +8060,7 @@ def creds_apply(
     # wider one, so echoing the selectors back would name the invocation that
     # withholds it again.
     rerun = repair_invocation(
-        selectors=() if left_out else selectors,
+        selection=None if left_out else selection,
         config_paths=[str(path) for path in run.config_paths],
         profile=run.profile,
         source=source_stage,
@@ -13008,7 +13003,7 @@ def creds_rotate(
     # The invocation that repairs this run, for SOPULI-W033 and the repair line
     # below, so the two name one command.
     rerun = repair_invocation(
-        selectors=selectors,
+        selection=selection,
         config_paths=[str(path) for path in run.config_paths],
         profile=run.profile,
         strategy=strategy,

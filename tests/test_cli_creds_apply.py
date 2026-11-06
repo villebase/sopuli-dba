@@ -1875,6 +1875,46 @@ def test_a_partial_run_names_the_invocation_that_repairs_it(
     assert f"repair with: sopuli creds apply --config {config} --select env=prod" in result.output
 
 
+def test_the_repair_line_keeps_every_selector_flag(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """A run narrowed by `--target`, `--application` and `--account` is repaired
+    narrowed the same way, as one narrowed by `--select` is."""
+    estate(
+        per_target={
+            "appdb-alpha": {"ACME_WEB_USER": drifted()},
+            "appdb-beta": {
+                "ACME_WEB_USER": [
+                    VerifyResult(VERIFY_LOGIN, FAIL, detail="ORA-01017"),
+                    VerifyResult(VERIFY_LOGIN, FAIL, detail="ORA-01017"),
+                ]
+            },
+        }
+    )
+    config = write_config(CONFIG + "groups:\n  prod-pdbs:\n    match: { env: prod }\n")
+
+    result = run(
+        runner,
+        config,
+        "--target",
+        "appdb-alpha",
+        "--target",
+        "appdb-beta",
+        "--group",
+        "prod-pdbs",
+        "--application",
+        "acme",
+        "--account",
+        "acme_web_user",
+    )
+
+    assert result.exit_code == ExitCode.PARTIAL
+    assert (
+        f"repair with: sopuli creds apply --config {config} --target appdb-alpha"
+        " --target appdb-beta --account acme_web_user --group prod-pdbs --application acme"
+    ) in result.output
+
+
 def test_a_run_that_worked_offers_no_repair(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:
@@ -3079,7 +3119,16 @@ def test_a_run_narrowed_to_one_target_changes_it_and_does_not_promote(
     harness = estate(documents=staged())
     config = write_config(REDRAW_CONFIG)
 
-    result = run(runner, config, "--target", "appdb-alpha")
+    result = run(
+        runner,
+        config,
+        "--target",
+        "appdb-alpha",
+        "--account",
+        "acme_web_user",
+        "--application",
+        "acme",
+    )
 
     assert result.exit_code == ExitCode.PARTIAL
     changed = [name for session in harness["sessions"] for name, _ in session.changed]
@@ -3088,6 +3137,8 @@ def test_a_run_narrowed_to_one_target_changes_it_and_does_not_promote(
     assert after["DB_CREDENTIALS"] == {"acme_web_user": LIVE}
     assert after["pending"] == {"acme_web_user": STAGED}
     assert "acme_web_user on appdb-beta" in result.output
+    remedy = result.output.split("repair with: ")[1].splitlines()[0]
+    assert remedy == f"sopuli creds apply --config {config}"
 
 
 def _row(result: Result, target: str) -> dict[str, Any]:

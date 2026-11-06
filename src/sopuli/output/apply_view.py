@@ -41,6 +41,7 @@ from sopuli.apply import (
 )
 from sopuli.check import ROLLOVER_ACTIVE, Outcome
 from sopuli.config.model import Binding
+from sopuli.config.selection import Selection
 from sopuli.diagnostics import (
     CHANGED_NOT_PROMOTED,
     PROMOTION_SKIPPED,
@@ -508,7 +509,7 @@ def render_source_table(rows: Sequence[tuple[Binding, Source]]) -> list[str]:
 
 def repair_invocation(
     *,
-    selectors: Sequence[str] = (),
+    selection: Selection | None = None,
     config_paths: Sequence[str] = (),
     profile: str | None = None,
     source: str | None = None,
@@ -524,7 +525,9 @@ def repair_invocation(
     exists to protect.
 
     So this echoes back the options that decide **what would be applied** -- the
-    selectors, the stage, the regime -- and the two that decide **how the file
+    :class:`~sopuli.config.selection.Selection` (``--select``, ``--target``,
+    ``--account``, ``--group`` and ``--application``, in ``--help``'s order), the
+    stage, the regime -- and the two that decide **how the file
     resolves**, ``--config`` and ``--profile``. A scheduled run repaired without
     its profile resolves its settings from different layers and is a different
     run (`01-configuration.md` §5), which is the failure that looks like the
@@ -557,8 +560,12 @@ def repair_invocation(
         words += ["--config", _word(path)]
     if profile is not None:
         words += ["--profile", _word(profile)]
-    for selector in selectors:
-        words += ["--select", _word(selector)]
+    if selection is not None:
+        for key, value in selection.select:
+            words += ["--select", _word(f"{key}={value}")]
+        for flag, names in selection.flags():
+            for name in names:
+                words += [f"--{flag}", _word(name)]
     if source is not None:
         words += ["--source", source]
         if source == PREVIOUS:
@@ -572,11 +579,14 @@ def _word(value: str) -> str:
     """One argument, quoted where it carries whitespace.
 
     **Not a general shell quoter**, and it should not become one. What is
-    composed here is config paths, a profile name and `k=v` label selectors, and
-    whitespace is the character among those that arises -- ``C:/Program
-    Files/estate.yaml`` is the ordinary case on Windows. Nothing here escapes
-    ``&``, ``$`` or a glob, and a value carrying one would need a different
-    answer per shell rather than this one.
+    composed here is config paths, a profile name, `k=v` label selectors, and
+    the names of targets, accounts, groups and applications. Whitespace is the
+    character among those that arises -- ``C:/Program Files/estate.yaml`` is the
+    ordinary case on Windows. Nothing here escapes ``&``, ``$``, ``%`` or a glob,
+    and a value carrying one would need a different answer per shell rather
+    than this one. A name is printed as it is: an Oracle account such as
+    ``acme$web`` needs its ``$`` quoted in bash or PowerShell, and a MySQL
+    account such as ``user@%`` needs its ``%`` doubled in a ``cmd`` batch file.
 
     Double quotes rather than single, because the line is meant to be pasted on
     Windows as well (P4): ``cmd`` does not treat a single quote as quoting at

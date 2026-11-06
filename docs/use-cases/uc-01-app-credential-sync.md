@@ -343,7 +343,10 @@ sopuli creds generate --application acme [--account acme_web_user]
    has it, and a drawn or supplied password is held to it (#1338). A target
    that the selectors leave out and that reads the same password counts too.
    Nothing logs in to it: only its product's fixed limit and the characters
-   its driver refuses are used (#1351).
+   its driver refuses are used (#1351). A policy that cannot be drawn under
+   these fixed limits is refused before any target login. A supplied password
+   is checked once, after the reading, so that one refusal names every
+   violation, a selected target's character set included.
 
    The same connection describes each account. An account that guardrail
    check 6 (a superuser), check 8 (a role the server reserves) or check 9 (a
@@ -1880,11 +1883,11 @@ run was applying the estate correctly, and a configuration error would complain
 about a file nothing had changed. The same holds for a policy that a target
 sharing the password cannot hold, such as a length past PostgreSQL's 1024
 bytes. That target counts even where the selectors left it out, because it
-reads the password the redraw stages (#1351). A run that applies from `current` instead of
-`pending` never redraws, because `origin` describes a staged value, and `current`
-is what applications already hold. Replacing that during an apply would be a
-different and much worse operation. §3's rule that an absent `origin` blocks a
-redraw already covers it.
+reads the password the redraw stages (#1351). A run that applies from `current`
+instead of `pending` never redraws, because `origin` describes a staged value,
+and `current` is what applications already hold. Replacing that during an apply
+would be a different and much worse operation. §3's rule that an absent `origin`
+blocks a redraw already covers it.
 
 `sopuli/driver/oracle/errors.py` maps the codes, under these rules:
 

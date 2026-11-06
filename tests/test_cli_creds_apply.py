@@ -4861,7 +4861,8 @@ def test_a_redraw_a_left_out_target_cannot_hold_reports_rather_than_raising(
 
     result = run(runner, write_config(config), "--target", "appdb-alpha", "--output", "json")
 
-    assert result.exit_code != ExitCode.CONFIG_INVALID, result.output
+    # Refused on `appdb-alpha` and not replaced: the run failed there, and said why.
+    assert result.exit_code == ExitCode.FAILURE, result.output
     assert stored(harness["store"], REDRAW_DOCUMENT)["pending"]["acme_web_user"] == STAGED
     (declined,) = [
         one for one in document(result).get("diagnostics", []) if one["code"] == "SOPULI-W030"

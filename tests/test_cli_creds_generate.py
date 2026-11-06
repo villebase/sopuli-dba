@@ -910,6 +910,23 @@ def test_a_quote_is_not_waived_for_an_oracle_target_the_selectors_leave_out(
     assert store.read(PATH) is None
 
 
+def test_a_left_out_target_whose_store_is_not_known_yet_still_holds_the_draw(
+    runner: CliRunner, write_config: Callable[[str], Path], store: MemoryStore
+) -> None:
+    """`appdb-pg` names no store, so its binding has none in this run. It reads
+    the same path and place, and its store could be the same one, so its limit
+    counts: the safe way to be wrong (#1351)."""
+    config = _with_postgres("[appdb-alpha, appdb-pg]", length=1100).replace(
+        "    postgres: { database: acme }\n    vault: vault-prod\n",
+        "    postgres: { database: acme }\n",
+    )
+    result = run(runner, write_config(config), "--target", "appdb-alpha", "--offline")
+
+    assert isinstance(result.exception, ConfigError), result.exception
+    assert "appdb-pg" in str(result.exception)
+    assert store.read(PATH) is None
+
+
 def test_a_target_that_reads_another_password_does_not_hold_the_draw(
     runner: CliRunner, write_config: Callable[[str], Path], store: MemoryStore
 ) -> None:

@@ -112,7 +112,7 @@ from sopuli.config.bindings import check_oci_name
 from sopuli.config.errors import KeyPath
 from sopuli.config.expansion import declared_at
 from sopuli.config.model import Delivery, Notify, PersonalAccountRule
-from sopuli.config.password_keys import place_of
+from sopuli.config.password_keys import declared_password_key, place_of
 from sopuli.config.products import (
     account_key,
     account_matcher,
@@ -355,7 +355,7 @@ from sopuli.output.vault_view import build as build_vault
 from sopuli.output.vault_view import render as render_vaults
 from sopuli.output.wallet_view import build as build_wallet
 from sopuli.output.wallet_view import render as render_wallet
-from sopuli.passwords import ByteLimit, PasswordPolicyError, generate, require_feasible
+from sopuli.passwords import ByteLimit, generate, require_feasible
 from sopuli.payload import (
     CURRENT,
     ORIGIN,
@@ -6663,9 +6663,7 @@ def _candidate(
     With no limit at all the policy's declared length governs, which is what
     :func:`sopuli.generate.candidate_for` does with an empty ``readings``.
     """
-    effective = binding if name is None else replace(binding, policy=name)
-    chosen, policy = staging.policy_for(config, effective)
-    sharing = _sharing_targets(estate, binding)
+    chosen, policy, sharing = _draw_inputs(binding, config, estate=estate, name=name)
     if products is None:
         products = frozenset(target.target.type for target in sharing)
     read = {target for target, _ in readings}
@@ -6690,11 +6688,26 @@ def _require_drawable(
 
     The refusal :func:`_candidate` would make for a drawn password with no
     reading, through :func:`sopuli.generate.require_drawable`, so a caller can
-    ask before any target login without making a password it throws away.
+    ask before any target login without making a password it throws away. Both
+    take their policy and targets from :func:`_draw_inputs`, so they cannot
+    disagree about which limits hold.
+    """
+    _, policy, sharing = _draw_inputs(binding, config, estate=estate, name=name)
+    staging.require_drawable(policy, _product_limits(sharing))
+
+
+def _draw_inputs(
+    binding: Binding, config: Config, *, estate: Config, name: str | None
+) -> tuple[str, PasswordPolicy, list[ExpandedTarget]]:
+    """The policy's name, the policy, and the targets that share the password:
+    what :func:`_candidate` and :func:`_require_drawable` both draw from.
+
+    ``name`` is `--policy`, which overrides the binding's own name before the
+    file's chain is consulted.
     """
     effective = binding if name is None else replace(binding, policy=name)
-    _, policy = staging.policy_for(config, effective)
-    staging.require_drawable(policy, _product_limits(_sharing_targets(estate, binding)))
+    chosen, policy = staging.policy_for(config, effective)
+    return chosen, policy, _sharing_targets(estate, binding)
 
 
 def _sharing_targets(estate: Config, binding: Binding) -> list[ExpandedTarget]:
@@ -6705,11 +6718,23 @@ def _sharing_targets(estate: Config, binding: Binding) -> list[ExpandedTarget]:
     ``binding``'s own target is named directly as well as found by its key. That
     is defensive: a selected binding that reaches a draw has its store, and its
     copy in the estate has the same key.
+
+    **A binding with no store yet counts where its path and place match.** Its
+    store would come from a profile or ``SOPULI_VAULT``, so it may be the same
+    one. Counting it can only add a limit, which is the safe way to be wrong,
+    and it is how :func:`_left_out` treats such a binding.
     """
     key = staging.password_key(binding)
     sharing = [binding]
     if key is not None:
-        sharing.extend(one for one in estate.bindings if staging.password_key(one) == key)
+        for one in estate.bindings:
+            declared = declared_password_key(one)
+            if declared is None:
+                continue
+            if declared == key or (
+                declared.store is None and (declared.path, declared.place) == (key.path, key.place)
+            ):
+                sharing.append(one)
     return _targets_of(estate, sharing)
 
 
@@ -11282,15 +11307,14 @@ def _cannot_draw(config: Config, estate: Config, binding: Binding) -> str | None
 
     :func:`_require_drawable` draws nothing. It refuses a policy that a target
     sharing the password cannot hold, a target the selectors left out included
-    (#1351). The message is the refusal's own, without its hint, which a
-    diagnostic has no field for.
+    (#1351), and a policy the chain cannot find. The reason is the refusal's own
+    message and hint, on one line: a diagnostic has no field for the hint.
     """
     try:
         _require_drawable(binding, config, estate=estate, name=None)
-    except PasswordPolicyError as refused:
-        return f"no password its policy draws would hold: {refused.message}"
-    except ConfigError:
-        return "this account has no password policy to draw from"
+    except ConfigError as refused:
+        reason = f"no password can be drawn for it: {refused.message}"
+        return f"{reason} -- {refused.hint}" if refused.hint else reason
     return None
 
 
@@ -12818,11 +12842,12 @@ def creds_rotate(
     # selectors left out that shares a password is decision #406's refusal
     # (`_refuse_narrow_rotation`), which says to widen the selection. Holding the
     # policy to it first would refuse with a hint to lower `length:`, and the
-    # run would still be refused after that (#1351).
-    estate = _declared_estate(run.config)
+    # run would still be refused after that (#1351). So the narrowed config is
+    # passed as the estate here, and only here.
     for binding in bindings:
         if due is None or _lock_key(binding) in due:
             _require_drawable(binding, config, estate=config, name=None)
+    estate = _declared_estate(run.config)
     # Refused here, not warned: the stage is written before the guardrail pass
     # and the databases change before the promotion, so a promotion the store
     # refuses would leave the rotation half done.

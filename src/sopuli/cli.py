@@ -606,12 +606,7 @@ def describe_selection(selection: Selection) -> str | None:
     configuration already declares.
     """
     parts = [f"{key}={value}" for key, value in selection.select]
-    for flag, names in (
-        ("target", selection.targets),
-        ("account", selection.accounts),
-        ("group", selection.groups),
-        ("application", selection.applications),
-    ):
+    for flag, names in selection.flags():
         parts.extend(f"{flag}={name}" for name in names)
     return ", ".join(parts) or None
 

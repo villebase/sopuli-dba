@@ -1891,7 +1891,7 @@ def test_the_repair_line_keeps_every_selector_flag(
             },
         }
     )
-    config = write_config(CONFIG)
+    config = write_config(CONFIG + "groups:\n  prod-pdbs:\n    match: { env: prod }\n")
 
     result = run(
         runner,
@@ -1900,6 +1900,8 @@ def test_the_repair_line_keeps_every_selector_flag(
         "appdb-alpha",
         "--target",
         "appdb-beta",
+        "--group",
+        "prod-pdbs",
         "--application",
         "acme",
         "--account",
@@ -1909,7 +1911,7 @@ def test_the_repair_line_keeps_every_selector_flag(
     assert result.exit_code == ExitCode.PARTIAL
     assert (
         f"repair with: sopuli creds apply --config {config} --target appdb-alpha"
-        " --target appdb-beta --account acme_web_user --application acme"
+        " --target appdb-beta --account acme_web_user --group prod-pdbs --application acme"
     ) in result.output
 
 
@@ -3117,7 +3119,16 @@ def test_a_run_narrowed_to_one_target_changes_it_and_does_not_promote(
     harness = estate(documents=staged())
     config = write_config(REDRAW_CONFIG)
 
-    result = run(runner, config, "--target", "appdb-alpha")
+    result = run(
+        runner,
+        config,
+        "--target",
+        "appdb-alpha",
+        "--account",
+        "acme_web_user",
+        "--application",
+        "acme",
+    )
 
     assert result.exit_code == ExitCode.PARTIAL
     changed = [name for session in harness["sessions"] for name, _ in session.changed]

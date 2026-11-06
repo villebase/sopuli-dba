@@ -563,14 +563,9 @@ def repair_invocation(
     if selection is not None:
         for key, value in selection.select:
             words += ["--select", _word(f"{key}={value}")]
-        for flag, names in (
-            ("--target", selection.targets),
-            ("--account", selection.accounts),
-            ("--group", selection.groups),
-            ("--application", selection.applications),
-        ):
+        for flag, names in selection.flags():
             for name in names:
-                words += [flag, _word(name)]
+                words += [f"--{flag}", _word(name)]
     if source is not None:
         words += ["--source", source]
         if source == PREVIOUS:
@@ -589,8 +584,9 @@ def _word(value: str) -> str:
     character among those that arises -- ``C:/Program Files/estate.yaml`` is the
     ordinary case on Windows. Nothing here escapes ``&``, ``$``, ``%`` or a glob,
     and a value carrying one would need a different answer per shell rather
-    than this one. A MySQL account name such as ``user@%`` is printed as it is,
-    so a repair line pasted into a ``cmd`` batch file needs its ``%`` doubled.
+    than this one. A name is printed as it is: an Oracle account such as
+    ``acme$web`` needs its ``$`` quoted in bash or PowerShell, and a MySQL
+    account such as ``user@%`` needs its ``%`` doubled in a ``cmd`` batch file.
 
     Double quotes rather than single, because the line is meant to be pasted on
     Windows as well (P4): ``cmd`` does not treat a single quote as quoting at

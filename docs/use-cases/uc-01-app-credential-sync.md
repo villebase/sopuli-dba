@@ -1331,8 +1331,8 @@ run spends one login on each converged pair and promotes. A repair from
 finishes in one run.
 
 **Exit 4 prints the command that repairs it.** A partial run's closing line says
-what to type. It is narrowed the way the run was narrowed, by the same
-`--select`, `--target`, `--account`, `--group` and `--application`, and it
+what to type. It is narrowed to the same selection as the run, spelled as
+`--select` pairs, `--target`, `--account`, `--group` and `--application`, and it
 carries `--config`, `--profile`, `--source` and `--strategy`, so the repair
 resolves and acts the way the run did. A run whose promotion was withheld
 because it was too narrow (§5) is repaired by a wider one, so its line carries

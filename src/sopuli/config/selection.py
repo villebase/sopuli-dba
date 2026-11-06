@@ -119,6 +119,22 @@ class Selection:
         """
         return account.upper() in {name.upper() for name in self.accounts}
 
+    def flags(self) -> tuple[tuple[str, tuple[str, ...]], ...]:
+        """The name selectors with the flag each came from, in ``--help``'s
+        order: ``--target``, ``--account``, ``--group``, ``--application``.
+
+        The one list of them, for each place that spells a selection back as
+        flags: the lock record (:func:`sopuli.cli.describe_selection`) and the
+        repair line (:func:`sopuli.output.apply_view.repair_invocation`).
+        ``--select`` is apart, because its members are pairs.
+        """
+        return (
+            ("target", self.targets),
+            ("account", self.accounts),
+            ("group", self.groups),
+            ("application", self.applications),
+        )
+
     def as_json(self) -> dict[str, object]:
         """``invocation.selection``, omitting the members nobody used.
 

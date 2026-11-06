@@ -1351,6 +1351,8 @@ def test_the_repair_line_of_a_rotation_keeps_every_selector_flag(
         "acme",
     )
 
+    assert result.exit_code == ExitCode.PARTIAL
+    assert "repair with: " in result.output
     remedy = result.output.split("repair with: ")[1].splitlines()[0]
     assert remedy == (
         f"sopuli creds apply --config {config} --target appdb-alpha"

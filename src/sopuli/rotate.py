@@ -154,6 +154,7 @@ def exit_code_for(
     promoted: bool,
     promotable: bool,
     disagreed: int,
+    unclosed: int = 0,
 ) -> int:
     """§8's failure table, as one number.
 
@@ -180,6 +181,13 @@ def exit_code_for(
     one outcome in two vocabularies -- with the scheduler that reads both left to
     reconcile them.
 
+    **A close `--finish-rollover` attempted and did not make is exit 4** (#1347),
+    where `apply`'s answer is otherwise 0. ``unclosed`` counts them: the pairs
+    `SOPULI-W043` names with a reason. The rotation finished and every target
+    accepts `current`, but the old password still works, and on MariaDB a window
+    never elapses. Re-running `creds finish-rollover` is safe and finishes it,
+    the read-back row's reasoning. A worse answer from `apply` stands.
+
     The takeover split -- 7 where the run was fenced out before it changed
     anything and 4 where it had already changed something -- is **not** here. It
     stays with the caller for the reason :mod:`sopuli.lock.errors` gives: only
@@ -189,4 +197,7 @@ def exit_code_for(
         return int(ExitCode.FAILURE)
     if disagreed:
         return int(ExitCode.PARTIAL)
-    return apply_states.exit_code_for(applied, promoted=promoted, promotable=promotable)
+    code = apply_states.exit_code_for(applied, promoted=promoted, promotable=promotable)
+    if unclosed and code == ExitCode.SUCCESS:
+        return int(ExitCode.PARTIAL)
+    return code

@@ -240,3 +240,24 @@ class TestExitCode:
             disagreed=0,
         )
         assert code == ExitCode.PARTIAL
+
+    def test_a_close_that_was_not_made_is_four(self) -> None:
+        """#1347: the rotation finished, but a window `--finish-rollover` was
+        asked to close is still open, and re-running `creds finish-rollover`
+        finishes it."""
+        code = rotation.exit_code_for(
+            staged_failures=0,
+            applied=[IN_SYNC],
+            promoted=True,
+            promotable=True,
+            disagreed=0,
+            unclosed=1,
+        )
+        assert code == ExitCode.PARTIAL
+
+    def test_a_worse_answer_than_an_unmade_close_stands(self) -> None:
+        """An unmade close turns only a 0 into a 4: a staging failure is still 1."""
+        code = rotation.exit_code_for(
+            staged_failures=1, applied=[], promoted=False, promotable=False, disagreed=0, unclosed=1
+        )
+        assert code == ExitCode.FAILURE

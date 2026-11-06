@@ -12883,6 +12883,7 @@ def creds_rotate(
             ),
             promotable=any(one.promotable for one in sequence.promotions.values()),
             disagreed=len(sequence.disagreed),
+            unclosed=sequence.unclosed,
         )
 
     document.finish(
@@ -13044,6 +13045,9 @@ class _Rotation:
     #: The (target, account) pairs ``--finish-rollover`` set out to close, which
     #: get no `SOPULI-W064`: the window it describes is gone (#1271).
     closing: frozenset[tuple[str, str]] = frozenset()
+    #: Closes ``--finish-rollover`` attempted and did not make, which make the
+    #: run exit 4 (#1347).
+    unclosed: int = 0
     stolen: LockStolenError | None = None
     #: The pre-flight's caveats as notes (decision #606), for the end of the run.
     caveats: list[str] = field(default_factory=list)
@@ -13228,8 +13232,10 @@ def _rotate_estate(
             )
             into.closed = sum(1 for record in finished if record.changed)
             # A close that did not happen leaves the old password working, so
-            # it is said, and its pair is no longer counted as closing (#1344).
+            # it is said, its pair is no longer counted as closing (#1344), and
+            # the run exits 4 (#1347).
             kept = _not_closed(finished)
+            into.unclosed = len(kept)
             into.closing = into.closing - {(target, account) for account, target, _ in kept}
             into.caveats.extend(
                 _not_closed_note(account, target, reason) for account, target, reason in kept

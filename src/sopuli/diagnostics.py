@@ -569,6 +569,11 @@ FAILED_LOGIN_BLOCK_UNREAD = "SOPULI-W063"
 #: `ed25519` account a PyMySQL client can use only the new password (#1271).
 ROLLOVER_CAVEAT = "SOPULI-W064"
 
+#: `account reset-password` on a MariaDB target sets the password as the only
+#: login method, which ends a second one, such as `unix_socket`, that the tool
+#: cannot see (#1317).
+SECOND_METHOD_UNSEEN = "SOPULI-W065"
+
 #: A document was not promoted because one or more of its targets did not
 #: confirm (#1328). Invariant 7 holds the promotion until every declared target
 #: confirms. The confirmed rows carry `SOPULI-W049`, and this names the
@@ -794,6 +799,16 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "account the listing shows as `OPEN` may be blocked until `PASSWORD_LOCK_TIME` "
             "ends, or until `ALTER USER … ACCOUNT UNLOCK`. One entry per MySQL target that "
             "lists an account that exists and is not locked, with `target` set."
+        ),
+        SECOND_METHOD_UNSEEN: (
+            "`account reset-password` will reset an account on a MariaDB target. The new "
+            "password is set as the only login method, so a second method the account had, "
+            "joined by `OR`, such as a `unix_socket` login on the database host, stops "
+            "working. The tool cannot see whether the account has one: it is only in "
+            "`mysql.global_priv`, which the tool account does not read. One entry per "
+            "MariaDB target the reset reaches, with `target` set, at plan time: printed "
+            "with the plan, before any confirmation question and the first change, "
+            "`--dry-run` included."
         ),
         ROLLOVER_CAVEAT: (
             "A rollover window that not every client can use. On a MariaDB `ed25519` "
@@ -1673,6 +1688,21 @@ def no_reset_record() -> Diagnostic:
             "no `reset_records:` block is declared, so no record of this reset will be "
             "written and no advisory lock is taken on the account: the run document and "
             "the database are the whole record of it"
+        ),
+    )
+
+
+def second_method_unseen(target: str) -> Diagnostic:
+    """`SOPULI-W065`, at plan time, for a MariaDB target a reset will reach
+    (#1317): said before the change, while the operator can still stop."""
+    return Diagnostic(
+        level="warning",
+        code=SECOND_METHOD_UNSEEN,
+        target=target,
+        message=(
+            f"{target}: where the account is reset, the password is set as the only login "
+            "method. Any other method it has, such as unix_socket, stops working, and the "
+            "tool cannot see one"
         ),
     )
 

@@ -258,8 +258,12 @@ show it, and the tool account reads neither (§2.2, §3). Measured by hand on
 So the plugin check admits such an account. A password change sends one
 method, which ends the other: a login by `unix_socket` stops working. No grant
 closes the gap without reading every stored value. `doctor --check-privileges`
-says so for any target with declared accounts, and the DBA checks `SHOW CREATE
-USER` for the accounts the tool manages.
+says so for a target that an application's `accounts:` are bound to, and the
+DBA checks `SHOW CREATE USER` for the accounts the tool manages. The gap is
+accepted for personal accounts too ([#1317](../decisions/log.md#1317)), where
+a DBA's own socket login is the likely case. `account reset-password` warns
+of it at plan time, `SOPULI-W065`, `--dry-run` included, and the row says the
+same.
 
 **A user name at an undeclared host is reported** by `doctor` (§2.3).
 
@@ -358,8 +362,17 @@ sent. It also refuses an empty password, control characters, and text that
 cannot be encoded as UTF-8, as the other drivers do. The server refuses a
 malformed value with the plain `1396` (CH3). A new server loads only
 `mysql_native_password`; `ed25519` must be installed with `INSTALL SONAME
-'auth_ed25519'` (CH4). Whether a password check plugin, such as
-`simple_password_check`, refuses the value is not measured (#1310).
+'auth_ed25519'` (CH4). **With `simple_password_check` or
+`password_reuse_check` loaded, the server refuses every value the driver
+sends** while `strict_password_validation` is `ON`, which is its default. The
+change fails with the plain `1396`, the answer a weak password gets
+(`12_password_check_probe.py`, PC1, PC3). With it `OFF` the value is accepted
+and neither plugin checks it (PC2, PC3). `cracklib_password_check` and other
+plugins were not measured. An account with only `CREATE USER` reads
+`@@strict_password_validation` and the loaded plugins from
+`information_schema.PLUGINS` (PC4). Until the driver reads them and refuses
+such a target at plan time, every change there fails during the run with that
+`1396`, which breaks invariant 4 (#1310).
 
 **The value is sensitive.** A `mysql_native_password` value is an unsalted
 SHA-1 hash. It allows an offline guess, and with one captured login handshake

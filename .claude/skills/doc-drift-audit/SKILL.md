@@ -68,31 +68,44 @@ the agent cannot read this skill.
 
 | Area | Files |
 |---|---|
-| config | `docs/design/01-configuration.md`, `examples/*.yaml` |
+| config-1 | `docs/design/01-configuration.md`, from the start to the line before `` ## 4. Target templating (`target_sets`) `` |
+| config-2 | `docs/design/01-configuration.md`, from `` ## 4. Target templating (`target_sets`) `` to the end, and `examples/*.yaml` |
 | output-1 | `docs/design/03-json-output.md`, from the start to the line before `` ### `orphans`, emitted by `vault orphans` `` in §2 |
 | output-2 | `docs/design/03-json-output.md`, from `` ### `orphans`, emitted by `vault orphans` `` to the end |
-| uc1 | `docs/use-cases/uc-01-app-credential-sync.md`, `docs/scenarios/*.md` |
+| uc1 | `docs/use-cases/uc-01-app-credential-sync.md` |
+| scenarios | `docs/scenarios/*.md` |
 | uc2 | `docs/use-cases/uc-02-personal-account-passwords.md` |
-| oracle | `docs/design/00-principles.md`, `docs/design/02-oracle-privileges.md`, `docs/design/02-postgres-privileges.md`, `docs/design/02-mysql-privileges.md`, `docs/measurements.md` |
+| oracle | `docs/design/02-oracle-privileges.md`, `docs/measurements.md` |
+| products | `docs/design/00-principles.md`, `docs/design/02-postgres-privileges.md`, `docs/design/02-mysql-privileges.md`, `docs/design/02-mariadb-privileges.md` |
 | process | `docs/design/04-testing.md`, `docs/workflow.md`, `docs/maintainer-environments.md`, `test/README.md`, `CONTRIBUTING.md`, `CLAUDE.md`, `.github/copilot-instructions.md` |
 | front | `README.md`, `SECURITY.md`, `docs/getting-started.md`, `docs/security-model.md`, `docs/local-testing.md` |
 | register | `docs/README.md` |
-| log | `docs/decisions/log.md` |
+| log-1 | `docs/decisions/log.md`, from the start to the line before `## #892` |
+| log-2 | `docs/decisions/log.md`, from `## #892` to the end |
 | adrs | `docs/decisions/adr-*.md` |
 | code | module docstrings, docstrings and comments in `src/sopuli/**/*.py` |
 
-`03-json-output.md` is two areas because one sweep of the whole file checked only
-about 2 claims per 1,000 words (#1086). Split it at that heading, so that every
-audit compares the same two halves, and tell each agent its range of lines.
+Four files are split in two, because a sweep of a whole one goes shallow. One
+sweep of all of `03-json-output.md` checked only about 2 claims per 1,000 words
+(#1086). `01-configuration.md` and `log.md` are each over 30,000 words (#1359).
+Split each at the heading the table names, so that every audit compares the same
+halves. Find the heading's line number before you start, and tell each agent its
+range of lines and that another agent covers the rest. `log.md` grows at its
+end, so log-2 grows. When log-2 passes 30,000 words, split it again at a later
+`## #N` heading, and add the heading here.
 
 Some areas need a note after the file list in the prompt:
 
 - **oracle**: "Check `docs/measurements.md` against the headers of the scripts in
-  `sql/oracle/` and `sql/postgres/`. Dated results are allowed in
+  `sql/oracle/`, `sql/postgres/`, `sql/mysql/` and `sql/mariadb/` (a Python
+  probe's docstring is its header). Dated results are allowed in
   `docs/measurements.md`; do not report them as narration."
+- **products**: "Dated measurement results quoted from `docs/measurements.md` are
+  allowed; do not report them as narration, but check that they agree with
+  `docs/measurements.md`."
 - **process**: "The sources of truth also include `.github/workflows/*.yml`, the
   compose files in `test/`, `pyproject.toml` and `tests/`."
-- **register**, **log** and **adrs**: "Decision records and ADRs record why a decision was made, so
+- **register**, **log-1**, **log-2** and **adrs**: "Decision records and ADRs record why a decision was made, so
   describing the rejected options is not narration. An ADR's *Context*
   section describes the situation when the decision was made; do not report
   it. Report claims about the current build that are false, and status claims
@@ -101,7 +114,9 @@ Some areas need a note after the file list in the prompt:
 - **code**: "A claim is what a comment or docstring says about the code: what a
   function does, who calls it, what it never does, how many of something there
   are. Check each against the code it describes, including callers in other
-  modules." While an issue for narration in comments is open, also say: "Report
+  modules. Start with the modules that changed since the last audit
+  (`git log --since=<its date> --name-only -- src/sopuli` lists them), then
+  cover the rest of the package as far as you can." While an issue for narration in comments is open, also say: "Report
   at most 10 `NARRATION` rows, and spend the effort on kinds 1 to 5."
 
 When a new document appears, add it to the area it fits. Keep each area under
@@ -119,7 +134,19 @@ claim true. Before anything is filed:
 3. If more than one in five of the re-checked findings does not hold, re-check
    that area's findings in full before filing them.
 4. Look at the `UNSURE` findings. Settle each one, or leave it out of the record.
-5. Compare each area's `CHECKED` count with its size. In the trial, the process
+5. Read the `NARRATION` rows, and drop the ones the writing rules allow. Most
+   rows are allowed, about 26 of 30 in #1359:
+   - the rationale and the rejected options in the decision log and in ADRs;
+   - a "[#N] later decided" pointer in a log record, which keeps the record
+     true for its date;
+   - the schema history in `03-json-output.md` §8;
+   - measurement dates;
+   - the examples in `CONTRIBUTING.md` that give a rule's reason;
+   - a page's note on which run its samples come from.
+6. A sample from a page that says which capture it comes from may be old
+   without being false. Note it in the record for a recapture, and do not file
+   it as false.
+7. Compare each area's `CHECKED` count with its size. In the trial, the process
    sweep checked about 8 claims per 1,000 words and the uc2 sweep about 3. An
    area far below 8 had a shallow sweep. Say so in the record, or run that area again.
 

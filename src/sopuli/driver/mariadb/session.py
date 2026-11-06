@@ -21,9 +21,10 @@ current value alone (#1271). The registry lists `doctor`, UC-1's `creds
 generate`, `apply`, `check`, `rotate` and `status`, and UC-2's four verbs.
 Every other method refuses with ``SOPULI-20006``.
 
-The session claims no server identity: MariaDB has no ``server_uuid``, and
-11.8.9 shows no ``server_uid`` status either, so two targets on one server are
-not caught here (#1286).
+The session names its server by ``@@server_uid``, so the CLI refuses two
+targets that are one server, as on MySQL (#1286). MariaDB has no
+``server_uuid``, and ``@@server_uid`` changes at each restart: it identifies a
+server only within one run.
 """
 
 from __future__ import annotations
@@ -195,6 +196,16 @@ def _nothing(what: str) -> str:
     )
 
 
+#: The server's identity for the one-server check (#1286). Not the status
+#: variable: ``SHOW STATUS LIKE 'server_uid'`` returns no row (probe 13, SI1).
+SERVER_UID = "select @@global.server_uid"
+
+
+def _server_uid(cursor: Any) -> str:
+    cursor.execute(SERVER_UID)
+    return str(cursor.fetchone()[0])
+
+
 @dataclass
 class MariadbSession(ClosesConnection):
     """One open connection to a MariaDB server. Implements the
@@ -227,6 +238,28 @@ class MariadbSession(ClosesConnection):
     _password_checks: tuple[str, ...] | None = field(default=None, init=False, repr=False)
     #: Why that read failed, for the refusal's hint.
     _checks_unread: str | None = field(default=None, init=False, repr=False)
+    #: The words for two targets that are one server
+    #: (:class:`~sopuli.driver.clusters.ClusterIdentity`), as on MySQL. Not
+    #: fields. ``identity_caveat`` is always ``None``: any account reads
+    #: ``@@server_uid`` (probe 13, SI1).
+    identity_caveat = None
+    identity_kind = "MariaDB server"
+    identity_key = "server_uid"
+    identity_hint = (
+        "declare each server once: two targets on one server would change its "
+        "accounts under two names"
+    )
+
+    def cluster_identity(self) -> str | None:
+        """The server's ``@@server_uid``, which the CLI uses to refuse two
+        targets that are one server (#1286). Any account reads it. It differed
+        on every server measured, a replica and its primary included, even
+        one with the primary's hostname (probe 13, SI3 to SI5).
+
+        It changes when the server restarts (SI2). The CLI compares identities
+        only within one run, so a restart during a run can miss two targets
+        on one server."""
+        return self._read(_server_uid)
 
     def scope(self) -> Scope:
         """What this session is: a server, read-write or not, and its

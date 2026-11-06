@@ -98,6 +98,57 @@ def test_the_mysql_session_names_its_server() -> None:
     assert (session.identity_kind, session.identity_key) == ("MySQL server", "server_uuid")
 
 
+def test_the_mariadb_session_names_its_server() -> None:
+    """For the same reason, on MariaDB, by ``@@server_uid`` (#1286)."""
+    session_module = pytest.importorskip("sopuli.driver.mariadb.session")
+    from sopuli.config.model import ExpandedTarget, Target
+    from sopuli.driver.protocol import Timeouts
+
+    target = ExpandedTarget(target=Target(name="mariadb-dev", type="mariadb", dsn="h:3306"))
+    session = session_module.MariadbSession(
+        connection=None, target=target, correlation_id="run", timeouts=Timeouts()
+    )
+
+    assert isinstance(session, ClusterIdentity)
+    assert (session.identity_kind, session.identity_key) == ("MariaDB server", "server_uid")
+    assert session.identity_caveat is None
+
+
+def test_the_mariadb_session_reads_the_server_uid() -> None:
+    """The statement and the reader, without a server: the isinstance check
+    above sees only that the names exist."""
+    session_module = pytest.importorskip("sopuli.driver.mariadb.session")
+    from sopuli.config.model import ExpandedTarget, Target
+    from sopuli.driver.protocol import Timeouts
+
+    executed: list[str] = []
+
+    class _Cursor:
+        def __enter__(self) -> _Cursor:
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            pass
+
+        def execute(self, statement: str) -> None:
+            executed.append(statement)
+
+        def fetchone(self) -> tuple[str]:
+            return ("vmGAk3HDOBZm5rKnJnCGDtplUwQ=",)
+
+    class _Connection:
+        def cursor(self) -> _Cursor:
+            return _Cursor()
+
+    target = ExpandedTarget(target=Target(name="mariadb-dev", type="mariadb", dsn="h:3306"))
+    session = session_module.MariadbSession(
+        connection=_Connection(), target=target, correlation_id="run", timeouts=Timeouts()
+    )
+
+    assert session.cluster_identity() == "vmGAk3HDOBZm5rKnJnCGDtplUwQ="
+    assert executed == ["select @@global.server_uid"]
+
+
 def test_two_targets_on_one_mysql_server_are_refused_by_name() -> None:
     class _Mysql(_Session):
         identity_kind = "MySQL server"

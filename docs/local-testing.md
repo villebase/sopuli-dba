@@ -953,6 +953,9 @@ guardrail 9 cannot see, and that a second login method is not seen:
   mariadb-dev: a declared account with a second login method, joined by OR, shows one of them: the mysql.user view does not show the other. A password change sends one method and ends the other, so a login by unix_socket, for example, stops working. Check SHOW CREATE USER for accounts the tool manages (02-mariadb-privileges.md section 4)
 ```
 
+Two targets that reach one server are refused with `SOPULI-20008`: the tool
+knows a server by its `@@server_uid`.
+
 To manage passwords, create two accounts as root, one at any host and one at a
 named host:
 
@@ -1143,8 +1146,6 @@ acme_app@%  mariadb-dev  IN_SYNC  any second password ended; the current passwor
 1 closed
 ...
 ```
-
-Two targets on one MariaDB server are not caught yet (#1286).
 
 ---
 

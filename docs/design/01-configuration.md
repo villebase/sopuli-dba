@@ -1787,8 +1787,14 @@ way.
 ([`02-mariadb-privileges.md`](02-mariadb-privileges.md), which has the tool
 account's grants). UC-1's `creds generate`, `apply`, `check`, `rotate` and
 `status` run against a MariaDB target ([#1270](../decisions/log.md#1270)), and
-so do UC-2's commands (#1272) and `finish-rollover` (#1271). Two targets on one MariaDB server are not caught, because
-MariaDB has no `server_uuid` (#1286).
+so do UC-2's commands (#1272) and `finish-rollover` (#1271). Two targets that
+reach one server are refused with `SOPULI-20008`, as on MySQL. MariaDB has no
+`server_uuid`, so the tool knows a server by its `@@server_uid`, which changes
+at each restart and identifies a server only within one run
+([#1286](../decisions/log.md#1286)). A replica has its own. Galera was not
+measured: its nodes share their accounts, but each node would have its own
+`@@server_uid`, so two targets on two nodes of one cluster would not be
+caught. Declare one target for the cluster.
 
 **Each product's keys stay on its own targets.** These are refused, each
 naming the target and the key:

@@ -156,14 +156,19 @@ version does not name MariaDB is refused, exit 9. `doctor --check-privileges`
 says why a scope lacks `password_value`: the plugins that refuse the value, or
 that the settings could not be read. It audits the tool account against §2.1 and
 §3. It names a declared account that does not exist, and one on a plugin the
-tool does not change. Two targets on one server are not caught yet (#1286):
-MariaDB has no `server_uuid`, and no value the server sets is both per server
-and stable. `@@server_uid` changes at each restart, and `server_id`, `port`,
-`datadir` and `gtid_domain_id` keep their defaults unless a DBA sets them.
-Between restarts, `@@server_uid` differed on every server measured, a replica
-from its primary included, even one with the primary's hostname, port and
-datadir (`13_server_identity_probe.py`). It warns, and never fails
-([P5](../decisions/log.md#p5)), about:
+tool does not change. Two targets on one server are refused, `SOPULI-20008`,
+as on MySQL ([#1286](../decisions/log.md#1286)). MariaDB has no
+`server_uuid`, so the tool knows a server by `@@server_uid`, which any account
+reads. It changes at each restart. Between restarts it differed on every
+server measured, a replica from its primary included, even one with the
+primary's hostname, port and datadir; `server_id`, `port`, `datadir` and
+`gtid_domain_id` keep their defaults unless a DBA sets them
+(`13_server_identity_probe.py`). The tool compares identities only within one
+run, so a server that restarts during a run can let two targets on it through.
+Galera was not measured. Its nodes share their accounts, but each node is a
+server that starts on its own, so it would have its own `@@server_uid`, and
+two targets on two nodes of one cluster would not be caught.
+It warns, and never fails ([P5](../decisions/log.md#p5)), about:
 
 - each declared user name that also exists at a host the config does not
   declare, as on MySQL ([`02-mysql-privileges.md`](02-mysql-privileges.md) §4).

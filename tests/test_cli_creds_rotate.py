@@ -55,6 +55,7 @@ from sopuli.driver.protocol import (
     UNAVAILABLE,
     ChangeResult,
     Credential,
+    DriverError,
     Encryption,
     PrivilegeAudit,
     Scope,
@@ -1740,6 +1741,8 @@ def test_a_close_the_guardrails_refuse_is_warned_and_not_counted(
     )
     result = run(runner, write_config(CONFIG), "--finish-rollover", "--output", "json")
 
+    # The rotation finished and the windows did not close: exit 4 (#1347).
+    assert result.exit_code == ExitCode.PARTIAL, result.output
     assert finished(harness) == []
     body = document(result)
     left = [one for one in body["diagnostics"] if one.get("code") == ROLLOVER_LEFT_OPEN]
@@ -1769,10 +1772,72 @@ def test_a_close_that_fails_its_login_is_warned_too(
     )
     result = run(runner, write_config(CONFIG), "--finish-rollover", "--output", "json")
 
+    assert result.exit_code == ExitCode.PARTIAL, result.output
     body = document(result)
     left = [one for one in body["diagnostics"] if one.get("code") == ROLLOVER_LEFT_OPEN]
     assert left, body["diagnostics"]
     assert all("close was not made" in one["message"] for one in left)
+
+
+def test_a_close_on_an_account_locked_meanwhile_is_four(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+) -> None:
+    """#1347: an account locked after its change keeps its window, so the run
+    warns `SOPULI-W043` and exits 4. Only one target's account is locked, and
+    the other's window closes."""
+
+    def lock(harness: dict[str, Any], event: str) -> None:
+        if _after_both_changes(harness, event):
+            harness["databases"]["appdb-alpha"].declared["ACME_WEB_USER"] = user(
+                rollover_enabled=True, status="LOCKED", locked=True
+            )
+
+    harness = estate(
+        users={"ACME_WEB_USER": user(rollover_enabled=True)},
+        capabilities=frozenset({PASSWORD_ROLLOVER, EXPIRE_PASSWORD}),
+        on_call=lock,
+    )
+    result = run(runner, write_config(CONFIG), "--finish-rollover", "--output", "json")
+
+    assert result.exit_code == ExitCode.PARTIAL, result.output
+    left = [one for one in document(result)["diagnostics"] if one.get("code") == ROLLOVER_LEFT_OPEN]
+    assert [one["target"] for one in left] == ["appdb-alpha"]
+    assert finished(harness) == ["ACME_WEB_USER"]
+
+
+def test_a_close_on_a_target_lost_meanwhile_is_four(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+) -> None:
+    """#1347: a target that cannot be reached for the close keeps its window,
+    so the run warns `SOPULI-W043` with the connection's error and exits 4.
+    The target is lost at the first close's read, after both changes and their
+    verifications, so the apply rows are confirmed and the 4 is the close's."""
+    unreachable: dict[str, Exception] = {}
+
+    def lose_the_target(harness: dict[str, Any], event: str) -> None:
+        if _after_both_changes(harness, event):
+            unreachable["appdb-beta"] = DriverError("ORA-12541: no listener")
+
+    harness = estate(
+        users={"ACME_WEB_USER": user(rollover_enabled=True)},
+        capabilities=frozenset({PASSWORD_ROLLOVER, EXPIRE_PASSWORD}),
+        on_call=lose_the_target,
+        connect_errors=unreachable,
+    )
+    result = run(runner, write_config(CONFIG), "--finish-rollover", "--output", "json")
+
+    assert result.exit_code == ExitCode.PARTIAL, result.output
+    body = document(result)
+    applied = [row for row in body["results"] if row["state"] != "PENDING_APPLY"]
+    assert all(row["state"] == "ROLLOVER_ACTIVE" for row in applied), applied
+    assert finished(harness) == ["ACME_WEB_USER"]
+    left = [one for one in body["diagnostics"] if one.get("code") == ROLLOVER_LEFT_OPEN]
+    assert [one["target"] for one in left] == ["appdb-beta"]
+    assert "no listener" in left[0]["message"]
 
 
 def test_a_window_that_elapses_on_its_own_is_not_warned(
@@ -1789,6 +1854,8 @@ def test_a_window_that_elapses_on_its_own_is_not_warned(
     )
     result = run(runner, write_config(CONFIG), "--finish-rollover", "--output", "json")
 
+    # Nothing for `creds finish-rollover` to do, so no exit 4 either (#1347).
+    assert result.exit_code == ExitCode.SUCCESS, result.output
     body = document(result)
     left = [one for one in body.get("diagnostics", []) if one.get("code") == ROLLOVER_LEFT_OPEN]
     assert left == []

@@ -240,3 +240,56 @@ class TestExitCode:
             disagreed=0,
         )
         assert code == ExitCode.PARTIAL
+
+    def test_a_close_that_was_not_made_is_four(self) -> None:
+        """#1347: the rotation finished, but a window `--finish-rollover` was
+        asked to close is still open, and re-running `creds finish-rollover`
+        finishes it."""
+        code = rotation.exit_code_for(
+            staged_failures=0,
+            applied=[IN_SYNC],
+            promoted=True,
+            promotable=True,
+            disagreed=0,
+            unclosed=1,
+        )
+        assert code == ExitCode.PARTIAL
+
+    def test_a_worse_answer_than_an_unmade_close_stands(self) -> None:
+        """An unmade close turns only a 0 into a 4: a staging failure is still 1."""
+        code = rotation.exit_code_for(
+            staged_failures=1, applied=[], promoted=False, promotable=False, disagreed=0, unclosed=1
+        )
+        assert code == ExitCode.FAILURE
+
+    @pytest.mark.parametrize(
+        ("applied", "disagreed", "expected"),
+        [
+            ([IN_SYNC, ERROR], 0, ExitCode.PARTIAL),
+            ([IN_SYNC], 1, ExitCode.PARTIAL),
+            ([ERROR], 0, ExitCode.FAILURE),
+        ],
+        ids=["apply-partial", "read-back", "apply-failed"],
+    )
+    def test_an_unmade_close_does_not_change_a_non_zero_answer(
+        self, applied: list[str], disagreed: int, expected: ExitCode
+    ) -> None:
+        """Whatever `apply` or the read-back already answered stands, so the
+        guard on 0 is what decides, not the count."""
+        promoted = all(state == IN_SYNC for state in applied)
+        without = rotation.exit_code_for(
+            staged_failures=0,
+            applied=applied,
+            promoted=promoted,
+            promotable=True,
+            disagreed=disagreed,
+        )
+        with_unclosed = rotation.exit_code_for(
+            staged_failures=0,
+            applied=applied,
+            promoted=promoted,
+            promotable=True,
+            disagreed=disagreed,
+            unclosed=2,
+        )
+        assert without == with_unclosed == expected

@@ -154,6 +154,7 @@ def exit_code_for(
     promoted: bool,
     promotable: bool,
     disagreed: int,
+    unclosed: int = 0,
 ) -> int:
     """§8's failure table, as one number.
 
@@ -174,11 +175,18 @@ def exit_code_for(
     Re-running `apply` converges it and is safe, which is what makes 4 the honest
     code rather than 1.
 
-    **Everything else is `apply`'s own answer**, unchanged and deliberately so.
-    Steps 5, 6 and 7 are `apply` doing what `apply` does, and a rotation that
-    exits differently from the `apply` inside it would be two commands describing
-    one outcome in two vocabularies -- with the scheduler that reads both left to
-    reconcile them.
+    **Steps 5, 6 and 7 are `apply`'s own answer**, deliberately so. They are
+    `apply` doing what `apply` does, and a rotation that exited differently from
+    the `apply` inside it would be two commands describing one outcome in two
+    vocabularies -- with the scheduler that reads both left to reconcile them.
+
+    **A window `--finish-rollover` was asked to close and left open is exit 4**
+    (#1347), where that answer is otherwise 0. ``unclosed`` counts them: the
+    pairs `SOPULI-W043` names. This is the one step after `apply`'s. The rotation
+    finished and every target accepts `current`, but the old password still
+    works, and on MariaDB a window never elapses. Re-running `creds
+    finish-rollover` is safe and finishes it, the read-back row's reasoning. A
+    worse answer from `apply` stands.
 
     The takeover split -- 7 where the run was fenced out before it changed
     anything and 4 where it had already changed something -- is **not** here. It
@@ -189,4 +197,7 @@ def exit_code_for(
         return int(ExitCode.FAILURE)
     if disagreed:
         return int(ExitCode.PARTIAL)
-    return apply_states.exit_code_for(applied, promoted=promoted, promotable=promotable)
+    code = apply_states.exit_code_for(applied, promoted=promoted, promotable=promotable)
+    if unclosed and code == ExitCode.SUCCESS:
+        return int(ExitCode.PARTIAL)
+    return code

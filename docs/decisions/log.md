@@ -4721,3 +4721,24 @@ the register.
   the account's grants are fixed and the close is run again. A condition a
   flag waives that appears after the window opened, such as a new
   administrative role, does not stop the close, as before #1344.
+
+## #1347
+
+- **Decided:** 2026-11-06, #1347
+- **Question:** `creds rotate --finish-rollover` warns `SOPULI-W043` for each
+  window a close it attempted did not make ([#1344](#1344)), but its exit code
+  read only the applied rows, so such a run could exit 0. Should it exit
+  non-zero?
+- **Decision:** A, exit 4 (`PARTIAL`), where the run would otherwise exit 0.
+  A worse code from the apply rows stands. A window the database cannot end
+  early, which elapses on its own, changes neither the warnings nor the exit
+  code.
+- **Why:** a scheduled rotation reads the exit code, and on MariaDB a window
+  never elapses, so a close nobody noticed leaves the old password working for
+  good. 4 rather than 1, as for a read-back disagreement (UC-1 §8, row 8): the
+  rotation finished and every target accepts `current`, and re-running `creds
+  finish-rollover` is safe and finishes it. Exit 1 would read a completed
+  rotation as a broken one.
+- **Rejected:** B: keep exit 0 and let `SOPULI-W043` carry it.
+- **Accepted cost:** a run that exited 0 before exits 4. There are no users
+  yet who depend on the old code.

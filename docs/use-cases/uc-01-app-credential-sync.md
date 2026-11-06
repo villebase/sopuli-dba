@@ -2439,6 +2439,7 @@ invariant 5: the write lands under the store's `locks/` prefix, in a store that
 | 6 | database changed but verification failed | report loudly, no promotion; `check --include-previous` tells "wrong password" from "account locked/expired" |
 | 7 | database has new, vault `current` still old | **the most severe case**: exit 4 with `SOPULI-W033`, which names the document, its accounts and the store's message, and each row carries the failed `vault_promote`. `pending` still holds the right value, so `sopuli creds apply` completes it. It verifies every target again and promotes. `rotate` does not retry the promotion: a compare-and-set conflict means a writer outside the tool, and reading again to merge over it would rewrite fields of accounts nobody selected |
 | 8 | promoted, and the read-back disagreed or failed | the databases are converged, and the run cannot confirm that the vault serves what it accepted. Exit 4 with `SOPULI-W012`, which names the accounts, and the store's message for a document it could not read. Nothing needs undoing; the place to look is the vault, not any database: a replica behind its primary, or a store that stopped answering |
+| the close, under `--finish-rollover`, after 8 | rotated and promoted, and a close was not made: the account was refused, locked or gone, its `current` was refused at the close, or its target could not be reached | the old password still works, and on MariaDB until someone closes the window. Exit 4 with `SOPULI-W043` per account and target, saying why ([#1347](../decisions/log.md#1347)). `creds finish-rollover` closes it once that is resolved, and running it again is safe. A window the database cannot end early elapses on its own, and changes neither |
 | any fence check, at 4–7 | another run took this run's lock; what this run already applied stands | abort at once, change nothing more, exit **7** if nothing had been applied and **4** if something had, with `SOPULI-W011`. `check` establishes what is true; the run that holds the lock is the one that may fix it. A write that passed its fence check before the takeover still lands, so `pending` can hold this run's password |
 
 ### How `rotate` is built
@@ -2502,6 +2503,10 @@ promotion, because the vault already held what was applied, is closed as usual.
 The run names each account and target it left open, in a note and as a warning
 diagnostic. `creds finish-rollover` closes them once `current` holds the new
 password. Where the promotion did not happen, `creds apply` promotes it first.
+A close the run attempted and did not make is named the same way, with its
+reason, and makes the run exit 4 where it would otherwise exit 0: the rotation
+finished, but what `--finish-rollover` asked for did not, and a scheduler reads
+the exit code ([#1347](../decisions/log.md#1347)).
 
 **The fence also covers `--finish-rollover`.** Closing windows is the run's last
 change and the furthest from the acquisition at step 2, so it is the most likely

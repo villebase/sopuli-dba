@@ -448,18 +448,23 @@ read does not change the argument.
 - `--from-stdin` is for migration, and for cases where an external system
   dictates the password. It checks the password against the policy and refuses
   on a violation, unless `--no-policy-check` is passed. The audit event records
-  that flag and the violations it accepted. The flag cannot waive a control
-  character, which every driver refuses, or a `"` where any target the
-  password is staged for is Oracle (invariant 11). The password would be staged
-  and then refused by every `creds apply` there (#1327). These are refused with
-  or without the flag, before anything is written. A password that ends in a
-  line break is told a pipe may have added one. An empty stdin is refused
-  before any check. It reads `length:` as a minimum, not an exact figure,
-  because a dictated password is not weaker for being longer. It reads a pipe
-  or a redirect, and refuses a stdin that is a terminal before anything else,
-  with exit 2: a typed password would show on the screen. On Windows, mintty
-  without `winpty` gives the program a pipe, which cannot be told from any
-  other pipe, so the refusal needs a console there.
+  that flag and the violations it accepted. The flag cannot waive what a
+  driver of a target the password is staged for refuses, because the password
+  would be staged and then refused by every `creds apply` there (#1327, #1335).
+  Every driver refuses a control character, a password longer than the
+  target's byte limit, and one its character set cannot hold. The Oracle
+  driver also refuses `"` (invariant 11). On PostgreSQL, MySQL and MariaDB
+  the limit is the product's, so it is checked with `--offline` too. An Oracle
+  target's limit is checked only where the target answered, so `--offline`
+  leaves it to `creds apply`. These are refused with or without the flag,
+  before anything is written. A password that ends in a line break is told a
+  pipe may have added one. An empty stdin is refused before any check. It
+  reads `length:` as a minimum, not an exact figure, because a dictated
+  password is not weaker for being longer. It reads a pipe or a redirect, and
+  refuses a stdin that is a terminal before anything else, with exit 2: a typed
+  password would show on the screen. On Windows, mintty without `winpty` gives
+  the program a pipe, which cannot be told from any other pipe, so the refusal
+  needs a console there.
 - **A staged `pending` is not discarded unless you ask** (decided in #769).
   Where a selected account already has one, the run refuses on exit 8, naming
   the accounts, and points to `creds apply`, which applies and promotes what is

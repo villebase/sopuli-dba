@@ -776,21 +776,46 @@ def test_a_drawn_refusal_names_the_first_of_equally_strict_targets() -> None:
 def test_a_supplied_password_names_each_target_that_refuses_it() -> None:
     """`--from-stdin` is checked against every target's limit, so each violation
     says which target it came from -- and two targets refusing it are two
-    violations, not one merged into "the target"."""
+    violations, not one merged into "the target". The driver refuses both, so
+    `--no-policy-check` cannot waive them (#1335)."""
     policy = PasswordPolicy(length=4, charset="custom", allow="abz中", first_char="alpha")
     narrow = ByteLimit(max_bytes=4, encoding="utf-8", charset="AL32UTF8")
 
-    found = generate.candidate_for(
-        BINDING,
-        policy,
-        name="p",
-        readings=(("db-western", WESTERN), ("db-narrow", narrow), ("db-unicode", UNICODE)),
-        supplied=Secret("ab中z"),
-        enforce=False,
-    )
+    with pytest.raises(PasswordPolicyError) as raised:
+        generate.candidate_for(
+            BINDING,
+            policy,
+            name="p",
+            readings=(("db-western", WESTERN), ("db-narrow", narrow), ("db-unicode", UNICODE)),
+            supplied=Secret("ab中z"),
+            enforce=False,
+        )
 
-    details = [violation.detail for violation in found.accepted_violations]
-    assert details == [
-        "cannot be represented in cp1252 on 'db-western'",
-        "is 6 bytes in utf-8, the limit on 'db-narrow' is 4",
-    ]
+    hint = raised.value.hint or ""
+    assert "encoding (cannot be represented in cp1252 on 'db-western')" in hint
+    assert "byte_length (is 6 bytes in utf-8, the limit on 'db-narrow' is 4)" in hint
+    assert "`--no-policy-check` cannot waive that" in hint
+
+
+@pytest.mark.parametrize("enforce", [True, False])
+@pytest.mark.parametrize("product", ["oracle", "postgresql", "mysql", "mariadb"])
+def test_a_password_a_target_cannot_store_is_refused_even_under_no_policy_check(
+    product: str, enforce: bool
+) -> None:
+    """Decision A of #1335: every driver refuses a password too long for the
+    target, or one its character set cannot hold, so the flag cannot waive it."""
+    policy = PasswordPolicy(length=4, charset="custom", allow="abz中", first_char="alpha")
+    narrow = ByteLimit(max_bytes=4, encoding="utf-8", charset="AL32UTF8")
+
+    with pytest.raises(PasswordPolicyError) as raised:
+        generate.candidate_for(
+            BINDING,
+            policy,
+            name="p",
+            readings=(("db-narrow", narrow),),
+            supplied=Secret("ab中z"),
+            enforce=enforce,
+            products=(product,),
+        )
+
+    assert "refuses byte_length" in (raised.value.hint or "")

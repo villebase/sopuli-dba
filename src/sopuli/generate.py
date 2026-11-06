@@ -64,6 +64,7 @@ from sopuli.config.references import dangling
 from sopuli.config.secret_refs import SecretRef
 from sopuli.config.sharing import STAGE_COLLISION_HINT, colliding_stages
 from sopuli.config.targets import ORACLE
+from sopuli.driver.registry import refused_password_rules
 from sopuli.lock.keys import LockKey
 from sopuli.passwords import (
     ByteLimit,
@@ -71,7 +72,6 @@ from sopuli.passwords import (
     Violation,
     check,
     ends_in_line_break,
-    unwaivable,
 )
 from sopuli.passwords import generate as draw_password
 from sopuli.payload import (
@@ -509,7 +509,8 @@ def candidate_for(
     the tool drew the value itself, and a flag that silently changed the
     generator would be a different feature wearing this one's name. It cannot
     waive what a driver of ``products`` refuses
-    (:func:`~sopuli.passwords.unwaivable`): that password would stage a
+    (:func:`~sopuli.driver.registry.refused_password_rules`), byte limits and
+    encoding included: that password would stage a
     ``pending`` that every ``creds apply`` there refuses (#1327). ``products``
     is every product the password is staged for, not only this binding's,
     because :func:`draw_once` gives the other bindings of the password this
@@ -539,7 +540,7 @@ def candidate_for(
         )
 
     violations = _every_violation(supplied, policy, readings)
-    refused = unwaivable(products)
+    refused = refused_password_rules(products)
     unusable = tuple(one for one in violations if one.rule in refused)
     if violations and (enforce or unusable):
         raise _refused(

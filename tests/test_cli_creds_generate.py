@@ -760,6 +760,35 @@ def test_a_quote_is_waivable_unless_an_oracle_target_shares_the_password(
         assert store.read(PATH) is None
 
 
+def test_offline_still_refuses_a_password_over_a_fixed_limit(
+    runner: CliRunner, write_config: Callable[[str], Path], store: MemoryStore
+) -> None:
+    """PostgreSQL's limit is the product's, so `--offline` knows it, and the
+    flag cannot waive it (#1335)."""
+    config = CONFIG.replace("targets: [appdb-alpha]", "targets: [appdb-pg]").replace(
+        "applications:",
+        "  - name: appdb-pg\n"
+        "    type: postgresql\n"
+        "    dsn: pg.example.com:5432\n"
+        "    environment: dev\n"
+        "    postgres: { database: acme }\n"
+        "    vault: vault-prod\n"
+        "applications:",
+    )
+    result = run(
+        runner,
+        write_config(config),
+        "--from-stdin",
+        "--no-policy-check",
+        "--offline",
+        stdin="A" * 1025 + "\n",
+    )
+
+    assert isinstance(result.exception, ConfigError), result.exception
+    assert "byte_length" in (result.exception.hint or "")
+    assert store.read(PATH) is None
+
+
 def test_an_empty_stdin_is_refused(
     runner: CliRunner, write_config: Callable[[str], Path], store: MemoryStore
 ) -> None:

@@ -33,11 +33,18 @@ client.
 from __future__ import annotations
 
 import importlib
+from collections.abc import Iterable
 from dataclasses import dataclass
 from types import ModuleType
 
 from sopuli.config.errors import ConfigError
 from sopuli.config.model import Target
+
+# The limits modules import no vendor client, so naming them here keeps the
+# registry importable on a machine with no driver installed.
+from sopuli.driver.mariadb.limits import LIMIT as MARIADB_LIMIT
+from sopuli.driver.mysql.limits import LIMIT as MYSQL_LIMIT
+from sopuli.driver.postgres.limits import LIMIT as POSTGRES_LIMIT
 from sopuli.driver.protocol import Driver, DriverContext, DriverError
 from sopuli.exit_codes import ExitCode
 from sopuli.extras import (
@@ -49,6 +56,7 @@ from sopuli.extras import (
     pipx_install_command,
 )
 from sopuli.extras import installed as extras_installed
+from sopuli.passwords import BYTE_LENGTH, CONTROL, ENCODING, FORBIDDEN, ByteLimit
 
 #: ``error.code`` for a configured driver whose client is not installed
 #: (``03-json-output.md`` §3), so a consumer can branch on this case without
@@ -86,10 +94,22 @@ class DatabaseDriver:
     #: importable.
     provides: frozenset[str] = frozenset()
     #: The product's password byte limit in words, for `policy sample
-    #: --max-bytes`'s help. A literal, because the help is built when the CLI is
+    #: --max-bytes`'s help. Read from :attr:`fixed_limit` where the product has
+    #: one, and a literal on Oracle, because the help is built when the CLI is
     #: imported and must not import a driver; a tier-0 test pins it to the
     #: driver's own rule.
     password_limit: str | None = None
+    #: The :func:`sopuli.passwords.check` rules whose violation this driver
+    #: refuses when it sets a password, so `creds generate --no-policy-check`
+    #: cannot waive them (#1327, #1335). A literal for the reason
+    #: ``password_limit`` is one; a tier-0 test pins it to what the driver's own
+    #: admission check refuses. An empty password is refused before any rule.
+    refuses: frozenset[str] = frozenset()
+    #: The password limit when it is a fact about the product rather than about
+    #: one database, so a check needs no connection to know it. ``None`` where
+    #: only the target can say, as on Oracle, whose limit depends on the release
+    #: and the character set.
+    fixed_limit: ByteLimit | None = None
     #: The commands this driver is written for, by the run document's command
     #: name (``creds.apply``, never ``creds apply``), or ``None`` for every
     #: command. `doctor` is never listed and never refused: it asks only what the
@@ -150,6 +170,8 @@ DRIVERS: dict[str, DatabaseDriver] = {
         # name resolves to nothing at all.
         provides=frozenset({"oracledb"}),
         password_limit="30 below 23, 128 from 23",
+        # `"` too: a quoted identifier has no escape for it (invariant 11).
+        refuses=frozenset({CONTROL, FORBIDDEN, ENCODING, BYTE_LENGTH}),
     ),
     # The module that imports psycopg, for the reason the Oracle entry names
     # `session`. `psycopg` is the module the `postgres` extra installs.
@@ -157,7 +179,9 @@ DRIVERS: dict[str, DatabaseDriver] = {
         module="sopuli.driver.postgres.session",
         extra="postgres",
         provides=frozenset({"psycopg"}),
-        password_limit="1024",
+        password_limit=str(POSTGRES_LIMIT.max_bytes),
+        refuses=frozenset({CONTROL, ENCODING, BYTE_LENGTH}),
+        fixed_limit=POSTGRES_LIMIT,
         # UC-1: `creds check`, by login (#1067); `creds apply`, which sets a
         # password with a verifier computed on the client (#1060); and `creds
         # rotate`, `generate`, `status` and `finish-rollover`, whose modes
@@ -201,7 +225,9 @@ DRIVERS: dict[str, DatabaseDriver] = {
         module="sopuli.driver.mysql.session",
         extra="mysql",
         provides=frozenset({"pymysql"}),
-        password_limit="256",
+        password_limit=str(MYSQL_LIMIT.max_bytes),
+        refuses=frozenset({CONTROL, ENCODING, BYTE_LENGTH}),
+        fixed_limit=MYSQL_LIMIT,
         commands=frozenset(
             {
                 "account.list",
@@ -240,7 +266,9 @@ DRIVERS: dict[str, DatabaseDriver] = {
         module="sopuli.driver.mariadb.session",
         extra="mariadb",
         provides=frozenset({"pymysql", "nacl"}),
-        password_limit="1024",
+        password_limit=str(MARIADB_LIMIT.max_bytes),
+        refuses=frozenset({CONTROL, ENCODING, BYTE_LENGTH}),
+        fixed_limit=MARIADB_LIMIT,
         commands=frozenset(
             {
                 "account.list",
@@ -307,6 +335,19 @@ class NotWrittenError(DriverError):
             hint=f"this is not something to install: {hint}",
             code=DRIVER_NOT_IMPLEMENTED,
         )
+
+
+def refused_password_rules(products: Iterable[str]) -> frozenset[str]:
+    """Every :func:`sopuli.passwords.check` rule a driver of ``products``
+    refuses, read from :attr:`DatabaseDriver.refuses`. No driver is imported.
+
+    No products is read as every product, the strictest answer: a caller that
+    named none still gets nothing waived that some driver refuses.
+    """
+    found: frozenset[str] = frozenset()
+    for product in products or DRIVERS:
+        found = found | DRIVERS[product].refuses
+    return found
 
 
 def installed(driver: DatabaseDriver) -> bool:

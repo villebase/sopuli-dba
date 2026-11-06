@@ -6424,13 +6424,16 @@ def creds_generate(
         emitter.event(document, "constraints.resolved", data=document.constraints)
     # Once per password, not per binding: an account on several targets that
     # share its ref is one password (`sopuli.generate`'s docstring).
-    # `_candidate` adds every product the password is staged for, so a driver
-    # that refuses it on one of them is not waived for the others (#1327).
+    # `_candidate` adds every product the password is staged for, a target the
+    # selectors left out included, so a driver that refuses it on one of them
+    # is not waived for the others (#1327, #1351).
+    estate = _declared_estate(run.config)
     candidates = staging.draw_once(
         bindings,
         lambda binding: _candidate(
             binding,
             config,
+            estate=estate,
             name=policy_name,
             supplied=supplied,
             enforce=not no_policy_check,
@@ -6619,6 +6622,7 @@ def _candidate(
     binding: Binding,
     config: Config,
     *,
+    estate: Config,
     name: str | None,
     supplied: Secret | None,
     enforce: bool,
@@ -6639,18 +6643,21 @@ def _candidate(
     property of the *targets*, not of the binding, and a function called once per
     account is the wrong place to open a connection.
 
-    **Every selected target that shares the password is added here**, because
-    each of them reads the one value that is staged (:func:`_sharing_targets`).
-    Each one's product limit is added where
-    ``readings`` has no reading for it, so every verb that draws is held to
-    them without passing them. ``products`` is those targets' products, unless
-    given, and :func:`~sopuli.driver.registry.refused_password_rules` reads it
-    (#1327). With no limit at all the policy's declared length governs, which is
-    what :func:`sopuli.generate.candidate_for` does with an empty ``readings``.
+    **Every target that shares the password is added here**, because each of
+    them reads the one value that is staged (:func:`_sharing_targets`). That
+    includes a target the selectors left out, so ``estate`` is the config before
+    they narrowed it (:func:`_declared_estate`). Nothing logs in to such a
+    target: only its product's fixed limit and its product's refused rules are
+    used. Each target's product limit is added where ``readings`` has no reading
+    for it, so every verb that draws is held to them without passing them.
+    ``products`` is those targets' products, unless given, and
+    :func:`~sopuli.driver.registry.refused_password_rules` reads it (#1327).
+    With no limit at all the policy's declared length governs, which is what
+    :func:`sopuli.generate.candidate_for` does with an empty ``readings``.
     """
     effective = binding if name is None else replace(binding, policy=name)
     chosen, policy = staging.policy_for(config, effective)
-    sharing = _sharing_targets(config, binding)
+    sharing = _sharing_targets(estate, binding)
     if products is None:
         products = frozenset(target.target.type for target in sharing)
     read = {target for target, _ in readings}
@@ -6666,16 +6673,20 @@ def _candidate(
     )
 
 
-def _sharing_targets(config: Config, binding: Binding) -> list[ExpandedTarget]:
-    """Every target in ``config`` whose binding reads ``binding``'s password.
+def _sharing_targets(estate: Config, binding: Binding) -> list[ExpandedTarget]:
+    """``binding``'s target and every target in ``estate`` whose binding reads
+    the same password.
 
-    ``config`` is the one the verb narrowed to its selection, so a target the
-    selectors left out is not here.
+    ``estate`` is the whole config, so a target the selectors left out is here.
+    ``binding``'s own target is named directly, not found by its key: where
+    :func:`_declared_estate` could not complete the stores, the estate's copy of
+    ``binding`` has none, and its key would match nothing.
     """
     key = staging.password_key(binding)
-    if key is None:
-        return _targets_of(config, [binding])
-    return _targets_of(config, [one for one in config.bindings if staging.password_key(one) == key])
+    sharing = [binding]
+    if key is not None:
+        sharing.extend(one for one in estate.bindings if staging.password_key(one) == key)
+    return _targets_of(estate, sharing)
 
 
 def _product_limits(targets: Sequence[ExpandedTarget]) -> list[tuple[str, ByteLimit]]:
@@ -11336,6 +11347,7 @@ def _restage(
     emitter = run.emitter()
     drawn: list[tuple[str, LockKey]] = []
     notes: list[Diagnostic] = []
+    estate = _declared_estate(run.config)
     for key, records in _redraws_by_document(wanted).items():
         # A redraw replaces a rollover rotation's `pending` with another that
         # carries its mark (#1224): the re-apply that follows reaches targets
@@ -11345,7 +11357,9 @@ def _restage(
             replace(candidate, rollover=_marked(candidate.binding, stored))
             for candidate in staging.draw_once(
                 [record.binding for record in records],
-                lambda binding: _candidate(binding, config, name=None, supplied=None, enforce=True),
+                lambda binding: _candidate(
+                    binding, config, estate=estate, name=None, supplied=None, enforce=True
+                ),
             )
         )
         # Sent as each password is drawn, before the write that stages it, so a
@@ -11697,8 +11711,9 @@ def _left_out(
 def _declared_estate(config: Config) -> Config:
     """Every binding the file declares, with the stores that resolve without asking.
 
-    For the promotion gate only (decision #406), which needs the pairs a selector
-    left out. **It never refuses**: `binding_stores.complete` rejects a
+    For a check that needs the pairs a selector left out, such as the promotion
+    gate (decision #406) and the targets that share a drawn password (#1351).
+    **It never refuses**: `binding_stores.complete` rejects a
     `SOPULI_VAULT` that names an undeclared store, which is right for a run that
     needs the default and wrong for one that is refused over a binding it excluded.
     Where completing would refuse, the bindings are returned as loaded, and the ones
@@ -12757,9 +12772,13 @@ def creds_rotate(
     # config, so it is refused before any target login, `--dry-run` included
     # (invariant 4). Only what is due is drawn, as the run draws. The draw is
     # pure and its values are thrown away: the run draws again after the survey.
+    # A target the selectors left out counts too (#1351).
+    estate = _declared_estate(run.config)
     staging.draw_once(
         [binding for binding in bindings if due is None or _lock_key(binding) in due],
-        lambda binding: _candidate(binding, config, name=None, supplied=None, enforce=True),
+        lambda binding: _candidate(
+            binding, config, estate=estate, name=None, supplied=None, enforce=True
+        ),
     )
     # Refused here, not warned: the stage is written before the guardrail pass
     # and the databases change before the promotion, so a promotion the store
@@ -13150,11 +13169,14 @@ def _rotate_estate(
     # sets it again without ending the window this run opens on MySQL. Only a
     # driver that keeps a second password on request reads the mark's effect.
     marked = strategy == strategies.ROLLOVER
+    estate = _declared_estate(run.config)
     writes = staging.group(
         replace(candidate, rollover=marked)
         for candidate in staging.draw_once(
             drawn,
-            lambda binding: _candidate(binding, config, name=None, supplied=None, enforce=True),
+            lambda binding: _candidate(
+                binding, config, estate=estate, name=None, supplied=None, enforce=True
+            ),
         )
     )
     for write in writes:

@@ -1670,6 +1670,43 @@ def test_a_dry_run_refuses_a_policy_over_the_products_fixed_limit_before_any_log
     assert harness["sessions"] == []
 
 
+def test_a_target_the_selectors_leave_out_holds_the_policy_to_its_limit_before_any_login(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """`appdb-pg` reads the password `--target appdb-alpha` would rotate, so a
+    policy PostgreSQL cannot hold is refused at plan time, `--dry-run`
+    included, and nothing logs in to either target (#1351)."""
+    config = (
+        CONFIG.replace("length: 24", "length: 1100")
+        .replace("apps/acme/{target}#", "apps/acme/shared#")
+        .replace(
+            "applications:",
+            "  - name: appdb-pg\n"
+            "    type: postgresql\n"
+            "    dsn: pg.example.com:5432\n"
+            "    environment: prod\n"
+            "    postgres: { database: acme }\n"
+            "    vault: vault-prod\n"
+            "applications:",
+        )
+        .replace(
+            "accounts: [acme_web_user]",
+            "accounts: [acme_web_user]\n    targets: [appdb-alpha, appdb-pg]",
+        )
+    )
+    harness = estate(
+        documents={"apps/acme/shared": {"DB_CREDENTIALS": {"acme_web_user": LIVE}}},
+    )
+    before = harness["store"].read("apps/acme/shared").version
+    result = run(runner, write_config(config), "--target", "appdb-alpha", "--dry-run")
+
+    assert result.exit_code != ExitCode.SUCCESS
+    assert "appdb-pg" in str(result.exception)
+    assert "1024" in str(result.exception)
+    assert harness["sessions"] == []
+    assert harness["store"].read("apps/acme/shared").version == before
+
+
 def test_an_error_after_a_retain_still_says_both_passwords_work(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:

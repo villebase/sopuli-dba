@@ -261,3 +261,35 @@ class TestExitCode:
             staged_failures=1, applied=[], promoted=False, promotable=False, disagreed=0, unclosed=1
         )
         assert code == ExitCode.FAILURE
+
+    @pytest.mark.parametrize(
+        ("applied", "disagreed", "expected"),
+        [
+            ([IN_SYNC, ERROR], 0, ExitCode.PARTIAL),
+            ([IN_SYNC], 1, ExitCode.PARTIAL),
+            ([ERROR], 0, ExitCode.FAILURE),
+        ],
+        ids=["apply-partial", "read-back", "apply-failed"],
+    )
+    def test_an_unmade_close_does_not_change_a_non_zero_answer(
+        self, applied: list[str], disagreed: int, expected: ExitCode
+    ) -> None:
+        """Whatever `apply` or the read-back already answered stands, so the
+        guard on 0 is what decides, not the count."""
+        promoted = all(state == IN_SYNC for state in applied)
+        without = rotation.exit_code_for(
+            staged_failures=0,
+            applied=applied,
+            promoted=promoted,
+            promotable=True,
+            disagreed=disagreed,
+        )
+        with_unclosed = rotation.exit_code_for(
+            staged_failures=0,
+            applied=applied,
+            promoted=promoted,
+            promotable=True,
+            disagreed=disagreed,
+            unclosed=2,
+        )
+        assert without == with_unclosed == expected

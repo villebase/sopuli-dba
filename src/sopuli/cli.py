@@ -13201,6 +13201,11 @@ def _rotate_estate(
             (record.binding.target, record.binding.account) for record in settled
         )
         left = _left_open(into.applied, settled)
+        # Every window `--finish-rollover` was asked for and left open makes the
+        # run exit 4 (#1347). These come with a withheld, failed or unconfirmed
+        # promotion, which already exits 4; counted all the same, so the rule
+        # holds without depending on that.
+        into.unclosed = len(left)
         if left:
             # One line for a person, and one entry per pair for a consumer, so
             # that which windows are open is read from `account` and `target`
@@ -13235,7 +13240,7 @@ def _rotate_estate(
             # it is said, its pair is no longer counted as closing (#1344), and
             # the run exits 4 (#1347).
             kept = _not_closed(finished)
-            into.unclosed = len(kept)
+            into.unclosed += len(kept)
             into.closing = into.closing - {(target, account) for account, target, _ in kept}
             into.caveats.extend(
                 _not_closed_note(account, target, reason) for account, target, reason in kept

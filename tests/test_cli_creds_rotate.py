@@ -1813,17 +1813,16 @@ def test_a_close_on_a_target_lost_meanwhile_is_four(
     estate: Harness,
 ) -> None:
     """#1347: a target that cannot be reached for the close keeps its window,
-    so the run warns `SOPULI-W043` and exits 4."""
+    so the run warns `SOPULI-W043` with the connection's error and exits 4.
+    The target is lost at the first close's read, after both changes and their
+    verifications, so the apply rows are confirmed and the 4 is the close's."""
     unreachable: dict[str, Exception] = {}
 
     def lose_the_target(harness: dict[str, Any], event: str) -> None:
-        changes = harness.setdefault("changes", [])
-        if event == "set_password":
-            changes.append(event)
-        if len(changes) >= 2:
+        if _after_both_changes(harness, event):
             unreachable["appdb-beta"] = DriverError("ORA-12541: no listener")
 
-    estate(
+    harness = estate(
         users={"ACME_WEB_USER": user(rollover_enabled=True)},
         capabilities=frozenset({PASSWORD_ROLLOVER, EXPIRE_PASSWORD}),
         on_call=lose_the_target,
@@ -1832,8 +1831,13 @@ def test_a_close_on_a_target_lost_meanwhile_is_four(
     result = run(runner, write_config(CONFIG), "--finish-rollover", "--output", "json")
 
     assert result.exit_code == ExitCode.PARTIAL, result.output
-    left = [one for one in document(result)["diagnostics"] if one.get("code") == ROLLOVER_LEFT_OPEN]
+    body = document(result)
+    applied = [row for row in body["results"] if row["state"] != "PENDING_APPLY"]
+    assert all(row["state"] == "ROLLOVER_ACTIVE" for row in applied), applied
+    assert finished(harness) == ["ACME_WEB_USER"]
+    left = [one for one in body["diagnostics"] if one.get("code") == ROLLOVER_LEFT_OPEN]
     assert [one["target"] for one in left] == ["appdb-beta"]
+    assert "no listener" in left[0]["message"]
 
 
 def test_a_window_that_elapses_on_its_own_is_not_warned(

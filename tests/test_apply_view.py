@@ -417,6 +417,23 @@ def test_the_repair_invocation_echoes_what_narrowed_the_run() -> None:
     assert line == "sopuli creds apply --select env=prod --select tenant=alpha"
 
 
+def test_the_repair_invocation_echoes_every_selector_flag() -> None:
+    """`--target`, `--group`, `--application` and `--account` narrow a run as
+    `--select` does, so a repair that dropped them would walk the whole estate."""
+    line = apply_view.repair_invocation(
+        selectors=("env=prod",),
+        targets=("appdb-alpha",),
+        groups=("tenants",),
+        applications=("acme",),
+        accounts=("acme_web_user", "acme_api_user"),
+    )
+
+    assert line == (
+        "sopuli creds apply --select env=prod --target appdb-alpha --group tenants"
+        " --application acme --account acme_web_user --account acme_api_user"
+    )
+
+
 def test_the_repair_invocation_carries_the_layers_the_run_resolved_under() -> None:
     """A scheduled run repaired without its profile resolves its settings from
     different layers and is a different run (`01-configuration.md` §5)."""

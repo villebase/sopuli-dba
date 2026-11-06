@@ -8064,8 +8064,13 @@ def creds_apply(
     # withheld because the run was too narrow (decision #406) is finished only by a
     # wider one, so echoing the selectors back would name the invocation that
     # withholds it again.
+    narrowed = not left_out
     rerun = repair_invocation(
-        selectors=() if left_out else selectors,
+        selectors=selectors if narrowed else (),
+        targets=targets if narrowed else (),
+        groups=groups if narrowed else (),
+        applications=applications if narrowed else (),
+        accounts=accounts if narrowed else (),
         config_paths=[str(path) for path in run.config_paths],
         profile=run.profile,
         source=source_stage,
@@ -13008,6 +13013,10 @@ def creds_rotate(
     # below, so the two name one command.
     rerun = repair_invocation(
         selectors=selectors,
+        targets=targets,
+        groups=groups,
+        applications=applications,
+        accounts=accounts,
         config_paths=[str(path) for path in run.config_paths],
         profile=run.profile,
         strategy=strategy,

@@ -509,6 +509,10 @@ def render_source_table(rows: Sequence[tuple[Binding, Source]]) -> list[str]:
 def repair_invocation(
     *,
     selectors: Sequence[str] = (),
+    targets: Sequence[str] = (),
+    groups: Sequence[str] = (),
+    applications: Sequence[str] = (),
+    accounts: Sequence[str] = (),
     config_paths: Sequence[str] = (),
     profile: str | None = None,
     source: str | None = None,
@@ -524,7 +528,8 @@ def repair_invocation(
     exists to protect.
 
     So this echoes back the options that decide **what would be applied** -- the
-    selectors, the stage, the regime -- and the two that decide **how the file
+    selectors (``--select``, ``--target``, ``--group``, ``--application`` and
+    ``--account``), the stage, the regime -- and the two that decide **how the file
     resolves**, ``--config`` and ``--profile``. A scheduled run repaired without
     its profile resolves its settings from different layers and is a different
     run (`01-configuration.md` §5), which is the failure that looks like the
@@ -557,8 +562,15 @@ def repair_invocation(
         words += ["--config", _word(path)]
     if profile is not None:
         words += ["--profile", _word(profile)]
-    for selector in selectors:
-        words += ["--select", _word(selector)]
+    for flag, values in (
+        ("--select", selectors),
+        ("--target", targets),
+        ("--group", groups),
+        ("--application", applications),
+        ("--account", accounts),
+    ):
+        for value in values:
+            words += [flag, _word(value)]
     if source is not None:
         words += ["--source", source]
         if source == PREVIOUS:

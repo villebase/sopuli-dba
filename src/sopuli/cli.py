@@ -12283,7 +12283,8 @@ def creds_finish_rollover(
     body = render_finish(
         rows, would_close=sum(1 for one in finished if one.would_close) if run.dry_run else None
     )
-    return f"{header}\n\n{body}"
+    refused = [_refused_close_note(record) for record in finished if record.turned_away]
+    return "\n".join([f"{header}\n\n{body}", *render_notices(refused)])
 
 
 def _finish_exit_code(finished: Sequence[_Finished]) -> int:

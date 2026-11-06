@@ -408,6 +408,13 @@ def test_a_refused_close_beside_a_made_one_exits_4(
     assert result.exit_code == ExitCode.PARTIAL, result.output
     states = {row["account"]: row["state"] for row in document(result)["results"]}
     assert states == {"acme_web_user": "IN_SYNC", "acme_batch_user": "SKIPPED"}
+
+    # The text says why the run exited 4, under the table.
+    monkeypatch.setattr("sopuli.cli.CLOSE_SETS_PASSWORD_TYPES", frozenset({"oracle"}))
+    text = run(runner, write_config(TWO_ACCOUNTS), "--select", "tenant=alpha", "--confirm")
+    assert text.exit_code == ExitCode.PARTIAL, text.output
+    assert "1 note:" in text.output
+    assert "the rollover window stays open for acme_batch_user on appdb-alpha" in text.output
     assert harness["sessions"][0].closed == ["ACME_WEB_USER"]
 
 

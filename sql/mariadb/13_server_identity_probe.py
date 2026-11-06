@@ -14,9 +14,12 @@ four servers:
        value answers `same` or `changed`
   SI3  across the four servers, once all four are read: for each value,
        whether all four differ
-
-A replica of one of these servers was not measured: whether a value differs
-between a primary and its replica, as `server_uuid` does, stays open.
+  SI4  a replica of each server: a new container of the same image on the
+       server's network, started with --server-id=2, which replication
+       needs, and replicating from the server's current binary log
+       position. The tool account is then created again on the server, so
+       the replica holds it only through replication. SI1 is read as that
+       account on both, and each value answers `same` or `differ`
 
 The probe checks each result against the one RESULTS below records. A
 difference, or a step that fails, makes it exit 1.
@@ -39,11 +42,16 @@ RESULTS -- the same on every release; RECORDED below holds each value
        changes**
   SI3  hostname and @@server_uid differ between the four servers; the others
        are shared
+  SI4  @@server_uid and hostname differ between a server and its replica.
+       server_id differs only because the replica had to be given another.
+       port, datadir and gtid_domain_id are the same
 
   So no value is both stable across a restart and set per server by the
   server itself. @@server_uid changes at each start. hostname differs here
   only because each container has its own; two servers on one host share
-  it, and differ by port or datadir instead.
+  it, and differ by port or datadir instead. Within one run, while no
+  server restarts, @@server_uid tells every server apart, a replica from
+  its primary included.
 
 HOW TO RUN, against the matrix (test/README.md), from the repo root:
 
@@ -53,8 +61,9 @@ It needs the docker CLI, and 02 beside it, with MySQL's 02, whose helpers it
 uses.
 
 THROWAWAY SERVERS ONLY. It restarts each server, creates the accounts
-sopuli_probe_hash and sopuli_probe_tool, and drops them at the end, also
-after a failed step.
+sopuli_probe_hash, sopuli_probe_tool and sopuli_probe_repl, and drops them at
+the end, also after a failed step. It starts one replica container per server,
+named after the server's container with `-replica`, and removes it after SI4.
 """
 
 from __future__ import annotations
@@ -63,6 +72,7 @@ import importlib.util
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 # 02's name starts with a digit, so it is loaded by its path.
@@ -149,6 +159,90 @@ def cases(service: str) -> None:
     SEEN[service] = after
     if len(SEEN) == len(ch.base.SERVICES):
         compare()
+    replica = f"{service}-replica"
+    try:
+        start_replica(service, replica)
+        primary_values, replica_values = values(service), values(replica)
+    finally:
+        remove_replica(service, replica)
+    print(f"SI4 {service}: primary {primary_values}")
+    print(f"SI4 {service}: replica {replica_values}")
+    apart = {
+        name: "same" if replica_values[name] == primary_values[name] else "differ"
+        for name in primary_values
+    }
+    print(f"SI4 {service}: {apart}")
+    ch.check(f"SI4 {service}", apart, RECORDED.get("SI4"))
+
+
+REPLICATION_USER = "sopuli_probe_repl"
+REPLICATION_PASSWORD = "Acme-Repl-pw0"
+
+
+def docker(*args: str) -> str:
+    done = subprocess.run(["docker", *args], check=False, capture_output=True, text=True)
+    if done.returncode != 0:
+        raise ch.StepError(f"docker {args[0]}: {done.stderr.strip()}")
+    return done.stdout.strip()
+
+
+def wait_for(what: str, ready: Callable[[], bool], seconds: int = 120) -> None:
+    for _ in range(seconds):
+        if ready():
+            return
+        time.sleep(1)
+    raise ch.StepError(f"{what}: not ready after {seconds} s")
+
+
+def start_replica(service: str, replica: str) -> None:
+    """SI4: a new server of the same image on the primary's network,
+    replicating from the primary's current binary log position. The tool
+    account is then created again on the primary, so the replica holds it
+    only through replication, which shows that replication runs."""
+    primary = ch.base.container(service)
+    image = docker("inspect", "--format", "{{.Config.Image}}", primary)
+    network = docker(
+        "inspect", "--format", "{{range $name, $_ := .NetworkSettings.Networks}}{{$name}}{{end}}",
+        primary,
+    )  # fmt: skip
+    ch.root(
+        service,
+        f"DROP USER IF EXISTS '{REPLICATION_USER}'@'%';"
+        f"CREATE USER '{REPLICATION_USER}'@'%' IDENTIFIED BY '{REPLICATION_PASSWORD}';"
+        f"GRANT REPLICATION SLAVE ON *.* TO '{REPLICATION_USER}'@'%'",
+    )
+    log_file, log_pos = ch.root(service, "SHOW MASTER STATUS").split("\t")[:2]
+    docker(
+        "run", "-d", "--name", ch.base.container(replica), "--network", network,
+        "-e", f"MARIADB_ROOT_PASSWORD={ch.ROOT_PASSWORD}", image, "--server-id=2",
+    )  # fmt: skip
+    wait_for(replica, lambda: ch.mysql(replica, "root", ch.ROOT_PASSWORD, "SELECT 1")[0])
+    ch.root(
+        replica,
+        f"CHANGE MASTER TO MASTER_HOST='{primary}', MASTER_PORT=3306,"
+        f" MASTER_USER='{REPLICATION_USER}', MASTER_PASSWORD='{REPLICATION_PASSWORD}',"
+        f" MASTER_LOG_FILE='{log_file}', MASTER_LOG_POS={log_pos};"
+        "START SLAVE",
+    )
+    tool = ch.TOOL
+    ch.root(
+        service,
+        f"DROP USER IF EXISTS '{tool}'@'%';"
+        f"CREATE USER '{tool}'@'%' IDENTIFIED BY '{ch.base.TOOL_PASSWORD}';"
+        f"GRANT CREATE USER ON *.* TO '{tool}'@'%'",
+    )
+    wait_for(
+        f"{replica} replicating",
+        lambda: ch.root(replica, f"SELECT COUNT(*) FROM mysql.user WHERE user = '{tool}'") == "1",
+        seconds=60,
+    )
+
+
+def remove_replica(service: str, replica: str) -> None:
+    subprocess.run(
+        ["docker", "rm", "-f", ch.base.container(replica)], check=False, capture_output=True
+    )
+    ch.root(service, f"DROP USER IF EXISTS '{REPLICATION_USER}'@'%'")
 
 
 def compare() -> None:
@@ -191,6 +285,15 @@ RECORDED: dict[str, dict[str, str]] = {
         "gtid_domain_id": "shared",
         "server_uid": "all differ",
         "status server_uid": "shared",
+    },
+    "SI4": {
+        "server_id": "differ",
+        "hostname": "differ",
+        "port": "same",
+        "datadir": "same",
+        "gtid_domain_id": "same",
+        "server_uid": "differ",
+        "status server_uid": "same",
     },
 }
 

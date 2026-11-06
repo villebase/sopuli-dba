@@ -38,6 +38,7 @@ from typing import Any, ClassVar, NoReturn, TypeVar
 import pymysql
 
 from sopuli.config.model import ExpandedTarget, Runtime
+from sopuli.driver.clusters import Identity
 from sopuli.driver.mariadb import accounts as accounts_module
 from sopuli.driver.mariadb import password as password_module
 from sopuli.driver.mariadb import roles, verification
@@ -216,15 +217,23 @@ WSREP_STATE = (
 )
 
 
-def _galera_cluster(cursor: Any) -> str | None:
-    """The cluster's UUID on a Galera node that is `Synced`, otherwise
-    ``None``. A node still joining was not measured, so it is known by its
-    server instead: that can miss two targets on one cluster, and never
-    refuses two that are not."""
+def _wsrep_state(cursor: Any) -> tuple[str, str]:
+    """The cluster's UUID and the node's state, each ``""`` where the server
+    has no such row, as a MariaDB built without Galera has none."""
     cursor.execute(WSREP_STATE)
     found = {str(name).lower(): str(value) for name, value in cursor.fetchall()}
-    cluster = found.get("wsrep_cluster_state_uuid", "")
-    return cluster if cluster and found.get("wsrep_local_state_comment") == "Synced" else None
+    return found.get("wsrep_cluster_state_uuid", ""), found.get("wsrep_local_state_comment", "")
+
+
+#: The words for two targets on nodes of one Galera cluster (#1346).
+GALERA_KIND = "Galera cluster"
+GALERA_KEY = "wsrep_cluster_state_uuid"
+GALERA_HINT = (
+    "declare each cluster once: its nodes share their accounts, so one target "
+    "covers them all. If they are two clusters, one started from a copy of the "
+    "other's data, they can share the UUID: give each its own secret and run one "
+    "of them per run with --target"
+)
 
 
 @dataclass
@@ -259,13 +268,13 @@ class MariadbSession(ClosesConnection):
     _password_checks: tuple[str, ...] | None = field(default=None, init=False, repr=False)
     #: Why that read failed, for the refusal's hint.
     _checks_unread: str | None = field(default=None, init=False, repr=False)
+    #: Why :meth:`shared_identity` found no cluster on a Galera node, or
+    #: ``None``. An account with only ``CREATE USER`` reads ``@@server_uid``
+    #: and the wsrep status (probe 13, SI1; probe 14, GI1).
+    identity_caveat: str | None = field(default=None, init=False, repr=False)
     #: The words for two targets that are one server
     #: (:class:`~sopuli.driver.clusters.ClusterIdentity`), as on MySQL. Not
-    #: fields. :meth:`cluster_identity` replaces the last three on a Galera
-    #: node. ``identity_caveat`` is always ``None``: an account with only
-    #: ``CREATE USER`` reads ``@@server_uid`` and ``wsrep_cluster_state_uuid``
-    #: (probe 13, SI1; probe 14, GI1).
-    identity_caveat = None
+    #: fields.
     identity_kind = "MariaDB server"
     identity_key = "server_uid"
     identity_hint = (
@@ -274,35 +283,42 @@ class MariadbSession(ClosesConnection):
     )
 
     def cluster_identity(self) -> str | None:
-        """What the CLI uses to refuse two targets that are one set of
-        accounts: on a Galera node, the cluster's ``wsrep_cluster_state_uuid``
-        (#1346), and otherwise the server's ``@@server_uid`` (#1286).
+        """The server's ``@@server_uid``, which the CLI uses to refuse two
+        targets that are one server (#1286). Any account reads it. It differed
+        on every server measured, a replica and its primary included, even
+        one with the primary's hostname (probe 13, SI3 to SI5).
 
-        A Galera cluster's nodes share their accounts, and each has its own
-        ``@@server_uid``. The cluster's UUID was shared by every node, differed
-        between two clusters started from empty data, and survived a node's
-        restart and the whole cluster's (probe 14, GI2 to GI5). A cluster
-        started from a copy of another's data was not measured, and would be
-        expected to keep its UUID: that refuses two targets, never lets two
-        through.
+        It changes when the server restarts (SI2). The CLI compares identities
+        only within one run, so a restart during a run can miss two targets
+        on one server."""
+        return self._read(_server_uid)
 
-        ``@@server_uid`` differed on every server measured, a replica and its
-        primary included, even one with the primary's hostname (probe 13, SI3
-        to SI5). It changes when the server restarts (SI2). The CLI compares
-        identities only within one run, so a restart during a run can miss two
-        targets on one server."""
-        cluster = self._read(_galera_cluster)
-        if cluster is None:
-            return self._read(_server_uid)
-        self.identity_kind = "Galera cluster"
-        self.identity_key = "wsrep_cluster_state_uuid"
-        self.identity_hint = (
-            "declare each cluster once: its nodes share their accounts, so one "
-            "target covers them all. If they are two clusters, one started from a "
-            "copy of the other's data, they can share the UUID: give each its own "
-            "secret and run one of them per run with --target"
-        )
-        return cluster
+    def shared_identity(self) -> Identity | None:
+        """On a Galera node, the cluster's ``wsrep_cluster_state_uuid``,
+        claimed beside :meth:`cluster_identity` (#1346). A cluster's nodes
+        share their accounts, and each has its own ``@@server_uid``.
+
+        The UUID was shared by every node, differed between two clusters
+        started from empty data, and survived a node's restart and the whole
+        cluster's (probe 14, GI2 to GI5). A cluster started from a copy of
+        another's data was not measured, and would be expected to keep the
+        UUID: that refuses two targets, and never lets two through.
+
+        Only a node that is ``Synced`` was measured, so a node in another
+        state, such as one joining or serving a state transfer, gives no
+        cluster, and :attr:`identity_caveat` says so. Its server is still
+        claimed, so two targets on that one node are still refused."""
+        cluster, state = self._read(_wsrep_state)
+        if not cluster:
+            return None
+        if state != "Synced":
+            self.identity_caveat = (
+                f"this Galera node is {state or 'in an unknown state'}, not Synced, so "
+                "it is known by its server alone: another target on a node of its "
+                "cluster is not refused"
+            )
+            return None
+        return Identity(cluster, GALERA_KIND, GALERA_KEY, GALERA_HINT)
 
     def scope(self) -> Scope:
         """What this session is: a server, read-write or not, and its

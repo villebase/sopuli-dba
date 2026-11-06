@@ -33,6 +33,10 @@ column mysql.wsrep_cluster.cluster_uuid:
   GI7  a password set on a1 by ALTER USER, then a login with it on a2 and on
        a3, from inside the node, at once. Twenty times, each with a new
        password. Answers how many logins failed on each node
+  GI8  a3 is desynced by root (SET GLOBAL wsrep_desync = ON), as a backup
+       does, and read as the tool account: its wsrep_local_state_comment,
+       and whether wsrep_cluster_state_uuid is the same as before. Then it
+       is synced again
 
 The probe checks each result against the one RECORDED below holds. A
 difference, or a step that fails, makes it exit 1.
@@ -48,9 +52,9 @@ RESULTS -- the same on every release; RECORDED below holds each value
 
   GI1  the tool account reads every variable and status variable.
        wsrep_cluster_state_uuid and wsrep_local_state_uuid are one UUID, such
-       as `ed105c80-da14-11f1-8404-db003b3a7fb6`. wsrep_cluster_name is
-       `my_wsrep_cluster`, the default. mysql.wsrep_cluster is refused,
-       1142
+       as `ed105c80-da14-11f1-8404-db003b3a7fb6`. wsrep_local_state_comment
+       is `Synced`. wsrep_cluster_name is `my_wsrep_cluster`, the default.
+       mysql.wsrep_cluster is refused, 1142
   GI2  within cluster A, server_uid and wsrep_gcomm_uuid differ on every
        node. wsrep_cluster_state_uuid and wsrep_local_state_uuid are shared
   GI3  between A and B, wsrep_cluster_state_uuid differs. wsrep_cluster_name
@@ -60,10 +64,13 @@ RESULTS -- the same on every release; RECORDED below holds each value
   GI5  after the whole cluster stops and starts again, wsrep_cluster_state_uuid
        is the same on a1
   GI6  without Galera, wsrep_on is 0, wsrep_cluster_state_uuid is an empty
-       value, and wsrep_local_state_uuid and wsrep_gcomm_uuid have no row.
-       wsrep_cluster_name is the same default as on a cluster
+       value, and wsrep_local_state_uuid, wsrep_gcomm_uuid and
+       wsrep_local_state_comment have no row. wsrep_cluster_name is the same
+       default as on a cluster
   GI7  no login failed: a password set on a1 logged in on a2 and on a3 at
        once, 20 times out of 20 on each node
+  GI8  a desynced node reads `Donor/Desynced`, and its
+       wsrep_cluster_state_uuid is the same as when it was Synced
 
   So wsrep_cluster_state_uuid is the value one cluster shares and another,
   started from empty data, does not, and it survives a node's restart and
@@ -108,12 +115,19 @@ APP = "sopuli_probe_app"
 TRIES = 20
 
 VARIABLES = ("server_uid", "wsrep_cluster_name", "wsrep_on")
-STATUS = ("wsrep_cluster_state_uuid", "wsrep_local_state_uuid", "wsrep_gcomm_uuid")
+#: The last is not a candidate: the driver reads it beside the first to know
+#: whether the node is `Synced`, so it is read as the tool account too.
+STATUS = (
+    "wsrep_cluster_state_uuid",
+    "wsrep_local_state_uuid",
+    "wsrep_gcomm_uuid",
+    "wsrep_local_state_comment",
+)
 TABLE = "mysql.wsrep_cluster.cluster_uuid"
 
 #: The candidates whose value differs per node or per cluster, checked in GI1
 #: only as `read`.
-PER_NODE = frozenset({"server_uid", *STATUS, TABLE})
+PER_NODE = frozenset({"server_uid", *STATUS, TABLE}) - {"wsrep_local_state_comment"}
 
 CLUSTER_A = ("a1", "a2", "a3")
 GALERA = (
@@ -432,6 +446,24 @@ def cases(image: str) -> None:
         failed = propagation(release)
         print(f"  GI7 failed logins out of {TRIES}: {failed}")
         check("GI7", image, failed)
+
+        synced_a3 = values(release, "a3")
+        release.root("a3", "SET GLOBAL wsrep_desync = ON")
+        try:
+            desynced = values(release, "a3")
+        finally:
+            release.root("a3", "SET GLOBAL wsrep_desync = OFF")
+        print(f"  GI8 a3 {desynced}")
+        check(
+            "GI8",
+            image,
+            {
+                "wsrep_local_state_comment": desynced["wsrep_local_state_comment"],
+                "wsrep_cluster_state_uuid": "same"
+                if desynced["wsrep_cluster_state_uuid"] == synced_a3["wsrep_cluster_state_uuid"]
+                else "changed",
+            },
+        )
     except StepError as error:
         FAILURES.append(f"{image}: step failed: {error}")
         print(f"  STEP FAILED: {error}")
@@ -448,6 +480,7 @@ RECORDED: dict[str, object] = {
         "wsrep_cluster_state_uuid": "read",
         "wsrep_local_state_uuid": "read",
         "wsrep_gcomm_uuid": "read",
+        "wsrep_local_state_comment": "Synced",
         TABLE: "1142 (42000)",
     },
     "GI2": {
@@ -457,6 +490,7 @@ RECORDED: dict[str, object] = {
         "wsrep_cluster_state_uuid": "shared",
         "wsrep_local_state_uuid": "shared",
         "wsrep_gcomm_uuid": "all differ",
+        "wsrep_local_state_comment": "shared",
         TABLE: "shared",
     },
     "GI3": {
@@ -466,6 +500,7 @@ RECORDED: dict[str, object] = {
         "wsrep_cluster_state_uuid": "differ",
         "wsrep_local_state_uuid": "differ",
         "wsrep_gcomm_uuid": "differ",
+        "wsrep_local_state_comment": "same",
         TABLE: "same",
     },
     "GI4": {
@@ -475,6 +510,7 @@ RECORDED: dict[str, object] = {
         "wsrep_cluster_state_uuid": "same",
         "wsrep_local_state_uuid": "same",
         "wsrep_gcomm_uuid": "changed",
+        "wsrep_local_state_comment": "same",
         TABLE: "same",
     },
     "GI5": {
@@ -484,6 +520,7 @@ RECORDED: dict[str, object] = {
         "wsrep_cluster_state_uuid": "same",
         "wsrep_local_state_uuid": "same",
         "wsrep_gcomm_uuid": "changed",
+        "wsrep_local_state_comment": "same",
         TABLE: "same",
     },
     "GI6": {
@@ -493,9 +530,11 @@ RECORDED: dict[str, object] = {
         "wsrep_cluster_state_uuid": "empty",
         "wsrep_local_state_uuid": "no row",
         "wsrep_gcomm_uuid": "no row",
+        "wsrep_local_state_comment": "no row",
         TABLE: "1142 (42000)",
     },
     "GI7": {"a2": 0, "a3": 0},
+    "GI8": {"wsrep_local_state_comment": "Donor/Desynced", "wsrep_cluster_state_uuid": "same"},
 }
 
 

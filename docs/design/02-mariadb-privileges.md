@@ -166,14 +166,17 @@ primary's hostname, port and datadir; `server_id`, `port`, `datadir` and
 (`13_server_identity_probe.py`). The tool compares identities only within one
 run, so a server that restarts during a run can let two targets on it through.
 A Galera cluster's nodes share their accounts, and each node has its own
-`@@server_uid`. So on a Galera node the tool knows the cluster instead, by
-the status variable `wsrep_cluster_state_uuid`. One cluster's nodes shared
-it, two clusters started from empty data had different ones, it survived a
-node's restart and the whole cluster's, and an account with only `CREATE
-USER` read it (`14_galera_identity_probe.py`). Two targets on nodes of one
-cluster are refused as one Galera cluster. A node that is not `Synced`, such
-as one still joining, is known by its `@@server_uid`, because no other state
-was measured. A cluster started from a copy of another cluster's data was not
+`@@server_uid`. So on a Galera node that is `Synced` the tool also knows the
+cluster, by the status variable `wsrep_cluster_state_uuid`. One cluster's
+nodes shared it, two clusters started from empty data had different ones, it
+survived a node's restart and the whole cluster's, and an account with only
+`CREATE USER` read it and the node's state (`14_galera_identity_probe.py`).
+Two targets on nodes of one cluster are refused as one Galera cluster. The
+server is claimed too, whatever the node's state, so two targets on one node
+are always refused. A node in another state, such as `Donor/Desynced` while a
+backup runs, gives no cluster: the probe measured only `Synced` as the state
+to trust, so `doctor` notes that another target on its cluster is not
+refused. A cluster started from a copy of another cluster's data was not
 measured: it is expected to keep that cluster's UUID, and the two would then
 be refused as one ([#1346](../decisions/log.md#1346)).
 `doctor` warns, and never fails ([P5](../decisions/log.md#p5)), about:

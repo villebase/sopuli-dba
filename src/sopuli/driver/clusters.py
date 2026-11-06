@@ -19,6 +19,7 @@ that the three sessions still have them.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
 from sopuli.config.errors import ConfigError
@@ -42,6 +43,26 @@ class ClusterIdentity(Protocol):
     identity_hint: str
 
     def cluster_identity(self) -> str | None: ...
+
+
+@dataclass(frozen=True)
+class Identity:
+    """One identity a session claims, with the words for its refusal."""
+
+    value: str
+    kind: str
+    key: str
+    hint: str
+
+
+@runtime_checkable
+class SharedIdentity(Protocol):
+    """A session whose server can belong to a group that shares its accounts,
+    such as a Galera cluster (#1346). The group's identity is claimed beside
+    the server's own, never instead of it, so it only adds refusals: two
+    targets on one server are refused whatever the group's state."""
+
+    def shared_identity(self) -> Identity | None: ...
 
 
 class OneClusterError(ConfigError):
@@ -76,13 +97,24 @@ def claim(session: object, target: str, clusters: dict[str, str]) -> None:
     """
     if not isinstance(session, ClusterIdentity):
         return
-    identity = session.cluster_identity()
-    if identity is None:
-        return
-    first = clusters.setdefault(identity, target)
-    if first != target:
-        raise OneClusterError(
-            f'targets "{first}" and "{target}" are one {session.identity_kind} '
-            f"({session.identity_key} {identity})",
-            hint=session.identity_hint,
+    found: list[Identity] = []
+    own = session.cluster_identity()
+    if own is not None:
+        found.append(
+            Identity(own, session.identity_kind, session.identity_key, session.identity_hint)
         )
+    if isinstance(session, SharedIdentity):
+        shared = session.shared_identity()
+        if shared is not None:
+            found.append(shared)
+    # Every identity is checked before any is recorded, so a refused target
+    # claims nothing.
+    for one in found:
+        first = clusters.get(one.value, target)
+        if first != target:
+            raise OneClusterError(
+                f'targets "{first}" and "{target}" are one {one.kind} ({one.key} {one.value})',
+                hint=one.hint,
+            )
+    for one in found:
+        clusters.setdefault(one.value, target)

@@ -4791,15 +4791,22 @@ the register.
   cluster?
 - **Decision:** A, the maintainer's choice. On a Galera node that is
   `Synced`, the MariaDB driver gives the cluster's `wsrep_cluster_state_uuid`
-  as its identity, and the refusal names a `Galera cluster`. Any other server,
-  and a node in any other state, keeps `@@server_uid`.
+  as a second identity, beside the server's `@@server_uid`, and a refusal on
+  it names a `Galera cluster`. The CLI refuses a target that shares either
+  with another. A node in another state gives no cluster, and `doctor` notes
+  it. The server is always claimed, so the cluster only adds refusals: two
+  targets on one node are refused whatever its state, as before.
 - **Why:** `14_galera_identity_probe.py` found the UUID shared by every node
   of a cluster, different between two clusters started from empty data, and
   the same after a node's restart and the whole cluster's, on every supported
   release. An account with only `CREATE USER` reads it, and a server without
-  Galera answers it empty. Only the `Synced` state was measured, so a joining
-  node falls back to `@@server_uid`: that can let two targets through, and
-  never refuses two that are separate.
+  Galera answers it empty. A desynced node read `Donor/Desynced` and kept the
+  UUID, but only `Synced` is trusted, so another state can let two targets
+  on two nodes through, and never refuses two that are separate.
+- **Rejected in review:** giving the cluster's UUID instead of the server's
+  `@@server_uid`. Two targets on one node could then claim different values
+  if the node changed state between their reads, and #1286's refusal would
+  be lost.
 - **Rejected:**
   1. B: keeping `@@server_uid` and the documented gap. It leaves the case the
      check exists for unrefused on every Galera estate.

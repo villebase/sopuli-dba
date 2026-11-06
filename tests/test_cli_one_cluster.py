@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from sopuli.driver.clusters import ONE_CLUSTER, ClusterIdentity, OneClusterError, claim
@@ -118,34 +120,13 @@ GALERA_UUID = "ed105c80-da14-11f1-8404-db003b3a7fb6"
 SERVER_UID = "vmGAk3HDOBZm5rKnJnCGDtplUwQ="
 
 
-@pytest.mark.parametrize(
-    ("wsrep", "identity", "kind", "key"),
-    [
-        # Without Galera the UUID is empty (probe 14, GI6).
-        ({"wsrep_cluster_state_uuid": ""}, SERVER_UID, "MariaDB server", "server_uid"),
-        (
-            {"Wsrep_cluster_state_uuid": GALERA_UUID, "Wsrep_local_state_comment": "Synced"},
-            GALERA_UUID,
-            "Galera cluster",
-            "wsrep_cluster_state_uuid",
-        ),
-        # A node still joining was not measured, so it is known by its server.
-        (
-            {"wsrep_cluster_state_uuid": GALERA_UUID, "wsrep_local_state_comment": "Joining"},
-            SERVER_UID,
-            "MariaDB server",
-            "server_uid",
-        ),
-    ],
-    ids=["no-galera", "synced-node", "joining-node"],
-)
-def test_the_mariadb_session_reads_its_identity(
-    wsrep: dict[str, str], identity: str, kind: str, key: str
-) -> None:
-    """The statements and the reader, without a server: the isinstance check
-    above sees only that the names exist. A Galera node that is `Synced` is
-    known by its cluster (#1346), any other server by `@@server_uid`
-    (#1286)."""
+SYNCED = {"Wsrep_cluster_state_uuid": GALERA_UUID, "Wsrep_local_state_comment": "Synced"}
+DONOR = {"wsrep_cluster_state_uuid": GALERA_UUID, "wsrep_local_state_comment": "Donor/Desynced"}
+
+
+def _mariadb(wsrep: dict[str, str], server_uid: str = SERVER_UID) -> tuple[Any, list[str]]:
+    """A MariaDB session over a fake connection, and the statements it ran.
+    ``fetchone`` answers ``@@server_uid``, ``fetchall`` the wsrep rows."""
     session_module = pytest.importorskip("sopuli.driver.mariadb.session")
     from sopuli.config.model import ExpandedTarget, Target
     from sopuli.driver.protocol import Timeouts
@@ -163,7 +144,7 @@ def test_the_mariadb_session_reads_its_identity(
             executed.append(statement)
 
         def fetchone(self) -> tuple[str]:
-            return (SERVER_UID,)
+            return (server_uid,)
 
         def fetchall(self) -> list[tuple[str, str]]:
             return list(wsrep.items())
@@ -176,11 +157,87 @@ def test_the_mariadb_session_reads_its_identity(
     session = session_module.MariadbSession(
         connection=_Connection(), target=target, correlation_id="run", timeouts=Timeouts()
     )
+    return session, executed
 
-    assert session.cluster_identity() == identity
-    assert (session.identity_kind, session.identity_key) == (kind, key)
-    assert executed[0] == session_module.WSREP_STATE
-    assert executed[1:] == ([] if identity == GALERA_UUID else ["select @@global.server_uid"])
+
+def test_the_mariadb_session_reads_the_server_uid() -> None:
+    """The statement and the reader, without a server: the isinstance check
+    above sees only that the names exist."""
+    session, executed = _mariadb({})
+
+    assert session.cluster_identity() == SERVER_UID
+    assert executed == ["select @@global.server_uid"]
+
+
+@pytest.mark.parametrize(
+    ("wsrep", "shared", "caveat"),
+    [
+        # Without Galera the UUID is empty (probe 14, GI6).
+        ({"wsrep_cluster_state_uuid": ""}, None, False),
+        # A server built without Galera has no rows at all.
+        ({}, None, False),
+        (SYNCED, GALERA_UUID, False),
+        # Only `Synced` was measured, so another state gives no cluster.
+        (DONOR, None, True),
+    ],
+    ids=["no-galera", "no-rows", "synced-node", "donor-node"],
+)
+def test_the_mariadb_session_reads_its_cluster(
+    wsrep: dict[str, str], shared: str | None, caveat: bool
+) -> None:
+    """#1346: a Galera node that is `Synced` gives its cluster's UUID. A node
+    in another state gives none, and says why."""
+    from sopuli.driver.clusters import SharedIdentity
+
+    session, executed = _mariadb(wsrep)
+    found = session.shared_identity()
+
+    # A name of its own, so the check does not narrow `session` for mypy.
+    checked: object = session
+    assert isinstance(checked, SharedIdentity)
+    assert executed == [pytest.importorskip("sopuli.driver.mariadb.session").WSREP_STATE]
+    assert (found and found.value) == shared
+    if found is not None:
+        assert (found.kind, found.key) == ("Galera cluster", "wsrep_cluster_state_uuid")
+    assert (session.identity_caveat is not None) == caveat
+    if caveat:
+        assert "Donor/Desynced, not Synced" in session.identity_caveat
+    # The server's own words are never replaced.
+    assert (session.identity_kind, session.identity_key) == ("MariaDB server", "server_uid")
+
+
+def test_two_targets_on_nodes_of_one_galera_cluster_are_refused() -> None:
+    """#1346, end to end through `claim`: two nodes have their own
+    `@@server_uid` and share the cluster's UUID."""
+    clusters: dict[str, str] = {}
+    first, _ = _mariadb(SYNCED, server_uid="node-1")
+    claim(first, "galera-g1", clusters)
+    second, _ = _mariadb(SYNCED, server_uid="node-2")
+
+    with pytest.raises(OneClusterError) as refused:
+        claim(second, "galera-g2", clusters)
+
+    assert refused.value.message == (
+        'targets "galera-g1" and "galera-g2" are one Galera cluster '
+        f"(wsrep_cluster_state_uuid {GALERA_UUID})"
+    )
+    assert "declare each cluster once" in str(refused.value.hint)
+    # The refused target claimed nothing.
+    assert clusters == {"node-1": "galera-g1", GALERA_UUID: "galera-g1"}
+
+
+def test_two_targets_on_one_galera_node_are_refused_whatever_its_state() -> None:
+    """The server is always claimed, so a node that left `Synced` between two
+    targets' reads is still one server, as before #1346."""
+    clusters: dict[str, str] = {}
+    synced, _ = _mariadb(SYNCED, server_uid="node-1")
+    claim(synced, "galera-a", clusters)
+    donor, _ = _mariadb(DONOR, server_uid="node-1")
+
+    with pytest.raises(OneClusterError) as refused:
+        claim(donor, "galera-b", clusters)
+
+    assert "are one MariaDB server (server_uid node-1)" in refused.value.message
 
 
 def test_two_targets_on_one_mysql_server_are_refused_by_name() -> None:

@@ -48,6 +48,8 @@ from sopuli.output.document import SCHEMA_VERSION
 from sopuli.output.emit import EVENT_SCHEMA_VERSION
 from sopuli.secrets import Secret
 from sopuli.store import MemoryStore, SecretStore
+from sopuli.store.credentials import read_secret
+from sopuli.store.protocol import StoreError
 
 RUN_SCHEMA = (
     Path(__file__).resolve().parents[1]
@@ -642,6 +644,57 @@ def test_a_binding_with_no_ref_says_so_rather_than_blaming_a_ref(
 
     assert "no secret ref" in result.output
     assert "the vault holds no password at" not in result.output
+
+
+def test_an_empty_current_with_a_staged_pending_says_so(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """A first `creds generate` stages `pending` with no `current`. "The vault
+    holds no password" sent an operator looking for a wrong path (#1328)."""
+    harness = estate()
+    for target in ("appdb-alpha", "appdb-beta"):
+        harness["store"].write(f"apps/acme/{target}", {"pending": "Staged-Horse-Battery-7"}, cas=1)
+    result = run(runner, write_config(CONFIG))
+
+    assert "a password is staged in `pending`" in result.output
+    assert "the vault holds no password at" not in result.output
+    assert all(session.attempts == [] for session in harness["sessions"])
+
+
+def test_a_pending_that_cannot_be_read_is_said_rather_than_hidden(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A read that fails for the message must not fall back to "holds no
+    password", which sends the operator to the config (#1328)."""
+    harness = estate()
+    for target in ("appdb-alpha", "appdb-beta"):
+        harness["store"].write(f"apps/acme/{target}", {}, cas=1)
+    real = read_secret
+
+    def refuse_pending(store: Any, ref: Any) -> Any:
+        if ref.stage == "pending":
+            raise StoreError("permission denied")
+        return real(store, ref)
+
+    monkeypatch.setattr("sopuli.cli.read_secret", refuse_pending)
+    result = run(runner, write_config(CONFIG))
+
+    assert "`pending` could not be read (StoreError)" in result.output
+    assert "the vault holds no password at" not in result.output
+
+
+def test_an_empty_document_still_says_the_vault_holds_no_password(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    harness = estate()
+    for target in ("appdb-alpha", "appdb-beta"):
+        harness["store"].write(f"apps/acme/{target}", {}, cas=1)
+    result = run(runner, write_config(CONFIG))
+
+    assert "the vault holds no password at" in result.output
 
 
 def test_an_unreachable_target_is_counted_as_failed(

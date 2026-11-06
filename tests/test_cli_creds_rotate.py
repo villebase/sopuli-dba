@@ -40,7 +40,13 @@ from sopuli.cli import _reach, cli
 from sopuli.clock import to_rfc3339, utc_now
 from sopuli.config.model import Vault
 from sopuli.config.targets import EXTERNAL
-from sopuli.diagnostics import ROLLOVER_CAVEAT, ROLLOVER_LEFT_OPEN, ROTATION_UNCONFIRMED
+from sopuli.diagnostics import (
+    PROMOTION_UNCONFIRMED,
+    ROLLOVER_CAVEAT,
+    ROLLOVER_LEFT_OPEN,
+    ROTATION_UNCONFIRMED,
+    promotion_unconfirmed,
+)
 from sopuli.driver.protocol import (
     EXPIRE_PASSWORD,
     FAIL,
@@ -1118,6 +1124,34 @@ def test_a_failed_target_keeps_its_pending_and_promotes_nothing(
     assert body["DB_CREDENTIALS"]["acme_web_user"] == LIVE
     assert body["pending"]["acme_web_user"] != LIVE
     assert "previous" not in body
+
+
+def test_a_shared_document_where_no_row_confirmed_gets_no_w066(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """#1328. `SOPULI-W066` is for a document whose confirmed rows look finished.
+    Here every row failed, each says why, and the run adds nothing."""
+    shared = CONFIG.replace("apps/acme/{target}#", "apps/acme/shared#")
+    estate(
+        documents={"apps/acme/shared": {"DB_CREDENTIALS": {"acme_web_user": LIVE}}},
+        set_error=StoreError("ORA-01031: insufficient privileges"),
+    )
+    body = document(run(runner, write_config(shared), "--output", "json"))
+
+    assert all(one.get("code") != PROMOTION_UNCONFIRMED for one in body.get("diagnostics", []))
+
+
+def test_w066_names_creds_apply_because_a_second_rotate_is_refused() -> None:
+    """A rotate that held a document leaves `pending` staged, and rotate refuses
+    to draw over it, so the remedy W066 names is `creds apply` (#1328)."""
+    one = promotion_unconfirmed("vault-prod:apps/acme/shared", [("a", "t1", "ERROR")])
+    two = promotion_unconfirmed(
+        "vault-prod:apps/acme/shared", [("a", "t1", "ERROR"), ("a", "t2", "ACCOUNT_MISSING")]
+    )
+
+    assert "fix what that row reports, then run `creds apply`" in one.message
+    assert "fix what those rows report, then run `creds apply`" in two.message
+    assert "same command" not in one.message
 
 
 def test_a_partially_reachable_estate_names_the_repair(

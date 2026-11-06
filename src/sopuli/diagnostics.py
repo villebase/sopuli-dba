@@ -574,6 +574,12 @@ ROLLOVER_CAVEAT = "SOPULI-W064"
 #: cannot see (#1317).
 SECOND_METHOD_UNSEEN = "SOPULI-W065"
 
+#: A document was not promoted because one or more of its targets did not
+#: confirm (#1328). Invariant 7 holds the promotion until every declared target
+#: confirms. The confirmed rows carry `SOPULI-W049`, and this names the
+#: document and the targets that held it, which no single row can see.
+PROMOTION_UNCONFIRMED = "SOPULI-W066"
+
 #: ``SOPULI-W004`` and ``SOPULI-W034`` to ``SOPULI-W039`` -- imported above
 #: rather than defined here. They are raised in the config layer, which cannot
 #: import this module, so they are defined in :mod:`sopuli.config.codes` and
@@ -814,6 +820,14 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "old password, `creds apply` setting a held rollover's `pending` again "
             "included, and the row says the same; under `creds rotate --dry-run`, for each "
             "account the run would stage."
+        ),
+        PROMOTION_UNCONFIRMED: (
+            "A secret document was not promoted because a row of it did not confirm, while "
+            "other rows of it did. Its confirmed rows carry `SOPULI-W049`; this names the "
+            "document, and each row that held it with its account, target and state. Fix "
+            "what those rows report, then run `creds apply`, after `creds apply` or `creds "
+            "rotate` alike: run before the fix, it holds the promotion again. One entry per "
+            "document."
         ),
         CONSTRAINTS_UNREAD: (
             "`creds generate` could not read a target's password constraints, so the "
@@ -1842,6 +1856,30 @@ def promotion_skipped(document: str, pairs: Sequence[tuple[str, str]]) -> Diagno
             "again. `--force` overrides it, unless it refused a superuser, a role the "
             "server reserves or an account with a global privilege, and waives the "
             "guardrails for every account the run selects"
+        ),
+    )
+
+
+def promotion_unconfirmed(document: str, held: Sequence[tuple[str, str, str]]) -> Diagnostic:
+    """One document a target that did not confirm held back (#1328).
+
+    ``held`` is (account, target, state) for each row that did not confirm, so
+    the reader knows where to go and what that target reported. Running
+    `creds apply` again holds the promotion again until what those rows report
+    is fixed, so the message says so rather than offering the re-run alone.
+
+    **`creds apply`, not "the same command".** `creds rotate` raises this too,
+    and a second rotate is refused while the document has a `pending` staged:
+    `apply` is what promotes it, after either command.
+    """
+    named = "; ".join(f"{account} on {target} ({state})" for account, target, state in held)
+    rows = "that row reports" if len(held) == 1 else "those rows report"
+    return Diagnostic(
+        level="warning",
+        code=PROMOTION_UNCONFIRMED,
+        message=(
+            f"{document} was not promoted: {named} did not confirm -- fix what {rows}, "
+            "then run `creds apply` to promote it"
         ),
     )
 

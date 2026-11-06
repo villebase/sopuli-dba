@@ -47,6 +47,7 @@ from sopuli.diagnostics import (
     PRIVILEGE_AUDIT_UNREAD,
     PROFILE_UNREAD,
     PROMOTION_FAILED,
+    PROMOTION_UNCONFIRMED,
     PROMOTION_WITHHELD,
     REPAIR_DOCUMENT_STALE,
     ROLLOVER_CAVEAT,
@@ -3137,6 +3138,37 @@ def test_a_confirmed_row_beside_a_target_that_failed_says_current_is_stale(
     # `current` left stale. Counted once each.
     summary = document(result)["summary"]
     assert (summary["ok"], summary["failed"]) == (0, 2)
+    assert "still holds the old one" not in warning["message"]
+    (held,) = [
+        one
+        for one in document(result).get("diagnostics", [])
+        if one.get("code") == PROMOTION_UNCONFIRMED
+    ]
+    assert "was not promoted: acme_web_user on appdb-beta (" in held["message"]
+
+
+def test_a_held_promotion_names_the_document_and_the_target_in_the_text(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """#1328: the text view said only `1 not confirmed`. It now names the
+    document that was not promoted and the target that held it."""
+    estate(
+        documents=staged(),
+        per_target={
+            "appdb-alpha": {"ACME_WEB_USER": drifted()},
+            "appdb-beta": {
+                "ACME_WEB_USER": [
+                    VerifyResult(VERIFY_LOGIN, FAIL, detail="ORA-01017"),
+                    VerifyResult(VERIFY_LOGIN, FAIL, detail="ORA-01017"),
+                ]
+            },
+        },
+    )
+
+    result = run(runner, write_config(REDRAW_CONFIG))
+
+    assert "was not promoted: acme_web_user on appdb-beta (" in result.output
+    assert "did not confirm" in result.output
 
 
 def test_the_withheld_promotion_names_the_wider_run_as_its_remedy(

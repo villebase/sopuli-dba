@@ -1625,8 +1625,10 @@ account keeps, so the tool keeps the old password by sending its value again.
   described ([#1344](../decisions/log.md#1344)). An account that gained, for
   example, a global privilege since its window opened keeps the window, and
   no login is spent: the row is `ERROR` where `--account` named it, and
-  `SKIPPED` otherwise. `--dry-run` shows the same. `creds rotate
-  --finish-rollover` runs them too, with its own `--force`.
+  `SKIPPED` otherwise. `--dry-run` shows the same. The verb has no `--force`,
+  so nothing waives them here. `creds rotate --finish-rollover` runs them
+  too, with its own `--force`, and warns `SOPULI-W043` for each window a close
+  left open, whatever the reason, instead of counting it closed.
 
 ### `creds finish-rollover`, and what it refuses (decided in #263)
 

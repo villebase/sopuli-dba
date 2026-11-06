@@ -9153,13 +9153,28 @@ def _turned_away(
     did. Fell inside a broader selection: skipped, and the run does the rest of
     its job.
     """
-    named = selection.names(binding.account)
+    turned_away = _turned_away_outcome(binding, review, selection=selection)
+    return _Applied(binding, source, turned_away, changed=False, duration_ms=_elapsed(started))
+
+
+def _turned_away_outcome(
+    binding: Binding,
+    review: guardrails.Review,
+    *,
+    selection: Selection | None,
+    waivable: bool = True,
+) -> check_states.Outcome:
+    """`REFUSED` where `--account` named the account, `SKIPPED` otherwise, with
+    the reason, logged as left alone. `creds apply`'s rows and `creds
+    finish-rollover`'s (#1344) both use it; ``waivable`` is ``False`` for a verb
+    with no `--force`."""
+    named = selection is not None and selection.names(binding.account)
     turned_away = check_states.Outcome(
         apply_states.REFUSED if named else apply_states.SKIPPED,
-        guardrails_reason(review, named=named),
+        guardrails_reason(review, named=named, waivable=waivable),
     )
     _left_alone(binding.account, binding.target, turned_away.state, turned_away.detail)
-    return _Applied(binding, source, turned_away, changed=False, duration_ms=_elapsed(started))
+    return turned_away
 
 
 def _refused_row(
@@ -9938,7 +9953,9 @@ def _declared_accounts(run: Invocation) -> frozenset[str]:
     return frozenset(binding.account for binding in run.config.bindings)
 
 
-def guardrails_reason(review: guardrails.Review, *, named: bool = False) -> str:
+def guardrails_reason(
+    review: guardrails.Review, *, named: bool = False, waivable: bool = True
+) -> str:
     """Why an account was refused, in one line, naming every check that objected.
 
     Every refusal rather than the first: an operator clearing these is going to
@@ -9950,6 +9967,9 @@ def guardrails_reason(review: guardrails.Review, *, named: bool = False) -> str:
     inside a broad selection needs no advice -- the run carried on and the row is
     informational -- while an operator who typed `--account DBSNMP` asked for
     this specific thing and is owed the sentence that says how to get it.
+
+    ``waivable`` is ``False`` for a verb with no `--force`, `creds
+    finish-rollover` (#1344), so the remedy does not name a flag it lacks.
     """
     reasons = "; ".join(refusal.reason for refusal in review.refusals)
     if not named:
@@ -9959,7 +9979,9 @@ def guardrails_reason(review: guardrails.Review, *, named: bool = False) -> str:
     # order picks the remedy.
     remedy = next(
         (UNWAIVABLE_REMEDIES[one.check] for one in review.refusals if not one.overridable),
-        "pass --force to override, which is recorded",
+        "pass --force to override, which is recorded"
+        if waivable
+        else "this command has no --force; resolve what the check names and run it again",
     )
     return f"{reasons} -- you named this account, so the run stopped short: {remedy}"
 
@@ -12159,7 +12181,14 @@ def creds_finish_rollover(
     sources = _sources(bindings, documents)
 
     finished = _finish_estate(
-        sources, run, config, margin=lockout_margin, preview=run.dry_run, selection=selection
+        sources,
+        run,
+        config,
+        margin=lockout_margin,
+        preview=run.dry_run,
+        guard=_FinishGuard(
+            declared=_declared_accounts(run), selection=selection, force=False, waivable=False
+        ),
     )
 
     document.results = [
@@ -12238,14 +12267,12 @@ def _finish_estate(
     margin: int,
     preview: bool,
     manager: LockManager | None = None,
-    selection: Selection | None = None,
-    force: bool = False,
+    guard: _FinishGuard | None = None,
 ) -> list[_Finished]:
     """Every account, target by target, one connection each. `check`'s grouping.
 
-    ``selection`` and ``force`` are for §4's checks on a target whose close sets
-    a password (:data:`CLOSE_SETS_PASSWORD_TYPES`): whether `--account` named a
-    refused account, and what the caller's `--force` waives.
+    ``guard`` is what §4's checks need, on a target whose close sets a password
+    (:data:`CLOSE_SETS_PASSWORD_TYPES`, #1344). It is built once per run.
 
     ``manager`` is ``None`` for `creds finish-rollover`, which takes no lock at
     all -- it writes to no store, so there is nothing for the advisory lock to
@@ -12273,8 +12300,7 @@ def _finish_estate(
                 margin=margin,
                 preview=preview,
                 manager=manager,
-                selection=selection,
-                force=force,
+                guard=guard if by_target[name].target.type in CLOSE_SETS_PASSWORD_TYPES else None,
             )
         )
     return found
@@ -12289,8 +12315,7 @@ def _finish_target(
     margin: int,
     preview: bool,
     manager: LockManager | None = None,
-    selection: Selection | None = None,
-    force: bool = False,
+    guard: _FinishGuard | None = None,
 ) -> list[_Finished]:
     """One target's worth of accounts, over one connection.
 
@@ -12316,11 +12341,6 @@ def _finish_target(
                 for binding, _ in work
             ]
 
-        guard = (
-            _FinishGuard(declared=_declared_accounts(run), selection=selection, force=force)
-            if target.target.type in CLOSE_SETS_PASSWORD_TYPES
-            else None
-        )
         rows = [
             _finish_one(
                 binding,
@@ -12349,11 +12369,13 @@ def _finish_target(
 class _FinishGuard:
     """What §4's checks need on a target whose close sets a password (#1344):
     the declared accounts, the selection that says whether `--account` named
-    one, and the caller's `--force`."""
+    one, the caller's `--force`, and whether the caller has that flag at all
+    (`creds finish-rollover` has none)."""
 
     declared: Collection[str]
     selection: Selection | None
     force: bool
+    waivable: bool
 
 
 def _finish_one(
@@ -12412,12 +12434,9 @@ def _finish_one(
         if guard is not None:
             review = guardrails.review(user, declared=guard.declared, force=guard.force)
             if not review.permitted:
-                named = guard.selection is not None and guard.selection.names(binding.account)
-                turned_away = check_states.Outcome(
-                    apply_states.REFUSED if named else apply_states.SKIPPED,
-                    guardrails_reason(review, named=named),
+                turned_away = _turned_away_outcome(
+                    binding, review, selection=guard.selection, waivable=guard.waivable
                 )
-                _left_alone(binding.account, binding.target, turned_away.state, turned_away.detail)
                 return _Finished(
                     binding, turned_away, changed=False, user=user, duration_ms=_elapsed(started)
                 )
@@ -13172,7 +13191,7 @@ def _rotate_estate(
                 for account, target in left
             )
         try:
-            into.closed = _close_windows(
+            finished = _close_windows(
                 settled,
                 run,
                 config,
@@ -13183,6 +13202,24 @@ def _rotate_estate(
                 manager=manager,
                 selection=selection,
                 force=force,
+            )
+            into.closed = sum(1 for record in finished if record.changed)
+            # A close that did not happen leaves the old password working, so
+            # it is said, and its pair is no longer counted as closing (#1344).
+            kept = _not_closed(finished)
+            into.closing = into.closing - {(target, account) for account, target, _ in kept}
+            into.caveats.extend(
+                _not_closed_note(account, target, reason) for account, target, reason in kept
+            )
+            document.diagnostics.extend(
+                Diagnostic(
+                    level="warning",
+                    message=_not_closed_note(account, target, reason),
+                    code=ROLLOVER_LEFT_OPEN,
+                    account=account,
+                    target=target,
+                )
+                for account, target, reason in kept
             )
         except LockStolenError as lost:
             # Every window this run had already closed stays closed, which is why
@@ -13335,6 +13372,26 @@ def _left_open_note(pairs: str) -> str:
     )
 
 
+def _not_closed(finished: Sequence[_Finished]) -> list[tuple[str, str, str]]:
+    """The windows `--finish-rollover` tried to close and did not, as account,
+    target and the row's reason. A row that changed nothing because the window
+    had already closed is `IN_SYNC`, and is not one of them."""
+    return [
+        (record.binding.account, record.binding.target, record.outcome.detail or "")
+        for record in finished
+        if not record.changed and record.outcome.state != check_states.IN_SYNC
+    ]
+
+
+def _not_closed_note(account: str, target: str, reason: str) -> str:
+    """`SOPULI-W043`'s message for a window the close itself left open (#1344)."""
+    return (
+        f"--finish-rollover left the rollover window open for {account} on {target}, "
+        f"because the close was not made: {reason}. Run `sopuli creds finish-rollover` "
+        "once that is resolved"
+    )
+
+
 def _data_at(key: LockKey, documents: Mapping[LockKey, Any]) -> Any:
     stored = documents.get(key)
     return None if stored is None else stored.data
@@ -13350,8 +13407,10 @@ def _close_windows(
     manager: LockManager,
     selection: Selection,
     force: bool,
-) -> int:
+) -> list[_Finished]:
     """`--finish-rollover`: end every window this run opened, once it is over.
+    One row per window it tried to close; the caller counts the closes and
+    reports the ones that did not happen (:func:`_not_closed`).
 
     **At the end of the run rather than per target**, which is the difference
     between this and `--strategy direct`. Direct closes each window as it opens
@@ -13386,18 +13445,18 @@ def _close_windows(
         and (record.rollover is None or record.rollover.get("active") is True)
     ]
     if not confirmed:
-        return 0
-    finished = _finish_estate(
+        return []
+    return _finish_estate(
         _sources(confirmed, documents),
         run,
         config,
         margin=margin,
         preview=False,
         manager=manager,
-        selection=selection,
-        force=force,
+        guard=_FinishGuard(
+            declared=_declared_accounts(run), selection=selection, force=force, waivable=True
+        ),
     )
-    return sum(1 for record in finished if record.changed)
 
 
 def _unconfirmed(accounts: Sequence[str], unread: Mapping[LockKey, Error]) -> Diagnostic:

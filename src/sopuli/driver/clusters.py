@@ -14,7 +14,9 @@ A session that can say which cluster it reached has ``cluster_identity()``,
 The PostgreSQL, MySQL and MariaDB sessions do, so the check asks for them by
 name rather than through :class:`~sopuli.driver.protocol.Session`, which every
 driver and test fake implements. ``tests/test_cli_one_cluster.py`` checks
-that the three sessions still have them.
+that the three sessions still have them. The MariaDB session also has
+``shared_identity()`` (:class:`SharedIdentity`), for a Galera node's cluster,
+which is claimed beside its server.
 """
 
 from __future__ import annotations
@@ -33,7 +35,9 @@ ONE_CLUSTER = "SOPULI-20008"
 class ClusterIdentity(Protocol):
     """A session that can name the cluster it reached."""
 
-    #: Why :meth:`cluster_identity` found no answer, or ``None``.
+    #: Why the session claims less than it could, or ``None``: on PostgreSQL,
+    #: why :meth:`cluster_identity` found no answer; on MariaDB, why a Galera
+    #: node gave no cluster (:class:`SharedIdentity`).
     identity_caveat: str | None
     #: What one identity names, and what the identity is, for the refusal:
     #: ``PostgreSQL cluster`` and ``system_identifier``.
@@ -79,8 +83,9 @@ def scope_and_claim(
     `doctor` and the other commands use.
 
     The scope comes first, so a PostgreSQL superuser is refused before the
-    cluster is read. Returns the scope and the caveat, if the session could not
-    read its identity.
+    cluster is read. Returns the scope and the caveat, if the session claims
+    less than it could: it could not read its identity, or a Galera node is
+    not `Synced`.
     """
     scope = session.scope()
     claim(session, target, clusters)

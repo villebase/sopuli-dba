@@ -10246,8 +10246,9 @@ def _open_session(
     this run is (:func:`~sopuli.driver.registry.require_command`).
 
     A session that can name its cluster (PostgreSQL) or server (MySQL and
-    MariaDB) reads its scope here, and is closed and refused if another target of this run already
-    reached that cluster (:func:`sopuli.driver.clusters.claim`). The scope comes
+    MariaDB, and on a Galera node also its cluster) reads its scope here, and
+    is closed and refused if another target of this run already reached any of
+    them (:func:`sopuli.driver.clusters.claim`). The scope comes
     first, so a superuser is refused before anything else is asked. `doctor`
     does both itself, so that a refusal is reported for a target it reached.
     """

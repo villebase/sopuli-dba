@@ -124,7 +124,7 @@ SYNCED = {"Wsrep_cluster_state_uuid": GALERA_UUID, "Wsrep_local_state_comment": 
 DONOR = {"wsrep_cluster_state_uuid": GALERA_UUID, "wsrep_local_state_comment": "Donor/Desynced"}
 
 
-def _mariadb(wsrep: dict[str, str], server_uid: str = SERVER_UID) -> tuple[Any, list[str]]:
+def _mariadb(wsrep: dict[Any, Any], server_uid: str = SERVER_UID) -> tuple[Any, list[str]]:
     """A MariaDB session over a fake connection, and the statements it ran.
     ``fetchone`` answers ``@@server_uid``, ``fetchall`` the wsrep rows."""
     session_module = pytest.importorskip("sopuli.driver.mariadb.session")
@@ -146,7 +146,7 @@ def _mariadb(wsrep: dict[str, str], server_uid: str = SERVER_UID) -> tuple[Any, 
         def fetchone(self) -> tuple[str]:
             return (server_uid,)
 
-        def fetchall(self) -> list[tuple[str, str]]:
+        def fetchall(self) -> list[tuple[Any, Any]]:
             return list(wsrep.items())
 
     class _Connection:
@@ -176,14 +176,24 @@ def test_the_mariadb_session_reads_the_server_uid() -> None:
         ({"wsrep_cluster_state_uuid": ""}, None, False),
         # A server built without Galera has no rows at all.
         ({}, None, False),
+        # NULL is no UUID, not the text "None"; bytes are decoded.
+        ({"wsrep_cluster_state_uuid": None, "wsrep_local_state_comment": "Synced"}, None, False),
+        (
+            {
+                b"wsrep_cluster_state_uuid": GALERA_UUID.encode(),
+                "wsrep_local_state_comment": b"Synced",
+            },
+            GALERA_UUID,
+            False,
+        ),
         (SYNCED, GALERA_UUID, False),
         # Only `Synced` was measured, so another state gives no cluster.
         (DONOR, None, True),
     ],
-    ids=["no-galera", "no-rows", "synced-node", "donor-node"],
+    ids=["no-galera", "no-rows", "null-uuid", "bytes-values", "synced-node", "donor-node"],
 )
 def test_the_mariadb_session_reads_its_cluster(
-    wsrep: dict[str, str], shared: str | None, caveat: bool
+    wsrep: dict[Any, Any], shared: str | None, caveat: bool
 ) -> None:
     """#1346: a Galera node that is `Synced` gives its cluster's UUID. A node
     in another state gives none, and says why."""

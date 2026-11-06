@@ -219,10 +219,20 @@ WSREP_STATE = (
 
 def _wsrep_state(cursor: Any) -> tuple[str, str]:
     """The cluster's UUID and the node's state, each ``""`` where the server
-    has no such row, as a MariaDB built without Galera has none."""
+    has no such row, as a MariaDB built without Galera has none, or answers
+    NULL. A value that comes as bytes is decoded, so it is never read as its
+    ``b'...'`` text."""
     cursor.execute(WSREP_STATE)
-    found = {str(name).lower(): str(value) for name, value in cursor.fetchall()}
+    found = {_text(name).lower(): _text(value) for name, value in cursor.fetchall()}
     return found.get("wsrep_cluster_state_uuid", ""), found.get("wsrep_local_state_comment", "")
+
+
+def _text(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes | bytearray):
+        return value.decode("utf-8", errors="replace")
+    return str(value)
 
 
 #: The words for two targets on nodes of one Galera cluster (#1346).

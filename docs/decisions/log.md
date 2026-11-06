@@ -4742,3 +4742,8 @@ the register.
 - **Rejected:** B: keep exit 0 and let `SOPULI-W043` carry it.
 - **Accepted cost:** a run that exited 0 before exits 4. There are no users
   yet who depend on the old code.
+- **The exit table follows:** `00-principles.md` read 4 as "some targets
+  succeeded, some failed". A read-back disagreement and an unmade close both
+  exit 4 with every target succeeded, so the maintainer had the table reworded
+  on 2026-11-06: part of what the run was asked to do did not happen, and
+  running again finishes it. No exit code changed.

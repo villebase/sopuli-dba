@@ -48,7 +48,8 @@ class ExitCode(IntEnum):
     """`check` found a mismatch. Distinct so schedulers can alert on it."""
 
     PARTIAL = 4
-    """Some targets succeeded, some failed."""
+    """Part of what the run was asked to do did not happen, such as some targets
+    succeeding and some failing, and running again finishes it."""
 
     UNSUPPORTED_CAPABILITY = 5
     """The target or driver cannot do what was asked (P1, invariant 4)."""

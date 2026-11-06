@@ -53,9 +53,10 @@ the command layer applies.
    privilege ``ON *.*`` but ``USAGE``, any on the ``mysql`` schema, and any
    ``PROXY`` grant, held or reached through a role. Never waived (#1222). On
    MySQL it runs only for a verb that sets a password, and not on the
-   session's own account, which check 7 covers. On MariaDB it runs for every
-   verb, and on the session's own account for a verb that sets no password
-   (:data:`GUARDED_TYPES`).
+   session's own account, which check 7 covers. On MariaDB it also runs for
+   `creds finish-rollover`, `account suspend` and `account expire-password`,
+   and for the last two on the session's own account too
+   (:data:`GUARDED_TYPES`). `creds check` and `doctor` refuse nothing by it.
 
 ### Refused, permitted, or *could not establish*
 

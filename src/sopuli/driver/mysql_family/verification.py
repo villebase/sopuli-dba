@@ -5,8 +5,8 @@ client's host, so a login as ``acme_app`` may reach an account other than the
 declared one. Only a ``user@%`` account that is the user's only account, with
 no anonymous account at a named host, is reached by every login as its user.
 Both drivers log in to verify a password only there (#1223, #1270). The
-MariaDB driver makes one exception: once per staged ``pending``, the login
-after a change may reach another account, and it passes only when
+MariaDB driver makes one exception: once per staged ``pending`` and target,
+the login after a change may reach another account, and it passes only when
 ``CURRENT_USER()`` is the declared one (CLAUDE.md invariant 5). Each driver
 says why in its own words.
 """

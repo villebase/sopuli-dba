@@ -892,10 +892,13 @@ Before any `ALTER USER`, the tool refuses when the target account:
    and `account expire-password` take power away, and may act on such an
    account. The account the session is connected as is exempt, because the
    tool already has its power; check 7 still refuses it unless `--force`
-   waives that. On MariaDB it also refuses `creds finish-rollover`, and
-   `account suspend` and `account expire-password` even on the session's own
-   account, because a `role:` rule there admits the account that created the
-   role, often root ([#1272](../decisions/log.md#1272)).
+   waives that. On MariaDB it also refuses `creds finish-rollover`, whose close
+   there sends the current password's value
+   ([#1344](../decisions/log.md#1344)). And it refuses `account suspend` and
+   `account expire-password`, even on the session's own account, because a
+   `role:` rule there admits the account that created the role, often root
+   ([#1272](../decisions/log.md#1272)). `02-mariadb-privileges.md` §5 has the
+   rule in full.
 
 `--force` overrides checks 2 to 5 and 7, for a DBA who deliberately manages an
 unusual account, or rotates the tool's own password

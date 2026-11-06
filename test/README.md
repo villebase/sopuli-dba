@@ -176,10 +176,11 @@ export SOPULI_TEST_YOPASS_PORT=1437
 ```
 
 Compose takes the project name and the ports from them. The suite takes its
-defaults from them too: Vault at `http://127.0.0.1:8300`, MySQL at
-`127.0.0.1:3406`, MariaDB at `127.0.0.1:3407`, Oracle at
-`localhost:1621/FREEPDB1`, Yopass at `http://127.0.0.1:1437`, and the container
-`sopuli-test-w2-oracle-free-1`. So the seven variables are the one place that names the stack.
+defaults from them too: Vault at `http://127.0.0.1:8300`, PostgreSQL at
+`127.0.0.1:5532`, MySQL at `127.0.0.1:3406`, MariaDB at `127.0.0.1:3407`,
+Oracle at `localhost:1621/FREEPDB1`, Yopass at `http://127.0.0.1:1437`, and the
+container `sopuli-test-w2-oracle-free-1`. So the seven variables are the one
+place that names the stack.
 `VAULT_ADDR`, `SOPULI_TEST_ORACLE_DSN` and `SOPULI_TEST_ORACLE_CONTAINER`
 still override the defaults when they are set. A shell that lacks the seven
 variables works on the first clone's stack, without a warning, because both

@@ -13,8 +13,9 @@ reader who is outside the project.
 
 A note on the current state before anything else: this is alpha software.
 This document describes Oracle. PostgreSQL, MySQL and MariaDB are supported
-too. On PostgreSQL, what a cluster lacks is refused before anything changes:
-`account expire-password`, and the seen path of `account reset-password`.
+too. What a target lacks, such as a password rollover window or, on
+PostgreSQL, a forced password change at next login, is refused before anything
+changes.
 [`design/02-postgres-privileges.md`](design/02-postgres-privileges.md),
 [`design/02-mysql-privileges.md`](design/02-mysql-privileges.md) and
 [`design/02-mariadb-privileges.md`](design/02-mariadb-privileges.md) say what

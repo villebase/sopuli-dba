@@ -1517,6 +1517,17 @@ where it is empty, or `unknown` where there is no such row, with `protocol`
 error, before anything else is read: MariaDB has a driver of its own, and
 neither handles passwords as MySQL does.
 
+**A MariaDB target's `scope.type` is `server` too.** `container` and
+`db_unique_name` are null. `open_mode` is `READ WRITE`, or `READ ONLY` where
+the server's `read_only` or the session's `tx_read_only` is on, and
+`read_write` is false then. `db_version` is `VERSION()` up to its first `-`.
+`capabilities` holds `role_lookup`, `expire_password` and `password_rollover`,
+and `password_value` too where the tool read the server's password-check
+plugins and found none that would refuse the value it sends
+(`02-mariadb-privileges.md`). The encryption is read as on MySQL. A server
+whose version does not name MariaDB is refused, a `config` error, before
+anything else is read.
+
 **`asserted` is absent when the target asserts nothing**, not present with
 `matches: true`. `01-configuration.md` §3a says that an assertion nobody makes is
 not a gap. An object claiming a match would report agreement with a claim that

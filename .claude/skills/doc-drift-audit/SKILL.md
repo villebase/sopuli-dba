@@ -85,14 +85,15 @@ the agent cannot read this skill.
 | adrs | `docs/decisions/adr-*.md` |
 | code | module docstrings, docstrings and comments in `src/sopuli/**/*.py` |
 
-Four files are split in two, because a sweep of a whole one goes shallow. One
+Three files are split in two, because a sweep of a whole one goes shallow. One
 sweep of all of `03-json-output.md` checked only about 2 claims per 1,000 words
 (#1086). `01-configuration.md` and `log.md` are each over 30,000 words (#1359).
 Split each at the heading the table names, so that every audit compares the same
 halves. Find the heading's line number before you start, and tell each agent its
 range of lines and that another agent covers the rest. `log.md` grows at its
-end, so log-2 grows. When log-2 passes 30,000 words, split it again at a later
-`## #N` heading, and add the heading here.
+end, so log-2 grows. When log-2 passes 30,000 words, pick a later `## #N`
+heading. End log-2's row at the line before it, add a log-3 row from it to the
+end, and add log-3 to the decision-record note below.
 
 Some areas need a note after the file list in the prompt:
 
@@ -115,8 +116,9 @@ Some areas need a note after the file list in the prompt:
   function does, who calls it, what it never does, how many of something there
   are. Check each against the code it describes, including callers in other
   modules. Start with the modules that changed since the last audit
-  (`git log --since=<its date> --name-only -- src/sopuli` lists them), then
-  cover the rest of the package as far as you can." While an issue for narration in comments is open, also say: "Report
+  (`git diff --name-only <its commit>..HEAD -- src/sopuli` lists them), then
+  cover the rest of the package as far as you can." Fill in the commit from the
+  previous record. While an issue for narration in comments is open, also say: "Report
   at most 10 `NARRATION` rows, and spend the effort on kinds 1 to 5."
 
 When a new document appears, add it to the area it fits. Keep each area under
@@ -134,18 +136,14 @@ claim true. Before anything is filed:
 3. If more than one in five of the re-checked findings does not hold, re-check
    that area's findings in full before filing them.
 4. Look at the `UNSURE` findings. Settle each one, or leave it out of the record.
-5. Read the `NARRATION` rows, and drop the ones the writing rules allow. Most
-   rows are allowed, about 26 of 30 in #1359:
-   - the rationale and the rejected options in the decision log and in ADRs;
-   - a "[#N] later decided" pointer in a log record, which keeps the record
-     true for its date;
-   - the schema history in `03-json-output.md` §8;
-   - measurement dates;
-   - the examples in `CONTRIBUTING.md` that give a rule's reason;
-   - a page's note on which run its samples come from.
-6. A sample from a page that says which capture it comes from may be old
-   without being false. Note it in the record for a recapture, and do not file
-   it as false.
+5. Read the `NARRATION` rows, and drop any that `sweep-prompt.md`'s *What not
+   to report* allows. Before the prompt listed them, about 26 of 30 rows were
+   of those kinds (#1359).
+6. A sample in `docs/getting-started.md` or a scenario, on a page that says
+   which capture its samples come from, may be old without being false. Note it
+   in the record for a recapture, and do not file it as false.
+   `docs/local-testing.md` is not such a page: it shows the current build, so a
+   sample there that the build no longer prints is `FALSE`.
 7. Compare each area's `CHECKED` count with its size. In the trial, the process
    sweep checked about 8 claims per 1,000 words and the uc2 sweep about 3. An
    area far below 8 had a shallow sweep. Say so in the record, or run that area again.

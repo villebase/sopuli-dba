@@ -48,6 +48,14 @@ the help text, the JSON schemas in `docs/schemas/`, the example configs in
 - Design opinions. Report only a claim that disagrees with the build.
 - A claim about an open decision or unbuilt work that is marked as open. That is
   correct.
+- These kinds of history, which the writing rules allow, as `NARRATION`:
+  - the rationale and the rejected options in the decision log and in ADRs;
+  - a "[#N] later decided" pointer in a decision-log record, which keeps the
+    record true for its date;
+  - the schema history in `03-json-output.md` §8;
+  - the date a measurement was made;
+  - the examples in `CONTRIBUTING.md` that give a rule's reason;
+  - a page's note on which run its samples come from.
 
 ## How to decide
 

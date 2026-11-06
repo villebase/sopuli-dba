@@ -295,8 +295,10 @@ any of these:
 `sopuli.driver.mariadb.admin` reads them, and the driver reads them whenever it
 describes an account. The refusal applies to `creds apply`, `creds rotate` and
 `account reset-password`, except on the session's own account, which check 7
-refuses instead
-([#1270](../decisions/log.md#1270)). Unlike on MySQL, it also applies to
+refuses instead ([#1270](../decisions/log.md#1270)). Unlike on MySQL, it also
+applies to `creds finish-rollover`, whose close here sends the current
+password's value and so changes the login: a refused account keeps its window,
+and no login is spent ([#1344](../decisions/log.md#1344)). And it applies to
 `account suspend` and `account expire-password`, which set no password, and
 to the session's own account for those two: a `role:` rule admits a role's
 creator (§4), and this is what stops one locking root or the tool account. It

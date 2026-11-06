@@ -316,6 +316,63 @@ def test_a_target_that_refuses_the_value_is_refused_before_the_question(
     assert all(session.closed == [] for session in harness["sessions"])
 
 
+@pytest.mark.parametrize("dry_run", [True, False], ids=["dry-run", "run"])
+@pytest.mark.parametrize(
+    ("selector", "state", "code"),
+    [
+        (("--account", "acme_web_user"), "ERROR", ExitCode.FAILURE),
+        (("--select", "tenant=alpha"), "SKIPPED", ExitCode.SUCCESS),
+    ],
+    ids=["named", "selected"],
+)
+def test_a_close_that_sets_a_password_runs_the_account_checks(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+    selector: tuple[str, str],
+    state: str,
+    code: ExitCode,
+    dry_run: bool,
+) -> None:
+    """#1344: where the close sends a password, as on MariaDB, an account §4
+    refuses keeps its window, with no login and nothing sent: `ERROR` where
+    `--account` named it, `SKIPPED` otherwise, as in `creds apply`. The fake
+    is Oracle-shaped, so Oracle is made such a product here."""
+    monkeypatch.setattr("sopuli.cli.CLOSE_SETS_PASSWORD_TYPES", frozenset({"oracle"}))
+    harness = estate(
+        users={"ACME_WEB_USER": in_rollover(global_privileges=frozenset({"SUPER ON *.*"}))}
+    )
+    flags = ["--dry-run"] if dry_run else ["--confirm"]
+    result = run(runner, write_config(CONFIG), *selector, "--output", "json", *flags)
+
+    assert result.exit_code == code, result.output
+    rows = document(result)["results"]
+    assert {row["state"] for row in rows} == {state}
+    assert all("SUPER ON *.*" in row["actions"][0]["detail"] for row in rows)
+    assert all(row["actions"][0]["applied"] is False for row in rows)
+    assert all(row["changed"] is False for row in rows)
+    for session in harness["sessions"]:
+        assert session.attempts == []
+        assert session.closed == []
+
+
+def test_a_close_that_sets_no_password_runs_no_account_checks(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+) -> None:
+    """Oracle's close expires the rollover period and sets no password, so the
+    account checks are not run again, as before #1344."""
+    harness = estate(
+        users={"ACME_WEB_USER": in_rollover(global_privileges=frozenset({"SUPER ON *.*"}))}
+    )
+    result = run(runner, write_config(CONFIG), "--select", "tenant=alpha", "--confirm")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert harness["sessions"][0].closed == ["ACME_WEB_USER"]
+
+
 @pytest.mark.parametrize(("dry_run", "active"), [(True, None), (False, False)])
 def test_the_json_says_active_only_where_it_is_known(
     runner: CliRunner,

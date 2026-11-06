@@ -1620,6 +1620,13 @@ account keeps, so the tool keeps the old password by sending its value again.
   account, it still goes ahead, so it sets the vault's `current` unverified,
   replacing any password the account drifted to. That is the value `creds
   apply` would set, and the rotation confirmed it before it promoted.
+- Because the close sets a password, `creds finish-rollover` runs §4's
+  account guardrails first, as `creds apply` does, on the account it has just
+  described ([#1344](../decisions/log.md#1344)). An account that gained, for
+  example, a global privilege since its window opened keeps the window, and
+  no login is spent: the row is `ERROR` where `--account` named it, and
+  `SKIPPED` otherwise. `--dry-run` shows the same. `creds rotate
+  --finish-rollover` runs them too, with its own `--force`.
 
 ### `creds finish-rollover`, and what it refuses (decided in #263)
 

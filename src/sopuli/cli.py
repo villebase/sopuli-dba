@@ -10305,6 +10305,11 @@ def _require_encryption(
 #: value it computes (:data:`~sopuli.driver.protocol.PASSWORD_VALUE`, #1310).
 PASSWORD_VALUE_TYPES = frozenset({MARIADB})
 
+#: The products whose rollover close sends a password value, so it changes the
+#: account's login, and `finish-rollover` runs UC-1 §4's checks first, as `creds
+#: apply` does (#1344). Oracle's and MySQL's close sets no password.
+CLOSE_SETS_PASSWORD_TYPES = frozenset({MARIADB})
+
 
 def _require_password_value(
     targets: Iterable[ExpandedTarget],
@@ -12153,7 +12158,9 @@ def creds_finish_rollover(
         documents = _read_documents(keys, stores, run=run)
     sources = _sources(bindings, documents)
 
-    finished = _finish_estate(sources, run, config, margin=lockout_margin, preview=run.dry_run)
+    finished = _finish_estate(
+        sources, run, config, margin=lockout_margin, preview=run.dry_run, selection=selection
+    )
 
     document.results = [
         build_finish_result(
@@ -12231,8 +12238,14 @@ def _finish_estate(
     margin: int,
     preview: bool,
     manager: LockManager | None = None,
+    selection: Selection | None = None,
+    force: bool = False,
 ) -> list[_Finished]:
     """Every account, target by target, one connection each. `check`'s grouping.
+
+    ``selection`` and ``force`` are for §4's checks on a target whose close sets
+    a password (:data:`CLOSE_SETS_PASSWORD_TYPES`): whether `--account` named a
+    refused account, and what the caller's `--force` waives.
 
     ``manager`` is ``None`` for `creds finish-rollover`, which takes no lock at
     all -- it writes to no store, so there is nothing for the advisory lock to
@@ -12253,7 +12266,15 @@ def _finish_estate(
     for name, work in grouped.items():
         found.extend(
             _finish_target(
-                by_target[name], work, run, config, margin=margin, preview=preview, manager=manager
+                by_target[name],
+                work,
+                run,
+                config,
+                margin=margin,
+                preview=preview,
+                manager=manager,
+                selection=selection,
+                force=force,
             )
         )
     return found
@@ -12268,6 +12289,8 @@ def _finish_target(
     margin: int,
     preview: bool,
     manager: LockManager | None = None,
+    selection: Selection | None = None,
+    force: bool = False,
 ) -> list[_Finished]:
     """One target's worth of accounts, over one connection.
 
@@ -12293,9 +12316,20 @@ def _finish_target(
                 for binding, _ in work
             ]
 
+        guard = (
+            _FinishGuard(declared=_declared_accounts(run), selection=selection, force=force)
+            if target.target.type in CLOSE_SETS_PASSWORD_TYPES
+            else None
+        )
         rows = [
             _finish_one(
-                binding, session, source=source, margin=margin, preview=preview, manager=manager
+                binding,
+                session,
+                source=source,
+                margin=margin,
+                preview=preview,
+                manager=manager,
+                guard=guard,
             )
             for binding, source in work
         ]
@@ -12311,6 +12345,17 @@ def _finish_target(
                 session.close()
 
 
+@dataclass(frozen=True)
+class _FinishGuard:
+    """What §4's checks need on a target whose close sets a password (#1344):
+    the declared accounts, the selection that says whether `--account` named
+    one, and the caller's `--force`."""
+
+    declared: Collection[str]
+    selection: Selection | None
+    force: bool
+
+
 def _finish_one(
     binding: Binding,
     session: Any,
@@ -12319,8 +12364,16 @@ def _finish_one(
     margin: int,
     preview: bool,
     manager: LockManager | None = None,
+    guard: _FinishGuard | None = None,
 ) -> _Finished:
     """One account: read the window, decide, and close it or say why not.
+
+    **With ``guard``, §4's checks run first** (#1344): on MariaDB the close
+    sends the current password's value, which changes the account's login, so
+    an account `creds apply` would refuse is refused here too. As in
+    :func:`_apply_one`, on the account `describe_user` already read, before the
+    login and before a preview says what it would do. A refused account keeps
+    its window: `ERROR` where `--account` named it, `SKIPPED` otherwise.
 
     ``attempts=1`` is the whole budget. This verb makes one login per account per
     run and never a second -- UC-1 section 7 mitigation 1 -- and it is declared to
@@ -12355,6 +12408,19 @@ def _finish_one(
             # Unreachable: `settled_before_closing` answers both. Restated so a
             # fall-through cannot decide a mutation on a value nobody checked.
             raise ValueError(f"no window to end for {binding.account!r} and no reason given")
+
+        if guard is not None:
+            review = guardrails.review(user, declared=guard.declared, force=guard.force)
+            if not review.permitted:
+                named = guard.selection is not None and guard.selection.names(binding.account)
+                turned_away = check_states.Outcome(
+                    apply_states.REFUSED if named else apply_states.SKIPPED,
+                    guardrails_reason(review, named=named),
+                )
+                _left_alone(binding.account, binding.target, turned_away.state, turned_away.detail)
+                return _Finished(
+                    binding, turned_away, changed=False, user=user, duration_ms=_elapsed(started)
+                )
 
         unknown = windows.window_unknown(user, session.scope())
         if preview:
@@ -13115,6 +13181,8 @@ def _rotate_estate(
                 documents={**documents, **promoted},
                 margin=margin,
                 manager=manager,
+                selection=selection,
+                force=force,
             )
         except LockStolenError as lost:
             # Every window this run had already closed stays closed, which is why
@@ -13280,6 +13348,8 @@ def _close_windows(
     documents: Mapping[LockKey, Any],
     margin: int,
     manager: LockManager,
+    selection: Selection,
+    force: bool,
 ) -> int:
     """`--finish-rollover`: end every window this run opened, once it is over.
 
@@ -13324,6 +13394,8 @@ def _close_windows(
         margin=margin,
         preview=False,
         manager=manager,
+        selection=selection,
+        force=force,
     )
     return sum(1 for record in finished if record.changed)
 

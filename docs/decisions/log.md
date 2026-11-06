@@ -4691,3 +4691,24 @@ the register.
   3. C: keeping the gap documented.
 - **Accepted cost:** a restart during a run, between two targets' logins,
   lets two targets on one server through for that run.
+
+## #1344
+
+- **Decided:** 2026-11-06, #1344
+- **Question:** On MariaDB, `creds finish-rollover` ends a window by sending
+  the current password's value ([#1271](#1271)), which changes the account's
+  login. It ran none of UC-1 §4's account guardrails, which `creds apply` and
+  `creds rotate` run before they change an account. Should it?
+- **Decision:** A: run them, before the login and before a preview, on the
+  account it has just described. A refused account keeps its window: `ERROR`
+  where `--account` named it, `SKIPPED` otherwise, as in `creds apply`. Only
+  where the close sets a password, which is MariaDB; Oracle's and MySQL's
+  close sets none.
+- **Why:** the window was opened by a verb that ran the checks, but the
+  account can have gained a privilege since, and the close changes its login
+  as `creds apply` would.
+- **Rejected:**
+  1. B: accept the gap and document it.
+  2. Leaving it for later.
+- **Accepted cost:** a refused close leaves the old password working until
+  the account's grants are fixed and the close is run again.

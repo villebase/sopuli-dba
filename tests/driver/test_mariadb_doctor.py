@@ -208,10 +208,29 @@ def test_a_wrong_password_is_an_authentication_failure(live_mariadb: Any, tmp_pa
 def test_two_targets_on_one_server_are_refused(live_mariadb: Any, tmp_path: Path) -> None:
     """#1286: the second target that reaches the server is refused, naming
     both and the server's `@@server_uid`, and doctor exits 9."""
-    config = _config(tmp_path / "c.yaml", live_mariadb, [])
-    text = config.read_text(encoding="utf-8")
-    block = text[text.index("  - name: tier1-mariadb") :]
-    config.write_text(text + block.replace("tier1-mariadb", "tier1-again"), encoding="utf-8")
+    target = """  - name: {name}
+    type: mariadb
+    dsn: "{dsn}"
+    environment: dev
+    mariadb: {{ ssl_mode: REQUIRED }}
+    admin:
+      username: "{user}"
+      auth: {{ method: env, password_env: {env} }}
+"""
+    config = tmp_path / "c.yaml"
+    config.write_text(
+        "version: 1\ntargets:\n"
+        + "".join(
+            target.format(
+                name=name, dsn=live_mariadb.dsn, user=live_mariadb.tool_user, env=PASSWORD_ENV
+            )
+            for name in ("tier1-mariadb", "tier1-again")
+        ),
+        encoding="utf-8",
+    )
+    # The permission check refuses a config others can read (Linux CI).
+    if sys.platform != "win32":
+        config.chmod(0o600)
 
     result = CliRunner().invoke(
         cli,

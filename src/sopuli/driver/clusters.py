@@ -5,14 +5,15 @@ of roles. Two targets that reach one cluster would change those roles under two
 names, so the second is refused, as a name declared twice is
 (``01-configuration.md`` §*``postgres:`` on a target*).
 
-A MySQL server is one set of accounts too, known by its ``server_uuid``.
+A MySQL server is one set of accounts too, known by its ``server_uuid``, and
+so is a MariaDB server, known by its ``@@server_uid`` (#1286).
 
 A session that can say which cluster it reached has ``cluster_identity()``,
 ``identity_caveat`` and the words for its refusal (:class:`ClusterIdentity`).
-The PostgreSQL and MySQL sessions do, so the check asks for them by name
-rather than through :class:`~sopuli.driver.protocol.Session`, which every
+The PostgreSQL, MySQL and MariaDB sessions do, so the check asks for them by
+name rather than through :class:`~sopuli.driver.protocol.Session`, which every
 driver and test fake implements. ``tests/test_cli_one_cluster.py`` checks
-that both sessions still have them.
+that the three sessions still have them.
 """
 
 from __future__ import annotations

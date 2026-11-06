@@ -13,6 +13,7 @@ from typing import Any
 from sopuli import apply, check
 from sopuli.config.model import Binding
 from sopuli.config.secret_refs import parse_secret_ref
+from sopuli.config.selection import Selection
 from sopuli.diagnostics import CHANGED_NOT_PROMOTED
 from sopuli.driver.protocol import (
     ACCOUNT_UNLOCK,
@@ -412,25 +413,30 @@ def test_the_repair_invocation_echoes_what_narrowed_the_run() -> None:
     """Exit 4 points at a remedy, and an unnarrowed one walks the estate the
     partial run already walked -- a login per account per target, against the
     counter UC-1 §7 exists to protect."""
-    line = apply_view.repair_invocation(selectors=("env=prod", "tenant=alpha"))
+    line = apply_view.repair_invocation(
+        selection=Selection(select=(("env", "prod"), ("tenant", "alpha")))
+    )
 
     assert line == "sopuli creds apply --select env=prod --select tenant=alpha"
 
 
 def test_the_repair_invocation_echoes_every_selector_flag() -> None:
-    """`--target`, `--group`, `--application` and `--account` narrow a run as
-    `--select` does, so a repair that dropped them would walk the whole estate."""
+    """`--target`, `--account`, `--group` and `--application` narrow a run as
+    `--select` does, so a repair that dropped them would walk the whole estate.
+    They come in `--help`'s order."""
     line = apply_view.repair_invocation(
-        selectors=("env=prod",),
-        targets=("appdb-alpha",),
-        groups=("tenants",),
-        applications=("acme",),
-        accounts=("acme_web_user", "acme_api_user"),
+        selection=Selection(
+            select=(("env", "prod"),),
+            targets=("appdb-alpha",),
+            accounts=("acme_web_user", "acme_api_user"),
+            groups=("tenants",),
+            applications=("acme",),
+        )
     )
 
     assert line == (
-        "sopuli creds apply --select env=prod --target appdb-alpha --group tenants"
-        " --application acme --account acme_web_user --account acme_api_user"
+        "sopuli creds apply --select env=prod --target appdb-alpha --account acme_web_user"
+        " --account acme_api_user --group tenants --application acme"
     )
 
 

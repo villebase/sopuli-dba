@@ -41,6 +41,7 @@ from sopuli.apply import (
 )
 from sopuli.check import ROLLOVER_ACTIVE, Outcome
 from sopuli.config.model import Binding
+from sopuli.config.selection import Selection
 from sopuli.diagnostics import (
     CHANGED_NOT_PROMOTED,
     PROMOTION_SKIPPED,
@@ -508,11 +509,7 @@ def render_source_table(rows: Sequence[tuple[Binding, Source]]) -> list[str]:
 
 def repair_invocation(
     *,
-    selectors: Sequence[str] = (),
-    targets: Sequence[str] = (),
-    groups: Sequence[str] = (),
-    applications: Sequence[str] = (),
-    accounts: Sequence[str] = (),
+    selection: Selection | None = None,
     config_paths: Sequence[str] = (),
     profile: str | None = None,
     source: str | None = None,
@@ -528,8 +525,9 @@ def repair_invocation(
     exists to protect.
 
     So this echoes back the options that decide **what would be applied** -- the
-    selectors (``--select``, ``--target``, ``--group``, ``--application`` and
-    ``--account``), the stage, the regime -- and the two that decide **how the file
+    :class:`~sopuli.config.selection.Selection` (``--select``, ``--target``,
+    ``--account``, ``--group`` and ``--application``, in ``--help``'s order), the
+    stage, the regime -- and the two that decide **how the file
     resolves**, ``--config`` and ``--profile``. A scheduled run repaired without
     its profile resolves its settings from different layers and is a different
     run (`01-configuration.md` §5), which is the failure that looks like the
@@ -562,15 +560,17 @@ def repair_invocation(
         words += ["--config", _word(path)]
     if profile is not None:
         words += ["--profile", _word(profile)]
-    for flag, values in (
-        ("--select", selectors),
-        ("--target", targets),
-        ("--group", groups),
-        ("--application", applications),
-        ("--account", accounts),
-    ):
-        for value in values:
-            words += [flag, _word(value)]
+    if selection is not None:
+        for key, value in selection.select:
+            words += ["--select", _word(f"{key}={value}")]
+        for flag, names in (
+            ("--target", selection.targets),
+            ("--account", selection.accounts),
+            ("--group", selection.groups),
+            ("--application", selection.applications),
+        ):
+            for name in names:
+                words += [flag, _word(name)]
     if source is not None:
         words += ["--source", source]
         if source == PREVIOUS:
@@ -584,11 +584,13 @@ def _word(value: str) -> str:
     """One argument, quoted where it carries whitespace.
 
     **Not a general shell quoter**, and it should not become one. What is
-    composed here is config paths, a profile name and `k=v` label selectors, and
-    whitespace is the character among those that arises -- ``C:/Program
-    Files/estate.yaml`` is the ordinary case on Windows. Nothing here escapes
-    ``&``, ``$`` or a glob, and a value carrying one would need a different
-    answer per shell rather than this one.
+    composed here is config paths, a profile name, `k=v` label selectors, and
+    the names of targets, accounts, groups and applications. Whitespace is the
+    character among those that arises -- ``C:/Program Files/estate.yaml`` is the
+    ordinary case on Windows. Nothing here escapes ``&``, ``$``, ``%`` or a glob,
+    and a value carrying one would need a different answer per shell rather
+    than this one. A MySQL account name such as ``user@%`` is printed as it is,
+    so a repair line pasted into a ``cmd`` batch file needs its ``%`` doubled.
 
     Double quotes rather than single, because the line is meant to be pasted on
     Windows as well (P4): ``cmd`` does not treat a single quote as quoting at

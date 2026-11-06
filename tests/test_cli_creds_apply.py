@@ -1909,7 +1909,7 @@ def test_the_repair_line_keeps_every_selector_flag(
     assert result.exit_code == ExitCode.PARTIAL
     assert (
         f"repair with: sopuli creds apply --config {config} --target appdb-alpha"
-        " --target appdb-beta --application acme --account acme_web_user"
+        " --target appdb-beta --account acme_web_user --application acme"
     ) in result.output
 
 

@@ -1332,7 +1332,7 @@ finishes in one run.
 
 **Exit 4 prints the command that repairs it.** A partial run's closing line says
 what to type. It is narrowed the way the run was narrowed, by the same
-`--select`, `--target`, `--group`, `--application` and `--account`, and it
+`--select`, `--target`, `--account`, `--group` and `--application`, and it
 carries `--config`, `--profile`, `--source` and `--strategy`, so the repair
 resolves and acts the way the run did. A run whose promotion was withheld
 because it was too narrow (§5) is repaired by a wider one, so its line carries

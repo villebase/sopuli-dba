@@ -1333,6 +1333,31 @@ def test_a_vault_lost_at_the_promotion_names_the_repair(
     assert "repair with:" in result.output
 
 
+def test_the_repair_line_of_a_rotation_keeps_every_selector_flag(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """A rotation narrowed by `--target`, `--account` and `--application` is
+    repaired narrowed the same way, as `creds apply`'s is (#1357)."""
+    estate(store=LostAtPromotion())
+    config = write_config(CONFIG)
+    result = run(
+        runner,
+        config,
+        "--target",
+        "appdb-alpha",
+        "--account",
+        "acme_web_user",
+        "--application",
+        "acme",
+    )
+
+    remedy = result.output.split("repair with: ")[1].splitlines()[0]
+    assert remedy == (
+        f"sopuli creds apply --config {config} --target appdb-alpha"
+        " --account acme_web_user --application acme"
+    )
+
+
 def test_a_read_back_that_fails_is_exit_four_with_the_stores_message(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:

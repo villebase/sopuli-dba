@@ -331,8 +331,8 @@ a local Oracle container, trimmed to the lines that matter.
 
 ```bash
 # 1. Draw a new random password and park it in the vault as `pending`.
-#    No database is changed: this command only asks each one how long a
-#    password may be.
+#    No database is changed. It does connect, to read how long a password may
+#    be and whether each account may be managed (--offline connects to none).
 sopuli --config sopuli.yaml creds generate
 
 # 2. Set that password on the database, check it works by logging in,

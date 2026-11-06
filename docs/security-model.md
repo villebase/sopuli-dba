@@ -193,8 +193,9 @@ Before `creds generate`, `creds apply` or `creds rotate` changes anything, it
 takes a *lock* — a marker saying "this credential is mine for the moment".
 `account reset-password` takes one too where a `reset_records:` block is
 declared. `creds finish-rollover`, `account suspend` and `account
-expire-password` write nothing to the vault and take none. The lock lives in the vault, next to the secret it
-guards, so two operators on two laptops, or two scheduled jobs, see the same one.
+expire-password` write nothing to the vault and take none. The lock lives in
+the vault, next to the secret it guards, so two operators on two laptops, or
+two scheduled jobs, see the same one.
 
 Three details make it survivable rather than merely present:
 

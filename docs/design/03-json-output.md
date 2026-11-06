@@ -246,8 +246,7 @@ Each part of the tool writes these lines:
 
 - **`run`**: the version of the tool and of Python, and the platform. The
   command, the config files, and each setting that does not have its built-in
-  value, with where it came from. The type of an exception that ends the run,
-  with its traceback.
+  value, with where it came from. An exception that ends the run, as above.
 - **`oracle`**: each connection, with the target and the user. Each statement
   the driver sends, on one line, with the time it took. The capabilities the
   probe found. Each verification login and its result. A statement that carries

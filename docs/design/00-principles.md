@@ -77,9 +77,10 @@ The interface has this shape for these reasons:
 - **A `require_*` method refuses by raising.** The tool calls it at plan
   time, before any account is changed, so a run that cannot be done fails before
   it starts (invariant 4). It raises instead of returning a refusal, so a caller
-  cannot ignore the answer. `require_rollover` may return a caveat when it
+  cannot ignore a refusal. `require_rollover` may also return a caveat when it
   allows the strategy: one sentence about what the window will not do for the
-  account, which the run reports as `SOPULI-W064`.
+  account. The pre-flight collects it, and the run reports it as
+  `SOPULI-W064`.
 - **A method exists only when something calls it.** Each method is a demand on
   every driver, so the protocol does not declare a method that no verb uses.
 

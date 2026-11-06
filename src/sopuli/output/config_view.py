@@ -565,9 +565,9 @@ def _vault_json(vault: Vault) -> dict[str, Any]:
     ``name`` and ``type`` are the store's identity and neither can be layered --
     a store that is HashiCorp from a laptop and OCI from CI is two stores (C13).
     ``non_production`` and ``locking`` are deliberately absent: both are
-    declaration-only guardrails, ``config.declared`` carries them as written, and
-    ``doctor`` reports the second as ``lock.mode``. Adding either later is
-    additive.
+    declaration-only guardrails, and ``config.declared`` carries them as written.
+    The verbs that take a lock, and `lock status` and `lock break`, report the
+    second as ``lock.mode``. Adding either later is additive.
     """
     return {
         "name": vault.name,

@@ -2347,8 +2347,8 @@ guarantee it has not checked.
 state before the first lock. Setting it first is safe: configuring a path creates
 no version, so the `cas: 0` write that a first acquisition makes still succeeds
 (measured on Vault 2.0.4). Two runs of this tool racing for a new lock have
-exactly one winner without the setting, because a `cas: 0` write succeeds only on a path with no
-history. The setting makes the **store** enforce the same rule on every other
+exactly one winner without the setting, because a `cas: 0` write succeeds only
+on a path with no history. The setting makes the **store** enforce the same rule on every other
 writer.
 
 Where the store refuses the setting, the run goes ahead and reports

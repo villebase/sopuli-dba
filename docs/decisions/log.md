@@ -4742,3 +4742,19 @@ the register.
 - **Rejected:** B: keep exit 0 and let `SOPULI-W043` carry it.
 - **Accepted cost:** a run that exited 0 before exits 4. There are no users
   yet who depend on the old code.
+
+## #1353
+
+- **Decided:** 2026-11-06, #1353
+- **Question:** P5's exit table read 4 as "some targets succeeded, some
+  failed". A read-back disagreement (UC-1 §8, row 8) and an unmade close
+  ([#1347](#1347)) both exit 4 with every target succeeded. Does the table
+  say what 4 means?
+- **Decision:** reword it, the maintainer's choice: some of what the run was
+  asked to do happened and some did not, and the output names what is left.
+  No exit code changes.
+- **Why:** the two cases are partial in the same sense as a failed target.
+  The wording keeps 4 apart from 1, which is a run where none of it happened.
+- **Rejected:** "running again finishes it", which the first draft said. It is
+  false after a lock takeover, which exits 4 and where re-running is the one
+  thing not to do while another run holds the lock.

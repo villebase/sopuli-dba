@@ -2465,7 +2465,8 @@ skip the whole estate on the run whose pre-flight matters most.
 **A staging failure stops the run before any database is touched.** Row 4 says
 nothing changed in the database. A rotation that staged two documents, failed on
 a third, and applied the two anyway would make that row untrue. It exits 1, not
-4: 4 means some targets succeeded and some failed, and here no target was tried.
+4: 4 means some of the run's work reached its targets, and here no target was
+tried.
 
 **Step 8 is a second read, not a comparison with what was written.** The check
 looks for a store that acknowledged a write and then served something else, which

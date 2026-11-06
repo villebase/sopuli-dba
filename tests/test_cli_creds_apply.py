@@ -4840,6 +4840,36 @@ def test_an_account_with_no_policy_reports_rather_than_raising(
     assert "no password policy" in declined[0]["message"]
 
 
+def test_a_redraw_a_left_out_target_cannot_hold_reports_rather_than_raising(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """`appdb-pg` reads the password too, and PostgreSQL holds 1024 bytes, so
+    no 1100-character draw can replace the refused one. The run has already
+    changed databases, so it says so as `SOPULI-W030` rather than stopping on a
+    configuration error, though `appdb-pg` is not selected (#1351)."""
+    harness = estate(documents=staged(), set_error=refusal(), refusals=1)
+    config = REDRAW_CONFIG.replace("length: 24", "length: 1100").replace(
+        "applications:",
+        "  - name: appdb-pg\n"
+        "    type: postgresql\n"
+        "    dsn: pg.example.com:5432\n"
+        "    environment: prod\n"
+        "    postgres: { database: acme }\n"
+        "    vault: vault-prod\n"
+        "applications:",
+    )
+
+    result = run(runner, write_config(config), "--target", "appdb-alpha", "--output", "json")
+
+    assert result.exit_code != ExitCode.CONFIG_INVALID, result.output
+    assert stored(harness["store"], REDRAW_DOCUMENT)["pending"]["acme_web_user"] == STAGED
+    (declined,) = [
+        one for one in document(result).get("diagnostics", []) if one["code"] == "SOPULI-W030"
+    ]
+    assert "appdb-pg" in declined["message"]
+    assert "1024" in declined["message"]
+
+
 # ------------------------------------------------------------- --repair ---
 
 

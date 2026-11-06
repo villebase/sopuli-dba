@@ -1874,10 +1874,13 @@ It is present only when there was one. It means "this row was applied more than
 once and reports the last attempt", not a failure. A redrawn account that ends
 `IN_SYNC` succeeded.
 
-**Two more refusals follow from the rules.** An account whose policy the file
+**Three more refusals follow from the rules.** An account whose policy the file
 does not declare cannot be drawn for, so it is reported and the run goes on. The
 run was applying the estate correctly, and a configuration error would complain
-about a file nothing had changed. A run that applies from `current` instead of
+about a file nothing had changed. The same holds for a policy that a target
+sharing the password cannot hold, such as a length past PostgreSQL's 1024
+bytes. That target counts even where the selectors left it out, because it
+reads the password the redraw stages (#1351). A run that applies from `current` instead of
 `pending` never redraws, because `origin` describes a staged value, and `current`
 is what applications already hold. Replacing that during an apply would be a
 different and much worse operation. §3's rule that an absent `origin` blocks a

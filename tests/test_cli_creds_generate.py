@@ -833,6 +833,34 @@ def test_a_target_the_selectors_leave_out_still_holds_the_draw_to_its_limit(
     assert store.read(PATH) is None
 
 
+def test_a_limit_known_from_the_config_is_refused_before_any_target_login(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    store: MemoryStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`appdb-pg`'s limit needs no connection, so the run refuses before it
+    logs in to `appdb-alpha` to read its constraints (invariant 4, #1351)."""
+    calls: list[str] = []
+
+    def counting(target: Any, invocation: Any, config: Any) -> _Session:
+        calls.append(target.name)
+        return _Session(ASCII_128)
+
+    monkeypatch.setattr("sopuli.cli._open_session", counting)
+    result = run(
+        runner,
+        write_config(_with_postgres("[appdb-alpha, appdb-pg]", length=1100)),
+        "--target",
+        "appdb-alpha",
+    )
+
+    assert isinstance(result.exception, ConfigError), result.exception
+    assert "appdb-pg" in str(result.exception)
+    assert calls == []
+    assert store.read(PATH) is None
+
+
 def test_a_quote_is_not_waived_for_an_oracle_target_the_selectors_leave_out(
     runner: CliRunner, write_config: Callable[[str], Path], store: MemoryStore
 ) -> None:

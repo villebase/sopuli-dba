@@ -375,13 +375,16 @@ know the path. A caller tells the two apart by `versioning` in `supports()`.
 - **KV v2** reads the `metadata` endpoint. `oldest_kept` is the lowest version
   listed, not the endpoint's `oldest_version`, which measured on Vault 2.0.4
   reads 0 until a version is pruned. A version pruned by `max_versions` is not
-  listed. A deleted version has a `deletion_time`, a destroyed one
-  `destroyed: true`.
+  listed. A version is deleted once its `deletion_time` has passed:
+  `delete_version_after` gives every live version a time in the future. A
+  destroyed one has `destroyed: true`. An answer the tool cannot read raises.
 - **KV v1** keeps no versions, and answers `None` without a request.
-- **OCI** lists `ListSecretVersions` with each version's `time_created`. A
-  version scheduled for deletion is deleted; nothing is destroyed. `current` is
-  the version OCI marks `LATEST`, which may be a pending one. The stages are not
-  part of the history. `time_created` has not been read from a real tenancy.
+- **OCI** lists `ListSecretVersions` with each version's `time_created`. The
+  secret is found by listing, so a busy secret is not waited for. A version is
+  deleted once its deletion time has passed, as on KV v2; the tool schedules
+  one two days ahead. Nothing is destroyed. `current` is the version OCI marks
+  `LATEST`, which may be a pending one. The stages are not part of the history.
+  `time_created` has not been read from a real tenancy.
 
 **`list` has these properties.** A backend's own listing endpoint gives none of
 them directly, and without them two adapters would disagree:

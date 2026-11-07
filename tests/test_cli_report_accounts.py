@@ -269,6 +269,19 @@ def test_an_unsupported_target_beside_a_reached_one_is_not_checked(
     assert document["summary"]["failed"] == 0
 
 
+def test_a_survey_that_fails_after_connecting_says_could_not_read(
+    write_config: WriteConfig, sessions: dict[str, Opener]
+) -> None:
+    class Refusing(FakeSession):
+        def survey_accounts(self) -> tuple[SurveyedAccount, ...]:
+            raise DriverError("DBA_PROFILES could not be read (ORA-00942)")
+
+    sessions["prod-alpha"] = lambda target, run, config: Refusing(target.name)
+    result = report(write_config)
+    assert result.exit_code == ExitCode.FAILURE, result.output
+    assert "prod-alpha  could not read: DBA_PROFILES" in click.unstyle(result.output)
+
+
 def test_a_session_without_a_survey_is_unsupported_not_unreachable(
     write_config: WriteConfig, sessions: dict[str, Opener]
 ) -> None:

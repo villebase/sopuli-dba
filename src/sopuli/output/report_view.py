@@ -9,7 +9,7 @@ accounts that passed every check. ``--all`` lists those too.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from sopuli.output.document import Error, Summary
@@ -46,7 +46,20 @@ class TargetReport:
     #: The target is of a product this report is not written for, refused
     #: before connecting. Not checked, rather than unreachable (UC-5 §3).
     unsupported: bool = False
-    notes: tuple[str, ...] = field(default=())
+    #: The target answered the login and then failed the survey, such as a
+    #: refused dictionary read. Still a target with no answer, but not one that
+    #: could not be reached.
+    read_failed: bool = False
+
+
+def target_counts(reports: Sequence[TargetReport]) -> tuple[int, int]:
+    """How many targets gave no answer, and how many of another product.
+
+    The one place both are counted, so the exit code and the summary agree.
+    """
+    unsupported = sum(1 for report in reports if report.unsupported)
+    unanswered = sum(1 for report in reports if report.error is not None) - unsupported
+    return unanswered, unsupported
 
 
 def render(reports: Sequence[TargetReport], *, show_all: bool) -> str:
@@ -59,7 +72,12 @@ def render(reports: Sequence[TargetReport], *, show_all: bool) -> str:
 
 def _section(report: TargetReport, *, show_all: bool) -> list[str]:
     if report.error is not None:
-        what = "not supported" if report.unsupported else "could not connect"
+        if report.unsupported:
+            what = "not supported"
+        elif report.read_failed:
+            what = "could not read"
+        else:
+            what = "could not connect"
         return [f"{paint(report.target, Role.HEADING)}  {what}: {report.error.message}"]
     lines = [f"{paint(report.target, Role.HEADING)}  ({_head(report)})"]
     shown = [row for row in report.rows if show_all or row.state != REPORT_OK]
@@ -88,7 +106,6 @@ def _section(report: TargetReport, *, show_all: bool) -> list[str]:
         {row.failed_logins_reason for row in report.rows if row.failed_logins_reason is not None}
     )
     lines.extend(f"  failed logins unknown: {reason}" for reason in reasons)
-    lines.extend(f"  {note}" for note in report.notes)
     return lines
 
 
@@ -193,8 +210,7 @@ def _result(row: AccountRow) -> dict[str, Any]:
 def summarise(reports: Sequence[TargetReport]) -> Summary:
     """The run's counts. ``failed`` counts unreachable targets and problems."""
     rows = [row for report in reports for row in report.rows]
-    unsupported = sum(1 for report in reports if report.unsupported)
-    unreachable = sum(1 for report in reports if report.error is not None) - unsupported
+    unreachable, unsupported = target_counts(reports)
     problems = sum(1 for row in rows if row.state in (REPORT_PROBLEM, ACCOUNT_MISSING))
     counts: dict[str, int] = {}
     for row in rows:

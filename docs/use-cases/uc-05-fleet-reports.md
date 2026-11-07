@@ -250,8 +250,10 @@ For an account the tool does not manage, only the database's date is shown.
 
 ## 7. Rules in the config
 
-**Built: the config section.** The rules are the `reports:` section
-(`01-configuration.md` §8a). The report that reads them is not built yet.
+**Built.** The rules are the `reports:` section (`01-configuration.md` §8a),
+and `report accounts` (§4) reads them. Where a rule and a `db_profiles` entry,
+or two rules, set one setting two ways, that check is *not checked* on the
+account, and its other checks still run.
 
 The settings are written in words that are not specific to one database
 product: `password_lifetime` and `failed_login_limit`, each `unlimited` or a

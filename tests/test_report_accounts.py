@@ -351,3 +351,42 @@ def test_a_not_checked_finding_says_the_surveys_reason() -> None:
     assert details["lock"] == "the lock is kept in CDB$ROOT"
     assert details["failed_login_limit"] == "FAILED_LOGIN_ATTEMPTS is kept in CDB$ROOT"
     assert row.failed_logins_reason == "the count is kept in CDB$ROOT"
+
+
+# ------------------------------------------ from the second review of #1385 ---
+
+
+def test_a_rule_and_its_db_profile_that_disagree_are_not_checked() -> None:
+    cfg = config(
+        reports={
+            "accounts": [{"accounts": ["X"], "settings": {"password_lifetime": "unlimited"}}],
+            "db_profiles": [{"name": "APP_PROF", "settings": {"password_lifetime": 90}}],
+        }
+    )
+    row = rows(cfg, account("X", profile="APP_PROF", password_lifetime="unlimited"))["X"]
+    finding = next(f for f in row.findings if f.check == "password_lifetime")
+    assert finding.outcome == "not_checked"
+    assert row.state == NOT_CHECKED
+
+
+def test_a_conflict_is_on_its_own_check_and_the_others_still_run() -> None:
+    cfg = config(
+        reports={
+            "accounts": [
+                {"accounts": ["ORDS_*"], "profile": "P", "settings": {"password_lifetime": 90}},
+                {"accounts": ["ORDS_PUBLIC*"], "settings": {"password_lifetime": 30}},
+            ]
+        }
+    )
+    row = rows(cfg, account("ORDS_PUBLIC_USER", profile="Q"))["ORDS_PUBLIC_USER"]
+    outcomes = {f.check: f.outcome for f in row.findings}
+    assert outcomes["password_lifetime"] == "not_checked"
+    assert outcomes["profile"] == "problem"
+    assert row.state == REPORT_PROBLEM
+
+
+def test_reasons_that_do_not_line_up_are_kept_not_dropped() -> None:
+    cfg = config(**rule(accounts=["X"], settings={"failed_login_limit": 5}))
+    surveyed = account("X", failed_login_limit=None, unreadable=("first reason", "an extra reason"))
+    finding = next(f for f in rows(cfg, surveyed)["X"].findings if f.check == "failed_login_limit")
+    assert finding.detail == "first reason; an extra reason"

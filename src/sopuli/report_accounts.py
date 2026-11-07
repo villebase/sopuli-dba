@@ -26,6 +26,7 @@ from sopuli.config.reports import UNLIMITED, is_pattern
 from sopuli.config.selection import select
 from sopuli.driver.survey import SurveyedAccount
 from sopuli.exit_codes import ExitCode
+from sopuli.personal import rules_for
 
 REPORT_OK = "REPORT_OK"
 REPORT_PROBLEM = "REPORT_PROBLEM"
@@ -96,7 +97,10 @@ def _reasons(surveyed: SurveyedAccount) -> dict[str, str]:
     """Each unreadable field's reason, matched to the field by the survey's order."""
     missing = [name for name in _REASON_ORDER if getattr(surveyed, name) is None]
     if len(missing) != len(surveyed.unreadable):
-        return {}
+        # The survey did not give one reason per field. Never drop what it
+        # said: every unreadable field carries all of it.
+        joined = "; ".join(surveyed.unreadable) or _UNREAD
+        return dict.fromkeys(missing, joined)
     return dict(zip(missing, surveyed.unreadable, strict=True))
 
 
@@ -106,7 +110,8 @@ class _Expectation:
 
     profile: str | None
     settings: Settings
-    conflict: bool = False
+    #: The checks two sources set two ways, which are not checked.
+    conflicts: frozenset[str] = frozenset()
 
 
 def evaluate(
@@ -228,9 +233,7 @@ def _personal_on(config: Config, target: str) -> tuple[set[str], set[str]]:
     """
     names: set[str] = set()
     profiles: set[str] = set()
-    for rule in config.personal_accounts:
-        if target not in {expanded.name for expanded in select(config, rule.targets)}:
-            continue
+    for rule in rules_for(config, target):
         names.update(account.upper() for account in rule.accounts)
         if rule.profile is not None:
             profiles.add(rule.profile.upper())
@@ -279,46 +282,38 @@ def _expectation(
     An application account's profile is its policy's, and never a rule's, also
     when its policy names none (`01-configuration.md` §8a).
     """
-    profiles = {rule.profile.upper() for rule in matching if rule.profile is not None}
-    lifetimes = {
-        rule.settings.password_lifetime
-        for rule in matching
-        if rule.settings.password_lifetime is not None
-    }
-    limits = {
-        rule.settings.failed_login_limit
-        for rule in matching
-        if rule.settings.failed_login_limit is not None
-    }
-    conflict = len(lifetimes) > 1 or len(limits) > 1 or (not application and len(profiles) > 1)
-    if application:
-        profile = application_profile
-    else:
-        profile = next((rule.profile for rule in matching if rule.profile is not None), None)
-    settings = Settings(
-        password_lifetime=next(iter(lifetimes), None),
-        failed_login_limit=next(iter(limits), None),
-    )
+    # A `db_profiles` entry for the account's profile states settings too, so it
+    # takes part as one more source: a rule and the profile entry that disagree
+    # are a conflict, never a silent precedence.
     profile_settings = next(
         (entry.settings for entry in db_profiles if entry.name.upper() == actual_profile.upper()),
         Settings(),
     )
+    sources = [rule.settings for rule in matching] + [profile_settings]
+    lifetimes = {s.password_lifetime for s in sources if s.password_lifetime is not None}
+    limits = {s.failed_login_limit for s in sources if s.failed_login_limit is not None}
+    profiles = {rule.profile.upper() for rule in matching if rule.profile is not None}
+    conflicts = frozenset(
+        check
+        for check, values in (
+            ("password_lifetime", lifetimes),
+            ("failed_login_limit", limits),
+            ("profile", set() if application else profiles),
+        )
+        if len(values) > 1
+    )
+    if application:
+        profile = application_profile
+    else:
+        profile = next((rule.profile for rule in matching if rule.profile is not None), None)
     return _Expectation(
         profile=profile,
         settings=Settings(
-            password_lifetime=_first(
-                settings.password_lifetime, profile_settings.password_lifetime
-            ),
-            failed_login_limit=_first(
-                settings.failed_login_limit, profile_settings.failed_login_limit
-            ),
+            password_lifetime=next(iter(lifetimes), None),
+            failed_login_limit=next(iter(limits), None),
         ),
-        conflict=conflict,
+        conflicts=conflicts,
     )
-
-
-def _first(*values: Limit | None) -> Limit | None:
-    return next((value for value in values if value is not None), None)
 
 
 # ---------------------------------------------------------------- the checks ---
@@ -333,9 +328,6 @@ def _check(surveyed: SurveyedAccount, expectation: _Expectation) -> tuple[Findin
     """
     reasons = _reasons(surveyed)
     lock = _lock(surveyed, reasons.get("locked", _UNREAD))
-    if expectation.conflict:
-        conflict = Finding("profile", NOT_CHECKED_OUTCOME, "two rules expect different things")
-        return (lock, conflict)
     settings = expectation.settings
     if expectation.profile is None and settings.is_empty:
         return (
@@ -343,9 +335,17 @@ def _check(surveyed: SurveyedAccount, expectation: _Expectation) -> tuple[Findin
             Finding("profile", NO_RULE_OUTCOME, "no rule states a profile or a setting"),
         )
     findings = [lock]
-    if expectation.profile is not None:
+    # A field two sources set two ways is not checked; the account's other
+    # checks still run.
+    conflicted = [
+        Finding(check, NOT_CHECKED_OUTCOME, "two rules expect different things")
+        for check in ("profile", "password_lifetime", "failed_login_limit")
+        if check in expectation.conflicts
+    ]
+    findings.extend(conflicted)
+    if expectation.profile is not None and "profile" not in expectation.conflicts:
         findings.append(_profile(surveyed, expectation.profile))
-    if settings.password_lifetime is not None:
+    if settings.password_lifetime is not None and "password_lifetime" not in expectation.conflicts:
         findings.append(
             _setting(
                 "password_lifetime",
@@ -355,7 +355,10 @@ def _check(surveyed: SurveyedAccount, expectation: _Expectation) -> tuple[Findin
                 reason=reasons.get("password_lifetime", _UNREAD),
             )
         )
-    if settings.failed_login_limit is not None:
+    if (
+        settings.failed_login_limit is not None
+        and "failed_login_limit" not in expectation.conflicts
+    ):
         findings.append(
             _setting(
                 "failed_login_limit",

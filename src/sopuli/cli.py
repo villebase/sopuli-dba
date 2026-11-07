@@ -5650,8 +5650,7 @@ def report_accounts_command(
     reached = config.expanded_targets
     reports = [_report_target(target, run, config) for target in reached]
     rows = [row for report in reports for row in report.rows]
-    unsupported = sum(1 for report in reports if report.unsupported)
-    unreachable = sum(1 for report in reports if report.error is not None) - unsupported
+    unreachable, unsupported = report_view.target_counts(reports)
     document.results = report_view.build_results(reports)
     document.finish(
         report_states.exit_code(
@@ -5696,7 +5695,11 @@ def _report_target(
         try:
             surveyed = survey()
         except Exception as error:  # noqa: BLE001 -- a per-target finding
-            return report_view.TargetReport(target=target.name, error=_finding(error))
+            # Connected, then could not read: said as such, not as "could not
+            # connect", though the target still gave no answer (exit 1).
+            return report_view.TargetReport(
+                target=target.name, error=_finding(error), read_failed=True
+            )
         return report_view.TargetReport(
             target=target.name,
             release=session.scope().db_version,

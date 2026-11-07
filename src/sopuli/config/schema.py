@@ -1352,7 +1352,10 @@ specials a charset does not have; `allow:` belongs to `charset: custom`; an \
 `auth:` block may carry only the keys its own `method:` takes; every vault, \
 policy, group, profile and target name written anywhere must be declared in the \
 section that declares it; a `for_each` must use one inner dimension throughout; \
-and a profile may not set a key that would change scope. A file this \
+a profile may not set a key that would change scope; a `reports.accounts` rule \
+needs `profile:` or `settings:`, names each account once across the rules, and may \
+not give an application account a `profile:`; and a `reports.db_profiles` name \
+appears once. A file this \
 schema accepts may still be refused there.\
 """
 

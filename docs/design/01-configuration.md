@@ -3909,6 +3909,12 @@ notices until a rotation.
   store comes only from a profile or `SOPULI_VAULT`, the file cannot show the
   pair: a run that draws both accounts refuses the write, and a run whose
   selectors leave one out does not see it ([#841](../decisions/log.md#841))
+- in `reports:` (§8a): a `reports.accounts` rule with neither `profile:` nor
+  `settings:`, an empty `settings:`, a setting that is neither `unlimited` nor a
+  whole number above 0, a pattern using a wildcard other than `*`, an account
+  named twice (in one rule or across rules), a `profile:` given to an account an
+  application declares, a `db_profiles` name written twice, and a rule's
+  `targets:` naming a group, target or label key the file does not have → error
 - a `personal_accounts:` entry naming none of `accounts:`, `profile:` and `role:`,
   or more than one of them → error. None declares nothing, which invariant 5 says
   is the default anyway and is not worth an entry; two would mean either the union

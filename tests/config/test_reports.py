@@ -145,6 +145,12 @@ def test_an_account_is_named_by_one_rule() -> None:
     assert "'DBSNMP' is named by two rules" in str(caught.value)
 
 
+def test_a_name_twice_in_one_rule_says_so() -> None:
+    with pytest.raises(ConfigError) as caught:
+        build_reports(document(accounts=[{"accounts": ["dbsnmp", "DBSNMP"], "profile": "P"}]))
+    assert "'DBSNMP' is named twice in one rule" in str(caught.value)
+
+
 def test_two_patterns_may_overlap() -> None:
     """Which accounts two patterns share is a fact about a database, not the file."""
     built = build_reports(

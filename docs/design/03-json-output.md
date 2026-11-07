@@ -6,7 +6,7 @@ for text output that keep it consistent with both.
 `sopuli/output/` produces them, and CI validates the output against the
 published schemas.
 
-Schemas: [`../schemas/sopuli-run-1.82.schema.json`](../schemas/sopuli-run-1.82.schema.json),
+Schemas: [`../schemas/sopuli-run-1.83.schema.json`](../schemas/sopuli-run-1.83.schema.json),
 [`../schemas/sopuli-event-1.24.schema.json`](../schemas/sopuli-event-1.24.schema.json)
 Examples, each from a real run:
 [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json),
@@ -456,7 +456,7 @@ This sketch shows the run document's shape:
                  account_status, changed, actions[], verification, rollover,
                  password_age_days, started_at, duration_ms, error, warnings[],
                  overridden[], redraws, kind, findings[], failed_logins,
-                 failed_logins_reason, declared_by, reset_at } ],
+                 privileges, failed_logins_reason, declared_by, reset_at } ],
   targets    [ { target, reachable, scope, asserted, duration_ms, privileges,
                  error, warnings[] } ],
   install    { backends[], drivers[] },

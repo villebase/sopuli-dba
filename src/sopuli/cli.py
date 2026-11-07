@@ -83,6 +83,7 @@ from sopuli import generate as staging
 from sopuli import plan as plan_builder
 from sopuli import repair as repair_module
 from sopuli import report_accounts as report_states
+from sopuli import report_privileges as privilege_states
 from sopuli import rotate as rotation
 from sopuli import status as status_states
 from sopuli import strategy as strategies
@@ -275,7 +276,7 @@ from sopuli.orphans import commands as orphan_commands
 from sopuli.orphans import declared_by as orphans_declared_by
 from sopuli.orphans import find as find_orphans
 from sopuli.orphans import survey_prefix
-from sopuli.output import report_view
+from sopuli.output import privileges_view, report_view
 from sopuli.output.about_view import render as render_about
 from sopuli.output.account_list_view import build_result as build_account_list_result
 from sopuli.output.account_list_view import render_account_list
@@ -5705,6 +5706,113 @@ def _report_target(
             release=session.scope().db_version,
             read=len(surveyed),
             rows=report_states.evaluate(target.name, config, surveyed),
+        )
+    finally:
+        if session is not None:
+            with suppress(Exception):
+                session.close()
+
+
+@report_group.command("privileges")
+@target_selector_options
+@click.option(
+    "--account",
+    "account",
+    metavar="NAME",
+    help="Show only this account. It may be one the config does not declare.",
+)
+@click.option("--detail", is_flag=True, help="List every privilege, with each role path.")
+@click.option(
+    "--public",
+    "public",
+    is_flag=True,
+    help="Also list the grants to PUBLIC, once per target.",
+)
+@global_options
+def report_privileges_command(
+    selectors: tuple[str, ...],
+    targets: tuple[str, ...],
+    groups: tuple[str, ...],
+    account: str | None,
+    detail: bool,
+    public: bool,
+    run: Invocation,
+) -> str:
+    """Show each account's effective privileges, through every role.
+
+    For each account `report accounts` covers: its roles, its system privileges
+    with where each comes from, and its object and column privileges as counts
+    by privilege and object type. `--detail` lists every privilege with each
+    role path. A privilege held through a role that is not a default role counts
+    too, and is marked. The report judges nothing.
+
+    Exit 0 when every part was read, 1 when a target could not be reached, and 4
+    when a part could not be read, such as without the optional grant on the
+    privilege views. Only Oracle can run this report yet.
+    """
+    document = run.document
+    selection = selected(selectors, targets, (), groups, ())
+    refuse_unknown(run.config, selection)
+    config = _narrow(run.config, selection)
+    document.selection = selection.as_json() or None
+
+    reports = [
+        _privileges_target(target, run, config, wanted=account, public=public)
+        for target in config.expanded_targets
+    ]
+    accounts = [one for report in reports for one in report.accounts]
+    unreachable, unsupported = privileges_view.target_counts(reports)
+    document.results = privileges_view.build_results(reports)
+    document.finish(
+        privilege_states.exit_code(
+            accounts, unreachable=unreachable, unsupported=unsupported, targets=len(reports)
+        ),
+        privileges_view.summarise(reports),
+    )
+    return privileges_view.render(reports, detail=detail)
+
+
+def _privileges_target(
+    target: ExpandedTarget,
+    run: Invocation,
+    config: Config,
+    *,
+    wanted: str | None,
+    public: bool,
+) -> privileges_view.TargetPrivileges:
+    """One target: survey its accounts, then their privileges, on one connection."""
+    session = None
+    try:
+        try:
+            session = _open_session(target, run, config)
+        except (DriverNotImplementedError, NotWrittenError) as error:
+            return privileges_view.TargetPrivileges(
+                target=target.name, error=_finding(error), unsupported=True
+            )
+        except Exception as error:  # noqa: BLE001 -- a per-target finding
+            return privileges_view.TargetPrivileges(target=target.name, error=_finding(error))
+        survey_accounts = getattr(session, "survey_accounts", None)
+        survey_privileges = getattr(session, "survey_privileges", None)
+        if survey_accounts is None or survey_privileges is None:
+            missing = DriverError(f"{target.name}: this driver cannot survey its privileges")
+            return privileges_view.TargetPrivileges(
+                target=target.name, error=_finding(missing), unsupported=True
+            )
+        try:
+            rows = report_states.evaluate(target.name, config, survey_accounts())
+            if wanted is not None:
+                rows = tuple(row for row in rows if row.account.upper() == wanted.upper())
+            names = [row.account for row in rows if row.state != report_states.ACCOUNT_MISSING]
+            grants = survey_privileges(names, public=public)
+        except Exception as error:  # noqa: BLE001 -- a per-target finding
+            return privileges_view.TargetPrivileges(
+                target=target.name, error=_finding(error), read_failed=True
+            )
+        return privileges_view.TargetPrivileges(
+            target=target.name,
+            release=session.scope().db_version,
+            accounts=privilege_states.per_account(target.name, rows, grants),
+            unreadable=grants.unreadable,
         )
     finally:
         if session is not None:

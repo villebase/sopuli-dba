@@ -34,3 +34,32 @@ Options:
 - `--all`: List every account, including the ones that passed every check.
 
 It also takes the [global options](README.md#global-options).
+
+## sopuli report privileges
+
+```
+sopuli report privileges [OPTIONS]
+```
+
+Show each account's effective privileges, through every role.
+
+For each account `report accounts` covers: its roles, its system privileges
+with where each comes from, and its object and column privileges as counts
+by privilege and object type. `--detail` lists every privilege with each
+role path. A privilege held through a role that is not a default role counts
+too, and is marked. The report judges nothing.
+
+Exit 0 when every part was read, 1 when a target could not be reached, and 4
+when a part could not be read, such as without the optional grant on the
+privilege views. Only Oracle can run this report yet.
+
+Options:
+
+- `--select` `K=V[,K=V]` (repeatable): Keep only targets carrying every label given. Repeat for more labels.
+- `--target` `NAME` (repeatable): Keep only this target. Repeat to add more.
+- `--group` `NAME` (repeatable): Keep only targets in this group. Repeat to add more.
+- `--account` `NAME`: Show only this account. It may be one the config does not declare.
+- `--detail`: List every privilege, with each role path.
+- `--public`: Also list the grants to PUBLIC, once per target.
+
+It also takes the [global options](README.md#global-options).

@@ -177,6 +177,52 @@ def tree(harness: Harness) -> Iterator[str]:
         harness.admin.wipe(f"{prefix}/{leaf}")
 
 
+# ------------------------------------------------------------- versions ---
+
+
+def test_a_path_never_written_has_no_history(harness: Harness) -> None:
+    assert harness.store.versions(harness.path) is None
+
+
+def test_every_version_written_is_listed_oldest_first(harness: Harness) -> None:
+    before = utc_now() - CLOCK_SKEW
+    for n in (1, 2, 3):
+        harness.store.write(harness.path, {"n": n}, cas=n - 1)
+    after = utc_now() + CLOCK_SKEW
+
+    history = harness.store.versions(harness.path)
+
+    assert history is not None
+    assert history.current == 3
+    assert history.oldest_kept == 1
+    assert [info.version for info in history.versions] == [1, 2, 3]
+    assert not any(info.deleted or info.destroyed for info in history.versions)
+    stamps = [info.created_at for info in history.versions]
+    assert all(stamp is not None and before <= stamp <= after for stamp in stamps)
+    assert stamps == sorted(stamps)  # type: ignore[type-var]
+
+
+def test_a_soft_delete_marks_the_latest_version_only(harness: Harness) -> None:
+    harness.store.write(harness.path, {"n": 1}, cas=0)
+    harness.store.write(harness.path, {"n": 2}, cas=1)
+    harness.admin.soft_delete(harness.path)
+
+    history = harness.store.versions(harness.path)
+
+    assert history is not None
+    assert [(info.version, info.deleted) for info in history.versions] == [(1, False), (2, True)]
+    assert history.current == 2
+
+
+def test_a_path_known_only_by_its_metadata_has_an_empty_history(harness: Harness) -> None:
+    harness.admin.require_cas(harness.path)
+
+    history = harness.store.versions(harness.path)
+
+    assert history is not None
+    assert (history.current, history.oldest_kept, history.versions) == (0, None, ())
+
+
 def test_a_store_with_compare_and_set_says_so(harness: Harness) -> None:
     assert CAS in harness.store.supports()
 

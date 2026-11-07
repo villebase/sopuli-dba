@@ -23,6 +23,7 @@ import base64
 import json
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
 
@@ -55,12 +56,19 @@ def refused(status: int, code: str, message: str) -> Any:
 VERSION_LIMIT = 30
 
 
+#: When the fake's first version of any secret was made. Each later version is
+#: a minute later, so a test can name the time a version was made.
+FIRST_CREATED = datetime(2026, 11, 1, 3, 0, tzinfo=UTC)
+
+
 @dataclass
 class FakeVersion:
     number: int
     content: bytes
     stages: set[str]
     time_of_deletion: Any = None
+    #: ``SecretVersionSummary.time_created``, a datetime in the SDK.
+    time_created: datetime | None = None
 
 
 @dataclass
@@ -96,7 +104,14 @@ class FakeSecret:
             if stage == "PENDING" and "PENDING" in one.stages:
                 one.stages = {"DEPRECATED"}
         number = len(self.versions) + 1
-        self.versions.append(FakeVersion(number=number, content=content, stages={"LATEST"}))
+        self.versions.append(
+            FakeVersion(
+                number=number,
+                content=content,
+                stages={"LATEST"},
+                time_created=FIRST_CREATED + timedelta(minutes=number - 1),
+            )
+        )
         if stage == "PENDING":
             self.versions[-1].stages.add("PENDING")
         else:
@@ -177,6 +192,7 @@ class FakeOci:
                     number=number,
                     content=_raw(one),
                     stages=set(stage),
+                    time_created=FIRST_CREATED + timedelta(minutes=number - 1),
                 )
                 for number, (one, stage) in enumerate(zip(contents, stages, strict=True), 1)
             ],
@@ -369,6 +385,7 @@ class FakeOci:
                     version_number=one.number,
                     stages=sorted(one.stages),
                     time_of_deletion=one.time_of_deletion,
+                    time_created=one.time_created,
                 )
                 for one in chunk
             ],

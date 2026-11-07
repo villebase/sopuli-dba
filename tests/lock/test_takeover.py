@@ -35,7 +35,7 @@ from sopuli.lock.takeover import (
 )
 from sopuli.lock.takeover import RELEASED as RELEASED_REASON
 from sopuli.store import CasConflictError, MemoryStore, SecretStore
-from sopuli.store.protocol import CAS, OK, PathMetadata, Stored, StoreHealth
+from sopuli.store.protocol import CAS, OK, PathMetadata, Stored, StoreHealth, VersionHistory
 
 KEY = LockKey(store="vault-prod", path="apps/acme/appdb-beta")
 HOLDER = Holder(host="ci-runner-3", pid=8821, os_user="svc_sopuli")
@@ -89,6 +89,9 @@ class Unfenced:
         raise AssertionError("a store that cannot fence must never be written to by `break`")
 
     def metadata(self, path: str) -> PathMetadata | None:  # pragma: no cover - not asked
+        return None
+
+    def versions(self, path: str) -> VersionHistory | None:  # pragma: no cover - not asked
         return None
 
     def require_cas(self, path: str) -> None:  # pragma: no cover - never reached

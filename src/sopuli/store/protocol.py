@@ -260,6 +260,37 @@ class PathMetadata:
     max_versions: int | None = None
 
 
+@dataclass(frozen=True)
+class VersionInfo:
+    """One version of a path that the store still lists.
+
+    ``created_at`` is ``None`` where the store gives no time for it. ``deleted``
+    is a soft delete: the version's data cannot be read, and the store may let it
+    be restored. ``destroyed`` is gone for good. A version that was pruned, by
+    ``max_versions`` or by the store's own limit, is not listed at all.
+    """
+
+    version: int
+    created_at: datetime | None
+    deleted: bool
+    destroyed: bool
+
+
+@dataclass(frozen=True)
+class VersionHistory:
+    """Every version of a path that the store still lists, oldest first.
+
+    ``current`` is the newest version number the store has made at the path,
+    whether or not that version can still be read. ``oldest_kept`` is the lowest
+    version number still listed, or ``None`` where none is. Versions below it
+    are gone, so ``oldest_kept`` is where the history ends, never where it began.
+    """
+
+    current: int
+    oldest_kept: int | None
+    versions: tuple[VersionInfo, ...]
+
+
 #: The store is there, answering, and able to serve this run.
 OK = "ok"
 
@@ -479,6 +510,18 @@ class SecretStore(Protocol):
         ``None`` for a path that has never been written *and* never had metadata
         configured. That is the ordinary state of a lock path before the first
         lock is taken, so it is not a failure.
+        """
+        ...
+
+    def versions(self, path: str) -> VersionHistory | None:
+        """Every version of ``path`` the store still lists, for UC-5's history.
+
+        ``None`` where the store keeps no versions, or where ``path`` is unknown
+        to it. A caller tells the two apart by :data:`VERSIONING` in
+        :meth:`supports`. A path known only by its metadata has a history with
+        ``current`` 0 and no versions.
+
+        Reads metadata only: no version's data is read, so no password is.
         """
         ...
 

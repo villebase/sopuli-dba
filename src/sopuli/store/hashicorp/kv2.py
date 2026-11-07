@@ -47,8 +47,10 @@ contents reads and finds out.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
+from sopuli.clock import from_rfc3339
 from sopuli.store.hashicorp._errors import from_vault, not_from_vault, raise_for
 from sopuli.store.hashicorp._health import health as probe_health
 from sopuli.store.hashicorp._listing import keys_of, walk
@@ -64,6 +66,8 @@ from sopuli.store.protocol import (
     Stored,
     StoreError,
     StoreHealth,
+    VersionHistory,
+    VersionInfo,
 )
 
 #: Vault's "no per-path limit" for ``max_versions``: the mount's own setting
@@ -249,6 +253,42 @@ class Kv2Store:
             max_versions=None if maximum in (None, UNLIMITED) else int(maximum),
         )
 
+    def versions(self, path: str) -> VersionHistory | None:
+        """``GET /v1/<mount>/metadata/<path>``: the endpoint :meth:`metadata` reads.
+
+        ``current_version`` and each entry of ``versions``, which holds only the
+        versions not yet pruned by ``max_versions``. ``oldest_kept`` is the
+        lowest of those, not the endpoint's ``oldest_version``: measured on
+        Vault 2.0.4, ``oldest_version`` reads 0 until a version is pruned,
+        though version 1 is still there. A deleted version has a
+        ``deletion_time``; a destroyed one has ``destroyed: true``. A path with
+        no metadata (404) is ``None``.
+        """
+        response = self.transport.request("GET", f"{self.mount}/metadata/{path}")
+        if response.status == 404:
+            return None
+        _check(response, path=path)
+
+        payload = _data(response)
+        listed = payload.get("versions") or {}
+        found = []
+        for number, entry in listed.items():
+            entry = entry if isinstance(entry, dict) else {}
+            found.append(
+                VersionInfo(
+                    version=int(number),
+                    created_at=_timestamp(entry.get("created_time")),
+                    deleted=_timestamp(entry.get("deletion_time")) is not None,
+                    destroyed=bool(entry.get("destroyed")),
+                )
+            )
+        found.sort(key=lambda info: info.version)
+        return VersionHistory(
+            current=int(payload.get("current_version") or 0),
+            oldest_kept=found[0].version if found else None,
+            versions=tuple(found),
+        )
+
     def require_cas(self, path: str) -> None:
         """``POST /v1/<mount>/metadata/<path>`` with ``cas_required: true``.
 
@@ -298,6 +338,20 @@ class Kv2Store:
             return None
         _check(response, path=prefix)
         return keys_of(response, prefix=prefix)
+
+
+def _timestamp(value: Any) -> datetime | None:
+    """An RFC 3339 time from Vault, or ``None`` for an empty or unreadable one.
+
+    KV v2 sends ``""`` as the ``deletion_time`` of a version never deleted, and
+    nanoseconds, which :meth:`datetime.fromisoformat` truncates to microseconds.
+    """
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return from_rfc3339(value)
+    except ValueError:
+        return None
 
 
 def _check(response: Response, *, path: str) -> None:

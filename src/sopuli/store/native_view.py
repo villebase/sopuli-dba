@@ -63,6 +63,7 @@ from sopuli.store.protocol import (
     Stored,
     StoreError,
     StoreHealth,
+    VersionHistory,
     WriteMechanism,
 )
 
@@ -279,6 +280,9 @@ class NativeStagedStore:
 
     def metadata(self, path: str) -> PathMetadata | None:
         return self.inner.metadata(path)
+
+    def versions(self, path: str) -> VersionHistory | None:
+        return self.inner.versions(path)
 
     def require_cas(self, path: str) -> None:
         self.inner.require_cas(path)

@@ -31,7 +31,14 @@ from sopuli.store.hashicorp._errors import raise_for
 from sopuli.store.hashicorp._health import health as probe_health
 from sopuli.store.hashicorp._listing import keys_of, walk
 from sopuli.store.hashicorp._transport import Response, Transport
-from sopuli.store.protocol import LIST, PathMetadata, Stored, StoreError, StoreHealth
+from sopuli.store.protocol import (
+    LIST,
+    PathMetadata,
+    Stored,
+    StoreError,
+    StoreHealth,
+    VersionHistory,
+)
 
 #: The version a store without versioning reports.
 #:
@@ -145,6 +152,14 @@ class Kv1Store:
         "this store knows nothing about the path apart from its contents", which
         is true. What the lock does about a store that cannot promise
         ``cas_required`` is the capability check above, not this.
+        """
+        return None
+
+    def versions(self, path: str) -> VersionHistory | None:
+        """Always ``None``: a v1 mount keeps one document and no versions.
+
+        Nothing is sent. The store does not declare ``versioning``, which is how
+        a caller tells this ``None`` from a path the store does not know.
         """
         return None
 

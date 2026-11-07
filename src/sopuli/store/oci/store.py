@@ -59,6 +59,8 @@ from sopuli.store.protocol import (
     Stored,
     StoreError,
     StoreHealth,
+    VersionHistory,
+    VersionInfo,
     bounded_prefix,
 )
 from sopuli.store.waiting import waiting
@@ -431,6 +433,50 @@ class OciStore:
         policy's job, which ``01-configuration.md`` §7 describes.
         """
         return None
+
+    def versions(self, path: str) -> VersionHistory | None:
+        """Every version ``ListSecretVersions`` gives for the secret at ``path``.
+
+        ``None`` where there is no secret, or only one being deleted. A version
+        scheduled for deletion is ``deleted``; OCI destroys nothing by itself
+        before that, so ``destroyed`` is always false. ``current`` is the
+        highest version number listed, the version OCI marks ``LATEST``, which
+        may be a PENDING rather than the CURRENT one. The stages are not part of
+        the history: a promotion moves them and leaves no time behind (UC-5 §6).
+        """
+        name = _names.to_oci(path)
+        what = self._what(name)
+        live = self._live(name, what=what)
+        if live is None:
+            return None
+        found: list[VersionInfo] = []
+        page = None
+        while True:
+            try:
+                response = self._read(self._vaults.list_secret_versions, live.id, page=page)
+            except oci.exceptions.ServiceError as exc:
+                _errors.raise_for(exc, what=what)
+            except NO_ANSWER as exc:
+                raise _errors.unreachable(exc, what=what) from exc
+            for version in response.data:
+                created = getattr(version, "time_created", None)
+                found.append(
+                    VersionInfo(
+                        version=int(version.version_number),
+                        created_at=created if isinstance(created, datetime) else None,
+                        deleted=version.time_of_deletion is not None,
+                        destroyed=False,
+                    )
+                )
+            page = response.next_page
+            if not page:
+                break
+        found.sort(key=lambda info: info.version)
+        return VersionHistory(
+            current=found[-1].version if found else 0,
+            oldest_kept=found[0].version if found else None,
+            versions=tuple(found),
+        )
 
     def require_cas(self, path: str) -> None:
         """Refuse, saying why: OCI cannot make a secret refuse a write without

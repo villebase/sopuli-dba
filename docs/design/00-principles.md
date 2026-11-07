@@ -313,6 +313,7 @@ SecretStore
   write(path, data, cas) -> version
   patch(path, changes, cas) -> version      # RFC 7396 merge patch
   metadata(path) -> PathMetadata | None
+  versions(path) -> VersionHistory | None   # every version the store still lists, no data
   require_cas(path) -> None                 # makes the path refuse writes without a CAS
   list(prefix) -> path[]
 
@@ -362,6 +363,25 @@ so every run that takes a lock on an OCI store reports `SOPULI-W019` and goes
 ahead. Only the IAM policy keeps other writers off an OCI secret
 (`01-configuration.md` §7). The tool's own writes still carry a
 compare-and-set, the write counter and the ETag.
+
+**`versions` lists a path's versions for UC-5's history report**
+(`../use-cases/uc-05-fleet-reports.md` §6). It reads metadata only, never a
+version's data. Each version has its number, when it was made, and whether it
+is deleted or destroyed. `current` is the newest version number the store has
+made, and `oldest_kept` the lowest it still lists: the history ends there, and
+earlier versions are gone. `None` means the store keeps no versions, or does not
+know the path. A caller tells the two apart by `versioning` in `supports()`.
+
+- **KV v2** reads the `metadata` endpoint. `oldest_kept` is the lowest version
+  listed, not the endpoint's `oldest_version`, which measured on Vault 2.0.4
+  reads 0 until a version is pruned. A version pruned by `max_versions` is not
+  listed. A deleted version has a `deletion_time`, a destroyed one
+  `destroyed: true`.
+- **KV v1** keeps no versions, and answers `None` without a request.
+- **OCI** lists `ListSecretVersions` with each version's `time_created`. A
+  version scheduled for deletion is deleted; nothing is destroyed. `current` is
+  the version OCI marks `LATEST`, which may be a pending one. The stages are not
+  part of the history. `time_created` has not been read from a real tenancy.
 
 **`list` has these properties.** A backend's own listing endpoint gives none of
 them directly, and without them two adapters would disagree:

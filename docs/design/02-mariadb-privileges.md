@@ -175,8 +175,10 @@ Two targets on nodes of one cluster are refused as one Galera cluster. The
 server is claimed too, whatever the node's state, so two targets on one node
 are always refused. A node in another state, such as `Donor/Desynced` while a
 backup runs, gives no cluster: the probe measured only `Synced` as the state
-to trust, so `doctor` notes that another target on its cluster is not
-refused. A cluster started from a copy of another cluster's data was not
+to trust. Another target on its cluster is then not refused, and every command
+that connects says so: `SOPULI-W068` in `diagnostics[]` and the text view,
+and in `doctor` also a note on the target
+([#1363](../decisions/log.md#1363)). A cluster started from a copy of another cluster's data was not
 measured: it is expected to keep that cluster's UUID, and the two would then
 be refused as one ([#1346](../decisions/log.md#1346)).
 `doctor` warns, and never fails ([P5](../decisions/log.md#p5)), about:

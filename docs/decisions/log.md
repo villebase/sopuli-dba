@@ -4819,3 +4819,26 @@ the register.
 - **Known cost:** a cluster started from a copy of another cluster's data is
   expected to keep that cluster's UUID, which was not measured. The two would
   be refused as one, and the hint says how to run them apart.
+
+## #1363
+
+- **Decided:** 2026-11-07, #1363
+- **Question:** a session can claim less than it could, so the check that
+  refuses two targets on one set of accounts (`SOPULI-20008`) may let two
+  through: on PostgreSQL, `system_identifier` could not be read; on
+  MariaDB, a Galera node is not `Synced`. Only `doctor` reported it. Should
+  every command?
+- **Decision:** A, the maintainer's choice. Every command that connects
+  reports it as `SOPULI-W068`, one entry per target, in `diagnostics[]` and
+  the text view. `doctor` also keeps its note on the target, and does not
+  print the warning a second time. Run schema 1.81 and event schema 1.24.
+- **Why:** a scheduled `creds apply`, `rotate` or `check` that runs during a
+  backup is the run most likely to meet a desynced node, and the one nobody
+  reads `doctor` for. It skipped a safety check and said nothing.
+- **Not a refusal:** a desynced node is normal. Refusing would fail every
+  scheduled run during a backup window.
+- **Rejected:** B, keeping `doctor` as the only place that says so and
+  documenting that. A document does not reach a scheduled run's output.
+- **Known cost:** an estate whose backup runs at the time of a scheduled run
+  gets the warning on that run each time. The check did not run then, so the
+  warning is true each time.

@@ -1651,8 +1651,9 @@ both targets exits 9 for the same reason, so a gate that runs it runs it once
 per target too. Reasons: [#1061](../decisions/log.md#1061). Any role
 can read the identifier by default (`pg-system-identifier` in
 [`../README.md`](../README.md) §*Verify before implementing*). Where a site
-revoked it, `doctor` says so in a warning and the target is not checked: not
-knowing is not a finding.
+revoked it, the target is not checked: not knowing is not a finding. Every
+command that connects says so in a warning, `SOPULI-W068`
+([#1363](../decisions/log.md#1363)).
 
 **The `dsn` is `host:port` and nothing else.** The host is a name, an IPv4
 address, or an IPv6 address in brackets, such as `[2001:db8::10]:5432`. A

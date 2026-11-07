@@ -38,7 +38,7 @@ so. That is a design decision, not an implementation detail.
 | `docs/design/04-testing.md` | tests and the test stack |
 | `docs/use-cases/uc-01-app-credential-sync.md` | application credentials: `creds generate`, `apply`, `check`, `rotate` |
 | `docs/use-cases/uc-02-personal-account-passwords.md` | personal accounts: `account` verbs, password reset, delivery methods |
-| `docs/use-cases/uc-05-fleet-reports.md` | the `report` commands, the only commands that report on accounts the config does not declare |
+| `docs/use-cases/uc-05-fleet-reports.md` | the `report` commands, the only commands that list the accounts the config does not declare |
 | `docs/measurements.md` | quoting or adding a result measured on an Oracle release |
 | `docs/decisions/log.md` | why a decision was made, and what was rejected |
 | `docs/decisions/adr-001-privilege-model.md` | before proposing a definer-rights package. It was considered and rejected |
@@ -99,15 +99,20 @@ detail.
    the target. It never fails with a generic error during execution. One
    exception is accepted: on PostgreSQL, a libpq older than 16 is refused per
    account during the run, because no measured supported install has one
-   ([#1076](docs/decisions/log.md#1076)).
+   ([#1076](docs/decisions/log.md#1076)). A second is accepted for UC-5's
+   `report` commands: a check that a target lacks the capability for is
+   reported as not checked on that target, and the command fails at plan time
+   only when no target can run the check
+   ([#1376](docs/decisions/log.md#1376)).
 
 5. **The config is the whitelist for changes.** The tool never changes an
    account the config does not declare. Selectors filter the declared set; they
    cannot extend it. `--force` overrides other guardrails, never this one.
-   Reading is wider in one place: the `report` commands of UC-5 read and report
-   on every account on a declared target, declared or not, and change nothing.
+   Reading is wider in one place: the `report` commands of UC-5 read and list
+   every account on a declared target, declared or not, and change nothing.
    Another command reads an undeclared account only where a check on a
-   declared one needs it, such as a MySQL user name at a second host. A
+   declared one needs it, such as a MySQL user name at a second host, which
+   its message then names. A
    personal account may be
    declared by a predicate over a profile or role; a mutating verb then still
    requires the account named on the command line. A name may not be declared

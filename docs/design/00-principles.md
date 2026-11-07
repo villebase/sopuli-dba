@@ -1008,7 +1008,7 @@ first question is where their test database runs.
   not break invariant 5: the config whitelists what the tool may change, and a
   survey changes nothing. UC-5's `report` commands read every account on a
   declared target on the same reasoning, and they are the only commands that
-  report on accounts the config does not declare
+  list the accounts the config does not declare
   ([#1376](../decisions/log.md#1376)).
 - **Breaking a lock is a verb, and it is not self-service.**
   `sopuli lock break <vault>:<path>` writes a `released` record over the held

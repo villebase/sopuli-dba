@@ -351,7 +351,9 @@ These entries share a setup. The probe is
   on Oracle, and with which grants?** Open: which of `DBA_USERS`,
   `DBA_PROFILES`, `DBA_ROLE_PRIVS`, `DBA_ROLES`, `DBA_SYS_PRIVS` and
   `DBA_TAB_PRIVS` the installed service account reads, which columns each
-  release has, which grants the rest need, and what a PDB shows for a common
+  release has (`DBA_USERS.PASSWORD_CHANGE_DATE` and `ORACLE_MAINTAINED` among
+  them), what `SYS.USER$` gives for `LCOUNT` and `PTIME` where its optional
+  grant is held, which grants the rest need, and what a PDB shows for a common
   account and a common profile.
 - `unverified` `ddl-text-awr` (#387) — **Does the kept text reach AWR?**
   On 19.32.0.0.0, with the Diagnostics Pack enabled, the wrapped literal (C3)
@@ -998,7 +1000,7 @@ install, and in what form.
 
 Specified in [`use-cases/uc-05-fleet-reports.md`](use-cases/uc-05-fleet-reports.md),
 and not built. It reads every declared target, changes nothing, and is the only
-place that reports on accounts the config does not declare
+place that lists the accounts the config does not declare
 ([#1376](decisions/log.md#1376)).
 
 ### UC-1b — self-rotation, where there is no admin credential

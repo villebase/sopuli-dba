@@ -4891,8 +4891,15 @@ the register.
      `creds status` and `account list` among them, keeps what it reads today:
      an undeclared account only where a check on a declared one needs it,
      such as a MySQL user name at a second host.
+  3. **An exception to invariant 4 for the reports.** A check that one target
+     lacks the capability for is *not checked* on that target, and the
+     report goes on with the others. The command fails at plan time only when
+     no target can run the check.
 - **Why:** a report that cannot see undeclared accounts cannot answer its
-  first question. The invariant's reasons are about changes: the tool's audit
+  first question. A report that refused the whole fleet because one old
+  target lacks a column would answer nothing, and *not checked* names the
+  capability and the target, which is what invariant 4 asks a refusal to
+  name. The invariant's reasons are about changes: the tool's audit
   trail names only accounts somebody chose to manage, and a selector never
   reaches further than the file. A report changes nothing, so neither reason
   applies to it. `lock status` already reads records the config does not

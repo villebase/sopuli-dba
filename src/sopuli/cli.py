@@ -82,6 +82,7 @@ from sopuli import finish_rollover as windows
 from sopuli import generate as staging
 from sopuli import plan as plan_builder
 from sopuli import repair as repair_module
+from sopuli import report_accounts as report_states
 from sopuli import rotate as rotation
 from sopuli import status as status_states
 from sopuli import strategy as strategies
@@ -229,6 +230,8 @@ from sopuli.driver.protocol import (
 )
 from sopuli.driver.registry import (
     DRIVERS,
+    DriverNotImplementedError,
+    NotWrittenError,
     driver_for,
     installed,
     require_command,
@@ -272,6 +275,7 @@ from sopuli.orphans import commands as orphan_commands
 from sopuli.orphans import declared_by as orphans_declared_by
 from sopuli.orphans import find as find_orphans
 from sopuli.orphans import survey_prefix
+from sopuli.output import report_view
 from sopuli.output.about_view import render as render_about
 from sopuli.output.account_list_view import build_result as build_account_list_result
 from sopuli.output.account_list_view import render_account_list
@@ -5597,6 +5601,109 @@ def _confirm(question: str, **options: Any) -> bool:
     would overwrite the question being answered.
     """
     return bool(click.confirm(printable(question, colour=False), **options))
+
+
+@cli.group("report")
+def report_group() -> None:
+    """Read-only reports across the declared targets (UC-5).
+
+    A report reads every account on each declared target, declared or not, and
+    changes nothing. These are the only commands that list the accounts the
+    config does not declare (invariant 5).
+    """
+
+
+@report_group.command("accounts")
+@target_selector_options
+@click.option(
+    "--all",
+    "show_all",
+    is_flag=True,
+    help="List every account, including the ones that passed every check.",
+)
+@global_options
+def report_accounts_command(
+    selectors: tuple[str, ...],
+    targets: tuple[str, ...],
+    groups: tuple[str, ...],
+    show_all: bool,
+    run: Invocation,
+) -> str:
+    """Check every account on each target against the `reports:` rules.
+
+    One table per target, problems first. A check ends as a problem, OK, not
+    checked (the target cannot read the value truthfully, such as a common
+    account's lock on a PDB), or no rule (the config states nothing to compare).
+    An account counts as OK only when every check had a rule and passed.
+
+    Exit 0 when nothing is wrong, 1 when a target could not be reached, 3 when a
+    check found a problem, and 4 when something could not be checked. An account
+    the config does not declare is listed as information and never changes the
+    exit code. Only Oracle can run this report yet.
+    """
+    document = run.document
+    selection = selected(selectors, targets, (), groups, ())
+    refuse_unknown(run.config, selection)
+    config = _narrow(run.config, selection)
+    document.selection = selection.as_json() or None
+
+    reached = config.expanded_targets
+    reports = [_report_target(target, run, config) for target in reached]
+    rows = [row for report in reports for row in report.rows]
+    unsupported = sum(1 for report in reports if report.unsupported)
+    unreachable = sum(1 for report in reports if report.error is not None) - unsupported
+    document.results = report_view.build_results(reports)
+    document.finish(
+        report_states.exit_code(
+            rows, unreachable=unreachable, unsupported=unsupported, targets=len(reports)
+        ),
+        report_view.summarise(reports),
+    )
+    return report_view.render(reports, show_all=show_all)
+
+
+def _report_target(
+    target: ExpandedTarget, run: Invocation, config: Config
+) -> report_view.TargetReport:
+    """One target: survey its accounts on one connection, then evaluate them.
+
+    A target that cannot be reached is one unreachable section and not a failed
+    run: the report still covers the others (UC-5 §3). Another product never
+    gets here, because ``_open_session`` asks the driver registry first, and
+    only Oracle lists this command.
+    """
+    session = None
+    try:
+        try:
+            session = _open_session(target, run, config)
+        except (DriverNotImplementedError, NotWrittenError) as error:
+            # Another product: refused before connecting. Not checked on this
+            # target, rather than unreachable (UC-5 §3).
+            return report_view.TargetReport(
+                target=target.name, error=_finding(error), unsupported=True
+            )
+        except Exception as error:  # noqa: BLE001 -- a per-target finding
+            return report_view.TargetReport(target=target.name, error=_finding(error))
+        survey = getattr(session, "survey_accounts", None)
+        if survey is None:
+            # No driver but Oracle's reaches this command (the registry), and
+            # Oracle's session has the method. Reported, not raised, if one does.
+            missing = DriverError(f"{target.name}: this driver cannot survey its accounts")
+            return report_view.TargetReport(target=target.name, error=_finding(missing))
+        try:
+            surveyed = survey()
+        except Exception as error:  # noqa: BLE001 -- a per-target finding
+            return report_view.TargetReport(target=target.name, error=_finding(error))
+        return report_view.TargetReport(
+            target=target.name,
+            release=session.scope().db_version,
+            read=len(surveyed),
+            rows=report_states.evaluate(target.name, config, surveyed),
+        )
+    finally:
+        if session is not None:
+            with suppress(Exception):
+                session.close()
 
 
 @cli.group("creds")

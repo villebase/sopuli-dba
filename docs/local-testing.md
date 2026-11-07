@@ -37,7 +37,7 @@ sopuli target list          sopuli creds check            sopuli account reset-p
 sopuli policy sample        sopuli creds rotate           sopuli account expire-password
 sopuli lock status          sopuli creds status           sopuli doctor
 sopuli lock break           sopuli creds finish-rollover  sopuli about
-sopuli vault orphans
+sopuli vault orphans        sopuli report accounts
 ```
 
 The `creds` commands manage application credentials (UC-1). The `account`
@@ -1163,8 +1163,8 @@ too, so `--color never` and `NO_COLOR=1` lose nothing:
 |---|---|---|
 | cyan | nothing to do | `IN_SYNC` |
 | yellow | somebody has to act, the run is fine | `DRIFT`, `PENDING_APPLY`, `ROLLOVER_ACTIVE`, `VAULT_ONLY`, `RESET` |
-| red, bold | the tool could not do the job, or the estate is not in a state it can | `ERROR`, `ACCOUNT_MISSING`, `LOCKED`, `EXPIRED` |
-| dim | nothing could be concluded | `UNVERIFIABLE`, `SKIPPED`, `DECLARED` |
+| red, bold | the tool could not do the job, or the estate is not in a state it can | `ERROR`, `ACCOUNT_MISSING`, `LOCKED`, `EXPIRED`, `REPORT_PROBLEM` |
+| dim | nothing could be concluded | `UNVERIFIABLE`, `SKIPPED`, `DECLARED`, `NOT_CHECKED`, `NO_RULE`, `UNDECLARED`, `REPORT_OK` |
 
 ### 8.1 `status`: what is there
 
@@ -2200,6 +2200,63 @@ acme_dev_bob@localhost  mariadb-dev  LOCKED  OPEN    sent ACCOUNT LOCK; whether 
 
 suspended acme_dev_bob@localhost on 1 of 1 targets
 ```
+
+---
+
+## 9a. Reports (UC-5)
+
+`report accounts` reads every account on each target and checks it against the
+`reports:` rules (`design/01-configuration.md` §8a). It changes nothing. Only
+Oracle can run it yet.
+
+Make two accounts on a profile whose passwords expire after 180 days, and one
+locked account that nothing declares. As SYS in the PDB:
+
+```sql
+CREATE PROFILE acme_rpt_prof LIMIT PASSWORD_LIFE_TIME 180 FAILED_LOGIN_ATTEMPTS 5;
+CREATE USER acme_rpt_user IDENTIFIED BY "Acme_Rpt_User_1" PROFILE acme_rpt_prof;
+CREATE USER acme_rpt_ok IDENTIFIED BY "Acme_Rpt_Ok_1" PROFILE acme_rpt_prof;
+CREATE USER acme_rpt_stray IDENTIFIED BY "Acme_Rpt_Stray_1";
+ALTER USER acme_rpt_stray ACCOUNT LOCK;
+```
+
+And a config with three rules, one of them for an account that does not exist:
+
+```yaml
+version: 1
+targets:
+  - name: free-pdb
+    type: oracle
+    dsn: localhost:1521/FREEPDB1
+    admin: { username: system, auth: { method: env } }
+reports:
+  accounts:
+    - accounts: [acme_rpt_user]
+      settings: { password_lifetime: unlimited }
+    - accounts: [acme_rpt_ok]
+      profile: ACME_RPT_PROF
+      settings: { password_lifetime: 365 }
+    - accounts: [acme_rpt_gone]
+      profile: ACME_RPT_PROF
+```
+
+```
+$ sopuli --config report.yaml report accounts
+free-pdb  (23.0.0.0.0, 36 accounts read, 2 with a problem, 3 undeclared)
+  ACCOUNT         KIND        PROFILE        STATUS  FAILED LOGINS  STATE            FINDING
+  ACME_RPT_USER   technical   ACME_RPT_PROF  OPEN    0              REPORT_PROBLEM   password_lifetime: 180 days, rule says unlimited
+  ACME_RPT_GONE   technical   -              -       -              ACCOUNT_MISSING  present: not on this target
+  ACME_RPT_STRAY  undeclared  DEFAULT        LOCKED  0              UNDECLARED       not in config
+  PDBADMIN        undeclared  DEFAULT        OPEN    0              UNDECLARED       not in config
+  SOPULI_PROBE    undeclared  DEFAULT        OPEN    0              UNDECLARED       not in config
+  1 account OK
+```
+
+It exits 3, because a check found a problem. The accounts Oracle maintains,
+such as `SYSTEM`, are left out unless a rule names them. An undeclared account
+is listed as information and never changes the exit code. `--all` also lists
+the accounts that passed, here `ACME_RPT_OK`. The release in the head line is
+`V$INSTANCE.VERSION`, which `doctor` shows too.
 
 ---
 

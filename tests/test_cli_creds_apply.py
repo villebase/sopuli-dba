@@ -5060,8 +5060,13 @@ def test_a_repair_run_is_repaired_with_the_same_file(
 
     assert result.exit_code == ExitCode.PARTIAL, result.output
     assert "acme_web_user on appdb-beta" in result.output
-    remedy = result.output.split("repair with: ")[1].splitlines()[0]
+    remedy, other = result.output.split("repair with: ")[1].splitlines()[:2]
     assert remedy == f"sopuli creds apply --config {config} --repair {previous}"
+    # Not a second `--repair FILE`: the operator would pass the flag twice.
+    assert other.strip() == (
+        "or: the same with this run's document in place of the --repair file, "
+        "if you captured it with --output json"
+    )
 
 
 def test_repair_narrows_to_the_pairs_that_did_not_confirm(

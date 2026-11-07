@@ -612,6 +612,9 @@ applications:""",
     assert result.exit_code == ExitCode.PARTIAL, result.output
     assert "cannot be promoted by this run" in result.output
     assert "a guardrail skipped acme_web_user on appdb-beta" in result.output, result.output
+    # Not "run the same command again", which W027 says withholds it again.
+    assert "run `creds apply` with the selection SOPULI-W027 asks for" in result.output
+    assert "run the same command again" not in result.output
     assert "repair with:" not in result.output
 
 

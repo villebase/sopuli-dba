@@ -1368,11 +1368,17 @@ The `--repair` line is printed only where an unconfirmed row exists. On §8 case
 from. `--repair` would filter the estate to nothing and report
 `nothing to apply`.
 
-The plain re-run is the first line, and not `--repair`, because the closing line
-is text output only. The emitter writes the JSON document or the text, never
-both. A text-mode run leaves no document on disk for `--repair` to read. A JSON
-consumer needs no line: it has `results[]`, and `03-json-output.md` §7's recipe
-is the same filter the flag applies.
+The first line never points `--repair` at this run's own document, because the
+closing line is text output only. The emitter writes the JSON document or the
+text, never both. A text-mode run leaves no document of its own on disk for
+`--repair` to read. A JSON consumer needs no line: it has `results[]`, and
+`03-json-output.md` §7's recipe is the same filter the flag applies.
+
+A run that read `--repair FILE` repeats that file on the first line. The file is
+on disk, and the pairs that failed are among the pairs it names. It costs a login
+for each pair of the file that this run confirmed. So the second line offers
+this run's document in place of the file, which names only the pairs that
+failed.
 
 **The line carries no diagnostic code.** `03-json-output.md` §3's rule is that a
 code exists for what the exit code cannot tell you. Here exit 4 says that the run

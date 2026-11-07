@@ -4848,4 +4848,7 @@ the register.
      withheld pairs. `--target` and `--account` combine as *and*, so a
      selection cannot always express exactly those pairs, and the line can
      grow long.
-- **Known cost:** the operator has to compose the wider run by hand.
+- **Known cost:** the operator has to compose the wider run by hand. A
+  `--repair FILE` run's line repeats the file, so it spends a login on each
+  pair of the file that the run confirmed. The line under it offers the run's
+  own document in place of the file, which names only the pairs that failed.

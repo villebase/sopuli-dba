@@ -515,6 +515,7 @@ def repair_invocation(
     profile: str | None = None,
     source: str | None = None,
     strategy: str | None = None,
+    repair_file: str | None = None,
 ) -> str:
     """The command line that repairs a partial run, spelled exactly.
 
@@ -552,7 +553,13 @@ def repair_invocation(
     estate an invocation that cannot run.
 
     The flag is named on a separate line instead, and that line promises
-    nothing: it says what the flag needs. A JSON consumer needs no line at
+    nothing: it says what the flag needs.
+
+    **A run that read** ``--repair FILE`` **is repaired with the same file.**
+    ``repair_file`` is that path. The file is on disk, because this run read
+    it, and the pairs that failed are among the pairs it names. Without it, a
+    ``--repair`` run with no other selector would print a line that names the
+    whole estate, and the line never widens the run (#1364). A JSON consumer needs no line at
     all -- it has ``results[]``, and ``03-json-output.md`` §7's recipe is the
     same filter this flag applies.
     """
@@ -567,6 +574,8 @@ def repair_invocation(
         for flag, names in selection.flags():
             for name in names:
                 words += [f"--{flag}", _word(name)]
+    if repair_file is not None:
+        words += ["--repair", _word(repair_file)]
     if source is not None:
         words += ["--source", source]
         if source == PREVIOUS:

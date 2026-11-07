@@ -3237,7 +3237,6 @@ def test_a_withheld_promotion_prints_no_repair_line(
 
     assert result.exit_code == ExitCode.PARTIAL
     assert "repair with:" not in result.output
-    assert f"--config {config}\n" not in result.output
     assert "acme_web_user on appdb-beta" in result.output
     assert "with a selection that includes them" in result.output
 
@@ -5025,6 +5024,44 @@ def _repair_file(tmp_path: Path, config: Path, results: list[dict[str, Any]]) ->
     path = tmp_path / "previous.json"
     path.write_text(json.dumps(_run_document(config, results)), encoding="utf-8")
     return path
+
+
+def test_a_repair_run_is_repaired_with_the_same_file(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness, tmp_path: Path
+) -> None:
+    """Decision #1364: the line never widens. A `--repair` run with no other
+    selector would otherwise print a line that names the whole estate, here
+    with a promotion withheld beside the pair that failed."""
+    estate(
+        documents=_withheld_beside_per_target(),
+        users={"ACME_WEB_USER": user(), "ACME_BATCH_USER": user("ACME_BATCH_USER")},
+        per_target={
+            "appdb-alpha": {
+                "ACME_WEB_USER": drifted(),
+                "ACME_BATCH_USER": [
+                    VerifyResult(VERIFY_LOGIN, FAIL, detail="ORA-01017"),
+                    VerifyResult(VERIFY_LOGIN, FAIL, detail="ORA-01017"),
+                ],
+            },
+        },
+    )
+    config = write_config(WITHHELD_BESIDE_PER_TARGET_CONFIG)
+    previous = _repair_file(
+        tmp_path,
+        config,
+        [
+            {"account": "acme_web_user", "target": "appdb-alpha", "state": "DRIFT"},
+            {"account": "acme_web_user", "target": "appdb-beta", "state": "IN_SYNC"},
+            {"account": "acme_batch_user", "target": "appdb-alpha", "state": "DRIFT"},
+        ],
+    )
+
+    result = run(runner, config, "--repair", str(previous))
+
+    assert result.exit_code == ExitCode.PARTIAL, result.output
+    assert "acme_web_user on appdb-beta" in result.output
+    remedy = result.output.split("repair with: ")[1].splitlines()[0]
+    assert remedy == f"sopuli creds apply --config {config} --repair {previous}"
 
 
 def test_repair_narrows_to_the_pairs_that_did_not_confirm(

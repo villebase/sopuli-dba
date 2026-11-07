@@ -765,9 +765,10 @@ would withhold the promotion again. A line that dropped the selectors would
 also act on every other document in the estate, and undo a rollout that the
 operator is staging target by target ([#1364](../decisions/log.md#1364)). The
 wider run costs one login per pair the narrow run already converged, and
-reports `changed: false` for each. An
-account that a guardrail skipped is inside the run, not outside it
-(`02-oracle-privileges.md` §4 says what a skip means).
+reports `changed: false` for each. An account that a guardrail skipped is inside
+the run, not outside it (`02-oracle-privileges.md` §4 says what a skip means).
+Where every other row of the document confirmed, the skip is also named, as
+`SOPULI-W050`, because the wider run would skip the same pair again.
 
 **The guardrails are asked on every target before the first change.** The
 guardrails read each database, so one account can hold `DBA` on one target and
@@ -1332,8 +1333,9 @@ on a target that the earlier run already applied, and this run did not check
 that database. The same happens to a repair narrowed to one of a document's two
 accounts: the sibling still has its `pending` staged. That is §5's promotion
 gate. So a partial rotation takes two runs to finish:
-`--repair` for the pairs that failed, then `apply` without narrowing. The second
-run spends one login on each converged pair and promotes. A repair from
+`--repair` for the pairs that failed, then `apply` with a selection that includes
+every pair `SOPULI-W027` names. The second run spends one login on each
+converged pair and promotes. A repair from
 `current`, which is drift with nothing staged, has nothing to promote and
 finishes in one run.
 
@@ -1341,10 +1343,13 @@ finishes in one run.
 what to type. It is narrowed to the same selection as the run, spelled as
 `--select` pairs, `--target`, `--account`, `--group` and `--application`, and it
 carries `--config`, `--profile`, `--source` and `--strategy`, so the repair
-resolves and acts the way the run did. The line never widens the selection. A
-run whose promotion was withheld because it was too narrow (§5) prints the line
-only for its pairs that failed, and prints none when none failed. `SOPULI-W027`
-then names the pairs a wider run must include. A run narrowed by
+resolves and acts the way the run did. A run that read `--repair FILE` carries
+the same `--repair FILE`. The line never widens the selection. A run whose
+promotion was withheld because it was too narrow (§5) prints the line only when
+something inside the run failed: a pair, or another document's promotion write
+(`SOPULI-W033`). It prints none when nothing did, or when a guardrail skip is
+the rest of what held the run back. `SOPULI-W027` then names the pairs a wider
+run must include. A run narrowed by
 `--select env=prod`, with one target that did not confirm, ends:
 
 ```

@@ -4827,12 +4827,14 @@ the register.
   (`SOPULI-W027`, [#406](#406)) printed a `repair with:` line with no
   selector, which names the whole estate. How wide should that line be?
 - **Decision:** C, the maintainer's choice. The line never widens. It keeps
-  the run's selectors, and it is printed only where a pair inside the run
-  failed. A run held back only by a narrowing, or by a narrowing and a
-  guardrail skip, prints none. `SOPULI-W027` names the pairs the promotion
-  needs, and the operator composes the wider run. `SOPULI-W033`'s rerun
-  follows the same rule. The `SOPULI-W027` message says to run with a
-  selection that includes the pairs, not without the narrowing.
+  the run's selectors, and a run that read `--repair FILE` repeats the same
+  file. It is printed only where something inside the run failed: a pair, or
+  another document's promotion write. A run held back only by a narrowing, or
+  by a narrowing and a guardrail skip, prints none. `SOPULI-W027` names the
+  pairs the promotion needs, and the operator composes the wider run. A skip
+  inside the narrowed run is named as `SOPULI-W050` beside it.
+  `SOPULI-W033`'s rerun follows the same rule. The `SOPULI-W027` message says
+  to run with a selection that includes the pairs, not without the narrowing.
 - **Why:** the whole-estate line also acts on documents the withheld one has
   nothing to do with. An operator who rolls document B out one target at a
   time, in a run that also withholds document A's promotion, would apply B's

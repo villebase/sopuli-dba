@@ -448,6 +448,22 @@ def test_the_repair_invocation_carries_the_layers_the_run_resolved_under() -> No
     assert line == "sopuli creds apply --config estate.yaml --profile scheduled"
 
 
+def test_a_repair_run_is_repaired_with_the_same_file() -> None:
+    """#1364: without the file, a `--repair` run with no other selector would
+    be repaired by a line that names the whole estate."""
+    line = apply_view.repair_invocation(
+        config_paths=("estate.yaml",),
+        selection=Selection(targets=("appdb-alpha",)),
+        repair_file="C:/runs/last run.json",
+        source="pending",
+    )
+
+    assert line == (
+        "sopuli creds apply --config estate.yaml --target appdb-alpha "
+        '--repair "C:/runs/last run.json" --source pending'
+    )
+
+
 def test_the_repair_invocation_carries_an_explicit_regime() -> None:
     """`--strategy` decides what is issued, so a repair without it may honour a
     different regime from the run it is repairing (UC-1 §6.3)."""

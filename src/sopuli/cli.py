@@ -8065,6 +8065,7 @@ def creds_apply(
         profile=run.profile,
         source=source_stage,
         strategy=strategy,
+        repair_file=None if repair_document is None else str(repair_document),
     )
     failed_promotions = _failed_promotions(
         applied, promotions, rerun=rerun if stolen is None else None
@@ -8122,7 +8123,7 @@ def creds_apply(
         rerun
         if code == ExitCode.PARTIAL
         and stolen is None
-        and not _only_skips_held_back(states, promotions)
+        and not _same_run_holds_back_again(states, promotions)
         else None
     )
     table = render_apply(
@@ -11563,10 +11564,20 @@ def _promote_documents(
             promotions[key] = _Promotion(None, "the vault already holds what was applied")
             continue
         if left_out is not None and left_out.get(key):
+            # A guardrail skip inside the run is named too, as SOPULI-W050, by
+            # the rule below: only where every other row confirmed. The wider
+            # run that SOPULI-W027 asks for would skip the same pair again, and
+            # W027 does not say so (#1364).
+            confirmed = apply_states.summarise_document(
+                record.outcome.state
+                for record in records
+                if record.outcome.state != apply_states.SKIPPED
+            )
             promotions[key] = _Promotion(
                 None,
                 "this run was narrower than the promotion, so the vault was left as it was",
                 promotable=True,
+                skipped=_skipped_pairs(records) if confirmed else (),
                 held=HELD_NARROWED,
             )
             continue
@@ -11668,7 +11679,9 @@ def _skipped_promotions(promotions: Mapping[LockKey, _Promotion]) -> list[Diagno
     ]
 
 
-def _only_skips_held_back(states: Sequence[str], promotions: Mapping[LockKey, _Promotion]) -> bool:
+def _same_run_holds_back_again(
+    states: Sequence[str], promotions: Mapping[LockKey, _Promotion]
+) -> bool:
     """Whether a guardrail skip or a narrowed run is the whole of what makes this run partial.
 
     Then the run's own repair line would name a run that skips the same pairs,
@@ -13104,7 +13117,7 @@ def _apply_owed(sequence: _Rotation, states: Sequence[str]) -> bool:
         states,
         promoted=all(one.version is not None for one in promotions if one.promotable),
         promotable=any(one.promotable for one in promotions),
-    ) == int(ExitCode.PARTIAL) and not _only_skips_held_back(states, sequence.promotions)
+    ) == int(ExitCode.PARTIAL) and not _same_run_holds_back_again(states, sequence.promotions)
 
 
 def _refuse_staged_rotation(rotating: Sequence[Binding], documents: Mapping[LockKey, Any]) -> None:

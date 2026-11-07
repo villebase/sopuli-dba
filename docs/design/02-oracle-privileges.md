@@ -764,6 +764,35 @@ measured what they can read on 26ai Free 23.26.3.0.0
   12.2.0.1.0 and 11.2.0.2.0 (above), and 11.2.0.2.0 has no
   `ORACLE_MAINTAINED` (§4, check 5). This probe ran on no other release.
 
+**The account survey sends three statements.** UC-5's account report reads
+every account on a target through `OracleSession.survey_accounts()`
+(`src/sopuli/driver/oracle/accounts.py`, `survey`). No statement names an
+account, so none binds anything, and none reads a password or verifier column.
+
+| Statement | Reads | Needs |
+|---|---|---|
+| every account: `USERNAME`, `ACCOUNT_STATUS`, `PROFILE`, `COMMON`, `ORACLE_MAINTAINED` | `DBA_USERS` | the grants above |
+| `PASSWORD_LIFE_TIME` and `FAILED_LOGIN_ATTEMPTS` for every profile, as shown, resolved through this container's `DEFAULT` profile, and the profile's `COMMON` | `DBA_PROFILES` | the grants above |
+| `NAME` and `LCOUNT` for every user | `SYS.USER$` | the optional grant; sent only with `offline_verify` |
+
+On a release that answers `ORA-00904` to `COMMON` or `ORACLE_MAINTAINED`, as
+11.2.0.2.0 does, the first two statements are sent again with `NULL` in those
+positions. Then no account is common, and an account is vendor-maintained when
+its name is on check 5's list (§4).
+
+The survey reports a value as unreadable, with a reason, where the findings
+above say a container cannot read it. It never reports the value the container
+shows instead. In any container but `CDB$ROOT` or a non-CDB:
+
+- a common account's lock, both limits and failed-login count are unreadable;
+- a limit that a common profile leaves at `DEFAULT` is unreadable, for local
+  accounts too.
+
+Without the optional grant every failed-login count is unreadable, and the
+reason names the grant. A limit that is not a whole number, such as a
+`PASSWORD_LIFE_TIME` of a fraction of a day, is unreadable too, and the reason
+gives the value.
+
 ---
 
 ## 3. What must not be granted

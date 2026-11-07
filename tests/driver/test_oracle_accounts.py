@@ -130,6 +130,49 @@ def test_the_effective_limit_is_resolved_and_never_the_word_default(account: Any
     assert state.failed_login_limit == "5", "set on the profile, so its own value"
 
 
+def test_the_survey_reads_every_account_and_resolves_default(account: Any) -> None:
+    """UC-5's survey against a real dictionary: the account's row, with its
+    `DEFAULT` lifetime resolved through this container's `DEFAULT` profile, the
+    vendor's own accounts marked, and the list in name order."""
+    with account.connection.cursor() as cursor:
+        cursor.execute(
+            "select limit from dba_profiles "
+            "where profile = 'DEFAULT' and resource_name = 'PASSWORD_LIFE_TIME'"
+        )
+        (default_lifetime,) = cursor.fetchone()
+    expected = "unlimited" if default_lifetime == "UNLIMITED" else int(default_lifetime)
+
+    surveyed = account.survey_accounts()
+    names = [row.name for row in surveyed]
+    assert names == sorted(names)
+    by_name = {row.name: row for row in surveyed}
+
+    row = by_name[ACCOUNT.upper()]
+    assert row.profile == PROFILE.upper()
+    assert row.status == "OPEN"
+    assert row.locked is False
+    assert row.common is False
+    assert row.vendor_maintained is False
+    assert row.failed_login_limit == 5, "set on the profile, so its own value"
+    assert row.password_lifetime == expected, "DEFAULT, resolved through this container"
+    if account.scope().supports(OFFLINE_VERIFY):
+        assert row.failed_logins == 0
+        assert row.unreadable == ()
+    else:
+        assert row.failed_logins is None
+        assert row.unreadable == (
+            "the failed-login count is in SYS.USER$; GRANT SELECT ON SYS.USER$ to the "
+            "service account to read it",
+        )
+
+    system = by_name["SYSTEM"]
+    assert system.vendor_maintained is True
+    if system.common and account.scope().type == "pdb":
+        assert system.locked is None, "a PDB does not show a common account's lock"
+        assert system.password_lifetime is None
+        assert system.failed_logins is None
+
+
 @pytest.mark.requires_capability(PASSWORD_ROLLOVER)
 def test_a_rotation_opens_a_rollover_window_the_status_reports(account: Any) -> None:
     """The finding this module rests on.

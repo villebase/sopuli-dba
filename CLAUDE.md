@@ -38,6 +38,7 @@ so. That is a design decision, not an implementation detail.
 | `docs/design/04-testing.md` | tests and the test stack |
 | `docs/use-cases/uc-01-app-credential-sync.md` | application credentials: `creds generate`, `apply`, `check`, `rotate` |
 | `docs/use-cases/uc-02-personal-account-passwords.md` | personal accounts: `account` verbs, password reset, delivery methods |
+| `docs/use-cases/uc-05-fleet-reports.md` | the `report` commands, the only commands that report on accounts the config does not declare |
 | `docs/measurements.md` | quoting or adding a result measured on an Oracle release |
 | `docs/decisions/log.md` | why a decision was made, and what was rejected |
 | `docs/decisions/adr-001-privilege-model.md` | before proposing a definer-rights package. It was considered and rejected |
@@ -100,9 +101,14 @@ detail.
    account during the run, because no measured supported install has one
    ([#1076](docs/decisions/log.md#1076)).
 
-5. **The config is the whitelist.** The tool never touches an account the config
-   does not declare. Selectors filter the declared set; they cannot extend it.
-   `--force` overrides other guardrails, never this one. A personal account may be
+5. **The config is the whitelist for changes.** The tool never changes an
+   account the config does not declare. Selectors filter the declared set; they
+   cannot extend it. `--force` overrides other guardrails, never this one.
+   Reading is wider in one place: the `report` commands of UC-5 read and report
+   on every account on a declared target, declared or not, and change nothing.
+   Another command reads an undeclared account only where a check on a
+   declared one needs it, such as a MySQL user name at a second host. A
+   personal account may be
    declared by a predicate over a profile or role; a mutating verb then still
    requires the account named on the command line. A name may not be declared
    twice. One database user on one target is bound to one place, in one
@@ -118,7 +124,8 @@ detail.
    only where no other account can answer. Reasons:
    [H1](docs/decisions/log.md#h1),
    [#874](docs/decisions/log.md#874),
-   [#1270](docs/decisions/log.md#1270).
+   [#1270](docs/decisions/log.md#1270),
+   [#1376](docs/decisions/log.md#1376).
 
 6. **Vault is master; direction is vault → database, always.** The database is
    never the source of truth.

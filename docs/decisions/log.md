@@ -4875,3 +4875,38 @@ the register.
   `--repair FILE` run's line repeats the file, so it spends a login on each
   pair of the file that the run confirmed. The line under it offers the run's
   own document in place of the file, which names only the pairs that failed.
+
+## #1376
+
+- **Decided:** 2026-11-07, #1376
+- **Question:** invariant 5 said the tool never touches an account the config
+  does not declare. UC-5's reports must say which accounts exist on a target,
+  such as DBSNMP, the APEX and ORDS accounts, and accounts nobody declared. May
+  a command read accounts the config does not declare?
+- **Decision:** the maintainer's. Invariant 5 has two halves.
+  1. **Changing** an account needs the config to declare it, as before.
+     `--force` never overrides that, and a selector cannot widen it.
+  2. **Reading** may cover every account on a declared target, but only in
+     UC-5's `report` commands. Every other command, `creds check`,
+     `creds status` and `account list` among them, keeps what it reads today:
+     an undeclared account only where a check on a declared one needs it,
+     such as a MySQL user name at a second host.
+- **Why:** a report that cannot see undeclared accounts cannot answer its
+  first question. The invariant's reasons are about changes: the tool's audit
+  trail names only accounts somebody chose to manage, and a selector never
+  reaches further than the file. A report changes nothing, so neither reason
+  applies to it. `lock status` already reads records the config does not
+  declare, for the same reason. In the maintainer's words, reading undeclared
+  accounts is "much more useful than obeying a rule we have invented for
+  ourselves".
+- **Rejected:**
+  1. Keep invariant 5 as it was. A report could then not say which accounts
+     exist.
+  2. Let every command read undeclared accounts. That changes `creds check`,
+     `creds status` and `account list`, and their tests, for no gain anyone
+     asked for.
+- **Known cost:** a report lists the privileges and failed logins of every
+  account on a target. It holds no secret, but it tells an attacker where to
+  look, so its output needs the same care as the tool's other output. The
+  service account needs read grants that the credential commands do not, and
+  which grants is measured in #1377.

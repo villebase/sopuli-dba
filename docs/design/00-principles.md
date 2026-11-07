@@ -1006,7 +1006,10 @@ first question is where their test database runs.
   It also **lists** each store's lock prefix, so it reports a record left at a
   path that the config no longer declares, marked `declared: false`. That does
   not break invariant 5: the config whitelists what the tool may change, and a
-  survey changes nothing.
+  survey changes nothing. UC-5's `report` commands read every account on a
+  declared target on the same reasoning, and they are the only commands that
+  report on accounts the config does not declare
+  ([#1376](../decisions/log.md#1376)).
 - **Breaking a lock is a verb, and it is not self-service.**
   `sopuli lock break <vault>:<path>` writes a `released` record over the held
   one, with `cas` set to the version it read. It never deletes the record: a

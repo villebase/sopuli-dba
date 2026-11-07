@@ -1162,7 +1162,7 @@ answer the same question.
 is a record the store holds and the file names nowhere: an application renamed
 or removed, or another config's estate sharing the mount. An operator cannot see
 it any other way, and it is the reason for listing. Invariant 5 still holds: the
-config whitelists what the tool may *touch*, and a survey touches nothing. It is
+config whitelists what the tool may *change*, and a survey changes nothing. It is
 judged against the **unfiltered** estate, so `--select` never turns somebody's
 own lock into a leftover. It is required on every entry: a consumer that had to
 read absence as "mine" would be branching on a gap, and a gap is also what a

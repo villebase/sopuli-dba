@@ -80,10 +80,14 @@ that could not be reached, never as a target with no problems.
 
 | Code | When |
 |---|---|
-| 0 | every account on every target is OK |
+| 0 | every target was reached, no check found a problem, and every check that had a rule ran |
 | 1 | a target could not be reached |
 | 3 | every target was reached, and at least one problem was found |
 | 4 | every target was reached and no problem was found, but something was not checked |
+| 5 | at plan time: no target can run a check the command needs (below) |
+
+*No rule* and information never change the exit code. An undeclared account
+that no rule names is shown, and a fleet full of them still exits 0.
 
 An unreachable target outranks a problem, as in `creds check`
 (UC-1 §7): a report that reached nine targets of ten must not exit 3 as if the
@@ -94,7 +98,11 @@ run document carries every count.
 **Capabilities, not versions** (invariant 3). Each check names the capability
 it needs. Where a target lacks it, the check is *not checked* on that target,
 and the capability is named. A missing capability fails the whole command at
-plan time only where no target could run the check. That is an exception to
+plan time, with exit 5, only where no target could run a check that decides a
+state. A check that only gives information, such as the failed-login count,
+never refuses: where no target can run it, its value is `unknown` everywhere.
+So a fleet of Autonomous Databases, which has no `SYS.USER$`, still gets its
+accounts report. That is an exception to
 invariant 4, recorded in [#1376](../decisions/log.md#1376): a report that
 refused the whole fleet for one old target would answer nothing.
 
@@ -118,10 +126,10 @@ no rule. Then:
 Every row has the account, its kind (application, technical, personal, or
 undeclared), its profile, its status, and what is wrong in plain words.
 Accounts that Oracle maintains (`ORACLE_MAINTAINED = 'Y'`) are left out unless a
-rule names them. The column is a capability: a release without it, such as
-11.2, cannot tell those accounts apart, so the report lists every account
-there and says in the target's head that it could not leave Oracle's own out.
-They show as undeclared, which is information and never a problem.
+rule names them, as a rule for `DBSNMP` does. On 11.2, which has no such
+column, the report uses the same list of Oracle's own accounts that the
+guardrails use there (`02-oracle-privileges.md` §4, check 5), so one estate
+gives the same list on every release.
 
 **The lock is the check; the failed-login count is information.** The lock
 status can be read on every release. The count needs the optional
@@ -186,12 +194,19 @@ password.
   entry is a change of `current`: a rotation, a rollback, or a
   `creds generate --promote --overwrite-current`. The report lists each one.
   Whether it can tell them apart is for the PR that builds it to establish.
-- **A personal account (UC-2)** has its history in its reset records
-  (UC-2 §3), one for each reset. It has no promotion stamps.
+- **On an OCI store with native staging** the stamps are the secret's
+  metadata, not part of a version, and each promotion overwrites them
+  (UC-1 §3). So only the current version's promotion time is known. The
+  report lists the other versions by the time each one was generated
+  (`generated_at`), and says that their promotion times are not kept.
+- **A personal account (UC-2)** has one reset record for each target and
+  account, and each reset overwrites it (UC-2 §3). Its history is that
+  record's versions. A seen reset with no store configured writes no record,
+  so only the database's date is shown for it.
 - **A store that keeps no versions**, such as HashiCorp KV v1, cannot give a
-  history. Versioning is a capability. Without it, the history is *not
-  checked*, with the capability named, and only the current stamps and the
-  database's date are shown.
+  history, for either kind of account. Versioning is a capability. Without it,
+  the history is *not checked*, with the capability named, and only the
+  latest stamps or record and the database's date are shown.
 
 **The history says where it ends.** When a store has pruned or destroyed older
 versions, the report says from which version and date it starts, and how many
@@ -200,9 +215,11 @@ first rotation.
 
 The database's own date of the last password change is shown beside the last
 rotation. The database usually changes before the promotion, because `apply`
-changes the target first and a promotion can wait days. So only one case is
-flagged, as information: the database changed after the last promotion and
-after any staged `pending`, which means a change made outside the tool.
+changes the target first and a promotion can wait days, and on MySQL and
+MariaDB `apply` sets the staged `pending` again on each run while the
+promotion is held. So only one case is flagged, as information: no `pending`
+is staged, and the database changed after the last promotion. With no rotation
+in progress, nothing in the tool changed it.
 
 A store version does not carry the run's correlation id, so a version is tied
 to its run only through its stamps ([#1374](https://github.com/villebase/sopuli-dba/issues/1374)).
@@ -240,9 +257,11 @@ The reports read `DBA_USERS`, `DBA_PROFILES`, `DBA_ROLE_PRIVS` and
 `DBA_ROLES`, which `sql/oracle/00_install.sql` already grants, and the views of
 system and object privileges, which it does not. The failed-login count and
 the older releases' date of the last password change are in `SYS.USER$`
-(`LCOUNT`, `PTIME`), behind the optional grant. Which columns each release
-has, such as `DBA_USERS.PASSWORD_CHANGE_DATE`, which grants the rest need, and what a PDB shows for a common account are
-not measured yet (unverified: report-reads). Each extra grant is `SELECT` only
+(`LCOUNT`, `PTIME`), behind the optional grant. `DBA_USERS.PASSWORD_CHANGE_DATE`
+exists from 19c (`02-oracle-privileges.md` §2). Which grants the privilege
+views need, how the effective privileges and a `DEFAULT` limit are read, and
+what a PDB shows for a common account are not measured yet
+(unverified: report-reads). Each extra grant is `SELECT` only
 and optional, and the tool probes for it. A report that cannot read a view says
 *not checked* for what it needed.
 

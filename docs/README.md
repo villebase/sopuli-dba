@@ -348,13 +348,14 @@ These entries share a setup. The probe is
   unrun. Read the 11.2 result as "11.2 keeps it", never as "every older release
   keeps it".
 - `unverified` `report-reads` (#1377) — **What can UC-5's report commands read
-  on Oracle, and with which grants?** Open: which of `DBA_USERS`,
-  `DBA_PROFILES`, `DBA_ROLE_PRIVS`, `DBA_ROLES`, `DBA_SYS_PRIVS` and
-  `DBA_TAB_PRIVS` the installed service account reads, which columns each
-  release has (`DBA_USERS.PASSWORD_CHANGE_DATE` and `ORACLE_MAINTAINED` among
-  them), what `SYS.USER$` gives for `LCOUNT` and `PTIME` where its optional
-  grant is held, which grants the rest need, and what a PDB shows for a common
-  account and a common profile.
+  on Oracle, and with which grants?** Known: `00_install.sql` grants `SELECT`
+  on `DBA_USERS`, `DBA_PROFILES`, `DBA_ROLE_PRIVS` and `DBA_ROLES`;
+  `DBA_USERS.PASSWORD_CHANGE_DATE` exists from 19c (`02-oracle-privileges.md`
+  §2); 11.2 has no `ORACLE_MAINTAINED`, and check 5's list stands in for it.
+  Open: which grants make `DBA_SYS_PRIVS` and `DBA_TAB_PRIVS` readable; whether
+  a hierarchical query over `DBA_ROLE_PRIVS` gives the effective privileges
+  through nested and non-default roles; how a `DEFAULT` profile limit resolves;
+  and what a PDB shows for a common account and a common profile.
 - `unverified` `ddl-text-awr` (#387) — **Does the kept text reach AWR?**
   On 19.32.0.0.0, with the Diagnostics Pack enabled, the wrapped literal (C3)
   reached `DBA_HIST_SQLTEXT` and stayed there. The `ALTER USER` that sopuli

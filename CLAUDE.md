@@ -112,10 +112,9 @@ detail.
    every account on a declared target, declared or not, and change nothing.
    Another command reads an undeclared account only where a check on a
    declared one needs it, such as a MySQL user name at a second host, which
-   its message then names. A
-   personal account may be
-   declared by a predicate over a profile or role; a mutating verb then still
-   requires the account named on the command line. A name may not be declared
+   its message then names. A personal account may be declared by a predicate
+   over a profile or role; a mutating verb then still requires the account
+   named on the command line. A name may not be declared
    twice. One database user on one target is bound to one place, in one
    spelling: two application entries that bind it to different places, or spell
    it two ways, are refused, with names compared by `upper()`. One exception

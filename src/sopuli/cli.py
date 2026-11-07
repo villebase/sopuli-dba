@@ -237,6 +237,7 @@ from sopuli.driver.registry import (
     installed,
     require_command,
 )
+from sopuli.driver.survey import SurveyedAccount
 from sopuli.exit_codes import ExitCode
 from sopuli.extras import MISSING_MODULE, missing_kind
 from sopuli.generate import Candidate, DocumentWrite
@@ -5765,11 +5766,51 @@ def report_privileges_command(
     document.results = privileges_view.build_results(reports)
     document.finish(
         privilege_states.exit_code(
-            accounts, unreachable=unreachable, unsupported=unsupported, targets=len(reports)
+            accounts,
+            unreachable=unreachable,
+            unsupported=unsupported,
+            targets=len(reports),
+            unreadable=any(report.unreadable for report in reports),
         ),
         privileges_view.summarise(reports),
     )
     return privileges_view.render(reports, detail=detail)
+
+
+def _wanted_rows(
+    target: str,
+    rows: Sequence[report_states.AccountRow],
+    surveyed: Sequence[SurveyedAccount],
+    wanted: str,
+) -> tuple[report_states.AccountRow, ...]:
+    """The one account ``--account`` names, by ``upper()``, as the selectors match.
+
+    Also an account the accounts report leaves out, such as one Oracle maintains
+    that no rule names: naming it on the command line asks for it. Empty where
+    the target has no such account, which the view then says.
+    """
+    spelled = wanted.upper()
+    found = tuple(
+        row
+        for row in rows
+        if row.account.upper() == spelled and row.state != report_states.ACCOUNT_MISSING
+    )
+    if found:
+        return found
+    return tuple(
+        report_states.AccountRow(
+            target,
+            one.name,
+            report_states.UNDECLARED_KIND,
+            one.profile,
+            one.status,
+            (),
+            report_states.UNDECLARED,
+            one.failed_logins,
+        )
+        for one in surveyed
+        if one.name.upper() == spelled
+    )
 
 
 def _privileges_target(
@@ -5799,9 +5840,12 @@ def _privileges_target(
                 target=target.name, error=_finding(missing), unsupported=True
             )
         try:
-            rows = report_states.evaluate(target.name, config, survey_accounts())
+            surveyed = survey_accounts()
+            rows = report_states.evaluate(target.name, config, surveyed)
+            absent = None
             if wanted is not None:
-                rows = tuple(row for row in rows if row.account.upper() == wanted.upper())
+                rows = _wanted_rows(target.name, rows, surveyed, wanted)
+                absent = None if rows else wanted
             names = [row.account for row in rows if row.state != report_states.ACCOUNT_MISSING]
             grants = survey_privileges(names, public=public)
         except Exception as error:  # noqa: BLE001 -- a per-target finding
@@ -5811,8 +5855,9 @@ def _privileges_target(
         return privileges_view.TargetPrivileges(
             target=target.name,
             release=session.scope().db_version,
-            accounts=privilege_states.per_account(target.name, rows, grants),
+            accounts=privilege_states.per_account(target.name, rows, grants, public=public),
             unreadable=grants.unreadable,
+            absent=absent,
         )
     finally:
         if session is not None:

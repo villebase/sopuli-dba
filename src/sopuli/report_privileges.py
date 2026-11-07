@@ -111,41 +111,39 @@ def counts(objects: Sequence[Privilege]) -> dict[tuple[str, str], tuple[int, int
 
 
 def per_account(
-    target: str, rows: Sequence[AccountRow], survey: GrantSurvey
+    target: str, rows: Sequence[AccountRow], survey: GrantSurvey, *, public: bool = False
 ) -> tuple[AccountPrivileges, ...]:
-    """Each account the accounts report covers, then ``PUBLIC`` if it was read.
+    """Each account the accounts report covers, then ``PUBLIC`` when asked for.
 
     The accounts are exactly ``report accounts``' rows, less the missing ones,
     so the two reports never disagree about which accounts a target has.
+    ``PUBLIC`` is listed whenever ``public`` is asked for, also when its grants
+    could not be read: then its parts are not checked, never absent.
     """
     built = [
         _one(target, row.account, row.kind, survey) for row in rows if row.state != ACCOUNT_MISSING
     ]
-    if _holds_public(survey):
+    if public:
         built.append(_one(target, PUBLIC, PUBLIC_KIND, survey))
     return tuple(built)
 
 
-def _holds_public(survey: GrantSurvey) -> bool:
-    parts = (survey.system or (), survey.objects or (), survey.columns or ())
-    return any(row.grantee.upper() == PUBLIC for part in parts for row in part) or any(
-        role.grantee.upper() == PUBLIC for role in survey.roles
-    )
-
-
 def _one(target: str, account: str, kind: str, survey: GrantSurvey) -> AccountPrivileges:
-    name = account.upper()
+    # Exact, as the dictionary spells it: the survey is asked for the names the
+    # accounts survey read, and two users whose names differ only in case
+    # (`ACME` and a quoted `"acme"`) are two accounts.
+    name = account
 
     def part(rows: tuple[GrantRow, ...] | None) -> tuple[Privilege, ...] | None:
         if rows is None:
             return None
-        return collapse([row for row in rows if row.grantee.upper() == name])
+        return collapse([row for row in rows if row.grantee == name])
 
     return AccountPrivileges(
         target=target,
         account=account,
         kind=kind,
-        roles=tuple(role for role in survey.roles if role.grantee.upper() == name),
+        roles=tuple(role for role in survey.roles if role.grantee == name),
         system=part(survey.system),
         objects=part(survey.objects),
         columns=part(survey.columns),
@@ -153,13 +151,23 @@ def _one(target: str, account: str, kind: str, survey: GrantSurvey) -> AccountPr
 
 
 def exit_code(
-    reports: Sequence[AccountPrivileges], *, unreachable: int, unsupported: int, targets: int
+    reports: Sequence[AccountPrivileges],
+    *,
+    unreachable: int,
+    unsupported: int,
+    targets: int,
+    unreadable: bool = False,
 ) -> int:
-    """5 if no target could run, 1 if one gave no answer, 4 if a part was not read."""
+    """5 if no target could run, 1 if one gave no answer, 4 if anything was not read.
+
+    ``unreadable`` is any target's survey saying it could not read something,
+    such as ``DBA_ROLES`` for the roles' authentication, even where every
+    account's three parts were read.
+    """
     if targets and unsupported == targets:
         return int(ExitCode.UNSUPPORTED_CAPABILITY)
     if unreachable:
         return int(ExitCode.FAILURE)
-    if unsupported or any(not one.complete for one in reports):
+    if unsupported or unreadable or any(not one.complete for one in reports):
         return int(ExitCode.PARTIAL)
     return int(ExitCode.SUCCESS)

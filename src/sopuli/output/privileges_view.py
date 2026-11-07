@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from sopuli.driver.grants import RoleGrant
+from sopuli.output import report_view
 from sopuli.output.document import Error, Summary
 from sopuli.output.palette import Role, paint
 from sopuli.output.table import Column, render_table
@@ -40,13 +41,13 @@ class TargetPrivileges:
     error: Error | None = None
     unsupported: bool = False
     read_failed: bool = False
+    #: The name ``--account`` gave, where this target has no such account.
+    absent: str | None = None
 
 
-def target_counts(reports: Sequence[TargetPrivileges]) -> tuple[int, int]:
-    """How many targets gave no answer, and how many of another product."""
-    unsupported = sum(1 for report in reports if report.unsupported)
-    unanswered = sum(1 for report in reports if report.error is not None) - unsupported
-    return unanswered, unsupported
+#: The one count of unanswered and unsupported targets, shared with
+#: ``report accounts`` so the two reports' exit codes cannot drift apart.
+target_counts = report_view.target_counts
 
 
 def render(reports: Sequence[TargetPrivileges], *, detail: bool) -> str:
@@ -70,6 +71,8 @@ def _section(report: TargetPrivileges, *, detail: bool) -> list[str]:
         f"{heading}  ({report.release or 'release unknown'}, "
         f"{len(report.accounts)} account{'' if len(report.accounts) == 1 else 's'})"
     ]
+    if report.absent is not None:
+        lines.append(f"  no account {report.absent} on this target")
     for one in report.accounts:
         lines.extend(_detail(one) if detail else _summary(one))
     lines.extend(f"  not checked: {reason}" for reason in report.unreadable)
@@ -114,7 +117,19 @@ def _counts(privileges: Sequence[Privilege] | None, *, noun: str | None = None) 
     parts = []
     for (privilege, object_type), (direct, via) in counts(privileges).items():
         what = noun or (object_type.lower() if object_type != "-" else "object")
-        parts.append(f"{privilege} on {direct + via} {what} ({direct} direct, {via} via roles)")
+        total = direct + via
+        plural = what if total == 1 else f"{what}s"
+        # Held only through a role that is not a default role: counted, and
+        # said, because the account has it only after SET ROLE (UC-5 §5).
+        inactive = sum(
+            1
+            for p in privileges
+            if p.privilege == privilege
+            and (p.object_type or "-") == object_type
+            and not p.via_default_role
+        )
+        note = f", {inactive} through a role that is not a default role" if inactive else ""
+        parts.append(f"{privilege} on {total} {plural} ({direct} direct, {via} via roles{note})")
     return "; ".join(parts)
 
 
@@ -176,18 +191,22 @@ def build_results(reports: Sequence[TargetPrivileges]) -> list[dict[str, Any]]:
                 }
             )
             continue
-        results.extend(_result(one) for one in report.accounts)
+        results.extend(_result(one, report.unreadable) for one in report.accounts)
     return results
 
 
-def _result(one: AccountPrivileges) -> dict[str, Any]:
+def _result(one: AccountPrivileges, unreadable: Sequence[str]) -> dict[str, Any]:
+    complete = one.complete and not unreadable
     return {
         "account": one.account,
         "target": one.target,
-        "state": REPORT_OK if one.complete else NOT_CHECKED,
+        "state": REPORT_OK if complete else NOT_CHECKED,
         "changed": False,
         "kind": one.kind,
         "privileges": {
+            # Why a part is null, as the target's survey said it.
+            "unreadable": list(unreadable),
+            "schema_privileges_read": False,
             "roles": [
                 {
                     "role": role.role,

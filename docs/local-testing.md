@@ -2312,7 +2312,7 @@ Without `--detail` the same account reads as a summary:
   ACME_RP_USER  (technical)
     roles: ACME_RP_APP (default), ACME_RP_BATCH (not default)
     system: CREATE SESSION (direct)
-    objects: EXECUTE on 1 procedure (0 direct, 1 via roles); INSERT on 1 table (0 direct, 1 via roles); SELECT on 2 table (1 direct, 1 via roles)
+    objects: EXECUTE on 1 procedure (0 direct, 1 via roles); INSERT on 1 table (0 direct, 1 via roles, 1 through a role that is not a default role); SELECT on 2 tables (1 direct, 1 via roles)
     columns: UPDATE on 1 column (1 direct, 0 via roles)
 ```
 

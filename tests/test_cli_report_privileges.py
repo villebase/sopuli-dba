@@ -126,11 +126,34 @@ def test_the_summary(write_config: WriteConfig, session: Any) -> None:
     assert result.exit_code == ExitCode.SUCCESS, result.output
     assert "ACME_RR_OUTER (default), ACME_RR_EXTRA (not default)" in text
     assert "CREATE TABLE (via ACME_RR_OUTER > ACME_RR_READ)" in text
-    assert "SELECT on 2 table (1 direct, 1 via roles)" in text
-    assert "INSERT on 1 table (0 direct, 1 via roles)" in text
+    assert "SELECT on 2 tables (1 direct, 1 via roles)" in text
+    assert (
+        "INSERT on 1 table (0 direct, 1 via roles, 1 through a role that is not a default role)"
+        in text
+    )
     assert "UPDATE on 1 column (1 direct, 0 via roles)" in text
     assert "schema privileges" in text
     assert session["session"].asked == ((APP,), False)
+
+
+def test_account_names_one_the_target_lacks(write_config: WriteConfig, session: Any) -> None:
+    result = report(write_config, "--account", "acme_nobody")
+    assert "no account acme_nobody on this target" in click.unstyle(result.output)
+
+
+def test_an_unread_roles_view_exits_4(
+    write_config: WriteConfig, session: dict[str, FakeSession]
+) -> None:
+    session["session"] = FakeSession(
+        GrantSurvey(
+            roles=GRANTS.roles,
+            system=GRANTS.system,
+            objects=GRANTS.objects,
+            columns=GRANTS.columns,
+            unreadable=("DBA_ROLES could not be read",),
+        )
+    )
+    assert report(write_config).exit_code == ExitCode.PARTIAL
 
 
 def test_detail_lists_every_privilege_with_its_path(

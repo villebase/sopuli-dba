@@ -123,11 +123,45 @@ def test_public_is_one_block_not_repeated() -> None:
         "free-pdb",
         [account_row(APP), account_row("ACME_OTHER")],
         survey(objects=RR4 + public_rows),
+        public=True,
     )
     names = [one.account for one in found]
     assert names.count("PUBLIC") == 1
     other = next(one for one in found if one.account == "ACME_OTHER")
     assert other.objects == ()
+
+
+def test_public_asked_for_and_unreadable_is_listed_not_checked() -> None:
+    found = per_account(
+        "free-pdb",
+        [account_row(APP)],
+        survey(system=None, objects=None, columns=None, roles=()),
+        public=True,
+    )
+    public = next(one for one in found if one.account == "PUBLIC")
+    assert public.objects is None
+    assert public.complete is False
+
+
+def test_public_is_not_listed_unless_asked_for() -> None:
+    public_rows = (grant("SELECT", "T6", grantee="PUBLIC"),)
+    found = per_account("free-pdb", [account_row(APP)], survey(objects=RR4 + public_rows))
+    assert [one.account for one in found] == [APP]
+
+
+def test_names_that_differ_only_in_case_are_two_accounts() -> None:
+    rows = (grant("SELECT", "T1", grantee="ACME"), grant("SELECT", "T2", grantee="acme"))
+    found = per_account(
+        "free-pdb", [account_row("ACME"), account_row("acme")], survey(objects=rows)
+    )
+    by_name = {one.account: one for one in found}
+    assert [p.name for p in by_name["ACME"].objects or ()] == ["T1"]
+    assert [p.name for p in by_name["acme"].objects or ()] == ["T2"]
+
+
+def test_a_survey_that_could_not_read_something_exits_4() -> None:
+    full = per_account("free-pdb", [account_row(APP)], survey())
+    assert exit_code(full, unreachable=0, unsupported=0, targets=1, unreadable=True) == 4
 
 
 def test_exit_codes() -> None:

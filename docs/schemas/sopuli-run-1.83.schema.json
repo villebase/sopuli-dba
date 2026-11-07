@@ -1880,9 +1880,18 @@
         "privileges": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["roles", "system", "objects", "columns"],
+          "required": ["unreadable", "schema_privileges_read", "roles", "system", "objects", "columns"],
           "description": "An account's effective privileges, from `report privileges` (added in 1.83, UC-5 §5). Each privilege appears once, with every role path that grants it. `system`, `objects` and `columns` are `null` where the target could not read them, never an empty list in their place. Schema privileges (23ai) are not read yet (#1389).",
           "properties": {
+            "unreadable": {
+              "type": "array",
+              "items": {"type": "string"},
+              "description": "What the target's survey could not read, such as a privilege view without its grant, in its own words. Empty when it read everything."
+            },
+            "schema_privileges_read": {
+              "type": "boolean",
+              "description": "Whether 23ai schema privileges (GRANT … ON SCHEMA) were read. Always false in this build (#1389), so a consumer never takes the lists as complete on a release that has them."
+            },
             "roles": {
               "type": "array",
               "items": {

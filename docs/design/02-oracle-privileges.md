@@ -808,7 +808,7 @@ column.
 
 | Statement | Reads | Needs |
 |---|---|---|
-| the roles granted directly, with `ADMIN_OPTION`, `DEFAULT_ROLE` and the role's `AUTHENTICATION_TYPE` | `DBA_ROLE_PRIVS`, `DBA_ROLES` | the grants above |
+| the roles granted directly, with `ADMIN_OPTION`, `DEFAULT_ROLE` and the role's `AUTHENTICATION_TYPE` | `DBA_ROLE_PRIVS`, and `DBA_ROLES` with `role_lookup` | the grants above |
 | system privileges, direct and through every role, one row per path | `DBA_SYS_PRIVS` | `grant_report_reads` |
 | object privileges, the same way, with `TYPE` and `GRANTABLE` | `DBA_TAB_PRIVS` | `grant_report_reads` |
 | column privileges, the same way | `DBA_COL_PRIVS` | `grant_report_reads` |
@@ -825,8 +825,18 @@ release that needs it.
 A refused grant view makes its part unreadable, never empty, with the code the
 server sent and the grant that fixes it. Measured on 23.26.3.0.0, a service
 account without `grant_report_reads` gets `ORA-00942` from each view. The view
-is not asked again for the next grantee. A refused `DBA_ROLE_PRIVS` or
-`DBA_ROLES` raises, as it does for every other command.
+is not asked again for the next grantee, and a narrower query shape, once
+accepted, is kept for the next grantee too. A refused `DBA_ROLE_PRIVS` raises,
+as it does for every other command. `DBA_ROLES` is granted by the install but
+required by no pre-flight. Without the `role_lookup` capability the roles are
+read from `DBA_ROLE_PRIVS` alone, each role's authentication is `UNKNOWN`, and
+the reason names the grant. `DBA_TAB_PRIVS` and `DBA_COL_PRIVS` hold one row
+per grantor, so the survey merges rows that differ only in grantor. The merged
+row is grantable when any of them is.
+
+The survey does not read `DBA_SCHEMA_PRIVS`, where 23ai keeps schema-level
+privileges such as `SELECT ANY TABLE ON SCHEMA`. No probe has measured that
+view.
 
 ---
 

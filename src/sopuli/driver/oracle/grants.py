@@ -13,8 +13,10 @@ Probe 19 measured the shapes these queries take (``02-oracle-privileges.md`` §2
 * **``PUBLIC``'s grants are reached only from ``PUBLIC``.** They are read once,
   as the grantee ``PUBLIC``, and only when the caller asks.
 
-``DBA_ROLE_PRIVS`` and ``DBA_ROLES`` are in the baseline grants, so a refusal
-there raises. The three grant views are behind the optional
+``DBA_ROLE_PRIVS`` is in the baseline grants, so a refusal there raises.
+``DBA_ROLES`` is granted by the install but required by no pre-flight, so it is
+read only with the ``role_lookup`` capability. The three grant views are
+behind the optional
 ``grant_report_reads`` switch: a refusal there makes that part ``None``, with a
 reason naming the grant, and the view is not asked again in this survey.
 
@@ -28,7 +30,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from sopuli.driver.grants import COLUMN, OBJECT, SYSTEM, GrantRow, GrantSurvey, RoleGrant
-from sopuli.driver.oracle.accounts import DictionaryUnreadableError, first_shape
+from sopuli.driver.oracle.accounts import DictionaryUnreadableError, fetch_all, first_shape
 from sopuli.driver.oracle.errors import INSTALL_SCRIPT
 from sopuli.driver.oracle.privileges import is_yes
 from sopuli.driver.protocol import Cursor
@@ -121,14 +123,43 @@ ROLE_GRANTS_QUERY_LEGACY = (
     "where p.grantee = :grantee"
 )
 
+#: The directly granted roles without ``DBA_ROLES``, for a session without the
+#: ``role_lookup`` capability. ``DBA_ROLES`` is granted by the install, but no
+#: pre-flight requires it (``privileges.PREDICATE_READS``), so it can be absent.
+ROLE_GRANTS_QUERY_NO_ROLES = (
+    "select p.granted_role, p.admin_option, p.default_role, cast(null as varchar2(11)) "
+    "from dba_role_privs p where p.grantee = :grantee"
+)
+
 _LEGACY_AUTHENTICATION = {"YES": "PASSWORD", "NO": "NONE"}
 
+#: :attr:`RoleGrant.authentication` where the role's authentication was not
+#: read: ``DBA_ROLES`` is not readable, or its column is empty. Not one of
+#: Oracle's words, so it cannot be taken for one.
+UNKNOWN_AUTHENTICATION = "UNKNOWN"
 
-def survey_grants(cursor: Cursor, accounts: Sequence[str], *, public: bool) -> GrantSurvey:
+#: Why every role's authentication is :data:`UNKNOWN_AUTHENTICATION`.
+_NO_ROLE_LOOKUP = (
+    "DBA_ROLES could not be read, so each role's authentication is UNKNOWN: GRANT "
+    f"SELECT ON SYS.DBA_ROLES to the service account, or run {INSTALL_SCRIPT}"
+)
+
+
+def survey_grants(
+    cursor: Cursor, accounts: Sequence[str], *, public: bool, role_lookup: bool = True
+) -> GrantSurvey:
     """Every grant ``accounts`` hold, and ``PUBLIC``'s once when ``public``.
 
     ``accounts`` are names as the dictionary spells them, bound unchanged.
-    Rows come back sorted, so two runs print the same report.
+    ``role_lookup`` is whether the session may read ``DBA_ROLES``. Without it the
+    roles are read from ``DBA_ROLE_PRIVS`` alone, each role's authentication is
+    :data:`UNKNOWN_AUTHENTICATION`, and ``unreadable`` says why.
+
+    Rows that differ only in their grantor are merged, and the merged row is
+    grantable when any of them is. Rows come back sorted, so two runs print the
+    same report. The first query shape the server accepts is kept for every
+    later grantee, so a release that needs a narrower shape refuses the wider
+    one once.
     """
     grantees = list(dict.fromkeys(accounts))
     if public and PUBLIC not in grantees:
@@ -136,17 +167,29 @@ def survey_grants(cursor: Cursor, accounts: Sequence[str], *, public: bool) -> G
     elif not public:
         grantees = [grantee for grantee in grantees if grantee != PUBLIC]
 
+    role_shapes = (
+        (ROLE_GRANTS_QUERY, ROLE_GRANTS_QUERY_LEGACY)
+        if role_lookup
+        else (ROLE_GRANTS_QUERY_NO_ROLES,)
+    )
+    shapes = {kind: part_shapes for kind, part_shapes, _ in _PARTS}
     roles: list[RoleGrant] = []
     parts: dict[str, list[GrantRow] | None] = {SYSTEM: [], OBJECT: [], COLUMN: []}
     reasons: dict[str, str] = {}
     for grantee in grantees:
-        roles.extend(_roles(cursor, grantee))
-        for kind, shapes, view in _PARTS:
+        query, role_rows = first_shape(
+            cursor, role_shapes, "DBA_ROLE_PRIVS", fetch_all, {"grantee": grantee}
+        )
+        role_shapes = (query,)
+        roles.extend(_roles(grantee, role_rows, legacy=query == ROLE_GRANTS_QUERY_LEGACY))
+        for kind, _, view in _PARTS:
             rows = parts[kind]
             if rows is None:
                 continue
             try:
-                _, answered = first_shape(cursor, shapes, view, _fetch_all, {"grantee": grantee})
+                query, answered = first_shape(
+                    cursor, shapes[kind], view, fetch_all, {"grantee": grantee}
+                )
             except DictionaryUnreadableError as refused:
                 parts[kind] = None
                 reasons[kind] = (
@@ -155,14 +198,18 @@ def survey_grants(cursor: Cursor, accounts: Sequence[str], *, public: bool) -> G
                     "with grant_report_reads=Y"
                 )
                 continue
+            shapes[kind] = (query,)
             rows.extend(_row(grantee, kind, answered_row) for answered_row in answered)
 
+    unreadable = [reasons[kind] for kind in (SYSTEM, OBJECT, COLUMN) if kind in reasons]
+    if not role_lookup:
+        unreadable.append(_NO_ROLE_LOOKUP)
     return GrantSurvey(
         roles=tuple(sorted(roles, key=lambda grant: (grant.grantee, grant.role))),
-        system=_sorted(parts[SYSTEM]),
-        objects=_sorted(parts[OBJECT]),
-        columns=_sorted(parts[COLUMN]),
-        unreadable=tuple(reasons[kind] for kind in (SYSTEM, OBJECT, COLUMN) if kind in reasons),
+        system=_merged(parts[SYSTEM]),
+        objects=_merged(parts[OBJECT]),
+        columns=_merged(parts[COLUMN]),
+        unreadable=tuple(unreadable),
     )
 
 
@@ -174,23 +221,11 @@ _PARTS: tuple[tuple[str, tuple[str, ...], str], ...] = (
 )
 
 
-def _fetch_all(cursor: Cursor) -> list[Any]:
-    return list(cursor.fetchall())
-
-
-def _roles(cursor: Cursor, grantee: str) -> list[RoleGrant]:
-    """The roles granted directly to ``grantee``. A refusal raises."""
-    query, rows = first_shape(
-        cursor,
-        (ROLE_GRANTS_QUERY, ROLE_GRANTS_QUERY_LEGACY),
-        "DBA_ROLE_PRIVS",
-        _fetch_all,
-        {"grantee": grantee},
-    )
-    legacy = query == ROLE_GRANTS_QUERY_LEGACY
+def _roles(grantee: str, rows: Any, *, legacy: bool) -> list[RoleGrant]:
+    """The roles granted directly to ``grantee``, from the answered rows."""
     grants = []
     for role, admin, default, authentication in rows:
-        word = str(authentication or "")
+        word = str(authentication) if authentication else UNKNOWN_AUTHENTICATION
         if legacy:
             word = _LEGACY_AUTHENTICATION.get(word.upper(), word)
         grants.append(
@@ -236,19 +271,26 @@ def _row(grantee: str, kind: str, row: Any) -> GrantRow:
     )
 
 
-def _sorted(rows: list[GrantRow] | None) -> tuple[GrantRow, ...] | None:
+def _merged(rows: list[GrantRow] | None) -> tuple[GrantRow, ...] | None:
+    """``rows`` with one row per path, sorted.
+
+    ``DBA_TAB_PRIVS`` and ``DBA_COL_PRIVS`` hold one row per grantor, so one
+    privilege granted by two owners, on one path, comes back twice. The merged
+    row is grantable when any of them is.
+    """
     if rows is None:
         return None
-    return tuple(
-        sorted(
-            rows,
-            key=lambda row: (
-                row.grantee,
-                row.privilege,
-                row.owner or "",
-                row.name or "",
-                row.column or "",
-                row.path,
-            ),
+    merged: dict[tuple[Any, ...], GrantRow] = {}
+    for row in rows:
+        key = (
+            row.grantee,
+            row.privilege,
+            row.owner or "",
+            row.name or "",
+            row.column or "",
+            row.path,
         )
-    )
+        seen = merged.get(key)
+        if seen is None or (row.grantable and not seen.grantable):
+            merged[key] = row
+    return tuple(merged[key] for key in sorted(merged))

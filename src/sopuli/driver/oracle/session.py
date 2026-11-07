@@ -462,10 +462,13 @@ class OracleSession(ClosesConnection):
         protocol: a caller finds it with ``getattr``. ``PUBLIC``'s grants are
         read once, as their own grantee, only when ``public`` is true. A grant
         view the session cannot read makes its part ``None`` with a reason
-        (:func:`~sopuli.driver.oracle.grants.survey_grants`).
+        (:func:`~sopuli.driver.oracle.grants.survey_grants`). Without the
+        ``role_lookup`` capability, roles are read without ``DBA_ROLES`` and
+        their authentication is unknown.
         """
+        role_lookup = self.scope().supports(ROLE_LOOKUP)
         with traced_cursor(self.connection) as cursor:
-            return survey_grants(cursor, accounts, public=public)
+            return survey_grants(cursor, accounts, public=public, role_lookup=role_lookup)
 
     def byte_limit(self) -> ByteLimit:
         """How long a password may be here, in this database's character set.

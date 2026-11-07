@@ -18,12 +18,14 @@ from sopuli.driver.oracle.grants import (
     COL_PRIVS_QUERY,
     ROLE_GRANTS_QUERY,
     ROLE_GRANTS_QUERY_LEGACY,
+    ROLE_GRANTS_QUERY_NO_ROLES,
     SYS_PRIVS_QUERY,
     TAB_PRIVS_QUERY,
     TAB_PRIVS_QUERY_LEGACY,
+    UNKNOWN_AUTHENTICATION,
     survey_grants,
 )
-from sopuli.driver.protocol import DriverError
+from sopuli.driver.protocol import ROLE_LOOKUP, DriverError, Scope
 
 APP = "ACME_RR_APP"
 OWNER = "ACME_RR_OWNER"
@@ -293,6 +295,57 @@ def test_a_release_without_type_or_authentication_type() -> None:
     assert survey.roles[0].authentication == "PASSWORD"
 
 
+def test_without_role_lookup_roles_are_read_without_dba_roles() -> None:
+    """DBA_ROLES is optional (`PREDICATE_READS`), so its absence must not end
+    the survey: the roles come from DBA_ROLE_PRIVS alone, with authentication
+    UNKNOWN and a reason naming the grant."""
+    answers = _answers()
+    answers[(ROLE_GRANTS_QUERY_NO_ROLES, APP)] = [("ACME_RR_DUP", "NO", "YES", None)]
+    cursor = _Cursor(answers)
+    survey = survey_grants(cursor, [APP], public=False, role_lookup=False)
+    assert survey.roles == (
+        RoleGrant(APP, "ACME_RR_DUP", False, True, authentication=UNKNOWN_AUTHENTICATION),
+    )
+    assert survey.objects is not None
+    (reason,) = survey.unreadable
+    assert "GRANT SELECT ON SYS.DBA_ROLES" in reason
+    assert ROLE_GRANTS_QUERY not in [sql for sql, _ in cursor.asked]
+
+
+def test_an_empty_authentication_is_unknown_not_blank() -> None:
+    answers = _answers(roles=[("ACME_RR_DUP", "NO", "YES", None)])
+    survey = survey_grants(_Cursor(answers), [APP], public=False)
+    assert survey.roles[0].authentication == UNKNOWN_AUTHENTICATION
+
+
+def test_rows_from_two_grantors_are_one_row_and_grantable_if_either_is() -> None:
+    answers = _answers(
+        objects=[
+            (None, None, "SELECT", OWNER, "T1", "TABLE", "NO"),
+            (None, None, "SELECT", OWNER, "T1", "TABLE", "YES"),
+            (None, None, "SELECT", OWNER, "T1", "TABLE", "NO"),
+        ]
+    )
+    survey = survey_grants(_Cursor(answers), [APP], public=False)
+    assert survey.objects is not None
+    (row,) = survey.objects
+    assert row.grantable is True
+
+
+def test_a_narrower_shape_is_kept_for_the_next_grantee() -> None:
+    """A release without DBA_TAB_PRIVS.TYPE refuses the wider query once, not
+    once per account."""
+    no_column = _ora("ORA-00904", '"T"."TYPE": invalid identifier')
+    answers = _answers(objects=no_column)
+    answers[(TAB_PRIVS_QUERY_LEGACY, APP)] = []
+    answers[(TAB_PRIVS_QUERY, "ACME_WEB_USER")] = no_column
+    cursor = _Cursor(answers)
+    survey_grants(cursor, [APP, "ACME_WEB_USER"], public=False)
+    asked = [sql for sql, _ in cursor.asked]
+    assert asked.count(TAB_PRIVS_QUERY) == 1
+    assert asked.count(TAB_PRIVS_QUERY_LEGACY) == 2
+
+
 def test_every_statement_binds_only_the_grantee_and_reads_no_verifier() -> None:
     cursor = _Cursor(_answers())
     survey_grants(cursor, [APP], public=False)
@@ -326,6 +379,7 @@ def test_the_session_method_reads_through_its_connection(session_module: Any) ->
         ),
         correlation_id="00000000-0000-0000-0000-000000000000",
     )
+    session._scope = Scope(type="pdb", capabilities=frozenset({ROLE_LOOKUP}))
     survey = session.survey_privileges([APP], public=False)
     assert isinstance(survey, GrantSurvey)
     assert survey.objects is not None

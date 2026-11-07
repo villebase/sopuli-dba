@@ -1199,10 +1199,10 @@ def survey(
     ``None`` rather than the value this container shows.
     """
     _, users = first_shape(
-        cursor, (SURVEY_USERS_QUERY, SURVEY_USERS_QUERY_LEGACY), "DBA_USERS", _fetch_all
+        cursor, (SURVEY_USERS_QUERY, SURVEY_USERS_QUERY_LEGACY), "DBA_USERS", fetch_all
     )
     _, limit_rows = first_shape(
-        cursor, (SURVEY_LIMITS_QUERY, SURVEY_LIMITS_QUERY_LEGACY), "DBA_PROFILES", _fetch_all
+        cursor, (SURVEY_LIMITS_QUERY, SURVEY_LIMITS_QUERY_LEGACY), "DBA_PROFILES", fetch_all
     )
     limits = {(str(row[0]), str(row[1])): row for row in limit_rows}
     counts, counts_gap = _lcounts(cursor) if user_dollar else ({}, _NO_GRANT)
@@ -1274,7 +1274,8 @@ _NO_GRANT = (
 )
 
 
-def _fetch_all(cursor: Cursor) -> list[Any]:
+def fetch_all(cursor: Cursor) -> list[Any]:
+    """Every row of the statement ``cursor`` just ran, for :func:`first_shape`."""
     return list(cursor.fetchall())
 
 

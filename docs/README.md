@@ -347,15 +347,18 @@ These entries share a setup. The probe is
   so the change is somewhere after 11.2 and no later than 12.2. Open: 12.1 is
   unrun. Read the 11.2 result as "11.2 keeps it", never as "every older release
   keeps it".
-- `unverified` `report-reads` (#1377) — **What can UC-5's report commands read
-  on Oracle, and with which grants?** Known: `00_install.sql` grants `SELECT`
-  on `DBA_USERS`, `DBA_PROFILES`, `DBA_ROLE_PRIVS` and `DBA_ROLES`;
-  `DBA_USERS.PASSWORD_CHANGE_DATE` exists from 19c (`02-oracle-privileges.md`
-  §2); 11.2 has no `ORACLE_MAINTAINED`, and check 5's list stands in for it.
-  Open: which grants make `DBA_SYS_PRIVS` and `DBA_TAB_PRIVS` readable; whether
-  a hierarchical query over `DBA_ROLE_PRIVS` gives the effective privileges
-  through nested and non-default roles; how a `DEFAULT` profile limit resolves;
-  and what a PDB shows for a common account and a common profile.
+- `verified` `report-reads` (#1377) — **What can UC-5's report commands read
+  on Oracle, and with which grants?**
+  On 23.26.3.0.0, `00_install.sql`'s grants read `DBA_USERS`, `DBA_PROFILES`,
+  `DBA_ROLE_PRIVS` and `DBA_ROLES`. `DBA_SYS_PRIVS` and `DBA_TAB_PRIVS` need
+  `SELECT` on each. A recursive query over `DBA_ROLE_PRIVS` gives the effective
+  privileges through nested and non-default roles, with their paths; grants to
+  `PUBLIC` need a read of their own. A `DEFAULT` limit resolves through a join
+  to the `DEFAULT` profile. In a PDB, a common account and a common profile
+  read as local ones do, except that the account's `PASSWORD_CHANGE_DATE` is
+  NULL. `02-oracle-privileges.md` §2 has the details. Open: every other
+  release; `PASSWORD_CHANGE_DATE` is known to be absent before 19c, and
+  `ORACLE_MAINTAINED` on 11.2.
 - `unverified` `ddl-text-awr` (#387) — **Does the kept text reach AWR?**
   On 19.32.0.0.0, with the Diagnostics Pack enabled, the wrapped literal (C3)
   reached `DBA_HIST_SQLTEXT` and stayed there. The `ALTER USER` that sopuli

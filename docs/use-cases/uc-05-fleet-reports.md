@@ -258,12 +258,21 @@ The reports read `DBA_USERS`, `DBA_PROFILES`, `DBA_ROLE_PRIVS` and
 system and object privileges, which it does not. The failed-login count and
 the older releases' date of the last password change are in `SYS.USER$`
 (`LCOUNT`, `PTIME`), behind the optional grant. `DBA_USERS.PASSWORD_CHANGE_DATE`
-exists from 19c (`02-oracle-privileges.md` §2). Which grants the privilege
-views need, how the effective privileges and a `DEFAULT` limit are read, and
-what a PDB shows for a common account are not measured yet
-(unverified: report-reads). Each extra grant is `SELECT` only
-and optional, and the tool probes for it. A report that cannot read a view says
-*not checked* for what it needed.
+exists from 19c (`02-oracle-privileges.md` §2).
+
+Measured on 23.26.3.0.0 (`02-oracle-privileges.md` §2, #1377):
+
+- the privilege views need `SELECT` on `DBA_SYS_PRIVS` and on
+  `DBA_TAB_PRIVS`;
+- one recursive query over `DBA_ROLE_PRIVS` gives the effective privileges
+  with their role paths, and grants to `PUBLIC` are read on their own;
+- a `DEFAULT` limit resolves through a join to the `DEFAULT` profile;
+- in a PDB, a common account's `PASSWORD_CHANGE_DATE` is NULL, as its `PTIME`
+  is. So §6's database date is `unknown` for a common account on a PDB
+  target, never a date read from somewhere else.
+
+Each extra grant is `SELECT` only and optional, and the tool probes for it. A
+report that cannot read a view says *not checked* for what it needed.
 
 ---
 

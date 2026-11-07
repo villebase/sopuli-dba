@@ -704,6 +704,39 @@ comes from `V$OPTION`, which `PUBLIC` can read. These results are from
 `sql/oracle/13_audit_coverage_probe.sql` on 26ai 23.26.2.0.0
 ([measurements](../measurements.md)).
 
+### What the report commands read, and the optional grants
+
+UC-5's `report` commands read accounts, profiles and privileges
+(`../use-cases/uc-05-fleet-reports.md` §8). `sql/oracle/19_report_read_probe.sql`
+measured what they can read on 26ai Free 23.26.3.0.0
+([measurements](../measurements.md), #1377):
+
+- **The grants above already read four of the six views.** An account holding
+  them reads `DBA_USERS`, `DBA_PROFILES`, `DBA_ROLE_PRIVS` and `DBA_ROLES`.
+- **The privilege views need a grant each.** `DBA_SYS_PRIVS` and
+  `DBA_TAB_PRIVS` give `ORA-00942: table or view does not exist` until
+  `SELECT` on each is granted. Both grants are `SELECT` only. They are added
+  to `00_install.sql` as an optional grant by the PR that first reads them,
+  not before.
+- **Effective privileges come from one recursive query.** A recursive `WITH`
+  over `DBA_ROLE_PRIVS`, joined to `DBA_TAB_PRIVS` and `DBA_SYS_PRIVS`, gives
+  each privilege an account reaches through its roles once, with the path of
+  roles and the first role's `DEFAULT_ROLE`. A role two levels down was
+  reached. A grant to `PUBLIC` is on no role path, so it needs a read of its
+  own. `DBA_TAB_PRIVS.TYPE` tells a table from a procedure.
+- **A `DEFAULT` limit is resolved by a join.** `DBA_PROFILES` shows `DEFAULT`
+  for each limit a profile inherits, and a join on `RESOURCE_NAME` to the
+  `DEFAULT` profile gives the value that applies.
+- **A PDB has no password change date for a common account.** Read in a PDB,
+  a common account's `DBA_USERS.PASSWORD_CHANGE_DATE` is NULL, as its `PTIME`
+  is (#1122). Its profile, status and the common profile's limits are read
+  there as for a local account.
+- **The columns the reports want exist** on that release:
+  `PASSWORD_CHANGE_DATE`, `LAST_LOGIN`, `ORACLE_MAINTAINED`, `COMMON` and
+  `INHERITED` in `DBA_USERS`, and `COMMON` and `INHERITED` in the profile and
+  privilege views. `PASSWORD_CHANGE_DATE` is absent before 19c (above), and
+  11.2 has no `ORACLE_MAINTAINED` (§4, check 5). Every other release is unrun.
+
 ---
 
 ## 3. What must not be granted

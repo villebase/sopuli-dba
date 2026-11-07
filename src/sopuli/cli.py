@@ -8056,16 +8056,17 @@ def creds_apply(
     # The invocation that repairs this run, for SOPULI-W033 and the repair line
     # below, so the two name one command.
     #
-    # One exception to "narrowed the way this run was narrowed": a promotion
-    # withheld because the run was too narrow (decision #406) is finished only by a
-    # wider one, so echoing the selectors back would name the invocation that
-    # withholds it again.
+    # Always narrowed the way this run was, even where a promotion was withheld
+    # because the run was too narrow (decision #406). A wider line would also
+    # act on documents the operator kept narrow on purpose, such as a staged
+    # rollout (#1364). `SOPULI-W027` names the pairs the promotion needs.
     rerun = repair_invocation(
-        selection=None if left_out else selection,
+        selection=selection,
         config_paths=[str(path) for path in run.config_paths],
         profile=run.profile,
         source=source_stage,
         strategy=strategy,
+        repair_file=None if repair_document is None else str(repair_document),
     )
     failed_promotions = _failed_promotions(
         applied, promotions, rerun=rerun if stolen is None else None
@@ -8123,7 +8124,7 @@ def creds_apply(
         rerun
         if code == ExitCode.PARTIAL
         and stolen is None
-        and not _only_skips_held_back(states, promotions)
+        and not _same_run_holds_back_again(states, promotions)
         else None
     )
     table = render_apply(
@@ -8132,6 +8133,7 @@ def creds_apply(
         source=source_stage,
         repair=repair,
         stopped=None if stolen is None else str(stolen),
+        repairing=repair_document is not None,
     )
     # Printed as well as put in `diagnostics[]`, which is `creds generate`'s rule
     # (UC-1 §4): the emitter prints the command's text and not the document, so a
@@ -8244,7 +8246,9 @@ class _Promotion:
     whether the store refused its compare-and-set (UC-1 §8 row 7).
 
     ``skipped`` is the (account, target) pairs a guardrail skipped for an account
-    this document would have promoted (#852), which ``SOPULI-W050`` names.
+    this document would have promoted (#852), which ``SOPULI-W050`` names. It is
+    set with ``held`` as `SOPULI-W050`'s cause, and also with the narrowed cause
+    where the run skipped a pair inside its selection (#1364).
 
     ``held`` says why a document that owed a promotion was held back without a
     write: the run was narrowed (`SOPULI-W027`), a guardrail skipped a target
@@ -11592,22 +11596,27 @@ def _promote_documents(
         if not owing:
             promotions[key] = _Promotion(None, "the vault already holds what was applied")
             continue
+        # Whether every row the run did not skip confirmed. A failure is the
+        # reason before a skip is: the same run again may fix it, and a skip's
+        # remedy (`--force`) is the wrong one for a target that is down.
+        confirmed = apply_states.summarise_document(
+            record.outcome.state
+            for record in records
+            if record.outcome.state != apply_states.SKIPPED
+        )
         if left_out is not None and left_out.get(key):
+            # A guardrail skip inside the run is named too, as SOPULI-W050, by
+            # the same rule. The wider run that SOPULI-W027 asks for would skip
+            # the same pair again, and W027 does not say so (#1364).
             promotions[key] = _Promotion(
                 None,
                 "this run was narrower than the promotion, so the vault was left as it was",
                 promotable=True,
+                skipped=_skipped_pairs(records) if confirmed else (),
                 held=HELD_NARROWED,
             )
             continue
-        # A failure is the reason before a skip is: the same run again may fix
-        # it, and a skip's remedy (`--force`) is the wrong one for a target that
-        # is down.
-        if not apply_states.summarise_document(
-            record.outcome.state
-            for record in records
-            if record.outcome.state != apply_states.SKIPPED
-        ):
+        if not confirmed:
             promotions[key] = _Promotion(
                 None,
                 "not every target confirmed, so the vault was left as it was",
@@ -11692,22 +11701,25 @@ def _unconfirmed_promotions(promotions: Mapping[LockKey, _Promotion]) -> list[Di
 def _skipped_promotions(promotions: Mapping[LockKey, _Promotion]) -> list[Diagnostic]:
     """``SOPULI-W050`` for each document a guardrail skip held back (#852)."""
     return [
-        promotion_skipped(str(key), promotion.skipped)
+        promotion_skipped(str(key), promotion.skipped, narrowed=promotion.held == HELD_NARROWED)
         for key, promotion in promotions.items()
         if promotion.skipped
     ]
 
 
-def _only_skips_held_back(states: Sequence[str], promotions: Mapping[LockKey, _Promotion]) -> bool:
-    """Whether a guardrail skip is the whole of what makes this run partial.
+def _same_run_holds_back_again(
+    states: Sequence[str], promotions: Mapping[LockKey, _Promotion]
+) -> bool:
+    """Whether a guardrail skip or a narrowed run is the whole of what makes this run partial.
 
-    Then the run's own repair line would name a run that skips the same pairs
-    again, so it is not printed and ``SOPULI-W050`` carries the remedy (#852).
+    Then the run's own repair line would name a run that skips the same pairs,
+    or withholds the same promotion, again. So it is not printed, and
+    ``SOPULI-W050`` or ``SOPULI-W027`` carries the remedy (#852, #1364).
     """
     held = [one for one in promotions.values() if one.promotable and one.version is None]
     return (
         bool(held)
-        and all(one.skipped for one in held)
+        and all(one.held in (HELD_SKIPPED, HELD_NARROWED) for one in held)
         and all(
             apply_states.is_confirmed(state) or state == apply_states.SKIPPED for state in states
         )
@@ -13133,7 +13145,7 @@ def _apply_owed(sequence: _Rotation, states: Sequence[str]) -> bool:
         states,
         promoted=all(one.version is not None for one in promotions if one.promotable),
         promotable=any(one.promotable for one in promotions),
-    ) == int(ExitCode.PARTIAL) and not _only_skips_held_back(states, sequence.promotions)
+    ) == int(ExitCode.PARTIAL) and not _same_run_holds_back_again(states, sequence.promotions)
 
 
 def _refuse_staged_rotation(rotating: Sequence[Binding], documents: Mapping[LockKey, Any]) -> None:

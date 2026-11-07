@@ -583,6 +583,41 @@ def test_a_refusal_after_the_survey_is_still_caught_at_the_change(
     assert len(harness["sessions"]) == 4
 
 
+def test_a_skip_inside_a_narrowed_run_is_named_beside_the_withheld_promotion(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """#1364. Narrowed to `appdb-alpha` and `appdb-beta`, where `DBA` is granted
+    during the run. The document is withheld for `appdb-gamma` (`SOPULI-W027`),
+    and the skip is named too (`SOPULI-W050`): the wider run W027 asks for
+    would skip the same pair again. No repair line, because the same run
+    would hold the promotion back again."""
+    grants = GrantedDuringRun()
+    grants["appdb-gamma"] = DBA_ON_BETA["appdb-alpha"]
+    grants.sessions = estate({}, by_target=grants)["sessions"]
+    three_targets = TWO_TARGETS.replace(
+        "applications:",
+        """\
+  - name: appdb-gamma
+    type: oracle
+    dsn: db-prod.example.com:1521/gamma.pdb.example.com
+    environment: prod
+    labels: { env: prod, tenant: gamma }
+    vault: vault-prod
+applications:""",
+    )
+    result = run(
+        runner, write_config(three_targets), "--target", "appdb-alpha", "--target", "appdb-beta"
+    )
+
+    assert result.exit_code == ExitCode.PARTIAL, result.output
+    assert "cannot be promoted by this run" in result.output
+    assert "a guardrail skipped acme_web_user on appdb-beta" in result.output, result.output
+    # Not "run the same command again", which W027 says withholds it again.
+    assert "run `creds apply` with the selection SOPULI-W027 asks for" in result.output
+    assert "run the same command again" not in result.output
+    assert "repair with:" not in result.output
+
+
 def test_rotate_decides_the_pass_from_its_survey(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:

@@ -242,19 +242,26 @@ For an account the tool does not manage, only the database's date is shown.
 
 ## 7. Rules in the config
 
-**Not built.** The rules are written in words that are not specific to one
-database product, such as "the password never expires", "locks after 5 failed
-logins" or "expires within 90 days". On Oracle the values are read through the
-account's profile. A list of database profiles and their expected settings,
-and the check of an account's profile by name, are an addition for Oracle on
-top of that. On another product, a rule reports *not checked* until that
-product's driver reads the settings. The format does not change when it does.
+**Built: the config section.** The rules are the `reports:` section
+(`01-configuration.md` §8a). The report that reads them is not built yet.
 
-- Rules name accounts by name or pattern, give them a kind and their expected
-  settings or profile, and select targets as `applications:` and
-  `personal_accounts:` do.
-- The list of database profiles cannot be called `profiles:`, because that key
-  already means run profiles (`01-configuration.md`, C10).
+The settings are written in words that are not specific to one database
+product: `password_lifetime` and `failed_login_limit`, each `unlimited` or a
+largest allowed value. On Oracle the values are read through the account's
+profile. `reports.db_profiles`, a list of database profiles and their expected
+settings, and a rule's `profile:`, the check of an account's profile by name,
+are an addition for Oracle on top of that. On another product, a rule reports
+*not checked* until that product's driver reads the settings. The format does
+not change when it does.
+
+- `reports.accounts` rules name accounts by name or `*` pattern, give them
+  their expected settings or profile, and select targets as `applications:`
+  and `personal_accounts:` do. A rule does not write a kind: the report
+  derives it from where the file declares the account.
+- The list of database profiles is `db_profiles`, not `profiles:`, because
+  that key already means run profiles (`01-configuration.md`, C10).
+- An application account's profile comes from its policy, so a rule may give
+  it settings and not a profile.
 - **There are no built-in rules.** Nothing is assumed about any kind of
   account. A technical account's password never expiring is a rule the DBA
   writes. A DBA who later rotates technical accounts with the tool may want

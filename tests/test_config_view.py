@@ -107,6 +107,31 @@ def test_the_default_view_names_every_section_of_the_file(config: Config) -> Non
         assert f"\n{section}\n" in text
 
 
+def test_the_default_view_shows_the_report_rules() -> None:
+    """A section the file writes and no view shows is one nobody can confirm took."""
+    config = build_config(
+        {
+            "version": 1,
+            "reports": {
+                "accounts": [
+                    {
+                        "accounts": ["DBSNMP", "ORDS_*"],
+                        "profile": "TECH_NOEXPIRE",
+                        "settings": {"password_lifetime": "unlimited"},
+                    }
+                ],
+                "db_profiles": [{"name": "TECH_NOEXPIRE", "settings": {"failed_login_limit": 10}}],
+            },
+        }
+    )
+    text = click.unstyle(render_text(PATHS, config, resolved=False))
+
+    assert "\nreports\n" in text
+    assert "DBSNMP, ORDS_*" in text
+    assert "password_lifetime unlimited" in text
+    assert "failed_login_limit 10" in text
+
+
 def test_a_non_production_store_is_marked(config: Config) -> None:
     """The marking exists so a development store is obviously one (P2), which
     only works if the view says so."""

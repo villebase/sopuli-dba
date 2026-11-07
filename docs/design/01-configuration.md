@@ -11,7 +11,7 @@ Put the binding keys at the top level and the file reads like a straightforward
 target list. This is the shape most users will ever need.
 
 ```yaml
-# yaml-language-server: $schema=./sopuli-config-3.6.schema.json
+# yaml-language-server: $schema=./sopuli-config-3.7.schema.json
 version: 1
 
 vaults: {}          # named secret stores
@@ -487,7 +487,7 @@ PDB per tenant across three environments, HashiCorp Vault as master. It needs no
 `applications:` section.
 
 ```yaml
-# yaml-language-server: $schema=./sopuli-config-3.6.schema.json
+# yaml-language-server: $schema=./sopuli-config-3.7.schema.json
 version: 1
 
 runtime:
@@ -3369,6 +3369,68 @@ rest need the target's limits and so cannot be known until a command runs.
 
 ---
 
+## 8a. `reports:` — what UC-5's reports check
+
+`sopuli report accounts` reads every account on a target and compares it with
+these rules (`../use-cases/uc-05-fleet-reports.md` §4 and §7). The section is
+optional, and absent means no rules.
+
+```yaml
+reports:
+  accounts:
+    - accounts: [DBSNMP, "ORDS_*", "APEX_*"]
+      targets: { group: prod }
+      profile: TECH_NOEXPIRE
+      settings: { password_lifetime: unlimited }
+    - accounts: [acme_app_user]
+      settings: { password_lifetime: 90 }
+  db_profiles:
+    - name: TECH_NOEXPIRE
+      settings: { password_lifetime: unlimited, failed_login_limit: 10 }
+```
+
+| Key | Meaning |
+|---|---|
+| `accounts[].accounts` | account names, or patterns whose only wildcard is `*`. Names are compared by `upper()` |
+| `accounts[].targets` | the same selector an application entry takes; absent means every target |
+| `accounts[].profile` | the database profile the accounts must be on (Oracle) |
+| `accounts[].settings` | what the accounts' password limits must be |
+| `db_profiles[].name` | a database profile |
+| `db_profiles[].settings` | what that profile's limits must be, for every account on it |
+
+An `accounts` entry needs `profile:`, `settings:` or both, because one with
+neither has nothing to check. A `db_profiles` entry needs `settings:`. A
+profile name appears once in `db_profiles`.
+
+**The settings are not Oracle's words** (UC-5 §7). Each takes `unlimited`, or a
+whole number above 0 that the database's value must not exceed:
+
+| Setting | Oracle reads it from | A number means |
+|---|---|---|
+| `password_lifetime` | the profile's `PASSWORD_LIFE_TIME` | the most days a password may live |
+| `failed_login_limit` | the profile's `FAILED_LOGIN_ATTEMPTS` | the most failed logins before the account locks |
+
+`unlimited` matches only an unlimited value, and a number never matches one.
+A setting a rule does not name is not compared.
+
+**Kind is never written.** The report says what kind each account is from
+where the file declares it: an account in `applications:` is an application
+account, one in `personal_accounts:` a personal account, and one that only a
+`reports.accounts` rule names a technical account. Any other account on the
+target is undeclared.
+
+**An application account's profile comes from its policy.** Its expected
+profile is `account.profile` in its policy (§8), so a rule that names an
+application account may give it `settings:` and may not give it `profile:`.
+That is refused when the file is read. A pattern that reaches an application
+account is matched against a database, so the report applies the policy's
+profile there.
+
+**A rule declares nothing for invariant 5.** A name here lets a report check an
+account. It does not let any changing command touch it.
+
+---
+
 ## 9. Precedence, restated with examples
 
 Order (highest first): **CLI → `SOPULI_*` env → third-party env → profile →
@@ -3622,7 +3684,7 @@ error message for a file this long.
 ## 9b. The published schema
 
 P3 requires a published JSON Schema. It is
-[`docs/schemas/sopuli-config-3.6.schema.json`](../schemas/sopuli-config-3.6.schema.json),
+[`docs/schemas/sopuli-config-3.7.schema.json`](../schemas/sopuli-config-3.7.schema.json),
 Draft 2020-12, and it exists for the editor rather than for the tool: pointed at
 from a YAML language server, it gives completion and inline errors while somebody
 is editing a 130-line file, which is worth more than the validation itself.
@@ -3633,7 +3695,7 @@ the same constants the builders validate with — `TARGET_KEYS`, `VAULT_TYPES`,
 a section's keys and its type table disagree. Regenerate with:
 
 ```
-python -m sopuli.config.schema > docs/schemas/sopuli-config-3.6.schema.json
+python -m sopuli.config.schema > docs/schemas/sopuli-config-3.7.schema.json
 ```
 
 `tests/config/test_schema.py` fails when the committed file is not what the model
@@ -3715,7 +3777,7 @@ A schema nothing is pointed at is a file in a directory. The association is made
 from the config file itself, with a comment on the first line:
 
 ```yaml
-# yaml-language-server: $schema=./sopuli-config-3.6.schema.json
+# yaml-language-server: $schema=./sopuli-config-3.7.schema.json
 version: 1
 ```
 
@@ -3726,7 +3788,7 @@ description the generator wrote for it, and an unknown key is underlined where i
 was typed.
 
 **The path is relative to the YAML file**, not to the repository. Copy the schema
-next to the config, or point at it where it lives — `$schema=../sopuli-dba/docs/schemas/sopuli-config-3.6.schema.json`
+next to the config, or point at it where it lives — `$schema=../sopuli-dba/docs/schemas/sopuli-config-3.7.schema.json`
 is as valid as the form above.
 
 **The `$id` inside the schema is an identifier, not an address.** It reads like a

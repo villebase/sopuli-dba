@@ -169,6 +169,53 @@ def test_public_is_asked_for_only_with_the_flag(write_config: WriteConfig, sessi
     assert session["session"].asked == ((APP,), True)
 
 
+def json_run(write_config: WriteConfig, *args: str) -> dict[str, Any]:
+    config = write_config(CONFIG)
+    result = CliRunner().invoke(
+        cli, ["--config", str(config), "--output", "json", "report", "privileges", *args]
+    )
+    document: dict[str, Any] = json.loads(result.output)
+    Draft202012Validator(RUN_SCHEMA).validate(document)
+    return document
+
+
+def test_public_json_validates_and_is_not_counted_as_an_account(
+    write_config: WriteConfig, session: Any
+) -> None:
+    document = json_run(write_config, "--public")
+    assert any(entry["kind"] == "public" for entry in document["results"])
+    assert "(23.0.0.0.0, 1 account)" in click.unstyle(report(write_config, "--public").output)
+
+
+def test_the_summary_agrees_with_the_results(
+    write_config: WriteConfig, session: dict[str, FakeSession]
+) -> None:
+    session["session"] = FakeSession(
+        GrantSurvey(
+            roles=GRANTS.roles,
+            system=GRANTS.system,
+            objects=GRANTS.objects,
+            columns=GRANTS.columns,
+            unreadable=("DBA_ROLES could not be read",),
+        )
+    )
+    document = json_run(write_config)
+    assert document["summary"]["ok"] == 0
+    assert document["summary"]["by_state"] == {"NOT_CHECKED": 1}
+
+
+def test_a_missing_account_is_in_the_json(write_config: WriteConfig, session: Any) -> None:
+    document = json_run(write_config, "--account", "acme_typo_user")
+    assert document["results"] == [
+        {
+            "account": "acme_typo_user",
+            "target": "free-pdb",
+            "state": "ACCOUNT_MISSING",
+            "changed": False,
+        }
+    ]
+
+
 def test_an_unread_part_is_not_checked_exit_4(
     write_config: WriteConfig, session: dict[str, FakeSession]
 ) -> None:

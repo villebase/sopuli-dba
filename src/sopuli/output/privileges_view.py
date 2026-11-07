@@ -17,8 +17,8 @@ from sopuli.output import report_view
 from sopuli.output.document import Error, Summary
 from sopuli.output.palette import Role, paint
 from sopuli.output.table import Column, render_table
-from sopuli.report_accounts import NOT_CHECKED, REPORT_OK
-from sopuli.report_privileges import AccountPrivileges, Privilege, counts
+from sopuli.report_accounts import ACCOUNT_MISSING, NOT_CHECKED, REPORT_OK
+from sopuli.report_privileges import PUBLIC_KIND, AccountPrivileges, Privilege, counts
 
 ABSENT = "-"
 ERROR = "ERROR"
@@ -67,9 +67,11 @@ def _section(report: TargetPrivileges, *, detail: bool) -> list[str]:
         else:
             what = "could not connect"
         return [f"{heading}  {what}: {report.error.message}"]
+    # PUBLIC is not an account, so the head line does not count it.
+    real = sum(1 for one in report.accounts if one.kind != PUBLIC_KIND)
     lines = [
         f"{heading}  ({report.release or 'release unknown'}, "
-        f"{len(report.accounts)} account{'' if len(report.accounts) == 1 else 's'})"
+        f"{real} account{'' if real == 1 else 's'})"
     ]
     if report.absent is not None:
         lines.append(f"  no account {report.absent} on this target")
@@ -118,7 +120,7 @@ def _counts(privileges: Sequence[Privilege] | None, *, noun: str | None = None) 
     for (privilege, object_type), (direct, via) in counts(privileges).items():
         what = noun or (object_type.lower() if object_type != "-" else "object")
         total = direct + via
-        plural = what if total == 1 else f"{what}s"
+        plural = what if total == 1 else _plural(what)
         # Held only through a role that is not a default role: counted, and
         # said, because the account has it only after SET ROLE (UC-5 §5).
         inactive = sum(
@@ -131,6 +133,15 @@ def _counts(privileges: Sequence[Privilege] | None, *, noun: str | None = None) 
         note = f", {inactive} through a role that is not a default role" if inactive else ""
         parts.append(f"{privilege} on {total} {plural} ({direct} direct, {via} via roles{note})")
     return "; ".join(parts)
+
+
+def _plural(noun: str) -> str:
+    """``tables``, ``directories``, ``libraries``: Oracle's object types in English."""
+    if noun.endswith("y") and not noun.endswith(("ay", "ey", "oy", "uy")):
+        return noun[:-1] + "ies"
+    if noun.endswith(("s", "x", "ch", "sh")):
+        return noun + "es"
+    return noun + "s"
 
 
 def _sources(privilege: Privilege) -> str:
@@ -191,6 +202,17 @@ def build_results(reports: Sequence[TargetPrivileges]) -> list[dict[str, Any]]:
                 }
             )
             continue
+        if report.absent is not None:
+            # `--account` named an account this target does not have. Said in
+            # JSON as in the text, so a job can tell it from a clean report.
+            results.append(
+                {
+                    "account": report.absent,
+                    "target": report.target,
+                    "state": ACCOUNT_MISSING,
+                    "changed": False,
+                }
+            )
         results.extend(_result(one, report.unreadable) for one in report.accounts)
     return results
 
@@ -242,20 +264,14 @@ def _privileges_json(part: Sequence[Privilege] | None) -> list[dict[str, Any]] |
 
 
 def summarise(reports: Sequence[TargetPrivileges]) -> Summary:
-    accounts = [one for report in reports for one in report.accounts]
-    unreachable, unsupported = target_counts(reports)
-    complete = sum(1 for one in accounts if one.complete)
+    """The run's counts, from :func:`build_results` itself, so the two never disagree."""
     by_state: dict[str, int] = {}
-    if complete:
-        by_state[REPORT_OK] = complete
-    if len(accounts) - complete + unsupported:
-        by_state[NOT_CHECKED] = len(accounts) - complete + unsupported
-    if unreachable:
-        by_state[ERROR] = unreachable
+    for entry in build_results(reports):
+        by_state[entry["state"]] = by_state.get(entry["state"], 0) + 1
     return Summary(
-        total=len(accounts) + unreachable + unsupported,
-        ok=complete,
+        total=sum(by_state.values()),
+        ok=by_state.get(REPORT_OK, 0),
         changed=0,
-        failed=unreachable,
+        failed=by_state.get(ERROR, 0),
         by_state=by_state,
     )

@@ -5798,18 +5798,7 @@ def _wanted_rows(
     if found:
         return found
     return tuple(
-        report_states.AccountRow(
-            target,
-            one.name,
-            report_states.UNDECLARED_KIND,
-            one.profile,
-            one.status,
-            (),
-            report_states.UNDECLARED,
-            one.failed_logins,
-        )
-        for one in surveyed
-        if one.name.upper() == spelled
+        report_states.undeclared_row(target, one) for one in surveyed if one.name.upper() == spelled
     )
 
 

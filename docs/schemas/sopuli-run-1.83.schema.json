@@ -1827,7 +1827,8 @@
             "application",
             "personal",
             "technical",
-            "undeclared"
+            "undeclared",
+            "public"
           ],
           "description": "What kind of account this is, from where the file declares it (added in 1.82, `report accounts`): in `applications:`, in `personal_accounts:`, only in a `reports.accounts` rule, or nowhere."
         },

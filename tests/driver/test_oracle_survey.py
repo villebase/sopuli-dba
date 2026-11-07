@@ -82,6 +82,7 @@ def _run(
     *,
     own_container: bool = False,
     user_dollar: bool = True,
+    application: bool = False,
     lcount: list[tuple[Any, ...]] | Exception | None = None,
     extra: dict[str, Any] | None = None,
 ) -> tuple[tuple[SurveyedAccount, ...], _Cursor]:
@@ -92,7 +93,10 @@ def _run(
     }
     answers.update(extra or {})
     cursor = _Cursor(answers)
-    return survey(cursor, own_container=own_container, user_dollar=user_dollar), cursor
+    surveyed = survey(
+        cursor, own_container=own_container, user_dollar=user_dollar, application=application
+    )
+    return surveyed, cursor
 
 
 def test_local_account_in_a_pdb_reads_everything() -> None:
@@ -248,6 +252,67 @@ def test_release_without_common_or_oracle_maintained() -> None:
     assert SURVEY_LIMITS_QUERY_LEGACY in cursor.asked
 
 
+def test_without_common_a_prefixed_account_in_a_pdb_is_taken_as_common() -> None:
+    """If the narrowed shape answers in a PDB, the C## prefix decides, as the
+    lockout guard's does, so a locked common account is never read as open."""
+    no_column = _ora("ORA-00904", '"COMMON": invalid identifier')
+    accounts, _ = _run(
+        [],
+        [],
+        lcount=[("C##ACME_ADM", 0), ("ACME_APP_USER", 0)],
+        extra={
+            SURVEY_USERS_QUERY: no_column,
+            SURVEY_USERS_QUERY_LEGACY: [
+                ("ACME_APP_USER", "OPEN", "ACME_PROF", None, None),
+                ("C##ACME_ADM", "OPEN", "ACME_PROF", None, None),
+            ],
+            SURVEY_LIMITS_QUERY: no_column,
+            SURVEY_LIMITS_QUERY_LEGACY: _limits("ACME_PROF", common=None),
+        },
+    )
+    by_name = {account.name: account for account in accounts}
+    admin = by_name["C##ACME_ADM"]
+    assert admin.common is True
+    assert admin.locked is None
+    assert admin.failed_logins is None
+    local = by_name["ACME_APP_USER"]
+    assert local.common is False
+    assert local.locked is False
+    # The lifetime is DEFAULT on a profile whose COMMON was not read.
+    assert local.password_lifetime is None
+    assert local.failed_login_limit == 5
+    (reason,) = local.unreadable
+    assert "whether the profile is common" in reason
+
+
+def test_in_an_application_container_the_reasons_say_unmeasured() -> None:
+    accounts, _ = _run(
+        [("ACME_APP_ADM", "OPEN", "ACME_PROF", "YES", "N")],
+        _limits("ACME_PROF"),
+        lcount=[("ACME_APP_ADM", 0)],
+        application=True,
+    )
+    (account,) = accounts
+    assert account.locked is None
+    assert len(account.unreadable) == 4
+    assert all("not been measured" in reason for reason in account.unreadable)
+    assert not any("CDB$ROOT" in reason for reason in account.unreadable)
+
+
+def test_an_empty_lcount_is_told_from_a_missing_row() -> None:
+    accounts, _ = _run(
+        [
+            ("ACME_APP_USER", "OPEN", "ACME_PROF", "NO", "N"),
+            ("ACME_WEB_USER", "OPEN", "ACME_PROF", "NO", "N"),
+        ],
+        _limits("ACME_PROF"),
+        lcount=[("ACME_APP_USER", None)],
+    )
+    by_name = {account.name: account for account in accounts}
+    assert by_name["ACME_APP_USER"].unreadable == ("SYS.USER$.LCOUNT is empty for ACME_APP_USER",)
+    assert by_name["ACME_WEB_USER"].unreadable == ("SYS.USER$ has no row for ACME_WEB_USER",)
+
+
 def test_oracle_maintained_is_read_where_the_column_exists() -> None:
     accounts, _ = _run(
         [("DBSNMP", "OPEN", "DEFAULT", "NO", "Y"), ("SCOTT", "OPEN", "DEFAULT", "NO", "N")],
@@ -325,13 +390,14 @@ class _Connection:
 
 
 @pytest.mark.parametrize(
-    ("scope_type", "capabilities", "own_container", "user_dollar"),
+    ("scope_type", "capabilities", "own_container", "user_dollar", "application"),
     [
-        ("pdb", frozenset({OFFLINE_VERIFY}), False, True),
-        ("cdb_root", frozenset(), True, False),
-        ("non_cdb", frozenset({OFFLINE_VERIFY}), True, True),
-        ("app_pdb", frozenset(), False, False),
-        ("unknown", frozenset(), False, False),
+        ("pdb", frozenset({OFFLINE_VERIFY}), False, True, False),
+        ("cdb_root", frozenset(), True, False, False),
+        ("non_cdb", frozenset({OFFLINE_VERIFY}), True, True, False),
+        ("app_pdb", frozenset(), False, False, True),
+        ("app_root", frozenset(), False, False, True),
+        ("unknown", frozenset(), False, False, False),
     ],
 )
 def test_the_session_passes_its_scope_to_the_survey(
@@ -341,13 +407,14 @@ def test_the_session_passes_its_scope_to_the_survey(
     capabilities: frozenset[str],
     own_container: bool,
     user_dollar: bool,
+    application: bool,
 ) -> None:
     seen: dict[str, bool] = {}
 
     def fake_survey(
-        cursor: Any, *, own_container: bool, user_dollar: bool
+        cursor: Any, *, own_container: bool, user_dollar: bool, application: bool
     ) -> tuple[SurveyedAccount, ...]:
-        seen.update(own_container=own_container, user_dollar=user_dollar)
+        seen.update(own_container=own_container, user_dollar=user_dollar, application=application)
         return ()
 
     monkeypatch.setattr(session_module, "survey", fake_survey)
@@ -361,7 +428,11 @@ def test_the_session_passes_its_scope_to_the_survey(
     )
     session._scope = Scope(type=scope_type, capabilities=capabilities)
     assert session.survey_accounts() == ()
-    assert seen == {"own_container": own_container, "user_dollar": user_dollar}
+    assert seen == {
+        "own_container": own_container,
+        "user_dollar": user_dollar,
+        "application": application,
+    }
 
 
 def test_a_refused_dba_users_read_names_the_grant() -> None:

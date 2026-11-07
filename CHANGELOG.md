@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.86.0](https://github.com/villebase/sopuli-dba/compare/v0.85.0...v0.86.0) (2026-11-07)
+
+
+### Features
+
+* know a Galera node by its cluster ([#1346](https://github.com/villebase/sopuli-dba/issues/1346)) ([#1356](https://github.com/villebase/sopuli-dba/issues/1356)) ([4b2ed55](https://github.com/villebase/sopuli-dba/commit/4b2ed550c07c07d4a45c4feb010bddda48f72b67))
+* warn on every command when the identity check is skipped ([#1363](https://github.com/villebase/sopuli-dba/issues/1363)) ([#1369](https://github.com/villebase/sopuli-dba/issues/1369)) ([ee0f077](https://github.com/villebase/sopuli-dba/commit/ee0f077d4f0442b321f05478af59e9c0f4fa8966))
+
+
+### Bug Fixes
+
+* **apply:** keep every selector flag in the repair line ([#1357](https://github.com/villebase/sopuli-dba/issues/1357)) ([#1362](https://github.com/villebase/sopuli-dba/issues/1362)) ([83d8ca9](https://github.com/villebase/sopuli-dba/commit/83d8ca9dc87849f6c09b6ce1aba5441d5c5a3ef7))
+* **apply:** never widen the repair line of a withheld promotion ([#1364](https://github.com/villebase/sopuli-dba/issues/1364)) ([#1368](https://github.com/villebase/sopuli-dba/issues/1368)) ([5289794](https://github.com/villebase/sopuli-dba/commit/5289794dc4f8d3cbebaabc40a9ec2b18c372377f))
+* exit 4 when finish-rollover skips a refused MariaDB close ([#1352](https://github.com/villebase/sopuli-dba/issues/1352)) ([#1354](https://github.com/villebase/sopuli-dba/issues/1354)) ([239e82d](https://github.com/villebase/sopuli-dba/commit/239e82d7feefe48fea2f955416d13c91a9a5408c))
+* exit 4 when rotate --finish-rollover leaves a close unmade ([#1347](https://github.com/villebase/sopuli-dba/issues/1347)) ([#1348](https://github.com/villebase/sopuli-dba/issues/1348)) ([e31febf](https://github.com/villebase/sopuli-dba/commit/e31febffcc3b9f61e346f76b16cc203344ea6c27))
+* **generate:** hold a drawn password to a product's fixed limit with no reading ([#1338](https://github.com/villebase/sopuli-dba/issues/1338)) ([#1349](https://github.com/villebase/sopuli-dba/issues/1349)) ([d06741b](https://github.com/villebase/sopuli-dba/commit/d06741b4489eaec2302dcf2519ce117354bd735b))
+* **generate:** hold a shared password to targets the selectors leave out ([#1351](https://github.com/villebase/sopuli-dba/issues/1351)) ([#1355](https://github.com/villebase/sopuli-dba/issues/1355)) ([bc0922b](https://github.com/villebase/sopuli-dba/commit/bc0922b9dc376e63f33575ebfb06c29a1f678bc9))
+
 ## [0.85.0](https://github.com/villebase/sopuli-dba/compare/v0.84.0...v0.85.0) (2026-11-06)
 
 

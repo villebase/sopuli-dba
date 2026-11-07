@@ -63,7 +63,7 @@ def test_a_db_profile() -> None:
 def test_an_empty_section_is_refused() -> None:
     with pytest.raises(ConfigError) as caught:
         build_reports({"version": 1, "reports": {}})
-    assert "reports" in str(caught.value)
+    assert "must declare `accounts:` or `db_profiles:`" in str(caught.value)
 
 
 def test_an_empty_list_is_refused() -> None:
@@ -90,7 +90,7 @@ def test_a_setting_is_unlimited_or_a_positive_whole_number(value: Any) -> None:
         build_reports(
             document(accounts=[{"accounts": ["X"], "settings": {"password_lifetime": value}}])
         )
-    assert "password_lifetime" in str(caught.value)
+    assert "`password_lifetime` must be `unlimited` or a whole number above 0" in str(caught.value)
 
 
 @pytest.mark.parametrize("value", ["unlimited", 1, 180])
@@ -110,20 +110,90 @@ def test_the_only_wildcard_is_a_star() -> None:
 def test_a_rule_needs_a_profile_or_settings() -> None:
     with pytest.raises(ConfigError) as caught:
         build_reports(document(accounts=[{"accounts": ["X"]}]))
-    assert "profile" in str(caught.value)
-    assert "settings" in str(caught.value)
+    assert "must declare `profile:` or `settings:`" in str(caught.value)
 
 
 def test_a_rule_needs_accounts() -> None:
     with pytest.raises(ConfigError) as caught:
         build_reports(document(accounts=[{"profile": "P"}]))
-    assert "accounts" in str(caught.value)
+    assert "must declare `accounts:`" in str(caught.value)
 
 
 def test_a_db_profile_needs_settings() -> None:
     with pytest.raises(ConfigError) as caught:
         build_reports(document(db_profiles=[{"name": "P"}]))
-    assert "settings" in str(caught.value)
+    assert "must declare `settings:`" in str(caught.value)
+
+
+def test_empty_settings_are_refused_even_beside_a_profile() -> None:
+    """The published schema refuses `settings: {}` too; builder and schema agree."""
+    with pytest.raises(ConfigError) as caught:
+        build_reports(document(accounts=[{"accounts": ["X"], "profile": "P", "settings": {}}]))
+    assert "must declare at least one setting" in str(caught.value)
+
+
+def test_an_account_is_named_by_one_rule() -> None:
+    with pytest.raises(ConfigError) as caught:
+        build_reports(
+            document(
+                accounts=[
+                    {"accounts": ["dbsnmp"], "profile": "P"},
+                    {"accounts": ["DBSNMP"], "profile": "Q"},
+                ]
+            )
+        )
+    assert "'DBSNMP' is named by two rules" in str(caught.value)
+
+
+def test_two_patterns_may_overlap() -> None:
+    """Which accounts two patterns share is a fact about a database, not the file."""
+    built = build_reports(
+        document(
+            accounts=[
+                {"accounts": ["ORDS_*"], "profile": "P"},
+                {"accounts": ["ORDS_PUBLIC*"], "profile": "Q"},
+            ]
+        )
+    )
+    assert len(built.accounts) == 2
+
+
+def test_a_misspelt_group_in_a_rule_is_refused() -> None:
+    with pytest.raises(ConfigError) as caught:
+        build_config(
+            {
+                "version": 1,
+                "groups": {"prod": {"match": {"env": "prod"}}},
+                "targets": [
+                    {
+                        "name": "free-pdb",
+                        "type": "oracle",
+                        "dsn": "localhost:1521/FREEPDB1",
+                        "labels": {"env": "prod"},
+                    }
+                ],
+                "reports": {
+                    "accounts": [{"accounts": ["X"], "targets": {"group": "prdo"}, "profile": "P"}]
+                },
+            }
+        )
+    assert "prdo" in str(caught.value)
+
+
+def test_an_unknown_target_in_a_rule_is_refused() -> None:
+    with pytest.raises(ConfigError) as caught:
+        build_config(
+            {
+                "version": 1,
+                "targets": [
+                    {"name": "free-pdb", "type": "oracle", "dsn": "localhost:1521/FREEPDB1"}
+                ],
+                "reports": {
+                    "accounts": [{"accounts": ["X"], "targets": ["nosuch"], "profile": "P"}]
+                },
+            }
+        )
+    assert "nosuch" in str(caught.value)
 
 
 def test_a_db_profile_name_appears_once() -> None:

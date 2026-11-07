@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sopuli.config.applications import build_target_selector
+from sopuli.config.applications import account_owners, build_target_selector
 from sopuli.config.errors import ROOT, ConfigError, KeyPath
 from sopuli.config.fields import (
     describe,
@@ -47,8 +47,11 @@ SETTINGS_KEYS = ("password_lifetime", "failed_login_limit")
 #: The one value a limit takes that is not a number.
 UNLIMITED = "unlimited"
 
-#: A pattern's only wildcard. Others are refused, so that a name that happens
-#: to contain one is never read as a pattern by accident.
+#: A pattern's only wildcard. The report matches names in the tool, against
+#: the names it read, and never sends a pattern to the database: so `_` and `%`
+#: are plain characters here, as in an Oracle name, and never SQL `LIKE`
+#: wildcards. The glob wildcards other than `*` are refused, so that a name
+#: holding one is never read as a pattern by accident.
 WILDCARD = "*"
 _REFUSED_WILDCARDS = ("?", "[", "]")
 
@@ -75,13 +78,38 @@ def build_reports(document: dict[str, Any]) -> Reports:
         for index, raw in enumerate(profiles)
     )
     _reject_duplicate_profiles(built_profiles, at=at.key("db_profiles"))
-    return Reports(
-        accounts=tuple(
-            _build_account_rule(raw, at=at.key("accounts").index(index))
-            for index, raw in enumerate(accounts)
-        ),
-        db_profiles=built_profiles,
+    built_rules = tuple(
+        _build_account_rule(raw, at=at.key("accounts").index(index))
+        for index, raw in enumerate(accounts)
     )
+    _reject_duplicate_accounts(built_rules, at=at.key("accounts"))
+    return Reports(accounts=built_rules, db_profiles=built_profiles)
+
+
+def _reject_duplicate_accounts(rules: tuple[ReportAccountRule, ...], *, at: KeyPath) -> None:
+    """One account name appears in one rule, compared by ``upper()``.
+
+    Two rules naming one account could expect two profiles, and the report
+    would have to pick. A rule for one account on some targets and another on
+    others is one rule per target selection in a later version, if it is ever
+    needed; refusing now is the reversible half. Patterns are not compared: which
+    accounts two patterns share is a fact about a database, so the report
+    handles that.
+    """
+    seen: dict[str, KeyPath] = {}
+    for index, rule in enumerate(rules):
+        for position, name in enumerate(rule.accounts):
+            if is_pattern(name):
+                continue
+            where = at.index(index).key("accounts").index(position)
+            spelled = name.upper()
+            if spelled in seen:
+                raise ConfigError(
+                    f"account {name!r} is named by two rules",
+                    at=where,
+                    hint=f"already named at {seen[spelled]}; name each account in one rule",
+                )
+            seen[spelled] = where
 
 
 def _entries(section: dict[str, Any], key: str, *, at: KeyPath) -> list[Any]:
@@ -145,6 +173,14 @@ def _build_db_profile(raw: Any, *, at: KeyPath) -> DbProfileRule:
 def _build_settings(raw: Any, *, at: KeyPath) -> Settings:
     block = mapping(raw, at=at)
     reject_unknown_keys(block, allowed=SETTINGS_KEYS, at=at)
+    if not block:
+        # Present and empty means somebody meant to write a setting; the
+        # published schema refuses it too (`minProperties: 1`).
+        raise ConfigError(
+            "must declare at least one setting",
+            at=at,
+            hint="delete `settings:` to declare none",
+        )
     return Settings(
         password_lifetime=_limit(block, "password_lifetime", at=at),
         failed_login_limit=_limit(block, "failed_login_limit", at=at),
@@ -210,10 +246,7 @@ def reject_profile_on_application_accounts(
     report is where a pattern that reaches an application account is handled:
     there the policy's profile wins.
     """
-    owners: dict[str, str] = {}
-    for application in applications:
-        for account in application.accounts:
-            owners[account.upper()] = application.label
+    owners = account_owners(applications)
 
     for index, rule in enumerate(reports.accounts):
         if rule.profile is None:

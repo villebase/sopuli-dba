@@ -292,33 +292,33 @@ def _report_rows(config: Config) -> list[str]:
     ``ACCOUNTS`` is the names and patterns as written: which accounts a pattern
     matches is a fact about a database, and this command describes the file.
     """
-    rules = [
-        [
-            ", ".join(rule.accounts),
-            _selector(rule),
-            _or_dash(rule.profile),
-            _or_dash(_settings_text(rule.settings)),
-        ]
-        for rule in config.reports.accounts
-    ]
-    profiles: list[list[Cell | str]] = [
-        [
-            f"db profile {profile.name}",
-            "all",
-            profile.name,
-            _or_dash(_settings_text(profile.settings)),
-        ]
-        for profile in config.reports.db_profiles
-    ]
-    return render_table(
+    rules = render_table(
         [
             Column("ACCOUNTS", _NAME),
             Column("TARGETS", _NAME),
             Column("PROFILE", _NAME),
             Column("SETTINGS"),
         ],
-        rules + profiles,
+        [
+            [
+                ", ".join(rule.accounts),
+                _selector(rule),
+                _or_dash(rule.profile),
+                _or_dash(_settings_text(rule.settings)),
+            ]
+            for rule in config.reports.accounts
+        ],
     )
+    # A table of its own: a database profile has no target selector, and a row
+    # in the rules table would show one the file never wrote.
+    profiles = render_table(
+        [Column("DB PROFILE", _NAME), Column("SETTINGS")],
+        [
+            [profile.name, _or_dash(_settings_text(profile.settings))]
+            for profile in config.reports.db_profiles
+        ],
+    )
+    return [*rules, *([""] if rules and profiles else []), *profiles]
 
 
 def _settings_text(settings: Settings) -> str | None:

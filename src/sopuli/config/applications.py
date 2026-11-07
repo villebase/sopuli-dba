@@ -389,3 +389,17 @@ def _reject_duplicate_names(applications: list[Application], *, at: KeyPath) -> 
                 hint=f"already used at index {seen[name]}; `--application` needs it to be unique",
             )
         seen[name] = index
+
+
+def account_owners(applications: tuple[Application, ...]) -> dict[str, str]:
+    """Each application account's name, by ``upper()``, mapped to its entry's label.
+
+    ``upper()`` because that is how a name is matched everywhere it is used
+    (invariant 5). The sections that may not reuse an application account's
+    name, `personal_accounts:` and a `reports:` rule's `profile:`, ask this.
+    """
+    owners: dict[str, str] = {}
+    for application in applications:
+        for account in application.accounts:
+            owners[account.upper()] = application.label
+    return owners

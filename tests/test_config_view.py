@@ -129,7 +129,11 @@ def test_the_default_view_shows_the_report_rules() -> None:
     assert "\nreports\n" in text
     assert "DBSNMP, ORDS_*" in text
     assert "password_lifetime unlimited" in text
-    assert "failed_login_limit 10" in text
+    profiles = text[text.index("DB PROFILE") :]
+    assert "TECH_NOEXPIRE" in profiles
+    assert "failed_login_limit 10" in profiles
+    # A database profile has no target selector, so its table shows none.
+    assert "all" not in profiles.splitlines()[1]
 
 
 def test_a_non_production_store_is_marked(config: Config) -> None:

@@ -83,7 +83,8 @@ HELD_UNCONFIRMED = "unconfirmed"
 _HELD_MESSAGES = {
     HELD_NARROWED: (
         f"this database has the new password and the vault was not promoted, so `current` "
-        f"does not hold it yet -- {PROMOTION_WITHHELD} names the wider run that finishes it"
+        f"does not hold it yet -- {PROMOTION_WITHHELD} names the pairs a run must include "
+        "to finish it"
     ),
     HELD_SKIPPED: (
         f"this database has the new password and the vault was not promoted, so `current` "
@@ -514,6 +515,7 @@ def repair_invocation(
     profile: str | None = None,
     source: str | None = None,
     strategy: str | None = None,
+    repair_file: str | None = None,
 ) -> str:
     """The command line that repairs a partial run, spelled exactly.
 
@@ -543,17 +545,23 @@ def repair_invocation(
     No other stage gets it: `--confirm` being on that operation alone is the
     point of having it.
 
-    **This line is the plain re-run, although ``--repair FILE`` exists.**
+    **This line never points** ``--repair`` **at this run's own document.**
     :meth:`~sopuli.output.emit.Emitter.emit` writes "the JSON document, or the
     human text, never both" -- so this line is only ever read by somebody in
-    **text** mode, and a text-mode run leaves no document on disk for
-    ``--repair`` to be pointed at. Replacing the line would hand a half-applied
-    estate an invocation that cannot run.
+    **text** mode, and a text-mode run leaves no document of its own on disk.
+    Pointing the line at one would hand a half-applied estate an invocation
+    that cannot run. That document is offered on a separate line instead, and
+    that line promises nothing: it says what it needs. A JSON consumer needs no
+    line at all -- it has ``results[]``, and ``03-json-output.md`` §7's recipe
+    is the same filter the flag applies.
 
-    The flag is named on a separate line instead, and that line promises
-    nothing: it says what the flag needs. A JSON consumer needs no line at
-    all -- it has ``results[]``, and ``03-json-output.md`` §7's recipe is the
-    same filter this flag applies.
+    **A run that read** ``--repair FILE`` **is repaired with the same file.**
+    ``repair_file`` is that path. The file is on disk, because this run read
+    it, and the pairs that failed are among the pairs it names. Without it, a
+    ``--repair`` run with no other selector would print a line that names the
+    whole estate, and the line never widens the run (#1364). The cost is a
+    login for each pair of the file that this run confirmed. This run's own
+    document, where it was captured, names only the pairs that failed.
     """
     words = ["sopuli", "creds", "apply"]
     for path in config_paths:
@@ -566,6 +574,8 @@ def repair_invocation(
         for flag, names in selection.flags():
             for name in names:
                 words += [f"--{flag}", _word(name)]
+    if repair_file is not None:
+        words += ["--repair", _word(repair_file)]
     if source is not None:
         words += ["--source", source]
         if source == PREVIOUS:
@@ -603,8 +613,13 @@ def render_apply(
     source: str | None = None,
     repair: str | None = None,
     stopped: str | None = None,
+    repairing: bool = False,
 ) -> str:
     """The result table and the closing line. ``rows`` is (binding, outcome, changed).
+
+    ``repairing`` is whether this run read ``--repair FILE``. Its ``repair``
+    line then repeats that file, so the ``--repair`` line offers this run's
+    document in place of it, not a second ``--repair`` (#1364).
 
     ``source`` is the stage the operator named, and it changes only one word:
     a rollback says "rolled back" rather than "changed". Worth the parameter,
@@ -648,6 +663,7 @@ def render_apply(
                 source=source,
                 repair=repair,
                 stopped=stopped,
+                repairing=repairing,
             ),
         ]
     )
@@ -677,6 +693,7 @@ def _verdict(
     source: str | None = None,
     repair: str | None = None,
     stopped: str | None = None,
+    repairing: bool = False,
 ) -> str:
     """The closing line: what happened, then what still needs attention.
 
@@ -722,13 +739,18 @@ def _verdict(
         # `--repair` still retries a skipped pair, so the flag line stays where
         # one is (#852): once its guardrail no longer refuses it, the retry
         # finishes the promotion it held back. `SOPULI-W050` says why.
-        return _with_remedy(line, repair, stopped, flag=bool(skipped))
+        return _with_remedy(line, repair, stopped, flag=bool(skipped), repairing=repairing)
     parts.append(f"{unconfirmed} not confirmed")
-    return _with_remedy(", ".join(parts), repair, stopped, flag=True)
+    return _with_remedy(", ".join(parts), repair, stopped, flag=True, repairing=repairing)
 
 
 def _with_remedy(
-    line: str, repair: str | None, stopped: str | None = None, *, flag: bool = False
+    line: str,
+    repair: str | None,
+    stopped: str | None = None,
+    *,
+    flag: bool = False,
+    repairing: bool = False,
 ) -> str:
     """The verdict, and under it either why the run stopped or what to type next.
 
@@ -765,4 +787,9 @@ def _with_remedy(
     remedy = f"{line}\nrepair with: {repair}"
     if not flag:
         return remedy
+    if repairing:
+        return (
+            f"{remedy}\n         or: the same with this run's document in place of the "
+            "--repair file, if you captured it with --output json"
+        )
     return f"{remedy}\n         or: --repair FILE, if you captured this run with --output json"

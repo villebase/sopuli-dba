@@ -4819,3 +4819,36 @@ the register.
 - **Known cost:** a cluster started from a copy of another cluster's data is
   expected to keep that cluster's UUID, which was not measured. The two would
   be refused as one, and the hint says how to run them apart.
+
+## #1364
+
+- **Decided:** 2026-11-07, #1364
+- **Question:** a narrowed `creds apply` that withholds a promotion
+  (`SOPULI-W027`, [#406](#406)) printed a `repair with:` line with no
+  selector, which names the whole estate. How wide should that line be?
+- **Decision:** C, the maintainer's choice. The line never widens. It keeps
+  the run's selectors, and a run that read `--repair FILE` repeats the same
+  file. It is printed only where something inside the run failed: a pair, or
+  another document's promotion write. A run held back only by a narrowing, or
+  by a narrowing and a guardrail skip, prints none. `SOPULI-W027` names the
+  pairs the promotion needs, and the operator composes the wider run. A skip
+  inside the narrowed run is named as `SOPULI-W050` beside it.
+  `SOPULI-W033`'s rerun follows the same rule. The `SOPULI-W027` message says
+  to run with a selection that includes the pairs, not without the narrowing.
+- **Why:** the whole-estate line also acts on documents the withheld one has
+  nothing to do with. An operator who rolls document B out one target at a
+  time, in a run that also withholds document A's promotion, would apply B's
+  `pending` everywhere and promote it by pasting the line. A printed command
+  never acts on more than was asked.
+- **Rejected:**
+  1. A: keep the whole-estate line. It always finishes the withheld
+     document, but it can undo another document's staged rollout, and it
+     spends a login on every pair of the estate (UC-1 §7).
+  2. B: keep the run's selectors and add `--target` and `--account` for the
+     withheld pairs. `--target` and `--account` combine as *and*, so a
+     selection cannot always express exactly those pairs, and the line can
+     grow long.
+- **Known cost:** the operator has to compose the wider run by hand. A
+  `--repair FILE` run's line repeats the file, so it spends a login on each
+  pair of the file that the run confirmed. The line under it offers the run's
+  own document in place of the file, which names only the pairs that failed.

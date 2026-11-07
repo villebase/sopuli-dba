@@ -1790,8 +1790,8 @@ def promotion_withheld(document: str, pairs: Sequence[tuple[str, str]]) -> Diagn
         code=PROMOTION_WITHHELD,
         message=(
             f"{document} cannot be promoted by this run: the promotion also needs {named}, "
-            "which this run's selection left out -- run `creds apply` without the narrowing "
-            "to finish"
+            "which this run's selection left out -- run `creds apply` with a selection that "
+            "includes them to finish"
         ),
     )
 
@@ -1869,11 +1869,18 @@ def handover_left_behind(account: str, target: str, reason: str) -> Diagnostic:
     )
 
 
-def promotion_skipped(document: str, pairs: Sequence[tuple[str, str]]) -> Diagnostic:
+def promotion_skipped(
+    document: str, pairs: Sequence[tuple[str, str]], *, narrowed: bool = False
+) -> Diagnostic:
     """One document a guardrail skip held back (#852), and the pairs it skipped.
 
     ``pairs`` is (account, target), named for :func:`promotion_withheld`'s reason:
     the reader goes to each of those targets next.
+
+    ``narrowed`` is whether the run was also too narrow for this document's
+    promotion, so :func:`promotion_withheld` is raised beside this one (#1364).
+    The same command again would withhold the promotion again, so the message
+    says to run the selection that diagnostic asks for instead.
 
     **No command is printed.** The one that would finish the job depends on the
     verb, the run's config, profile, source and strategy, and on which accounts a
@@ -1884,13 +1891,18 @@ def promotion_skipped(document: str, pairs: Sequence[tuple[str, str]]) -> Diagno
     """
     named = "; ".join(f"{account} on {target}" for account, target in pairs)
     targets = "that target still holds" if len(pairs) == 1 else "those targets still hold"
+    rerun = (
+        f"`creds apply` with the selection {PROMOTION_WITHHELD} asks for"
+        if narrowed
+        else "the same command again"
+    )
     return Diagnostic(
         level="warning",
         code=PROMOTION_SKIPPED,
         message=(
             f"{document} was not promoted: a guardrail skipped {named}, and {targets} the "
-            "old password -- clear what the guardrail reported and run the same command "
-            "again. `--force` overrides it, unless it refused a superuser, a role the "
+            f"old password -- clear what the guardrail reported and run {rerun}. "
+            "`--force` overrides it, unless it refused a superuser, a role the "
             "server reserves or an account with a global privilege, and waives the "
             "guardrails for every account the run selects"
         ),

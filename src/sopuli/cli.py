@@ -8055,12 +8055,12 @@ def creds_apply(
     # The invocation that repairs this run, for SOPULI-W033 and the repair line
     # below, so the two name one command.
     #
-    # One exception to "narrowed the way this run was narrowed": a promotion
-    # withheld because the run was too narrow (decision #406) is finished only by a
-    # wider one, so echoing the selectors back would name the invocation that
-    # withholds it again.
+    # Always narrowed the way this run was, even where a promotion was withheld
+    # because the run was too narrow (decision #406). A wider line would also
+    # act on documents the operator kept narrow on purpose, such as a staged
+    # rollout (#1364). `SOPULI-W027` names the pairs the promotion needs.
     rerun = repair_invocation(
-        selection=None if left_out else selection,
+        selection=selection,
         config_paths=[str(path) for path in run.config_paths],
         profile=run.profile,
         source=source_stage,
@@ -11669,15 +11669,16 @@ def _skipped_promotions(promotions: Mapping[LockKey, _Promotion]) -> list[Diagno
 
 
 def _only_skips_held_back(states: Sequence[str], promotions: Mapping[LockKey, _Promotion]) -> bool:
-    """Whether a guardrail skip is the whole of what makes this run partial.
+    """Whether a guardrail skip or a narrowed run is the whole of what makes this run partial.
 
-    Then the run's own repair line would name a run that skips the same pairs
-    again, so it is not printed and ``SOPULI-W050`` carries the remedy (#852).
+    Then the run's own repair line would name a run that skips the same pairs,
+    or withholds the same promotion, again. So it is not printed, and
+    ``SOPULI-W050`` or ``SOPULI-W027`` carries the remedy (#852, #1364).
     """
     held = [one for one in promotions.values() if one.promotable and one.version is None]
     return (
         bool(held)
-        and all(one.skipped for one in held)
+        and all(one.held in (HELD_SKIPPED, HELD_NARROWED) for one in held)
         and all(
             apply_states.is_confirmed(state) or state == apply_states.SKIPPED for state in states
         )

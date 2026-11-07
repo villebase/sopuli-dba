@@ -1790,8 +1790,8 @@ def promotion_withheld(document: str, pairs: Sequence[tuple[str, str]]) -> Diagn
         code=PROMOTION_WITHHELD,
         message=(
             f"{document} cannot be promoted by this run: the promotion also needs {named}, "
-            "which this run's selection left out -- run `creds apply` without the narrowing "
-            "to finish"
+            "which this run's selection left out -- run `creds apply` with a selection that "
+            "includes them to finish"
         ),
     )
 

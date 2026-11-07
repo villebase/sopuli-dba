@@ -83,7 +83,8 @@ HELD_UNCONFIRMED = "unconfirmed"
 _HELD_MESSAGES = {
     HELD_NARROWED: (
         f"this database has the new password and the vault was not promoted, so `current` "
-        f"does not hold it yet -- {PROMOTION_WITHHELD} names the wider run that finishes it"
+        f"does not hold it yet -- {PROMOTION_WITHHELD} names the pairs a run must include "
+        "to finish it"
     ),
     HELD_SKIPPED: (
         f"this database has the new password and the vault was not promoted, so `current` "

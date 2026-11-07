@@ -3137,8 +3137,9 @@ def test_a_run_narrowed_to_one_target_changes_it_and_does_not_promote(
     assert after["DB_CREDENTIALS"] == {"acme_web_user": LIVE}
     assert after["pending"] == {"acme_web_user": STAGED}
     assert "acme_web_user on appdb-beta" in result.output
-    remedy = result.output.split("repair with: ")[1].splitlines()[0]
-    assert remedy == f"sopuli creds apply --config {config}"
+    # The same run again would withhold the promotion again, and a line that
+    # dropped the selectors would reach further than the operator asked (#1364).
+    assert "repair with:" not in result.output
 
 
 def _row(result: Result, target: str) -> dict[str, Any]:
@@ -3222,19 +3223,96 @@ def test_a_held_promotion_names_the_document_and_the_target_in_the_text(
     assert "did not confirm" in result.output
 
 
-def test_the_withheld_promotion_names_the_wider_run_as_its_remedy(
+def test_a_withheld_promotion_prints_no_repair_line(
     runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
 ) -> None:
-    """The `repair with:` line echoes the selectors, and here that would be the
-    invocation that withholds the promotion again."""
+    """Decision #1364, option C. The run's own line would withhold the
+    promotion again, and a line naming the whole estate would also act on
+    documents the operator kept narrow, such as a staged rollout. `SOPULI-W027`
+    names the pairs, and the operator composes the wider run."""
     estate(documents=staged())
     config = write_config(LABELLED_SHARED_CONFIG)
 
     result = run(runner, config, "--select", "tenant=alpha")
 
     assert result.exit_code == ExitCode.PARTIAL
+    assert "repair with:" not in result.output
+    assert f"--config {config}\n" not in result.output
+    assert "acme_web_user on appdb-beta" in result.output
+    assert "with a selection that includes them" in result.output
+
+
+#: `REDRAW_CONFIG`'s shared document, beside a second application with one
+#: document per target. A run narrowed to appdb-alpha withholds the first and
+#: can promote the second.
+WITHHELD_BESIDE_PER_TARGET_CONFIG = (
+    REDRAW_CONFIG
+    + """\
+  - name: acme-batch
+    accounts: [acme_batch_user]
+    secret_template: "apps/acme-batch/{target}#DB_CREDENTIALS/{account}"
+"""
+)
+
+
+def _withheld_beside_per_target() -> dict[str, dict[str, Any]]:
+    return {
+        **staged(),
+        "apps/acme-batch/appdb-alpha": {
+            "DB_CREDENTIALS": {"acme_batch_user": LIVE},
+            "pending": {"acme_batch_user": STAGED},
+        },
+    }
+
+
+def test_a_withheld_promotion_with_a_failed_pair_keeps_the_runs_selectors(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """Decision #1364: where a pair inside the narrowed run failed, the line
+    repairs that pair, narrowed the way the run was, and never widens."""
+    estate(
+        documents=_withheld_beside_per_target(),
+        users={"ACME_WEB_USER": user(), "ACME_BATCH_USER": user("ACME_BATCH_USER")},
+        per_target={
+            "appdb-alpha": {
+                "ACME_WEB_USER": drifted(),
+                "ACME_BATCH_USER": [
+                    VerifyResult(VERIFY_LOGIN, FAIL, detail="ORA-01017"),
+                    VerifyResult(VERIFY_LOGIN, FAIL, detail="ORA-01017"),
+                ],
+            },
+        },
+    )
+    config = write_config(WITHHELD_BESIDE_PER_TARGET_CONFIG)
+
+    result = run(runner, config, "--target", "appdb-alpha")
+
+    assert result.exit_code == ExitCode.PARTIAL
+    assert "acme_web_user on appdb-beta" in result.output
     remedy = result.output.split("repair with: ")[1].splitlines()[0]
-    assert remedy == f"sopuli creds apply --config {config}"
+    assert remedy == f"sopuli creds apply --config {config} --target appdb-alpha"
+
+
+def test_a_failed_promotion_beside_a_withheld_one_keeps_the_runs_selectors(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """Decision #1364 applies to `SOPULI-W033`'s rerun too. Before it, one
+    withheld document widened the rerun of every other document's failed
+    promotion to the whole estate."""
+    harness = estate(
+        documents=_withheld_beside_per_target(),
+        users={"ACME_WEB_USER": user(), "ACME_BATCH_USER": user("ACME_BATCH_USER")},
+        answers={"ACME_WEB_USER": drifted(), "ACME_BATCH_USER": drifted()},
+    )
+    outside_writer(harness["store"], "apps/acme-batch/appdb-alpha")
+    config = write_config(WITHHELD_BESIDE_PER_TARGET_CONFIG)
+
+    found = document(run(runner, config, "--target", "appdb-alpha", "--output", "json"))
+
+    codes = [one.get("code") for one in found["diagnostics"]]
+    assert PROMOTION_WITHHELD in codes
+    (failed,) = [one for one in found["diagnostics"] if one.get("code") == PROMOTION_FAILED]
+    assert f"run `sopuli creds apply --config {config} --target appdb-alpha`" in failed["message"]
 
 
 def test_the_wider_run_finishes_what_the_narrow_one_left(

@@ -758,9 +758,14 @@ A run narrowed past any of these, by `--target`, `--select`, `--account` or
 `--repair`, still changes the databases it was pointed at. That is how a rollout
 is staged target by target. It then **withholds the promotion**: `pending`
 stays, the run exits 4, and `SOPULI-W027` names the pairs it left out. The remedy
-is a run wide enough to include them, so the `repair with:` line of that run
-drops the selectors instead of repeating them. The wider run costs one login per
-pair the narrow run already converged, and reports `changed: false` for each. An
+is a run whose selection includes them, and the operator composes it. The
+`repair with:` line never names it. The line keeps the run's selectors, and
+where nothing else held the run back it is not printed, because the same run
+would withhold the promotion again. A line that dropped the selectors would
+also act on every other document in the estate, and undo a rollout that the
+operator is staging target by target ([#1364](../decisions/log.md#1364)). The
+wider run costs one login per pair the narrow run already converged, and
+reports `changed: false` for each. An
 account that a guardrail skipped is inside the run, not outside it
 (`02-oracle-privileges.md` §4 says what a skip means).
 
@@ -1336,9 +1341,11 @@ finishes in one run.
 what to type. It is narrowed to the same selection as the run, spelled as
 `--select` pairs, `--target`, `--account`, `--group` and `--application`, and it
 carries `--config`, `--profile`, `--source` and `--strategy`, so the repair
-resolves and acts the way the run did. A run whose promotion was withheld
-because it was too narrow (§5) is repaired by a wider one, so its line carries
-no selector:
+resolves and acts the way the run did. The line never widens the selection. A
+run whose promotion was withheld because it was too narrow (§5) prints the line
+only for its pairs that failed, and prints none when none failed. `SOPULI-W027`
+then names the pairs a wider run must include. A run narrowed by
+`--select env=prod`, with one target that did not confirm, ends:
 
 ```
 1 changed, 1 not confirmed

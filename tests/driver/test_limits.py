@@ -49,19 +49,24 @@ class _Cursor:
         ("11.2.0.4.0", LEGACY_MAX_BYTES),
         ("12.1.0.2.0", LEGACY_MAX_BYTES),
         ("12.2.0.1.0", LEGACY_MAX_BYTES),
-        ("18.0.0.0.0", LEGACY_MAX_BYTES),
+        ("18.4.0.0.0", LEGACY_MAX_BYTES),
+        ("19.3.0.0.0", LEGACY_MAX_BYTES),
+        ("19.32.0.0.0", LEGACY_MAX_BYTES),
+        ("21.3.0.0.0", LEGACY_MAX_BYTES),
+        ("23.26.3.0.0", MODERN_MAX_BYTES),
+        # The base release, which a VERSION read gives: on the same side of the
+        # floor as the full one.
         ("19.0.0.0.0", LEGACY_MAX_BYTES),
-        ("21.0.0.0.0", LEGACY_MAX_BYTES),
         ("23.0.0.0.0", MODERN_MAX_BYTES),
     ],
 )
 def test_the_limit_follows_the_probed_version(version: str, expected: int) -> None:
     """30 below 23, 128 from it.
 
-    The 18c-and-later rows read ``x.0.0.0.0`` because that is what
-    ``V$INSTANCE.VERSION`` reports there: the base release, not the RU. 12.2,
-    18c, 19c and 21c are all measured to refuse a 31st byte, which is why the
-    floor is not 12.2 -- that is where *identifiers* grew, not passwords.
+    The 18c-and-later rows are the full releases ``V$INSTANCE.VERSION_FULL``
+    reports. Only the first two parts are compared. 12.2, 18c, 19c and 21c are
+    all measured to refuse a 31st byte, which is why the floor is not 12.2 --
+    that is where *identifiers* grew, not passwords.
 
     Not a violation of invariant 3: the rule forbids branching on a version from
     *config*, and no dictionary view states this limit — so the version the

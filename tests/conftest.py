@@ -814,8 +814,8 @@ def _server_version(cursor: Any) -> str | None:
     *environment unavailable* -- which under `SOPULI_TEST_TIER1=required` is one
     error per test that says nothing about 11g and everything about one column.
 
-    `VERSION` exists on every release and is what the driver itself reads
-    (`capabilities.VERSION`), so the fallback is the tool's own query. It answers
+    The driver reads the same two columns in the same order
+    (`capabilities.release_of`). `VERSION` exists on every release. It answers
     the base release rather than the patch level -- `18.0.0.0.0` where
     `VERSION_FULL` says `18.4.0.0.0` -- which is why it is second rather than
     first: this string is what the capability matrix is labelled with, and a

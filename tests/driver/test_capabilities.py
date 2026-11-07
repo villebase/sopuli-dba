@@ -24,6 +24,8 @@ from sopuli.driver.oracle.capabilities import (
     PROBED_OR_STRUCTURAL,
     PROBES,
     STRUCTURAL,
+    VERSION,
+    VERSION_FULL,
     ProbeError,
     ReadOnlyTargetError,
     ScopeAssertionError,
@@ -424,7 +426,8 @@ def test_observe_reports_what_it_found() -> None:
         {
             CONTAINER_NAME: "CDB$ROOT",
             "select db_unique_name, open_mode from v$database": ("FREE", "READ WRITE"),
-            "select version from v$instance": "23.0.0.0.0",
+            VERSION_FULL: "23.26.3.0.0",
+            VERSION: "23.0.0.0.0",
             PROBES[COMMON_USERS]: 1,
             NETWORK_PROTOCOL: "tcp",
             CONNECT_INFO: "AES256 Encryption service adapter for Linux: Version 23.26.2.0.0",
@@ -436,11 +439,40 @@ def test_observe_reports_what_it_found() -> None:
     assert found.type == "cdb_root"
     assert found.container == "CDB$ROOT"
     assert found.db_unique_name == "FREE"
-    assert found.db_version == "23.0.0.0.0"
+    assert found.db_version == "23.26.3.0.0", "the full release, not the base one"
     assert found.read_write is True
     assert found.supports(COMMON_USERS)
     assert found.encryption.method == ENCRYPTION_NATIVE
     assert found.encryption.algorithm == "AES256"
+
+
+def test_a_release_without_version_full_reports_version() -> None:
+    """11.2 and 12c answer ORA-00904 to VERSION_FULL, and their VERSION is
+    already the full release."""
+    cursor = _Cursor(
+        {
+            CONTAINER_NAME: "CDB$ROOT",
+            "select db_unique_name, open_mode from v$database": ("ORCL", "READ WRITE"),
+            VERSION_FULL: RuntimeError('ORA-00904: "VERSION_FULL": invalid identifier'),
+            VERSION: "12.2.0.1.0",
+        }
+    )
+
+    assert observe(cursor).db_version == "12.2.0.1.0"
+
+
+def test_a_refused_version_read_is_no_version() -> None:
+    refused = RuntimeError("ORA-00942: table or view does not exist")
+    cursor = _Cursor(
+        {
+            CONTAINER_NAME: "CDB$ROOT",
+            "select db_unique_name, open_mode from v$database": ("ORCL", "READ WRITE"),
+            VERSION_FULL: refused,
+            VERSION: refused,
+        }
+    )
+
+    assert observe(cursor).db_version is None
 
 
 def test_a_standby_is_reported_read_only() -> None:

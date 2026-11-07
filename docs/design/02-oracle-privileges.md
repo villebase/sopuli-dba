@@ -277,10 +277,11 @@ ADB takes some things away for good:
   sweep cannot run there. Its `SYSDBA` positions do not apply to ADB; they are
   not merely unrun. Do not carry 26ai Free's result over to ADB because both are
   26ai.
-- **`db_version` is the base release**, `23.0.0.0.0`, because it comes from
-  `V$INSTANCE.VERSION`. Since 18c that column holds only the base release: 19.3
-  reports `19.0.0.0.0`, with `VERSION_FULL` `19.3.0.0.0`. `doctor` shows it as
-  `scope.db_version`. Only the password-limit floor in
+- **`db_version` is the full release**, from `V$INSTANCE.VERSION_FULL`, and
+  from `VERSION` on a release that answers `ORA-00904` to it. Since 18c
+  `VERSION` holds only the base release: 19.3 reports `19.0.0.0.0`, with
+  `VERSION_FULL` `19.3.0.0.0`. The tool has not read `VERSION_FULL` on ADB yet.
+  `doctor` shows it as `scope.db_version`. Only the password-limit floor in
   `driver/oracle/limits.py` uses it to decide anything, and that compares the
   first two parts only.
 - **Not tried:** whether `ADMIN` can grant `SELECT ON SYS.V_$PWFILE_USERS` (§4

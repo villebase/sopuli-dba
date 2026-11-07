@@ -197,6 +197,13 @@ CLOUD_SERVICE = "select sys_context('userenv','cloud_service') from dual"
 
 DATABASE_FACTS = "select db_unique_name, open_mode from v$database"
 
+#: The full release, such as ``23.26.3.0.0``. From 18c, ``V$INSTANCE.VERSION``
+#: holds only the base release (``23.0.0.0.0``, ``19.0.0.0.0``), and
+#: ``VERSION_FULL`` holds the release update too.
+VERSION_FULL = "select version_full from v$instance"
+
+#: The release on 11.2 and 12c, which answer ``ORA-00904`` to ``VERSION_FULL``.
+#: There ``VERSION`` is already the full release, such as ``12.2.0.1.0``.
 VERSION = "select version from v$instance"
 
 
@@ -481,19 +488,34 @@ def observe(cursor: Cursor) -> Scope:
         else None
     )
     facts = read(cursor, DATABASE_FACTS)
-    version = read(cursor, VERSION)
     open_mode = str(facts[1]) if facts and facts[1] else None
 
     return Scope(
         type=scope_type(container, application),
         container=container,
         db_unique_name=str(facts[0]) if facts and facts[0] else None,
-        db_version=str(version[0]) if version and version[0] else None,
+        db_version=release_of(cursor),
         open_mode=open_mode,
         read_write=None if open_mode is None else open_mode.upper().startswith("READ WRITE"),
         capabilities=probe(cursor),
         encryption=encryption_of(cursor),
     )
+
+
+def release_of(cursor: Cursor) -> str | None:
+    """The full release this database reports, or ``None`` if it cannot be read.
+
+    :data:`VERSION_FULL` first, then :data:`VERSION`. The server's answer picks
+    the column, never a version test: ``ORA-00904`` is :func:`read`'s ``None``,
+    so a release without ``VERSION_FULL`` is asked for ``VERSION``. Either way
+    the value is the full release, so ``db_version`` means one thing on every
+    release.
+    """
+    for statement in (VERSION_FULL, VERSION):
+        row = read(cursor, statement)
+        if row and row[0]:
+            return str(row[0])
+    return None
 
 
 # --------------------------------------------------------------- assertions ---
@@ -629,6 +651,7 @@ __all__ = [
     "STRUCTURAL",
     "UNKNOWN",
     "VERSION",
+    "VERSION_FULL",
     "Cursor",
     "ProbeError",
     "ReadOnlyTargetError",
@@ -640,6 +663,7 @@ __all__ = [
     "observe",
     "probe",
     "read",
+    "release_of",
     "require_read_write",
     "scope_type",
 ]

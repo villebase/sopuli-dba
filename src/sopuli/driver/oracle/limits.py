@@ -56,10 +56,10 @@ CHARSET_QUERY = "select value from nls_database_parameters where parameter = 'NL
 #: **Not 12.2**: 12.2 raised *identifiers* from 30 bytes to 128, and
 #: passwords did not move with them. A 31st byte is ``ORA-00972`` on 11.2, 12.2,
 #: 18.4, 19.3 and 21.3, and 19.32 refuses 128; 26ai 23.26 accepts 128. So the
-#: floor is somewhere in (21.3, 23.26], and ``23`` is the only one this module can
-#: express: the version it is compared against is ``V$INSTANCE.VERSION``, which is
-#: the *base* release on 18c and later, so every 23ai and 26ai reads
-#: ``23.0.0.0.0``. A 23ai before 23.26 is unmeasured and indistinguishable here.
+#: floor is somewhere in (21.3, 23.26], and it is set at ``23``: every 23ai and
+#: 26ai gets 128. The version compared is the full release
+#: (``capabilities.release_of``), so a 23ai before 23.26 reads its own release,
+#: but it is unmeasured, and the floor still gives it 128.
 MODERN_MAX_BYTES = 128
 LEGACY_MAX_BYTES = 30
 LONG_PASSWORD_FLOOR = (23, 0)

@@ -704,6 +704,66 @@ comes from `V$OPTION`, which `PUBLIC` can read. These results are from
 `sql/oracle/13_audit_coverage_probe.sql` on 26ai 23.26.2.0.0
 ([measurements](../measurements.md)).
 
+### What the report commands read, and the optional grants
+
+UC-5's `report` commands read accounts, profiles and privileges
+(`../use-cases/uc-05-fleet-reports.md` §8). `sql/oracle/19_report_read_probe.sql`
+measured what they can read on 26ai Free 23.26.3.0.0
+([measurements](../measurements.md), #1377):
+
+- **The grants above already read four of the six views.** An account holding
+  them reads `DBA_USERS`, `DBA_PROFILES`, `DBA_ROLE_PRIVS` and `DBA_ROLES`.
+  This holds for a local service account and for a common one whose grants
+  are made `CONTAINER = ALL`, reading in a PDB.
+- **The privilege views need a grant each.** `DBA_SYS_PRIVS`, `DBA_TAB_PRIVS`
+  and `DBA_COL_PRIVS` give `ORA-00942: table or view does not exist` until
+  `SELECT` on each is granted. All three grants are `SELECT` only. They are
+  added to `00_install.sql` as an optional grant by the PR that first reads
+  them, not before.
+- **A column grant is in `DBA_COL_PRIVS` only.** `UPDATE` on one column of a
+  table has no row in `DBA_TAB_PRIVS`, so a report that reads only
+  `DBA_TAB_PRIVS` misses it.
+- **Effective privileges come from one recursive query, one row per path.** A
+  recursive `WITH` over `DBA_ROLE_PRIVS`, started from the account and from
+  `PUBLIC`, and joined to `DBA_TAB_PRIVS` and `DBA_SYS_PRIVS`, reaches every
+  object and system privilege the account holds, with the path of roles and
+  the first role's `DEFAULT_ROLE`. It returns a row for each path, not for
+  each privilege: a privilege granted directly and through two roles came
+  back three times. So a report collapses the rows per privilege and object,
+  and keeps every path. A role granted to `PUBLIC`, and a system privilege
+  held through it, are reached only by starting from `PUBLIC` too.
+  `DBA_TAB_PRIVS.TYPE` tells a table from a procedure. For the 8 accounts of an
+  almost empty PDB the query returned 144 rows for the accounts and 4874 for
+  `PUBLIC`, in about 0.6 seconds, with `PUBLIC`'s rows counted once. A report
+  that repeats them for each account multiplies them.
+- **A local profile's `DEFAULT` limit resolves through the PDB's `DEFAULT`
+  profile.** `DBA_PROFILES` shows `DEFAULT` for each limit a profile inherits.
+  For a local profile, a join on `RESOURCE_NAME` to the `DEFAULT` profile
+  gives the limit that applies: with the PDB's `DEFAULT` at 2 failed logins, a
+  local account on a profile with `DEFAULT` locked at its third.
+- **A common profile's `DEFAULT` limit follows the root's `DEFAULT` profile.**
+  With the PDB's `DEFAULT` at 2, the same join in the PDB gives 2, yet a local
+  account on a common profile with `DEFAULT`, and a common account on it,
+  stayed open after three failed logins. With the root's `DEFAULT` at 2
+  instead, both were locked at the third. This holds for a local account on
+  the common profile too, so it is a property of the profile. A PDB target
+  cannot read the root's `DEFAULT` profile.
+- **A common account's limits come from its profile in the root.** #1122
+  found this with probe 17: a profile given to a common account in the PDB
+  does not apply, though the PDB's `DBA_USERS.PROFILE` names it. So a PDB
+  target cannot read the limits that apply to a common account either.
+- **A PDB does not show a common account's lock or its last password
+  change.** Read in a PDB, a locked common account's `ACCOUNT_STATUS` is
+  `OPEN`, as #1122 found, and its `DBA_USERS.PASSWORD_CHANGE_DATE` is NULL, as
+  its `PTIME` is. Its profile name, and the common profile's own limits, are
+  read there.
+- **The columns the reports want exist** on that release:
+  `PASSWORD_CHANGE_DATE`, `LAST_LOGIN`, `ORACLE_MAINTAINED`, `COMMON` and
+  `INHERITED` in `DBA_USERS`, and `COMMON` and `INHERITED` in the profile and
+  privilege views. `PASSWORD_CHANGE_DATE` is absent on 18.4.0.0.0,
+  12.2.0.1.0 and 11.2.0.2.0 (above), and 11.2.0.2.0 has no
+  `ORACLE_MAINTAINED` (§4, check 5). This probe ran on no other release.
+
 ---
 
 ## 3. What must not be granted
@@ -1529,6 +1589,7 @@ the design as it is then.
 | `sql/oracle/16_lcount_grant_probe.sql` | what `SYS.KU$_USER_VIEW` shows of `LCOUNT` and the verifiers under each role combination, in a PDB and in `CDB$ROOT`, and what a read leaves in the audit trail (§2) |
 | `sql/oracle/17_common_lcount_probe.sql` | where a common account's failed-login count lives, which profile limit locks it, and what a session in a PDB can read of the count (§2) |
 | `sql/oracle/18_common_spare4_probe.sql` | what `SPARE4` holds for a common account in a PDB and in `CDB$ROOT`, and whether a password change in the root reaches the PDB's row (§2) |
+| `sql/oracle/19_report_read_probe.sql` | what UC-5's report commands can read, the grants the privilege views need (column grants among them), the effective-privilege query, and how a `DEFAULT` limit resolves for a local and a common profile (§2) |
 | `sql/oracle/99_uninstall.sql` | removes the service account and, optionally, the audit policies |
 | `docs/decisions/adr-001-privilege-model.md` | why this model, what was rejected, and when to reconsider |
 

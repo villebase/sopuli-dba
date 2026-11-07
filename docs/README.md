@@ -347,15 +347,20 @@ These entries share a setup. The probe is
   so the change is somewhere after 11.2 and no later than 12.2. Open: 12.1 is
   unrun. Read the 11.2 result as "11.2 keeps it", never as "every older release
   keeps it".
-- `unverified` `report-reads` (#1377) — **What can UC-5's report commands read
-  on Oracle, and with which grants?** Known: `00_install.sql` grants `SELECT`
-  on `DBA_USERS`, `DBA_PROFILES`, `DBA_ROLE_PRIVS` and `DBA_ROLES`;
-  `DBA_USERS.PASSWORD_CHANGE_DATE` exists from 19c (`02-oracle-privileges.md`
-  §2); 11.2 has no `ORACLE_MAINTAINED`, and check 5's list stands in for it.
-  Open: which grants make `DBA_SYS_PRIVS` and `DBA_TAB_PRIVS` readable; whether
-  a hierarchical query over `DBA_ROLE_PRIVS` gives the effective privileges
-  through nested and non-default roles; how a `DEFAULT` profile limit resolves;
-  and what a PDB shows for a common account and a common profile.
+- `verified` `report-reads` (#1377) — **What can UC-5's report commands read
+  on Oracle, and with which grants?**
+  On the one release measured: `00_install.sql`'s grants, local or
+  `CONTAINER = ALL`, read `DBA_USERS`, `DBA_PROFILES`, `DBA_ROLE_PRIVS` and
+  `DBA_ROLES`, and `DBA_SYS_PRIVS`, `DBA_TAB_PRIVS` and `DBA_COL_PRIVS` need
+  `SELECT` on each. A recursive query from the account and from `PUBLIC`
+  reaches the effective privileges through nested, non-default and `PUBLIC`
+  roles, one row per path. A local profile's `DEFAULT` limit resolves through
+  the PDB's `DEFAULT` profile, and a common profile's through the root's,
+  which a PDB cannot read. In a PDB a locked common account reads `OPEN`, and
+  its `PASSWORD_CHANGE_DATE` is NULL. `02-oracle-privileges.md` §2 has the
+  details, and [measurements.md](measurements.md) the release. The reports
+  read by capability, so a release without a column or a grant is found when
+  it is read, not assumed from this one.
 - `unverified` `ddl-text-awr` (#387) — **Does the kept text reach AWR?**
   On 19.32.0.0.0, with the Diagnostics Pack enabled, the wrapped literal (C3)
   reached `DBA_HIST_SQLTEXT` and stayed there. The `ALTER USER` that sopuli

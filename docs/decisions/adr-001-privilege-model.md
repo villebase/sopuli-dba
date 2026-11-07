@@ -84,7 +84,8 @@ as the views of system and object privileges. Each extra grant is `SELECT`
 only and optional, and the tool probes for it, as it does for
 `SELECT ON SYS.USER$`. The service account still changes passwords and
 nothing else. On 23.26.3.0.0 the extra grants are `SELECT` on `DBA_SYS_PRIVS`
-and on `DBA_TAB_PRIVS` (`../design/02-oracle-privileges.md` §2, #1377).
+and on `DBA_TAB_PRIVS`, for a local service account and for a common one alike
+(`../design/02-oracle-privileges.md` §2, #1377).
 
 **Correlation survived.** The package's local audit table was useful because it
 joined a database row to a tool run. `DBMS_SESSION.SET_IDENTIFIER` puts the run's

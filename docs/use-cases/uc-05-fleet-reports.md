@@ -132,7 +132,11 @@ guardrails use there (`02-oracle-privileges.md` §4, check 5), so one estate
 gives the same list on every release.
 
 **The lock is the check; the failed-login count is information.** The lock
-status can be read on every release. The count needs the optional
+status can be read on every release, with one exception: in a PDB, a locked
+common account reads `OPEN`, because its lock is kept in `CDB$ROOT`
+(`02-oracle-privileges.md` §2, [#1122](../decisions/log.md#1122)). So on a PDB
+target the lock of a common account is *not checked*, and the report never
+calls it OK. The count needs the optional
 `SELECT ON SYS.USER$` grant, does not exist on Autonomous Database, and reads 0
 for a common account in a PDB, because the count is kept in `CDB$ROOT`
 (`02-oracle-privileges.md` §2, [#1122](../decisions/log.md#1122)). Where the
@@ -147,8 +151,10 @@ count cannot be read truthfully, the report shows `unknown`, never 0.
    such as "the password never expires". On Oracle the values come from the
    account's profile, so a list of database profiles can state them once for
    every account on that profile. A limit that reads `DEFAULT` is resolved
-   through the `DEFAULT` profile before it is compared. Only the settings a
-   rule lists are compared.
+   through the `DEFAULT` profile before it is compared. For a common profile
+   read on a PDB target, the limit that applies comes from the root's
+   `DEFAULT` profile, which the target cannot read, so such a limit is *not
+   checked* there. Only the settings a rule lists are compared.
 
 A profile missing on a target is one finding, not one per account.
 
@@ -263,13 +269,17 @@ exists from 19c (`02-oracle-privileges.md` §2).
 Measured on 23.26.3.0.0 (`02-oracle-privileges.md` §2, #1377):
 
 - the privilege views need `SELECT` on `DBA_SYS_PRIVS` and on
-  `DBA_TAB_PRIVS`;
-- one recursive query over `DBA_ROLE_PRIVS` gives the effective privileges
-  with their role paths, and grants to `PUBLIC` are read on their own;
-- a `DEFAULT` limit resolves through a join to the `DEFAULT` profile;
-- in a PDB, a common account's `PASSWORD_CHANGE_DATE` is NULL, as its `PTIME`
-  is. So §6's database date is `unknown` for a common account on a PDB
-  target, never a date read from somewhere else.
+  `DBA_TAB_PRIVS`, for a local service account and a common one alike;
+- one recursive query over `DBA_ROLE_PRIVS`, started from the account and
+  from `PUBLIC`, reaches the effective privileges with their role paths. It
+  returns one row per path, so §5 collapses the rows per privilege and object
+  and keeps every path;
+- a local profile's `DEFAULT` limit resolves through the PDB's `DEFAULT`
+  profile, and a common profile's through the root's (§4);
+- in a PDB, a locked common account reads `OPEN` (§4), and its
+  `PASSWORD_CHANGE_DATE` is NULL, as its `PTIME` is. So §6 has no database
+  date for a common account on a PDB target. Reading the root's would need
+  `SET CONTAINER`, which the tool does not hold (`00-principles.md`).
 
 Each extra grant is `SELECT` only and optional, and the tool probes for it. A
 report that cannot read a view says *not checked* for what it needed.

@@ -349,16 +349,17 @@ These entries share a setup. The probe is
   keeps it".
 - `verified` `report-reads` (#1377) — **What can UC-5's report commands read
   on Oracle, and with which grants?**
-  On 23.26.3.0.0, `00_install.sql`'s grants read `DBA_USERS`, `DBA_PROFILES`,
-  `DBA_ROLE_PRIVS` and `DBA_ROLES`. `DBA_SYS_PRIVS` and `DBA_TAB_PRIVS` need
-  `SELECT` on each. A recursive query over `DBA_ROLE_PRIVS` gives the effective
-  privileges through nested and non-default roles, with their paths; grants to
-  `PUBLIC` need a read of their own. A `DEFAULT` limit resolves through a join
-  to the `DEFAULT` profile. In a PDB, a common account and a common profile
-  read as local ones do, except that the account's `PASSWORD_CHANGE_DATE` is
-  NULL. `02-oracle-privileges.md` §2 has the details. Open: every other
-  release; `PASSWORD_CHANGE_DATE` is known to be absent before 19c, and
-  `ORACLE_MAINTAINED` on 11.2.
+  On the one release measured, 23.26.3.0.0: `00_install.sql`'s grants, local or
+  `CONTAINER = ALL`, read `DBA_USERS`, `DBA_PROFILES`, `DBA_ROLE_PRIVS` and
+  `DBA_ROLES`, and `DBA_SYS_PRIVS` and `DBA_TAB_PRIVS` need `SELECT` on each. A
+  recursive query from the account and from `PUBLIC` reaches the effective
+  privileges through nested, non-default and `PUBLIC` roles, one row per path.
+  A local profile's `DEFAULT` limit resolves through the PDB's `DEFAULT`
+  profile, and a common profile's through the root's, which a PDB cannot
+  read. In a PDB a locked common account reads `OPEN`, and its
+  `PASSWORD_CHANGE_DATE` is NULL. `02-oracle-privileges.md` §2 has the
+  details. The reports read by capability, so a release without a column or
+  a grant is found when it is read, not assumed from this one.
 - `unverified` `ddl-text-awr` (#387) — **Does the kept text reach AWR?**
   On 19.32.0.0.0, with the Diagnostics Pack enabled, the wrapped literal (C3)
   reached `DBA_HIST_SQLTEXT` and stayed there. The `ALTER USER` that sopuli

@@ -777,8 +777,10 @@ account, so none binds anything, and none reads a password or verifier column.
 
 On a release that answers `ORA-00904` to `COMMON` or `ORACLE_MAINTAINED`, as
 11.2.0.2.0 does, the first two statements are sent again with `NULL` in those
-positions. Then no account is common, and an account is vendor-maintained when
-its name is on check 5's list (§4).
+positions. Then an account is vendor-maintained when its name is on check 5's
+list (§4). In a non-CDB no account is common. In any other container an account
+named with the `C##` prefix is taken as common, as the lockout guard does, and
+every profile is taken as common.
 
 The survey reports a value as unreadable, with a reason, where the findings
 above say a container cannot read it. It never reports the value the container
@@ -787,6 +789,9 @@ shows instead. In any container but `CDB$ROOT` or a non-CDB:
 - a common account's lock, both limits and failed-login count are unreadable;
 - a limit that a common profile leaves at `DEFAULT` is unreadable, for local
   accounts too.
+
+In an application container, where these values are kept was not measured, and
+the reasons say so.
 
 Without the optional grant every failed-login count is unreadable, and the
 reason names the grant. A limit that is not a whole number, such as a

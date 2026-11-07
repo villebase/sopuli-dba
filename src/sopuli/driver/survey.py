@@ -25,10 +25,16 @@ Limit = int | Literal["unlimited"] | None
 class SurveyedAccount:
     """One account, with the settings a report checks.
 
-    ``status`` is the database's own word, as read. ``locked``,
-    ``password_lifetime``, ``failed_login_limit`` and ``failed_logins`` are
-    ``None`` where the target cannot read them, and ``unreadable`` then holds
-    one reason for each field that is ``None``.
+    ``status`` is the account status this container shows, as read. It is not
+    the account's lock where ``locked`` is ``None``: an Oracle PDB shows a
+    common account as ``OPEN`` while the root has it locked. Decide on
+    ``locked``, never on ``status``.
+
+    ``locked``, ``password_lifetime``, ``failed_login_limit`` and
+    ``failed_logins`` are ``None`` where the target cannot read them.
+    ``unreadable`` then holds one reason for each field that is ``None``, in
+    that field order. The reasons are sentences for a person; which fields are
+    ``None`` says which checks cannot run.
     """
 
     name: str

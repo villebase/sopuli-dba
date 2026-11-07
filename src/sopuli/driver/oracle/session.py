@@ -450,6 +450,7 @@ class OracleSession(ClosesConnection):
                 cursor,
                 own_container=scope.type in OWN_COUNT_SCOPES,
                 user_dollar=scope.supports(OFFLINE_VERIFY),
+                application=scope.type in APPLICATION_SCOPES,
             )
 
     def byte_limit(self) -> ByteLimit:

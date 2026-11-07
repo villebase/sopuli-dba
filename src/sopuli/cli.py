@@ -1236,11 +1236,9 @@ def _examine(
         # claims, because that decides the exit code.
         found: Scope | None = None
         try:
-            scope, caveats = scope_and_claim(session, target.name, run.clusters)
+            scope, caveats = _claim(session, target.name, run, in_text=False)
             found = scope
             warnings += caveats
-            for caveat in caveats:
-                _warn_identity_unchecked(run, target.name, caveat, in_text=False)
             if privileges:
                 audit = session.privileges(accounts=_declared_on(config.bindings, target.name))
                 # Folded into the scope the entry already carries rather than
@@ -10308,8 +10306,10 @@ def _open_session(
     MariaDB, and on a Galera node also its cluster) reads its scope here, and
     is closed and refused if another target of this run already reached any of
     them (:func:`sopuli.driver.clusters.claim`). The scope comes
-    first, so a superuser is refused before anything else is asked. `doctor`
-    does both itself, so that a refusal is reported for a target it reached.
+    first, so a superuser is refused before anything else is asked. A session
+    that claims less than it could raises `SOPULI-W068` (:func:`_claim`).
+    `doctor` does all of this itself, so that a refusal is reported for a
+    target it reached.
     """
     if not scope_only:
         require_command(target.target, run.document.command)
@@ -10319,29 +10319,39 @@ def _open_session(
     if scope_only or not isinstance(session, ClusterIdentity):
         return session
     try:
-        _, caveats = scope_and_claim(session, target.name, run.clusters)
+        _claim(session, target.name, run, in_text=True)
     except BaseException:
         with suppress(Exception):
             session.close()
         raise
-    for caveat in caveats:
-        _warn_identity_unchecked(run, target.name, caveat, in_text=True)
     return session
 
 
-def _warn_identity_unchecked(run: Invocation, target: str, caveat: str, *, in_text: bool) -> None:
-    """Say that a target's session claimed less than it could, once per target
-    (#1363). A run opens a target more than once, for its pre-flight and for the
-    run itself, and the caveat is the same each time. `doctor` passes
-    ``in_text=False``, because its text view prints the caveat as a note on the
-    target."""
-    warning = identity_unchecked(target, caveat)
-    if any(one.code == warning.code and one.target == target for one in run.document.diagnostics):
-        return
-    if in_text:
-        run.document.warn_in_text(warning)
-    else:
-        run.document.diagnostics.append(warning)
+def _claim(
+    session: Session, target: str, run: Invocation, *, in_text: bool
+) -> tuple[Scope, tuple[str, ...]]:
+    """:func:`~sopuli.driver.clusters.scope_and_claim` for this run, and
+    `SOPULI-W068` where the session claimed less than it could (#1363).
+
+    Once per target: a run opens a target more than once, for its pre-flight
+    and for the run itself. The first warning is kept. A node's state can change
+    between the two opens, but the first message is true of the open it came
+    from, and either way the check was skipped in this run. `doctor` passes
+    ``in_text=False``: its text view prints the caveat as a note on the target,
+    and the warning goes in ``diagnostics[]`` alone.
+    """
+    scope, caveats = scope_and_claim(session, target, run.clusters)
+    for caveat in caveats:
+        warning = identity_unchecked(target, caveat)
+        if any(
+            one.code == warning.code and one.target == target for one in run.document.diagnostics
+        ):
+            continue
+        if in_text:
+            run.document.warn_in_text(warning)
+        else:
+            run.document.diagnostics.append(warning)
+    return scope, caveats
 
 
 def _driver_context(run: Invocation, config: Config) -> DriverContext:

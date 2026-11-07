@@ -1477,8 +1477,9 @@ def rollover_caveat(target: str, account: str, caveat: str) -> Diagnostic:
 
 
 def identity_unchecked(target: str, caveat: str) -> Diagnostic:
-    """`SOPULI-W068`: the session's ``identity_caveat``, on a command that is not
-    `doctor` (#1363). `doctor` reports it as a note on its target."""
+    """`SOPULI-W068`: the session's ``identity_caveat``, from every command that
+    connects (#1363). `doctor` puts it in ``diagnostics[]`` and prints the
+    caveat as a note on its target instead of in its warnings."""
     return Diagnostic(
         level="warning",
         code=IDENTITY_UNCHECKED,

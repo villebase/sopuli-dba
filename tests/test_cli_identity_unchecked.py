@@ -20,7 +20,7 @@ from click.testing import CliRunner, Result
 from jsonschema import Draft202012Validator
 
 from sopuli.admin import Resolved
-from sopuli.cli import _warn_identity_unchecked, cli
+from sopuli.cli import _claim, cli
 from sopuli.config.model import Vault
 from sopuli.config.targets import EXTERNAL
 from sopuli.diagnostics import IDENTITY_UNCHECKED
@@ -28,6 +28,7 @@ from sopuli.driver.clusters import ClusterIdentity
 from sopuli.driver.protocol import PASS, VERIFY_LOGIN, Credential, Scope, UserState, VerifyResult
 from sopuli.exit_codes import ExitCode
 from sopuli.output.document import SCHEMA_VERSION, RunDocument
+from sopuli.output.emit import EVENT_SCHEMA_VERSION
 from sopuli.secrets import Secret
 from sopuli.store import MemoryStore, SecretStore
 
@@ -37,6 +38,7 @@ RUN_SCHEMA = (
     / "schemas"
     / f"sopuli-run-{SCHEMA_VERSION}.schema.json"
 )
+EVENT_SCHEMA = RUN_SCHEMA.with_name(f"sopuli-event-{EVENT_SCHEMA_VERSION}.schema.json")
 
 CONFIG = """\
 version: 1
@@ -193,21 +195,51 @@ def test_a_session_that_claims_all_it_can_says_nothing(
 
 
 def test_a_target_opened_twice_is_warned_of_once() -> None:
-    """A run's pre-flight and the run itself open one target twice, with the
-    same caveat each time."""
-    run: Any = SimpleNamespace(document=RunDocument.start("creds.apply"))
+    """A run's pre-flight and the run itself open one target twice."""
+    run: Any = SimpleNamespace(document=RunDocument.start("creds.apply"), clusters={})
+    alpha: Any = ClusterSession("uid-alpha", CAVEAT)
+    beta: Any = ClusterSession("uid-beta", CAVEAT)
     for _ in range(2):
-        _warn_identity_unchecked(run, "appdb-alpha", CAVEAT, in_text=True)
-    _warn_identity_unchecked(run, "appdb-beta", CAVEAT, in_text=True)
+        _claim(alpha, "appdb-alpha", run, in_text=True)
+    _claim(beta, "appdb-beta", run, in_text=True)
 
     assert [one.target for one in run.document.diagnostics] == ["appdb-alpha", "appdb-beta"]
     assert len(run.document.warnings_text) == 2
 
 
-def test_doctor_puts_it_in_diagnostics_but_not_twice_in_text() -> None:
-    """`doctor` prints the caveat as a note on its target already."""
-    run: Any = SimpleNamespace(document=RunDocument.start("doctor"))
-    _warn_identity_unchecked(run, "appdb-alpha", CAVEAT, in_text=False)
+def test_the_stream_carries_it_as_a_diagnostic_event(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Any
+) -> None:
+    """The event schema was bumped for this code, so its event is checked too."""
+    estate({"appdb-alpha": CAVEAT})
+    result = check(runner, write_config(CONFIG), "--output", "jsonl")
 
-    assert [one.code for one in run.document.diagnostics] == [IDENTITY_UNCHECKED]
-    assert run.document.warnings_text == []
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    events = [json.loads(line) for line in result.output.splitlines() if line.strip()]
+    validator = Draft202012Validator(json.loads(EVENT_SCHEMA.read_text(encoding="utf-8")))
+    for event in events:
+        validator.validate(event)
+    found = [
+        event
+        for event in events
+        if event["event"] == "diagnostic"
+        and (event.get("data") or {}).get("code") == IDENTITY_UNCHECKED
+    ]
+    assert [(event["target"], event["message"]) for event in found] == [
+        ("appdb-alpha", f"appdb-alpha: {CAVEAT}")
+    ]
+
+
+def test_doctor_puts_it_in_diagnostics_and_prints_it_once(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Any
+) -> None:
+    """`doctor` prints the caveat as a note on its target, so its warnings
+    must not print it a second time."""
+    estate({"appdb-alpha": CAVEAT})
+    config = write_config(CONFIG)
+
+    text = runner.invoke(cli, ["--config", str(config), "doctor"])
+    assert text.output.count(CAVEAT) == 1, text.output
+
+    result = runner.invoke(cli, ["--config", str(config), "doctor", "--output", "json"])
+    assert [one["target"] for one in unchecked(json.loads(result.output))] == ["appdb-alpha"]

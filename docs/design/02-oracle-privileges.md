@@ -717,9 +717,10 @@ measured what they can read on 26ai Free 23.26.3.0.0
   are made `CONTAINER = ALL`, reading in a PDB.
 - **The privilege views need a grant each.** `DBA_SYS_PRIVS`, `DBA_TAB_PRIVS`
   and `DBA_COL_PRIVS` give `ORA-00942: table or view does not exist` until
-  `SELECT` on each is granted. All three grants are `SELECT` only. They are
-  added to `00_install.sql` as an optional grant by the PR that first reads
-  them, not before.
+  `SELECT` on each is granted. All three grants are `SELECT` only.
+  `00_install.sql` makes them as parameter 8, `grant_report_reads`, off by
+  default. No other command reads these views, and `doctor` does not probe
+  them.
 - **A column grant is in `DBA_COL_PRIVS` only.** `UPDATE` on one column of a
   table has no row in `DBA_TAB_PRIVS`, so a report that reads only
   `DBA_TAB_PRIVS` misses it.
@@ -797,6 +798,35 @@ Without the optional grant every failed-login count is unreadable, and the
 reason names the grant. A limit that is not a whole number, such as a
 `PASSWORD_LIFE_TIME` of a fraction of a day, is unreadable too, and the reason
 gives the value.
+
+**The privilege survey sends four statements per grantee.** UC-5's privilege
+report reads the surveyed accounts' grants through
+`OracleSession.survey_privileges()` (`src/sopuli/driver/oracle/grants.py`).
+`PUBLIC` is a grantee only when the caller asks, and then once. Each statement
+binds the grantee's name and nothing else. None reads a password or verifier
+column.
+
+| Statement | Reads | Needs |
+|---|---|---|
+| the roles granted directly, with `ADMIN_OPTION`, `DEFAULT_ROLE` and the role's `AUTHENTICATION_TYPE` | `DBA_ROLE_PRIVS`, `DBA_ROLES` | the grants above |
+| system privileges, direct and through every role, one row per path | `DBA_SYS_PRIVS` | `grant_report_reads` |
+| object privileges, the same way, with `TYPE` and `GRANTABLE` | `DBA_TAB_PRIVS` | `grant_report_reads` |
+| column privileges, the same way | `DBA_COL_PRIVS` | `grant_report_reads` |
+
+The last three each start with the recursive `WITH` the probe measured. A
+`CYCLE` clause stops it if a role is reached again, though Oracle refuses a
+circular grant (`ORA-01934`). The role path is joined with `CHR(0)`, which no
+identifier can contain. On a release that answers `ORA-00904` to
+`DBA_TAB_PRIVS.TYPE`, the object type is `NULL`. On one that answers it to
+`DBA_ROLES.AUTHENTICATION_TYPE`, `PASSWORD_REQUIRED` is read instead, with
+`YES` and `NO` given as `PASSWORD` and `NONE`. Neither fallback has run on a
+release that needs it.
+
+A refused grant view makes its part unreadable, never empty, with the code the
+server sent and the grant that fixes it. Measured on 23.26.3.0.0, a service
+account without `grant_report_reads` gets `ORA-00942` from each view. The view
+is not asked again for the next grantee. A refused `DBA_ROLE_PRIVS` or
+`DBA_ROLES` raises, as it does for every other command.
 
 ---
 

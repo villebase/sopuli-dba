@@ -71,6 +71,13 @@
 --         ADMIN itself gets ORA-00942 on SYS.USER$ (#478). V$PWFILE_USERS
 --         (position 6) untried on ADB.
 --
+--         grant_report_reads (position 8) added and run on 26ai Free
+--         23.26.3.0.0 2026-11-07 (#1387): by hand as SYSDBA in PDB mode in
+--         FREEPDB1, with Y and with N, and through
+--         tests/driver/test_oracle_install_script.py. With N the account holds
+--         none of DBA_SYS_PRIVS, DBA_TAB_PRIVS and DBA_COL_PRIVS; with Y it holds
+--         SELECT on all three. Untried on every other release.
+--
 --         SELECT ON SYS.DBA_ROLES added 2026-09-25 (#531) and run on 26ai Free
 --         23.26.2.0.0 in all three modes, through
 --         tests/driver/test_oracle_install_script.py, and by hand in PDB mode;
@@ -114,6 +121,8 @@ WHENEVER SQLERROR EXIT SQL.SQLCODE
 --   5 grant_set_container Y grants SET CONTAINER -- see below
 --   6 grant_pwfile        Y grants SELECT on SYS.V_$PWFILE_USERS -- see below
 --   7 grant_connect_info  Y grants SELECT on SYS.V_$SESSION_CONNECT_INFO -- see below
+--   8 grant_report_reads  Y grants SELECT on DBA_SYS_PRIVS, DBA_TAB_PRIVS and
+--                         DBA_COL_PRIVS -- see below
 --
 -- An argument wins; anything not passed falls back to the default beside it.
 --
@@ -133,8 +142,9 @@ COLUMN 4 NEW_VALUE 4
 COLUMN 5 NEW_VALUE 5
 COLUMN 6 NEW_VALUE 6
 COLUMN 7 NEW_VALUE 7
+COLUMN 8 NEW_VALUE 8
 SELECT NULL AS "1", NULL AS "2", NULL AS "3", NULL AS "4", NULL AS "5", NULL AS "6",
-       NULL AS "7"
+       NULL AS "7", NULL AS "8"
   FROM dual WHERE 1 = 0;
 
 -- Defaults live here, in the NVL. `grant_user_dollar=Y` enables
@@ -150,6 +160,9 @@ SELECT NULL AS "1", NULL AS "2", NULL AS "3", NULL AS "4", NULL AS "5", NULL AS 
 -- the check did not run. `grant_connect_info=Y` is only for a database where
 -- PUBLIC's read of V$SESSION_CONNECT_INFO has been revoked: without that view the
 -- tool cannot tell whether a plain TCP connection uses NNE.
+-- `grant_report_reads=Y` lets UC-5's privilege report read every account's
+-- system, object and column grants. Without it those parts are reported as not
+-- checked.
 COLUMN p_mode NEW_VALUE mode                NOPRINT
 COLUMN p_name NEW_VALUE svc_name            NOPRINT
 COLUMN p_tbs  NEW_VALUE svc_tablespace      NOPRINT
@@ -157,13 +170,15 @@ COLUMN p_usr  NEW_VALUE grant_user_dollar   NOPRINT
 COLUMN p_ctr  NEW_VALUE grant_set_container NOPRINT
 COLUMN p_pwf  NEW_VALUE grant_pwfile        NOPRINT
 COLUMN p_cin  NEW_VALUE grant_connect_info  NOPRINT
+COLUMN p_rpt  NEW_VALUE grant_report_reads  NOPRINT
 SELECT NVL('&1', 'COMMON')     AS p_mode,
        NVL('&2', 'SOPULI_SVC') AS p_name,
        NVL('&3', 'USERS')      AS p_tbs,
        NVL('&4', 'N')          AS p_usr,
        NVL('&5', 'N')          AS p_ctr,
        NVL('&6', 'N')          AS p_pwf,
-       NVL('&7', 'N')          AS p_cin
+       NVL('&7', 'N')          AS p_cin,
+       NVL('&8', 'N')          AS p_rpt
   FROM dual;
 SET TERMOUT ON
 
@@ -451,7 +466,33 @@ END;
 /
 
 --------------------------------------------------------------------------------
--- 8. Report: exactly what this account now holds
+-- 8. Optional: the grant views, for UC-5's privilege report
+--
+-- The report reads every account's system privileges (DBA_SYS_PRIVS), object
+-- privileges (DBA_TAB_PRIVS) and column privileges (DBA_COL_PRIVS). A column
+-- grant is in DBA_COL_PRIVS only. Without these grants each view answers
+-- ORA-00942, and the report says that part was not checked
+-- (docs/design/02-oracle-privileges.md §2). All three are SELECT only, and no
+-- other command reads them.
+--------------------------------------------------------------------------------
+PROMPT
+PROMPT [8] optional: DBA_SYS_PRIVS, DBA_TAB_PRIVS, DBA_COL_PRIVS (grant_report_reads=&grant_report_reads)
+BEGIN
+  IF UPPER('&grant_report_reads') = 'Y' THEN
+    EXECUTE IMMEDIATE 'GRANT SELECT ON SYS.DBA_SYS_PRIVS TO &eff_user&cont_all';
+    EXECUTE IMMEDIATE 'GRANT SELECT ON SYS.DBA_TAB_PRIVS TO &eff_user&cont_all';
+    EXECUTE IMMEDIATE 'GRANT SELECT ON SYS.DBA_COL_PRIVS TO &eff_user&cont_all';
+    DBMS_OUTPUT.PUT_LINE('granted SELECT ON DBA_SYS_PRIVS, DBA_TAB_PRIVS and '
+      || 'DBA_COL_PRIVS (for the privilege report)');
+  ELSE
+    DBMS_OUTPUT.PUT_LINE('grant views not granted: the privilege report gives '
+      || 'system, object and column privileges as not checked');
+  END IF;
+END;
+/
+
+--------------------------------------------------------------------------------
+-- 9. Report: exactly what this account now holds
 --------------------------------------------------------------------------------
 SET LINESIZE 200
 COLUMN privilege FORMAT A32
@@ -459,7 +500,7 @@ COLUMN owner     FORMAT A10
 COLUMN table_name FORMAT A20
 
 PROMPT
-PROMPT [8] report: exactly what this account now holds
+PROMPT [9] report: exactly what this account now holds
 PROMPT
 -- `DBA_SYS_PRIVS.COMMON` arrived with multitenant in 12.1. On 11.2 naming it is
 -- `ORA-00904`, and under this file's `WHENEVER SQLERROR EXIT SQL.SQLCODE` that

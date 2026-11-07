@@ -55,6 +55,7 @@ from oracle_harness import INVALID_LOGON, sys_login_refused, sys_password
 from repo_files import requires_repo
 from sopuli.driver.oracle.privileges import (
     PREDICATE_READS,
+    REPORT_READS,
     REQUIRED_PRIVILEGES,
     REQUIRED_READS,
     ROOT_ONLY_READS,
@@ -732,6 +733,7 @@ def test_the_optional_grants_are_off_unless_asked_for(
     assert "SELECT ON USER$" not in default
     assert "SET CONTAINER" not in default
     assert "SELECT ON V_$SESSION_CONNECT_INFO" not in default
+    assert not set(REPORT_READS) & default
 
     result = sqlplus(
         container,
@@ -744,11 +746,13 @@ def test_the_optional_grants_are_off_unless_asked_for(
         "Y",
         "N",
         "Y",
+        "Y",
     )
     assert result.returncode == 0, result.stdout[-2000:]
     asked = grants_of(container, ROOT, install_account)
     assert "SELECT ON USER$" in asked
     assert "SELECT ON V_$SESSION_CONNECT_INFO" in asked
+    assert set(REPORT_READS) <= asked
     if install_mode == "COMMON":
         assert "SET CONTAINER" in asked
     else:

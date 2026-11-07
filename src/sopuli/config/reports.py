@@ -96,7 +96,7 @@ def _reject_duplicate_accounts(rules: tuple[ReportAccountRule, ...], *, at: KeyP
     accounts two patterns share is a fact about a database, so the report
     handles that.
     """
-    seen: dict[str, KeyPath] = {}
+    seen: dict[str, tuple[int, KeyPath]] = {}
     for index, rule in enumerate(rules):
         for position, name in enumerate(rule.accounts):
             if is_pattern(name):
@@ -104,12 +104,17 @@ def _reject_duplicate_accounts(rules: tuple[ReportAccountRule, ...], *, at: KeyP
             where = at.index(index).key("accounts").index(position)
             spelled = name.upper()
             if spelled in seen:
+                first_rule, first_at = seen[spelled]
+                same = first_rule == index
                 raise ConfigError(
-                    f"account {name!r} is named by two rules",
+                    f"account {name!r} is named twice in one rule"
+                    if same
+                    else f"account {name!r} is named by two rules",
                     at=where,
-                    hint=f"already named at {seen[spelled]}; name each account in one rule",
+                    hint=f"already named at {first_at}; "
+                    + ("name it once" if same else "name each account in one rule"),
                 )
-            seen[spelled] = where
+            seen[spelled] = (index, where)
 
 
 def _entries(section: dict[str, Any], key: str, *, at: KeyPath) -> list[Any]:

@@ -26,6 +26,7 @@ from sopuli.config.reports import UNLIMITED, is_pattern
 from sopuli.config.selection import select
 from sopuli.driver.survey import SurveyedAccount
 from sopuli.exit_codes import ExitCode
+from sopuli.personal import rules_for
 
 REPORT_OK = "REPORT_OK"
 REPORT_PROBLEM = "REPORT_PROBLEM"
@@ -80,6 +81,27 @@ class AccountRow:
     #: Information, never a check: the failed-login count, or ``None`` where the
     #: target cannot read it truthfully. Shown as `unknown`, never as 0.
     failed_logins: int | None = None
+    #: Why ``failed_logins`` is ``None``, as the survey said it.
+    failed_logins_reason: str | None = None
+
+
+#: The survey's fields that can be ``None``, in the order it writes their
+#: reasons into :attr:`SurveyedAccount.unreadable` (one reason per ``None``).
+_REASON_ORDER = ("locked", "password_lifetime", "failed_login_limit", "failed_logins")
+
+#: Said when the survey gave no reason for a value it could not read.
+_UNREAD = "cannot be read on this target"
+
+
+def _reasons(surveyed: SurveyedAccount) -> dict[str, str]:
+    """Each unreadable field's reason, matched to the field by the survey's order."""
+    missing = [name for name in _REASON_ORDER if getattr(surveyed, name) is None]
+    if len(missing) != len(surveyed.unreadable):
+        # The survey did not give one reason per field. Never drop what it
+        # said: every unreadable field carries all of it.
+        joined = "; ".join(surveyed.unreadable) or _UNREAD
+        return dict.fromkeys(missing, joined)
+    return dict(zip(missing, surveyed.unreadable, strict=True))
 
 
 @dataclass(frozen=True)
@@ -88,7 +110,8 @@ class _Expectation:
 
     profile: str | None
     settings: Settings
-    conflict: bool = False
+    #: The checks two sources set two ways, which are not checked.
+    conflicts: frozenset[str] = frozenset()
 
 
 def evaluate(
@@ -111,6 +134,12 @@ def evaluate(
         name = surveyed.name.upper()
         found.add(name)
         matching = [rule for rule in rules if _names(rule, name)]
+        named = bool(matching) or name in applications or name in personal_names
+        if surveyed.vendor_maintained and not named:
+            # Oracle's own accounts are left out unless the file names one, by
+            # name or by a report rule's pattern. A personal predicate over a
+            # profile does not count: `profile: DEFAULT` would bring in SYS.
+            continue
         if name in applications:
             kind = APPLICATION
         elif name in personal_names or surveyed.profile.upper() in personal_profiles:
@@ -119,13 +148,15 @@ def evaluate(
             kind = TECHNICAL
         else:
             kind = UNDECLARED_KIND
-        if surveyed.vendor_maintained and not matching and kind == UNDECLARED_KIND:
-            continue
         if kind == UNDECLARED_KIND:
             built.append(_row(target, surveyed, kind, (), UNDECLARED))
             continue
         expectation = _expectation(
-            matching, applications.get(name), config.reports.db_profiles, surveyed.profile
+            matching,
+            applications.get(name),
+            config.reports.db_profiles,
+            surveyed.profile,
+            application=kind == APPLICATION,
         )
         findings = _check(surveyed, expectation)
         built.append(_row(target, surveyed, kind, findings, _state(findings)))
@@ -202,9 +233,7 @@ def _personal_on(config: Config, target: str) -> tuple[set[str], set[str]]:
     """
     names: set[str] = set()
     profiles: set[str] = set()
-    for rule in config.personal_accounts:
-        if target not in {expanded.name for expanded in select(config, rule.targets)}:
-            continue
+    for rule in rules_for(config, target):
         names.update(account.upper() for account in rule.accounts)
         if rule.profile is not None:
             profiles.add(rule.profile.upper())
@@ -243,36 +272,48 @@ def _expectation(
     application_profile: str | None,
     db_profiles: Sequence[DbProfileRule],
     actual_profile: str,
+    *,
+    application: bool,
 ) -> _Expectation:
-    """What the file expects of one account. Two rules that disagree are a conflict."""
-    wanted = {(rule.profile.upper() if rule.profile else None, rule.settings) for rule in matching}
-    conflict = len(wanted) > 1
-    profile = application_profile
-    settings = Settings()
-    if matching and not conflict:
-        first = matching[0]
-        profile = profile if profile is not None else first.profile
-        settings = first.settings
+    """What the file expects of one account.
+
+    Rules combine field by field: a profile from one rule and a setting from
+    another both apply. Only one field set two ways by two rules is a conflict.
+    An application account's profile is its policy's, and never a rule's, also
+    when its policy names none (`01-configuration.md` §8a).
+    """
+    # A `db_profiles` entry for the account's profile states settings too, so it
+    # takes part as one more source: a rule and the profile entry that disagree
+    # are a conflict, never a silent precedence.
     profile_settings = next(
         (entry.settings for entry in db_profiles if entry.name.upper() == actual_profile.upper()),
         Settings(),
     )
+    sources = [rule.settings for rule in matching] + [profile_settings]
+    lifetimes = {s.password_lifetime for s in sources if s.password_lifetime is not None}
+    limits = {s.failed_login_limit for s in sources if s.failed_login_limit is not None}
+    profiles = {rule.profile.upper() for rule in matching if rule.profile is not None}
+    conflicts = frozenset(
+        check
+        for check, values in (
+            ("password_lifetime", lifetimes),
+            ("failed_login_limit", limits),
+            ("profile", set() if application else profiles),
+        )
+        if len(values) > 1
+    )
+    if application:
+        profile = application_profile
+    else:
+        profile = next((rule.profile for rule in matching if rule.profile is not None), None)
     return _Expectation(
         profile=profile,
         settings=Settings(
-            password_lifetime=_first(
-                settings.password_lifetime, profile_settings.password_lifetime
-            ),
-            failed_login_limit=_first(
-                settings.failed_login_limit, profile_settings.failed_login_limit
-            ),
+            password_lifetime=next(iter(lifetimes), None),
+            failed_login_limit=next(iter(limits), None),
         ),
-        conflict=conflict,
+        conflicts=conflicts,
     )
-
-
-def _first(*values: Limit | None) -> Limit | None:
-    return next((value for value in values if value is not None), None)
 
 
 # ---------------------------------------------------------------- the checks ---
@@ -285,42 +326,54 @@ def _check(surveyed: SurveyedAccount, expectation: _Expectation) -> tuple[Findin
     So the checks that apply are the lock and whatever the file states. Where it
     states nothing at all, the account is in the `no rule` state (U8).
     """
-    if expectation.conflict:
-        conflict = Finding("profile", NOT_CHECKED_OUTCOME, "two rules expect different things")
-        return (_lock(surveyed), conflict)
+    reasons = _reasons(surveyed)
+    lock = _lock(surveyed, reasons.get("locked", _UNREAD))
     settings = expectation.settings
     if expectation.profile is None and settings.is_empty:
         return (
-            _lock(surveyed),
+            lock,
             Finding("profile", NO_RULE_OUTCOME, "no rule states a profile or a setting"),
         )
-    findings = [_lock(surveyed)]
-    if expectation.profile is not None:
+    findings = [lock]
+    # A field two sources set two ways is not checked; the account's other
+    # checks still run.
+    conflicted = [
+        Finding(check, NOT_CHECKED_OUTCOME, "two rules expect different things")
+        for check in ("profile", "password_lifetime", "failed_login_limit")
+        if check in expectation.conflicts
+    ]
+    findings.extend(conflicted)
+    if expectation.profile is not None and "profile" not in expectation.conflicts:
         findings.append(_profile(surveyed, expectation.profile))
-    if settings.password_lifetime is not None:
+    if settings.password_lifetime is not None and "password_lifetime" not in expectation.conflicts:
         findings.append(
             _setting(
                 "password_lifetime",
                 surveyed.password_lifetime,
                 settings.password_lifetime,
                 unit=" days",
+                reason=reasons.get("password_lifetime", _UNREAD),
             )
         )
-    if settings.failed_login_limit is not None:
+    if (
+        settings.failed_login_limit is not None
+        and "failed_login_limit" not in expectation.conflicts
+    ):
         findings.append(
             _setting(
                 "failed_login_limit",
                 surveyed.failed_login_limit,
                 settings.failed_login_limit,
                 unit="",
+                reason=reasons.get("failed_login_limit", _UNREAD),
             )
         )
     return tuple(findings)
 
 
-def _lock(surveyed: SurveyedAccount) -> Finding:
+def _lock(surveyed: SurveyedAccount, reason: str) -> Finding:
     if surveyed.locked is None:
-        return Finding("lock", NOT_CHECKED_OUTCOME, "cannot be read on this target")
+        return Finding("lock", NOT_CHECKED_OUTCOME, reason)
     if surveyed.locked:
         return Finding("lock", PROBLEM, f"locked: {surveyed.status}")
     return Finding("lock", OK, surveyed.status)
@@ -332,9 +385,11 @@ def _profile(surveyed: SurveyedAccount, expected: str) -> Finding:
     return Finding("profile", PROBLEM, f"on {surveyed.profile}, expected {expected}")
 
 
-def _setting(check: str, actual: Limit | None, expected: Limit, *, unit: str) -> Finding:
+def _setting(
+    check: str, actual: Limit | None, expected: Limit, *, unit: str, reason: str
+) -> Finding:
     if actual is None:
-        return Finding(check, NOT_CHECKED_OUTCOME, "cannot be read on this target")
+        return Finding(check, NOT_CHECKED_OUTCOME, reason)
     if _meets(actual, expected):
         return Finding(check, OK, _limit_text(actual, unit))
     wanted = UNLIMITED if expected == UNLIMITED else f"at most {expected}{unit}"
@@ -383,6 +438,11 @@ def _row(
         findings=findings,
         state=state,
         failed_logins=surveyed.failed_logins,
+        failed_logins_reason=(
+            _reasons(surveyed).get("failed_logins", _UNREAD)
+            if surveyed.failed_logins is None
+            else None
+        ),
     )
 
 

@@ -5650,8 +5650,7 @@ def report_accounts_command(
     reached = config.expanded_targets
     reports = [_report_target(target, run, config) for target in reached]
     rows = [row for report in reports for row in report.rows]
-    unsupported = sum(1 for report in reports if report.unsupported)
-    unreachable = sum(1 for report in reports if report.error is not None) - unsupported
+    unreachable, unsupported = report_view.target_counts(reports)
     document.results = report_view.build_results(reports)
     document.finish(
         report_states.exit_code(
@@ -5687,13 +5686,20 @@ def _report_target(
         survey = getattr(session, "survey_accounts", None)
         if survey is None:
             # No driver but Oracle's reaches this command (the registry), and
-            # Oracle's session has the method. Reported, not raised, if one does.
+            # Oracle's session has the method. A driver that does is not
+            # written for this report: not checked there, never unreachable.
             missing = DriverError(f"{target.name}: this driver cannot survey its accounts")
-            return report_view.TargetReport(target=target.name, error=_finding(missing))
+            return report_view.TargetReport(
+                target=target.name, error=_finding(missing), unsupported=True
+            )
         try:
             surveyed = survey()
         except Exception as error:  # noqa: BLE001 -- a per-target finding
-            return report_view.TargetReport(target=target.name, error=_finding(error))
+            # Connected, then could not read: said as such, not as "could not
+            # connect", though the target still gave no answer (exit 1).
+            return report_view.TargetReport(
+                target=target.name, error=_finding(error), read_failed=True
+            )
         return report_view.TargetReport(
             target=target.name,
             release=session.scope().db_version,

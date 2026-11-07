@@ -8,8 +8,8 @@ Every sample is pasted from a real run on Windows 11, with Instant Client
 and Vault. Most come from main at caf2645, after the 0.78.0 release, on
 2026-10-23. A sample added since then comes from a run of the change that added
 it. Every sample that shows PostgreSQL is one of these, from 18a0ceb to 50ea18d,
-2026-10-25 and 2026-10-26. The samples in §11 come from main at 50ea18d on
-2026-10-27.
+2026-10-25 and 2026-10-26. The samples in §11 come from main at ee0f077 on
+2026-11-07.
 Commands are written for Git Bash or WSL. Where a sample was shortened, `...`
 marks the cut. The tokens and passwords the runs
 printed are replaced with `<TOKEN>` and `<PASSWORD>`, and the local user and
@@ -2345,7 +2345,7 @@ schemas are in [`schemas/`](schemas/). For example, read the summary with Python
 ```
 $ sopuli --config sopuli.yaml --output json creds check > check.json
 $ python -c "import json; d=json.load(open('check.json')); print(d['schema_version'], d['exit_code'], d['summary'])"
-1.66 0 {'total': 2, 'ok': 1, 'changed': 0, 'failed': 0, 'unchanged': 2, 'drift': 0, 'unverifiable': 0, 'by_state': {'IN_SYNC': 1, 'ROLLOVER_ACTIVE': 1}}
+1.81 0 {'total': 2, 'ok': 1, 'changed': 0, 'failed': 0, 'unchanged': 2, 'drift': 0, 'unverifiable': 0, 'by_state': {'IN_SYNC': 1, 'ROLLOVER_ACTIVE': 1}}
 ```
 
 `acme_batch_user` is `ROLLOVER_ACTIVE` because the `apply` in §10 opened its
@@ -2360,9 +2360,9 @@ it. The last event carries the summary and the exit code:
 
 ```
 $ sopuli --config sopuli.yaml creds check --output jsonl
-{"schema_version":"1.19","event":"run.started","seq":0,"ts":"2026-10-29T19:22:44.035132Z","correlation_id":"06079ed6-f71a-402c-b40f-f75541363294","data":{"command":"creds.check","dry_run":false}}
+{"schema_version":"1.24","event":"run.started","seq":0,"ts":"2026-11-07T14:07:38.375411Z","correlation_id":"2256d846-1c08-4e5d-ab2f-96b06f8de3a4","data":{"command":"creds.check","dry_run":false}}
 ...
-{"schema_version":"1.19","event":"run.finished","seq":6,"ts":"2026-10-29T19:22:45.013889Z","correlation_id":"06079ed6-f71a-402c-b40f-f75541363294","data":{"summary":{"total":2,"ok":1,"changed":0,"failed":0,"unchanged":2,"drift":0,"unverifiable":0,"by_state":{"IN_SYNC":1,"ROLLOVER_ACTIVE":1}},"exit_code":0}}
+{"schema_version":"1.24","event":"run.finished","seq":6,"ts":"2026-11-07T14:07:39.557810Z","correlation_id":"2256d846-1c08-4e5d-ab2f-96b06f8de3a4","data":{"summary":{"total":2,"ok":1,"changed":0,"failed":0,"unchanged":2,"drift":0,"unverifiable":0,"by_state":{"IN_SYNC":1,"ROLLOVER_ACTIVE":1}},"exit_code":0}}
 ```
 
 Other commands refuse it:

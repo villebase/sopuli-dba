@@ -5687,9 +5687,12 @@ def _report_target(
         survey = getattr(session, "survey_accounts", None)
         if survey is None:
             # No driver but Oracle's reaches this command (the registry), and
-            # Oracle's session has the method. Reported, not raised, if one does.
+            # Oracle's session has the method. A driver that does is not
+            # written for this report: not checked there, never unreachable.
             missing = DriverError(f"{target.name}: this driver cannot survey its accounts")
-            return report_view.TargetReport(target=target.name, error=_finding(missing))
+            return report_view.TargetReport(
+                target=target.name, error=_finding(missing), unsupported=True
+            )
         try:
             surveyed = survey()
         except Exception as error:  # noqa: BLE001 -- a per-target finding

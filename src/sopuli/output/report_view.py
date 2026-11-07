@@ -82,6 +82,12 @@ def _section(report: TargetReport, *, show_all: bool) -> list[str]:
     ok = sum(1 for row in report.rows if row.state == REPORT_OK)
     if not show_all:
         lines.append(f"  {_count(ok, 'account')} OK")
+    # Why a count is `unknown`, said once for each distinct reason rather than
+    # on every row that shares it, such as a missing SYS.USER$ grant.
+    reasons = sorted(
+        {row.failed_logins_reason for row in report.rows if row.failed_logins_reason is not None}
+    )
+    lines.extend(f"  failed logins unknown: {reason}" for reason in reasons)
     lines.extend(f"  {note}" for note in report.notes)
     return lines
 
@@ -152,7 +158,9 @@ def build_results(reports: Sequence[TargetReport]) -> list[dict[str, Any]]:
                 {
                     "account": ABSENT,
                     "target": report.target,
-                    "state": ERROR,
+                    # Another product is not checked there (UC-5 §3), as the exit
+                    # code says; only an unreached target is an error.
+                    "state": NOT_CHECKED if report.unsupported else ERROR,
                     "changed": False,
                     "error": report.error.to_dict(),
                 }
@@ -177,21 +185,26 @@ def _result(row: AccountRow) -> dict[str, Any]:
         entry["account_status"] = row.status
     if row.state != ACCOUNT_MISSING:
         entry["failed_logins"] = row.failed_logins
+    if row.failed_logins_reason is not None:
+        entry["failed_logins_reason"] = row.failed_logins_reason
     return entry
 
 
 def summarise(reports: Sequence[TargetReport]) -> Summary:
     """The run's counts. ``failed`` counts unreachable targets and problems."""
     rows = [row for report in reports for row in report.rows]
-    unreachable = sum(1 for report in reports if report.error is not None)
+    unsupported = sum(1 for report in reports if report.unsupported)
+    unreachable = sum(1 for report in reports if report.error is not None) - unsupported
     problems = sum(1 for row in rows if row.state in (REPORT_PROBLEM, ACCOUNT_MISSING))
     counts: dict[str, int] = {}
     for row in rows:
         counts[row.state] = counts.get(row.state, 0) + 1
     if unreachable:
         counts[ERROR] = unreachable
+    if unsupported:
+        counts[NOT_CHECKED] = counts.get(NOT_CHECKED, 0) + unsupported
     return Summary(
-        total=len(rows) + unreachable,
+        total=len(rows) + unreachable + unsupported,
         ok=sum(1 for row in rows if row.state == REPORT_OK),
         changed=0,
         failed=problems + unreachable,

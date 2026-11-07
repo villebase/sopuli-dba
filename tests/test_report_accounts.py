@@ -281,3 +281,73 @@ def test_exit_codes() -> None:
     assert exit_code([row(REPORT_PROBLEM), row(NOT_CHECKED)], unreachable=0) == 3
     assert exit_code([row(NOT_CHECKED)], unreachable=0) == 4
     assert exit_code([row(NO_RULE), row(UNDECLARED), row(REPORT_OK)], unreachable=0) == 0
+
+
+# ------------------------------------------------- from the review of #1385 ---
+
+
+def test_two_rules_setting_different_fields_combine() -> None:
+    """Only one field set two ways is a conflict; a profile from one rule and a
+    setting from another apply together."""
+    cfg = config(
+        reports={
+            "accounts": [
+                {"accounts": ["ACME_*"], "profile": "P"},
+                {"accounts": ["acme_batch_user"], "settings": {"password_lifetime": "unlimited"}},
+            ]
+        }
+    )
+    row = rows(cfg, account("ACME_BATCH_USER", profile="Q"))["ACME_BATCH_USER"]
+    assert row.state == REPORT_PROBLEM
+    details = {f.check: f.detail for f in row.findings}
+    assert details["profile"] == "on Q, expected P"
+    assert details["password_lifetime"] == "180 days, rule says unlimited"
+
+
+def test_an_application_account_never_takes_a_rules_profile() -> None:
+    """Its profile comes from its policy only, also when the policy names none."""
+    cfg = config(
+        applications=[
+            {"name": "acme", "accounts": ["acme_app_user"], "secret": "acme/app#password"}
+        ],
+        vaults={"vault-dev": {"type": "hashicorp", "addr": "http://127.0.0.1:8200"}},
+        defaults={"vault": "vault-dev"},
+        reports={"accounts": [{"accounts": ["ACME_*"], "profile": "P"}]},
+    )
+    row = rows(cfg, account("ACME_APP_USER", profile="DEFAULT"))["ACME_APP_USER"]
+    assert row.state == NO_RULE
+    assert all(f.check != "profile" or f.outcome == "no_rule" for f in row.findings)
+
+
+def test_a_profile_predicate_does_not_bring_in_oracles_own_accounts() -> None:
+    cfg = config(personal_accounts=[{"profile": "DEFAULT"}])
+    found = rows(
+        cfg,
+        account("SYSTEM", vendor_maintained=True, locked=True, status="LOCKED"),
+        account("ACME_DEV_ALICE"),
+    )
+    assert "SYSTEM" not in found
+    assert found["ACME_DEV_ALICE"].kind == "personal"
+
+
+def test_a_not_checked_finding_says_the_surveys_reason() -> None:
+    cfg = config(**rule(accounts=["C##ACME_ADM"], settings={"failed_login_limit": 5}))
+    surveyed = account(
+        "C##ACME_ADM",
+        common=True,
+        locked=None,
+        password_lifetime=None,
+        failed_login_limit=None,
+        failed_logins=None,
+        unreadable=(
+            "the lock is kept in CDB$ROOT",
+            "PASSWORD_LIFE_TIME is kept in CDB$ROOT",
+            "FAILED_LOGIN_ATTEMPTS is kept in CDB$ROOT",
+            "the count is kept in CDB$ROOT",
+        ),
+    )
+    row = rows(cfg, surveyed)["C##ACME_ADM"]
+    details = {f.check: f.detail for f in row.findings}
+    assert details["lock"] == "the lock is kept in CDB$ROOT"
+    assert details["failed_login_limit"] == "FAILED_LOGIN_ATTEMPTS is kept in CDB$ROOT"
+    assert row.failed_logins_reason == "the count is kept in CDB$ROOT"

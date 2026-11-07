@@ -1850,6 +1850,10 @@
           "minimum": 0,
           "description": "The failed-login count `report accounts` read (added in 1.82). Information, never a check. `null` where the target cannot read it truthfully, such as a common account on a PDB, whose count is kept in CDB$ROOT; never 0 in its place."
         },
+        "failed_logins_reason": {
+          "type": "string",
+          "description": "Why `failed_logins` is `null`, as the target's survey said it (added in 1.82), such as a missing `SELECT ON SYS.USER$` grant. Present only where `failed_logins` is `null`."
+        },
         "declared_by": {
           "type": [
             "string",

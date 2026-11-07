@@ -78,6 +78,14 @@ These stop being a security boundary — a compromised credential bypasses them 
 and become protection against typos and over-wide config changes. The docs say so
 plainly rather than overselling them.
 
+**The report commands read more, and change nothing.** UC-5's `report`
+commands read dictionary views that the credential commands do not need, such
+as the views of system and object privileges. Each extra grant is `SELECT`
+only and optional, and the tool probes for it, as it does for
+`SELECT ON SYS.USER$`. The service account still changes passwords and
+nothing else. Which views it needs, and on which releases, is not measured yet
+(unverified: report-reads).
+
 **Correlation survived.** The package's local audit table was useful because it
 joined a database row to a tool run. `DBMS_SESSION.SET_IDENTIFIER` puts the run's
 correlation id into `UNIFIED_AUDIT_TRAIL.CLIENT_ID`, preserving that join with no

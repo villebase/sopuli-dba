@@ -39,6 +39,7 @@ on which Oracle release, and what it showed.
 | [design/04-testing.md](design/04-testing.md) | What can and cannot be containerised, capability-driven matrix, tiering, fault injection, release gates |
 | [use-cases/uc-01-app-credential-sync.md](use-cases/uc-01-app-credential-sync.md) | UC-1: application DB account credentials, vault as master — `generate` / `apply` / `check` / `rotate` |
 | [use-cases/uc-02-personal-account-passwords.md](use-cases/uc-02-personal-account-passwords.md) | UC-2: a person's own database account — the `account` verbs, password reset, the reset record, and delivery methods |
+| [use-cases/uc-05-fleet-reports.md](use-cases/uc-05-fleet-reports.md) | UC-5: read-only reports across a fleet — accounts, privileges and rotation history. Not built yet |
 | [workflow.md](workflow.md) | Binding: branching (`issue-<n>-<slug>`, no long-lived integration branch), Conventional Commits, release-please and the 0.x policy |
 | [measurements.md](measurements.md) | What ran on which Oracle release, when, and what it showed: the one place for release-by-release results |
 | [local-testing.md](local-testing.md) | The usual commands, run by hand against the tier-1 stack: setup, the `creds` lifecycle, the `account` verbs, and a few refusals |
@@ -346,6 +347,15 @@ These entries share a setup. The probe is
   so the change is somewhere after 11.2 and no later than 12.2. Open: 12.1 is
   unrun. Read the 11.2 result as "11.2 keeps it", never as "every older release
   keeps it".
+- `unverified` `report-reads` (#1377) — **What can UC-5's report commands read
+  on Oracle, and with which grants?** Known: `00_install.sql` grants `SELECT`
+  on `DBA_USERS`, `DBA_PROFILES`, `DBA_ROLE_PRIVS` and `DBA_ROLES`;
+  `DBA_USERS.PASSWORD_CHANGE_DATE` exists from 19c (`02-oracle-privileges.md`
+  §2); 11.2 has no `ORACLE_MAINTAINED`, and check 5's list stands in for it.
+  Open: which grants make `DBA_SYS_PRIVS` and `DBA_TAB_PRIVS` readable; whether
+  a hierarchical query over `DBA_ROLE_PRIVS` gives the effective privileges
+  through nested and non-default roles; how a `DEFAULT` profile limit resolves;
+  and what a PDB shows for a common account and a common profile.
 - `unverified` `ddl-text-awr` (#387) — **Does the kept text reach AWR?**
   On 19.32.0.0.0, with the Diagnostics Pack enabled, the wrapped literal (C3)
   reached `DBA_HIST_SQLTEXT` and stayed there. The `ALTER USER` that sopuli
@@ -930,7 +940,8 @@ No 1Password store exists. These answer #1193, whether one could. The probe is
 
 ## Next use cases
 
-None of these is specified. Each has a number so that work deferred from a
+UC-5 has a document and is not built. The others are not specified. Each has
+a number so that work deferred from a
 specified use case can name where it goes. A number does not change once it is
 written down, because documents, issues and pull requests cite it. A new use case
 takes the next free number.
@@ -986,15 +997,12 @@ equivalent account, which the tool otherwise never holds. A DBA runs
 `admin install` command. This use case decides whether provisioning covers the
 install, and in what form.
 
-### UC-5 — drift and compliance reporting across a fleet
+### UC-5 — account, privilege and rotation reports across a fleet
 
-`creds check` answers "does the vault agree with this database" for the
-accounts one config declares. This use case asks the same across the estate:
-which accounts exist that nobody declared, which profiles are in use, where
-password versions or verifiers are older than policy allows, and what the fleet
-looks like to an auditor.
-
-It differs from UC-1 in what it may change, which is nothing.
+Specified in [`use-cases/uc-05-fleet-reports.md`](use-cases/uc-05-fleet-reports.md),
+and not built. It reads every declared target, changes nothing, and is the only
+place that lists the accounts the config does not declare
+([#1376](decisions/log.md#1376)).
 
 ### UC-1b — self-rotation, where there is no admin credential
 

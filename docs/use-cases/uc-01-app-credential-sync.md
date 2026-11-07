@@ -1294,8 +1294,8 @@ spelling of them would only be easier to get wrong.
 document describes a stale estate. Two properties limit the harm before any rule
 is needed:
 
-- **It can only narrow.** Invariant 5 makes the config the whitelist, and
-  `--repair` feeds a filter, not a target list. A pair that the document names
+- **It can only narrow.** Invariant 5 makes the config the whitelist for
+  changes, and `--repair` feeds a filter, not a target list. A pair that the document names
   and the config no longer declares is dropped, not acted on.
 - **A pair repaired since costs one login and reports `changed: false`,**
   because `apply` checks before it acts.

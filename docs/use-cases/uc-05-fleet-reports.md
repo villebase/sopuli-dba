@@ -1,0 +1,312 @@
+# UC-5 — Account, privilege and rotation reports across a fleet
+
+Depends on: `../design/00-principles.md`, `../design/01-configuration.md`,
+`../design/02-oracle-privileges.md`
+
+This document specifies `sopuli report accounts`, `sopuli report privileges`
+and `sopuli report history`. **Nothing in it is built yet.** Oracle comes
+first; PostgreSQL, MySQL and MariaDB come later. §9 lists the decisions. The
+command names, flags and config keys in this document are proposals until the
+PR that builds each one fixes them.
+
+---
+
+## 1. Summary
+
+**Goal.** A DBA answers these questions by hand today, one database at a time:
+
+1. **Application accounts.** Which accounts exist on which target, and is each
+   one on the right profile?
+2. **Technical accounts**, such as `DBSNMP` and the APEX and ORDS accounts. Is
+   each one on a profile whose settings match the rule written for it? An
+   account left on `DEFAULT` can have its password expire, and something
+   breaks.
+3. **Personal accounts.** The owner asks: do I have an account on every
+   server, is it locked, have there been failed logins, and what can I do
+   there? The DBA runs the report and answers. Owners do not run it.
+4. **An auditor.** When was each password rotated, and which roles and
+   privileges does each account hold? The auditor judges from what is shown
+   whether the privileges are minimal.
+
+The reports read every declared target and change nothing on any target or
+store.
+
+**The one thing a report must never do is say an account is fine when it is
+not.** §3 says how the design prevents it.
+
+**Not in scope:** comparing grants with an expected list; a history longer
+than the store keeps; finding databases the config does not list; fixing
+anything.
+
+---
+
+## 2. What the reports read, and invariant 5
+
+Invariant 5 makes the config the whitelist for **changes**. A report changes
+nothing, and its first question is which accounts exist. So the `report`
+commands read every account on a declared target, whether the config declares
+the account or not. They are the only commands that list the accounts the
+config does not declare. Every other command keeps what it reads today: an
+undeclared account only where a check on a declared one needs it. The MySQL
+and MariaDB checks, for example, name a user at a second host that the config
+does not declare, because it could answer the declared account's login
+([#1376](../decisions/log.md#1376)).
+
+The targets still come from the config, because that is where their connection
+details are. A report never reaches a database the config does not list.
+
+A report holds no secret. It does list the privileges and failed logins of
+every account on a target, which tells an attacker where to look, so its output
+needs the same care as the tool's other output.
+
+---
+
+## 3. Never fine when it is not
+
+**Each check on an account ends in one of four states:**
+
+| State | Meaning |
+|---|---|
+| problem | the check ran and the account fails it |
+| OK | the check ran and the account passes it |
+| not checked | the check could not run: the service account cannot read a view, the release lacks a capability, or the target could not be reached. The reason is shown |
+| no rule | the config states nothing the check could compare against. Shown, not a problem, and not OK |
+
+An account counts as OK only when every check that applies to it had a rule,
+ran, and passed. A target that could not be reached is reported as a target
+that could not be reached, never as a target with no problems.
+
+**Exit codes**, from the existing set in `00-principles.md`:
+
+| Code | When |
+|---|---|
+| 0 | every target was reached, no check found a problem, and every check that had a rule ran |
+| 1 | a target could not be reached |
+| 3 | every target was reached, and at least one problem was found |
+| 4 | every target was reached and no problem was found, but something was not checked |
+| 5 | at plan time: no target can run a check the command needs (below) |
+
+*No rule* and information never change the exit code. An undeclared account
+that no rule names is shown, and a fleet full of them still exits 0.
+
+An unreachable target outranks a problem, as in `creds check`
+(UC-1 §7): a report that reached nine targets of ten must not exit 3 as if the
+survey were complete. A problem outranks *not checked*, because the target was
+reached and the problem is certain. None of 1, 3 and 4 reads as clean, and the
+run document carries every count.
+
+**Capabilities, not versions** (invariant 3). Each check names the capability
+it needs. Where a target lacks it, the check is *not checked* on that target,
+and the capability is named. A missing capability fails the whole command at
+plan time, with exit 5, only where no target could run a check that decides a
+state. A check that only gives information, such as the failed-login count,
+never refuses: where no target can run it, its value is `unknown` everywhere.
+So a fleet of Autonomous Databases, which has no `SYS.USER$`, still gets its
+accounts report. That is an exception to
+invariant 4, recorded in [#1376](../decisions/log.md#1376): a report that
+refused the whole fleet for one old target would answer nothing.
+
+---
+
+## 4. The accounts report
+
+**Not built.** One table per target, in the config's target order. The head of
+each table names the target, the release read from it, and how many accounts
+were read, how many have a problem, how many were not checked, and how many have
+no rule. Then:
+
+- **problems first, worst first:** a password that will expire on an account
+  whose rule says it must not; a locked account; settings that differ from the
+  rule; a declared account missing from a target it is declared for; then
+  accounts not checked;
+- **then information, which never sets exit 3:** an account the config does
+  not declare, and failed logins on an account that is not locked;
+- **then a count of the accounts that passed everything.** A flag lists them.
+
+Every row has the account, its kind (application, technical, personal, or
+undeclared), its profile, its status, and what is wrong in plain words.
+Accounts that Oracle maintains (`ORACLE_MAINTAINED = 'Y'`) are left out unless a
+rule names them, as a rule for `DBSNMP` does. On 11.2, which has no such
+column, the report uses the same list of Oracle's own accounts that the
+guardrails use there (`02-oracle-privileges.md` §4, check 5), so one estate
+gives the same list on every release.
+
+**The lock is the check; the failed-login count is information.** The lock
+status can be read on every release. The count needs the optional
+`SELECT ON SYS.USER$` grant, does not exist on Autonomous Database, and reads 0
+for a common account in a PDB, because the count is kept in `CDB$ROOT`
+(`02-oracle-privileges.md` §2, [#1122](../decisions/log.md#1122)). Where the
+count cannot be read truthfully, the report shows `unknown`, never 0.
+
+**Two checks on settings:**
+
+1. **Account → profile, by name.** An account a rule covers has an expected
+   profile. For an application account, the expected profile is UC-1's
+   `policies.<name>.account.profile`, so it is not written twice.
+2. **The account's settings against the rule.** A rule says what it expects,
+   such as "the password never expires". On Oracle the values come from the
+   account's profile, so a list of database profiles can state them once for
+   every account on that profile. A limit that reads `DEFAULT` is resolved
+   through the `DEFAULT` profile before it is compared. Only the settings a
+   rule lists are compared.
+
+A profile missing on a target is one finding, not one per account.
+
+---
+
+## 5. The privilege report
+
+**Not built.** Two views, for one account or for every account on a target.
+
+**The summary** shows:
+
+- system privileges, each with where it comes from: directly, or through
+  which role;
+- the roles granted, with `ADMIN OPTION`, whether each is a default role, and
+  whether it is protected by a password or is a secure application role;
+- object privileges as counts by privilege and object type, such as "SELECT on
+  42 tables (30 direct, 12 through `ACME_READ_ROLE`)", and EXECUTE and DEBUG on
+  procedures, functions, packages and types, each type counted on its own.
+
+**The detailed list** has one row for each privilege: the privilege, the
+object's owner, name and type, where it comes from, with the whole chain of
+roles, and `GRANTABLE` or `ADMIN OPTION`.
+
+Both views count **effective** privileges: an account's own grants, and every
+grant it reaches through its roles, however deeply they are nested. A privilege
+held two ways is counted once and shows both sources. A role that is not a
+default role still counts, and is marked, because the account can enable it.
+Grants to `PUBLIC` are left out unless a flag asks for them.
+
+---
+
+## 6. Rotation history
+
+**Not built.** The history comes from what the tool wrote, and it reads no
+password.
+
+- **An application account (UC-1)** has its history in the store's versions.
+  A rotation writes more than one version: UC-1 stages `pending`, then
+  promotes it. The promotion stamps that UC-1 §3 writes (`rotated_at`,
+  `rotated_by`) change only when `current` changes. Where one secret holds
+  several accounts, each stamp is a map keyed by account, so the report
+  compares the account's own entry, never the whole field. A change of that
+  entry is a change of `current`: a rotation, a rollback, or a
+  `creds generate --promote --overwrite-current`. The report lists each one.
+  Whether it can tell them apart is for the PR that builds it to establish.
+- **On an OCI store with native staging** the stamps are the secret's
+  metadata, not part of a version, and each promotion overwrites them
+  (UC-1 §3). So only the current version's promotion time is known. The
+  report lists the other versions by the time each one was generated
+  (`generated_at`), and says that their promotion times are not kept.
+- **A personal account (UC-2)** has one reset record for each target and
+  account, and each reset overwrites it (UC-2 §3). Its history is that
+  record's versions. A seen reset with no store configured writes no record,
+  so only the database's date is shown for it.
+- **A store that keeps no versions**, such as HashiCorp KV v1, cannot give a
+  history, for either kind of account. Versioning is a capability. Without it,
+  the history is *not checked*, with the capability named, and only the
+  latest stamps or record and the database's date are shown.
+
+**The history says where it ends.** When a store has pruned or destroyed older
+versions, the report says from which version and date it starts, and how many
+earlier versions are gone. It never presents the oldest version kept as the
+first rotation.
+
+The database's own date of the last password change is shown beside the last
+rotation. The database usually changes before the promotion, because `apply`
+changes the target first and a promotion can wait days, and on MySQL and
+MariaDB `apply` sets the staged `pending` again on each run while the
+promotion is held. So only one case is flagged, as information: no `pending`
+is staged, and the database changed after the last promotion. With no rotation
+in progress, nothing in the tool changed it.
+
+A store version does not carry the run's correlation id, so a version is tied
+to its run only through its stamps ([#1374](https://github.com/villebase/sopuli-dba/issues/1374)).
+For an account the tool does not manage, only the database's date is shown.
+
+---
+
+## 7. Rules in the config
+
+**Not built.** The rules are written in words that are not specific to one
+database product, such as "the password never expires", "locks after 5 failed
+logins" or "expires within 90 days". On Oracle the values are read through the
+account's profile. A list of database profiles and their expected settings,
+and the check of an account's profile by name, are an addition for Oracle on
+top of that. On another product, a rule reports *not checked* until that
+product's driver reads the settings. The format does not change when it does.
+
+- Rules name accounts by name or pattern, give them a kind and their expected
+  settings or profile, and select targets as `applications:` and
+  `personal_accounts:` do.
+- The list of database profiles cannot be called `profiles:`, because that key
+  already means run profiles (`01-configuration.md`, C10).
+- **There are no built-in rules.** Nothing is assumed about any kind of
+  account. A technical account's password never expiring is a rule the DBA
+  writes. A DBA who later rotates technical accounts with the tool may want
+  their passwords to expire.
+- A rule declares nothing a changing command may act on. A name in a rule is
+  not a declaration for invariant 5.
+
+---
+
+## 8. What the service account needs to read
+
+The reports read `DBA_USERS`, `DBA_PROFILES`, `DBA_ROLE_PRIVS` and
+`DBA_ROLES`, which `sql/oracle/00_install.sql` already grants, and the views of
+system and object privileges, which it does not. The failed-login count and
+the older releases' date of the last password change are in `SYS.USER$`
+(`LCOUNT`, `PTIME`), behind the optional grant. `DBA_USERS.PASSWORD_CHANGE_DATE`
+exists from 19c (`02-oracle-privileges.md` §2). Which grants the privilege
+views need, how the effective privileges and a `DEFAULT` limit are read, and
+what a PDB shows for a common account are not measured yet
+(unverified: report-reads). Each extra grant is `SELECT` only
+and optional, and the tool probes for it. A report that cannot read a view says
+*not checked* for what it needed.
+
+---
+
+## 9. Decisions
+
+Decided by the maintainer on 2026-11-07, with the design (#1375). The two
+that change an invariant have a record in the decision log, #1376. The rest
+are this document's specification, and the sections above give their reasons.
+No question here is open, so none has an ID in the decision register.
+
+| Question | Answer |
+|---|---|
+| May a command read accounts the config does not declare? | yes, in the `report` commands only; changing still needs a declaration ([#1376](../decisions/log.md#1376)) |
+| Do existing commands read undeclared accounts too? | no more than they do today ([#1376](../decisions/log.md#1376)) |
+| Does a capability that one target lacks fail the whole report? | no; that check is *not checked* on that target, an exception to invariant 4 ([#1376](../decisions/log.md#1376)) |
+| Is a profile rule about its name or its settings? | both: account → profile by name, and the settings against the rule (§4) |
+| How is the accounts report laid out? | one table per target, problems first (§4) |
+| Which privilege views? | a summary, and a detailed list (§5) |
+| Does a privilege through a role count for the account? | yes, and the role is named (§5) |
+| How long a history? | every rotation the store still has, and where it ends (§6) |
+| Which product first? | Oracle |
+| An account with no rule | the `no rule` state: shown, not a problem, not OK (§3) |
+| Built-in rules? | none (§7) |
+| Is the rule format specific to Oracle? | no; the settings are stated in words common to all products, and Oracle's profiles are an addition (§7) |
+
+---
+
+## 10. The invariants, read for UC-5
+
+| # | Invariant | Here |
+|---|---|---|
+| 1 | no secret in `argv` | applies unchanged |
+| 2 | redaction at the serialiser | applies. A report reads no password. The history reads stamps, never the password fields |
+| 3 | branch on capability, not version | applies: each check names its capability (§3) |
+| 4 | unavailable capability fails at plan time | applies where no target could run a check. Elsewhere a missing capability is *not checked* on that target, an exception recorded in [#1376](../decisions/log.md#1376) (§3) |
+| 5 | the config is the whitelist for changes | the reports are the only commands that list the accounts the config does not declare (§2) |
+| 6 | vault is master | nothing to govern: a report changes nothing |
+| 7 | never promote before confirmation | nothing to govern: there is no promotion |
+| 8 | `--dry-run` and a plan | nothing to govern: the reports change nothing |
+| 9 | idempotency | nothing to govern: the reports change nothing |
+| 10 | safety settings only ratchet | applies unchanged. The safety settings govern changes, and a report makes none. A report reads under the same settings as `creds check` |
+| 11 | passwords with `"` rejected | nothing to govern: a report sets no password |
+| 12 | JSON output is a versioned contract | applies: each report's run document has a schema in `docs/schemas/`, and its samples validate against it |
+| 13 | no password in a PL/SQL block | nothing to govern: a report sends no password |
+| 14 | no password bound into a predicate | applies: no report compares a password or a verifier, by bind or by literal |
+| 15 | the password never reaches PostgreSQL, MySQL or MariaDB | nothing to govern: a report sends no password |

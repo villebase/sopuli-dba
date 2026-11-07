@@ -151,10 +151,15 @@ count cannot be read truthfully, the report shows `unknown`, never 0.
    such as "the password never expires". On Oracle the values come from the
    account's profile, so a list of database profiles can state them once for
    every account on that profile. A limit that reads `DEFAULT` is resolved
-   through the `DEFAULT` profile before it is compared. For a common profile
-   read on a PDB target, the limit that applies comes from the root's
-   `DEFAULT` profile, which the target cannot read, so such a limit is *not
-   checked* there. Only the settings a rule lists are compared.
+   through the `DEFAULT` profile before it is compared. On a PDB target two
+   cases cannot be read, so they are *not checked* there:
+   - **a common account**, whatever its profile: its limits come from its
+     profile in the root, not from the profile the PDB names
+     ([#1122](../decisions/log.md#1122));
+   - **a `DEFAULT` limit on a common profile**, for a local account on it
+     too: it follows the root's `DEFAULT` profile, not the PDB's.
+
+   Only the settings a rule lists are compared.
 
 A profile missing on a target is one finding, not one per account.
 
@@ -172,7 +177,9 @@ A profile missing on a target is one finding, not one per account.
   whether it is protected by a password or is a secure application role;
 - object privileges as counts by privilege and object type, such as "SELECT on
   42 tables (30 direct, 12 through `ACME_READ_ROLE`)", and EXECUTE and DEBUG on
-  procedures, functions, packages and types, each type counted on its own.
+  procedures, functions, packages and types, each type counted on its own;
+- column privileges, such as UPDATE on one column of a table, counted
+  separately, because they are kept apart from table grants.
 
 **The detailed list** has one row for each privilege: the privilege, the
 object's owner, name and type, where it comes from, with the whole chain of
@@ -268,8 +275,9 @@ exists from 19c (`02-oracle-privileges.md` §2).
 
 Measured on 23.26.3.0.0 (`02-oracle-privileges.md` §2, #1377):
 
-- the privilege views need `SELECT` on `DBA_SYS_PRIVS` and on
-  `DBA_TAB_PRIVS`, for a local service account and a common one alike;
+- the privilege views need `SELECT` on `DBA_SYS_PRIVS`, `DBA_TAB_PRIVS` and
+  `DBA_COL_PRIVS`, for a local service account and a common one alike. A
+  column grant is in `DBA_COL_PRIVS` only;
 - one recursive query over `DBA_ROLE_PRIVS`, started from the account and
   from `PUBLIC`, reaches the effective privileges with their role paths. It
   returns one row per path, so §5 collapses the rows per privilege and object
@@ -279,7 +287,8 @@ Measured on 23.26.3.0.0 (`02-oracle-privileges.md` §2, #1377):
 - in a PDB, a locked common account reads `OPEN` (§4), and its
   `PASSWORD_CHANGE_DATE` is NULL, as its `PTIME` is. So §6 has no database
   date for a common account on a PDB target. Reading the root's would need
-  `SET CONTAINER`, which the tool does not hold (`00-principles.md`).
+  `SET CONTAINER`, which the tool does not use, by design
+  (`00-principles.md`).
 
 Each extra grant is `SELECT` only and optional, and the tool probes for it. A
 report that cannot read a view says *not checked* for what it needed.

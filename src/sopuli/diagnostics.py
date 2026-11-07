@@ -594,6 +594,12 @@ PROMOTION_UNCONFIRMED = "SOPULI-W066"
 #: from `SOPULI-W015`, which says the policy's declared length governed.
 PRODUCT_LIMIT_USED = "SOPULI-W067"
 
+#: A session claimed less than it could, so the check that refuses two targets
+#: on one set of accounts (`SOPULI-20008`) may let two through (#1363): on
+#: PostgreSQL, `system_identifier` could not be read; on MariaDB, a Galera node
+#: is not `Synced`.
+IDENTITY_UNCHECKED = "SOPULI-W068"
+
 #: ``SOPULI-W004`` and ``SOPULI-W034`` to ``SOPULI-W039`` -- imported above
 #: rather than defined here. They are raised in the config layer, which cannot
 #: import this module, so they are defined in :mod:`sopuli.config.codes` and
@@ -850,6 +856,13 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "connection, so the draw was checked against it, and the message names the "
             "targets. Where a target with no such limit was not read either, "
             "`SOPULI-W015` is raised for it as well. `--offline` emits nothing."
+        ),
+        IDENTITY_UNCHECKED: (
+            "A target's session claimed less than it could, so the check that refuses two "
+            "targets on one set of accounts (`SOPULI-20008`) may have let two through: on "
+            "PostgreSQL, `system_identifier` could not be read; on MariaDB, a Galera node "
+            "was not `Synced`, so its cluster was not claimed. The message says which. One "
+            "entry per target, from every command that connects."
         ),
         CONSTRAINTS_UNREAD: (
             "`creds generate` could not read a target's password constraints, so the "
@@ -1460,6 +1473,18 @@ def rollover_caveat(target: str, account: str, caveat: str) -> Diagnostic:
         target=target,
         account=account,
         message=f"{target}: {account}: {caveat}",
+    )
+
+
+def identity_unchecked(target: str, caveat: str) -> Diagnostic:
+    """`SOPULI-W068`: the session's ``identity_caveat``, from every command that
+    connects (#1363). `doctor` puts it in ``diagnostics[]`` and prints the
+    caveat as a note on its target instead of in its warnings."""
+    return Diagnostic(
+        level="warning",
+        code=IDENTITY_UNCHECKED,
+        target=target,
+        message=f"{target}: {caveat}",
     )
 
 

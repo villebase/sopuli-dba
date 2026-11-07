@@ -50,7 +50,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from sopuli.clock import from_rfc3339
+from sopuli.clock import from_rfc3339, utc_now
 from sopuli.store.hashicorp._errors import from_vault, not_from_vault, raise_for
 from sopuli.store.hashicorp._health import health as probe_health
 from sopuli.store.hashicorp._listing import keys_of, walk
@@ -237,16 +237,23 @@ class Kv2Store:
             )
         return version
 
-    def metadata(self, path: str) -> PathMetadata | None:
+    def _metadata(self, path: str) -> dict[str, Any] | None:
+        """``GET /v1/<mount>/metadata/<path>``, or ``None`` where there is none.
+
+        A 404 is ordinary for a lock path before the first lock is taken, so not
+        a failure -- pre-flight reads it to ask whether `cas_required` is set,
+        and "the path has no metadata" is a perfectly good answer.
+        """
         response = self.transport.request("GET", f"{self.mount}/metadata/{path}")
         if response.status == 404:
-            # Ordinary for a lock path before the first lock is taken, so not a
-            # failure -- pre-flight reads it to ask whether `cas_required` is set,
-            # and "the path has no metadata" is a perfectly good answer.
             return None
         _check(response, path=path)
+        return _data(response)
 
-        payload = _data(response)
+    def metadata(self, path: str) -> PathMetadata | None:
+        payload = self._metadata(path)
+        if payload is None:
+            return None
         maximum = payload.get("max_versions")
         return PathMetadata(
             cas_required=bool(payload.get("cas_required")),
@@ -260,31 +267,47 @@ class Kv2Store:
         versions not yet pruned by ``max_versions``. ``oldest_kept`` is the
         lowest of those, not the endpoint's ``oldest_version``: measured on
         Vault 2.0.4, ``oldest_version`` reads 0 until a version is pruned,
-        though version 1 is still there. A deleted version has a
-        ``deletion_time``; a destroyed one has ``destroyed: true``. A path with
-        no metadata (404) is ``None``.
-        """
-        response = self.transport.request("GET", f"{self.mount}/metadata/{path}")
-        if response.status == 404:
-            return None
-        _check(response, path=path)
+        though version 1 is still there. A destroyed version has
+        ``destroyed: true``. A path with no metadata (404) is ``None``.
 
-        payload = _data(response)
+        **A version is deleted once its ``deletion_time`` has passed**, by this
+        host's clock, as Vault itself reads it. ``delete_version_after``, which
+        ``vault_path`` delivery sets, gives every live version a deletion time
+        in the future. An answer this build cannot read, such as a version key
+        that is not a number or a deletion time that is not RFC 3339, raises
+        :class:`~sopuli.store.protocol.StoreError` rather than being guessed at.
+        An unreadable ``created_time`` is only ``None``: it decides nothing.
+        """
+        payload = self._metadata(path)
+        if payload is None:
+            return None
+        now = utc_now()
         listed = payload.get("versions") or {}
+        if not isinstance(listed, dict):
+            raise _unreadable(path, "versions is not an object")
         found = []
         for number, entry in listed.items():
             entry = entry if isinstance(entry, dict) else {}
+            if not str(number).isdigit():
+                raise _unreadable(path, f"version {number!r} is not a number")
+            ends = entry.get("deletion_time")
+            deletion = _timestamp(ends)
+            if ends and deletion is None:
+                raise _unreadable(path, f"version {number}'s deletion_time {ends!r} is not a time")
             found.append(
                 VersionInfo(
                     version=int(number),
                     created_at=_timestamp(entry.get("created_time")),
-                    deleted=_timestamp(entry.get("deletion_time")) is not None,
+                    deleted=deletion is not None and deletion <= now,
                     destroyed=bool(entry.get("destroyed")),
                 )
             )
         found.sort(key=lambda info: info.version)
+        current = payload.get("current_version") or 0
+        if not isinstance(current, int):
+            raise _unreadable(path, f"current_version {current!r} is not a number")
         return VersionHistory(
-            current=int(payload.get("current_version") or 0),
+            current=current,
             oldest_kept=found[0].version if found else None,
             versions=tuple(found),
         )
@@ -352,6 +375,15 @@ def _timestamp(value: Any) -> datetime | None:
         return from_rfc3339(value)
     except ValueError:
         return None
+
+
+def _unreadable(path: str, what: str) -> StoreError:
+    """A metadata answer this build cannot read, said as such."""
+    return StoreError(
+        f"the store's version list for {path!r} cannot be read: {what}",
+        hint="check what answers on the vault address; a proxy in front of Vault may "
+        "rewrite the answer",
+    )
 
 
 def _check(response: Response, *, path: str) -> None:

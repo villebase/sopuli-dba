@@ -25,7 +25,7 @@ from sopuli.store import MemoryStore
 from sopuli.store.hashicorp._transport import Response
 from sopuli.store.hashicorp.kv1 import Kv1Store
 from sopuli.store.hashicorp.kv2 import Kv2Store
-from sopuli.store.native_view import NativeStagedStore
+from sopuli.store.native_view import LayoutUnknownError, NativeStagedStore
 from sopuli.store.oci import OciStore
 from sopuli.store.protocol import (
     CAS,
@@ -126,6 +126,35 @@ def test_kv2_a_path_with_no_metadata_is_none() -> None:
     assert Kv2Store(transport=transport, mount="kv").versions("p") is None  # type: ignore[arg-type]
 
 
+def test_kv2_a_deletion_time_still_ahead_is_not_a_deletion() -> None:
+    """`delete_version_after`, which `vault_path` delivery sets, gives every
+    live version a deletion time in the future."""
+    body = {
+        "data": {
+            "current_version": 1,
+            "versions": {"1": _version("2026-11-07T22:17:44Z", deleted="2999-01-01T00:00:00Z")},
+        }
+    }
+    history = Kv2Store(transport=_Transport(Response(200, body)), mount="kv").versions("p")  # type: ignore[arg-type]
+
+    assert history is not None
+    assert history.versions[0].deleted is False
+
+
+@pytest.mark.parametrize(
+    "versions",
+    [
+        {"one": _version("2026-11-07T22:17:44Z")},
+        {"1": _version("2026-11-07T22:17:44Z", deleted="yesterday")},
+    ],
+    ids=["key-not-a-number", "deletion-time-not-a-time"],
+)
+def test_kv2_an_answer_it_cannot_read_raises(versions: dict[str, Any]) -> None:
+    body = {"data": {"current_version": 1, "versions": versions}}
+    with pytest.raises(StoreError, match="cannot be read"):
+        Kv2Store(transport=_Transport(Response(200, body)), mount="kv").versions("p")  # type: ignore[arg-type]
+
+
 def test_kv2_an_unreadable_time_is_none_not_a_failure() -> None:
     body = {"data": {"current_version": 1, "versions": {"1": _version("not a time")}}}
     history = Kv2Store(transport=_Transport(Response(200, body)), mount="kv").versions("p")  # type: ignore[arg-type]
@@ -213,8 +242,11 @@ def oci_store(fake: FakeOci) -> OciStore:
 
 
 def test_oci_lists_every_version_with_its_time(oci_store: OciStore, fake: FakeOci) -> None:
+    """Version 1's deletion time has passed; version 2's, as the tool schedules
+    one two days ahead, has not, so version 2 is still there."""
     secret = fake.put("acme-db", {"password": "a"}, {"password": "b"}, {"password": "c"})
-    secret.versions[0].time_of_deletion = "2026-11-09T12:00:00Z"
+    secret.versions[0].time_of_deletion = datetime(2020, 1, 1, tzinfo=UTC)
+    secret.versions[1].time_of_deletion = datetime(2999, 1, 1, tzinfo=UTC)
 
     history = oci_store.versions("acme-db")
 
@@ -259,6 +291,29 @@ def test_oci_a_missing_secret_is_none(oci_store: OciStore) -> None:
     assert oci_store.versions("acme-none") is None
 
 
+def test_oci_a_secret_being_deleted_is_none(oci_store: OciStore, fake: FakeOci) -> None:
+    fake.put("acme-db", {"password": "a"}, lifecycle_state="PENDING_DELETION")
+    assert oci_store.versions("acme-db") is None
+
+
+def test_oci_a_busy_secret_is_listed_without_waiting(oci_store: OciStore, fake: FakeOci) -> None:
+    """A write waits for ACTIVE and needs the ETag; a listing needs neither."""
+    fake.put("acme-db", {"password": "a"}, lifecycle_state="UPDATING")
+    fake.calls.clear()
+
+    history = oci_store.versions("acme-db")
+
+    assert history is not None
+    assert "get_secret" not in fake.calls
+
+
+def test_oci_an_unreadable_deletion_time_raises(oci_store: OciStore, fake: FakeOci) -> None:
+    secret = fake.put("acme-db", {"password": "a"})
+    secret.versions[0].time_of_deletion = "soon"
+    with pytest.raises(StoreError, match="not one"):
+        oci_store.versions("acme-db")
+
+
 # ------------------------------------------------------- native staging ---
 
 
@@ -270,6 +325,30 @@ def test_the_native_staging_adapter_passes_versions_through() -> None:
     )
 
     assert view.versions("p") == inner.versions("p")
+
+
+def test_the_native_staging_adapter_refuses_a_path_whose_layout_is_unsure() -> None:
+    inner = MemoryStore(capabilities=frozenset({CAS, LIST, VERSIONING, STAGING}))
+    inner.write("p", {"password": "a"}, cas=0)
+    view = NativeStagedStore(
+        inner,
+        native=lambda path: None,
+        by="test",
+        now=lambda: datetime(2026, 11, 1, tzinfo=UTC),
+        unsure=lambda path: True,
+    )
+
+    with pytest.raises(LayoutUnknownError):
+        view.versions("p")
+
+
+def test_memory_native_staging_after_a_delete_is_none() -> None:
+    """OCI answers nothing for a secret being deleted, and the fake agrees."""
+    store = MemoryStore(capabilities=frozenset({CAS, LIST, VERSIONING, STAGING}))
+    store.write("p", {"password": "a"}, cas=0)
+    store.delete("p")
+
+    assert store.versions("p") is None
 
 
 # ------------------------------------------------------- Vault, tier 1 ---

@@ -311,12 +311,15 @@ class MemoryStore:
         whose capabilities leave out ``versioning``. Nothing is pruned here
         (:class:`_Path`), so every version is listed. A delete marks the latest
         version deleted, as KV v2's soft delete does. With native staging the
-        versions are the generations, and none is deleted.
+        versions are the generations, and a deleted path is ``None``, as OCI
+        answers for a secret being deleted.
         """
         entry = self.paths.get(path)
         if entry is None or VERSIONING not in self.capabilities:
             return None
         if STAGING in self.capabilities:
+            if not entry.stages:
+                return None
             numbers, current = sorted(entry.generations), entry.generation
         else:
             numbers, current = sorted(entry.history), entry.version

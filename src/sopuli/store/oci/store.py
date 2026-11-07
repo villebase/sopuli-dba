@@ -28,7 +28,7 @@ import binascii
 import json
 import shlex
 import time
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from email.utils import parsedate_to_datetime
@@ -37,7 +37,7 @@ from typing import Any, NoReturn
 
 import oci
 
-from sopuli.clock import utc_now
+from sopuli.clock import from_rfc3339, utc_now
 from sopuli.config.model import Vault
 from sopuli.exit_codes import ExitCode
 from sopuli.store.oci import _errors, _names
@@ -437,40 +437,39 @@ class OciStore:
     def versions(self, path: str) -> VersionHistory | None:
         """Every version ``ListSecretVersions`` gives for the secret at ``path``.
 
-        ``None`` where there is no secret, or only one being deleted. A version
-        scheduled for deletion is ``deleted``; OCI destroys nothing by itself
-        before that, so ``destroyed`` is always false. ``current`` is the
-        highest version number listed, the version OCI marks ``LATEST``, which
-        may be a PENDING rather than the CURRENT one. The stages are not part of
-        the history: a promotion moves them and leaves no time behind (UC-5 §6).
+        ``None`` where there is no secret, or only one being deleted. The secret
+        is found by listing only: a report does not wait for a busy secret to
+        settle, nor need its ETag, as a write does.
+
+        A version is ``deleted`` once its deletion time has passed, by this
+        host's clock, the rule KV v2 follows. The tool schedules a DEPRECATED
+        version's deletion two days ahead (decision 7), and until then the
+        version is still there. OCI destroys nothing by itself, so ``destroyed``
+        is always false. ``current`` is the highest version number listed, the
+        version OCI marks ``LATEST``, which may be a PENDING rather than the
+        CURRENT one. The stages are not part of the history: a promotion moves
+        them and leaves no time behind (UC-5 §6).
         """
         name = _names.to_oci(path)
         what = self._what(name)
-        live = self._live(name, what=what)
-        if live is None:
+        summary = next(
+            (one for one in self._summaries(name) if one.lifecycle_state not in GONE), None
+        )
+        if summary is None:
             return None
-        found: list[VersionInfo] = []
-        page = None
-        while True:
-            try:
-                response = self._read(self._vaults.list_secret_versions, live.id, page=page)
-            except oci.exceptions.ServiceError as exc:
-                _errors.raise_for(exc, what=what)
-            except NO_ANSWER as exc:
-                raise _errors.unreachable(exc, what=what) from exc
-            for version in response.data:
-                created = getattr(version, "time_created", None)
-                found.append(
-                    VersionInfo(
-                        version=int(version.version_number),
-                        created_at=created if isinstance(created, datetime) else None,
-                        deleted=version.time_of_deletion is not None,
-                        destroyed=False,
-                    )
+        now = self._now()
+        found = []
+        for version in self._listed_versions(summary.id, what=what):
+            created = getattr(version, "time_created", None)
+            ends = _when(version.time_of_deletion)
+            found.append(
+                VersionInfo(
+                    version=int(version.version_number),
+                    created_at=created if isinstance(created, datetime) else None,
+                    deleted=ends is not None and ends <= now,
+                    destroyed=False,
                 )
-            page = response.next_page
-            if not page:
-                break
+            )
         found.sort(key=lambda info: info.version)
         return VersionHistory(
             current=found[-1].version if found else 0,
@@ -619,6 +618,25 @@ class OciStore:
         counted = 0
         deprecated: list[int] = []
         at: dict[str, int] = {}
+        for version in self._listed_versions(secret_id, what=what):
+            if version.time_of_deletion is not None:
+                continue
+            counted += 1
+            stages = set(version.stages or ()) - {"LATEST"}
+            if stages == {DEPRECATED}:
+                deprecated.append(version.version_number)
+            for stage in stages & {"CURRENT", "PREVIOUS"}:
+                at[stage] = version.version_number
+        return Room(
+            versions=counted,
+            deprecated=tuple(sorted(deprecated)),
+            limit=VERSION_LIMIT,
+            previous=at.get("PREVIOUS"),
+            current=at.get("CURRENT"),
+        )
+
+    def _listed_versions(self, secret_id: str, *, what: str) -> Iterator[Any]:
+        """Every ``ListSecretVersions`` entry, page by page."""
         page = None
         while True:
             try:
@@ -627,24 +645,10 @@ class OciStore:
                 _errors.raise_for(exc, what=what)
             except NO_ANSWER as exc:
                 raise _errors.unreachable(exc, what=what) from exc
-            for version in response.data:
-                if version.time_of_deletion is not None:
-                    continue
-                counted += 1
-                stages = set(version.stages or ()) - {"LATEST"}
-                if stages == {DEPRECATED}:
-                    deprecated.append(version.version_number)
-                for stage in stages & {"CURRENT", "PREVIOUS"}:
-                    at[stage] = version.version_number
+            yield from response.data
             page = response.next_page
             if not page:
-                return Room(
-                    versions=counted,
-                    deprecated=tuple(sorted(deprecated)),
-                    limit=VERSION_LIMIT,
-                    previous=at.get("PREVIOUS"),
-                    current=at.get("CURRENT"),
-                )
+                return
 
     def _make_room(self, live: _Live, *, path: str, what: str) -> _Live:
         """Decision 7: OCI refused a version because the secret is full, so
@@ -1357,6 +1361,20 @@ def _token(metadata: Mapping[str, Any], *, what: str) -> int:
     if token < 1:
         raise StoreError(f"{what} has a write counter this tool did not write: {value!r}")
     return token
+
+
+def _when(value: Any) -> datetime | None:
+    """A time the SDK gave, as a datetime, or ``None`` where there is none.
+
+    The SDK gives a datetime. A string is read as RFC 3339, and one that is not
+    raises: an unreadable deletion time is not taken as no deletion.
+    """
+    if value is None or isinstance(value, datetime):
+        return value
+    try:
+        return from_rfc3339(str(value))
+    except ValueError as exc:
+        raise StoreError(f"OCI gave a time that is not one: {value!r}") from exc
 
 
 def _server_time(headers: Mapping[str, str] | None) -> datetime | None:

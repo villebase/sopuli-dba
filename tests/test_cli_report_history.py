@@ -157,6 +157,9 @@ def estate(monkeypatch: pytest.MonkeyPatch) -> Harness:
                 password_changed_unknown="needs SELECT ON SYS.USER$",
             ),
             "JDOE": UserState(name="JDOE", status="OPEN", password_changed_at=CHANGED),
+            "ACME_STRAY_USER": UserState(
+                name="ACME_STRAY_USER", status="OPEN", password_changed_at=CHANGED
+            ),
         }
 
         def fake_connect(
@@ -292,8 +295,33 @@ def test_account_names_one_nobody_manages(write_config: WriteConfig, estate: Har
     estate()
     text = click.unstyle(report(write_config, "--account", "acme_typo_user").output)
 
+    # Not managed, and the database has no such account either.
     assert "no managed account acme_typo_user on this target" in text
-    # Nothing to describe, so the database is not connected to.
+
+
+def test_an_unmanaged_account_shows_only_its_database_date(
+    write_config: WriteConfig, estate: Harness
+) -> None:
+    """UC-5 §6: for an account the tool does not manage, only the database's date."""
+    estate()
+    result = report(write_config, "--account", "acme_stray_user")
+    text = flat(result)
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert "acme_stray_user (undeclared)" in text
+    assert "database changed: 2026-11-07T03:00:05Z" in text
+    assert "does not manage this account's password" in text
+
+
+def test_a_target_with_nothing_to_describe_is_not_connected_to(
+    write_config: WriteConfig, estate: Harness
+) -> None:
+    estate()
+    nothing = CONFIG.split("applications:")[0]
+    result = report(write_config, config=nothing)
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert "no account here has a password the tool manages" in flat(result)
     assert connected == []
 
 
@@ -319,14 +347,51 @@ def test_a_records_listing_that_fails_is_said_even_with_no_named_account(
     assert "the store gave no answer" in flat(result)
 
 
-def test_without_reset_records_a_named_account_is_not_checked(
+def test_without_reset_records_a_named_account_shows_its_database_date(
     write_config: WriteConfig, estate: Harness
 ) -> None:
+    """UC-5 §6: a reset with no records store writes no record, so only the
+    database's date is shown, said in a note."""
     estate()
     result = report(write_config, "--account", "jdoe", config=NO_RECORDS_CONFIG)
+    text = flat(result)
 
-    assert result.exit_code == ExitCode.PARTIAL, result.output
-    assert "no `reset_records:` store is declared" in flat(result)
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert "database changed: 2026-11-07T03:00:05Z" in text
+    assert "note: no `reset_records:` store is declared" in text
+
+
+def test_account_naming_an_application_account_does_not_ask_the_records(
+    write_config: WriteConfig, estate: Harness
+) -> None:
+    store = estate()
+
+    def refused(prefix: str) -> tuple[str, ...]:
+        raise ConnectionError("vault sealed")
+
+    store.list = refused  # type: ignore[method-assign]
+    result = report(write_config, "--account", "acme_web_user", config=RECORDS_ONLY_CONFIG)
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert "reset records" not in flat(result)
+
+
+def test_every_version_read_failing_is_a_store_with_no_answer(
+    write_config: WriteConfig, estate: Harness
+) -> None:
+    store = estate()
+    original = store.read
+
+    def forbidden(path: str, *, version: int | None = None) -> Any:
+        if path == "apps/acme/db" and version is not None:
+            raise PermissionError("403 permission denied on data/")
+        return original(path, version=version)
+
+    store.read = forbidden  # type: ignore[method-assign]
+    result = report(write_config, "--account", "acme_web_user")
+
+    assert result.exit_code == ExitCode.FAILURE, result.output
+    assert "403 permission denied" in flat(result)
 
 
 def test_a_version_whose_read_fails_is_a_gap_not_a_failure(

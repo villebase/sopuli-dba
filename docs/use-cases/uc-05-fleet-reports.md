@@ -218,7 +218,8 @@ history is not checked.
   `reset_records:`. A personal account a rule names and that was never reset
   is listed with nothing recorded. One a profile or role predicate admits is
   listed only where it has a record, because resolving the predicate needs
-  the database.
+  the database. `--account` may name an account the tool does not manage:
+  only its database date is shown.
 - **An unreachable target** still gets its histories, which come from the
   store, without the database's dates, and the run exits 1.
 

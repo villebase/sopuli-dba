@@ -19,8 +19,9 @@ from sopuli.output.table import Column, render_table
 from sopuli.report_accounts import ACCOUNT_MISSING, NOT_CHECKED, REPORT_OK
 from sopuli.report_history import RESET, AccountHistory, Event
 
-ABSENT = "-"
-ERROR = "ERROR"
+#: Shared with the other reports, so their results spell these one way.
+ABSENT = report_view.ABSENT
+ERROR = report_view.ERROR
 
 
 @dataclass(frozen=True)

@@ -16,9 +16,11 @@ from sopuli.driver.oracle.accounts import (
     SURVEY_LCOUNT_QUERY,
     SURVEY_LIMITS_QUERY,
     SURVEY_LIMITS_QUERY_LEGACY,
+    SURVEY_PROFILES_QUERY,
     SURVEY_USERS_QUERY,
     SURVEY_USERS_QUERY_LEGACY,
     DictionaryUnreadableError,
+    profile_names,
     survey,
 )
 from sopuli.driver.protocol import OFFLINE_VERIFY, Scope
@@ -444,3 +446,40 @@ def test_a_refused_dba_users_read_names_the_grant() -> None:
         )
     assert raised.value.code == "ORA-00942"
     assert "DBA_USERS" in str(raised.value)
+
+
+# --------------------------------------------- the target's profiles (#1390) ---
+
+
+def test_every_profile_name_is_read_in_one_unbound_statement() -> None:
+    cursor = _Cursor(
+        {SURVEY_PROFILES_QUERY: [("DEFAULT",), ("TECH_NOEXP",), ("ORA_STIG_PROFILE",)]}
+    )
+    assert profile_names(cursor) == frozenset({"DEFAULT", "TECH_NOEXP", "ORA_STIG_PROFILE"})
+    assert cursor.asked == [SURVEY_PROFILES_QUERY]
+    assert cursor.binds == [None]
+    assert SURVEY_PROFILES_QUERY == "select distinct profile from dba_profiles"
+
+
+def test_a_refused_profile_list_names_the_view() -> None:
+    cursor = _Cursor({SURVEY_PROFILES_QUERY: _ora("ORA-00942", "table or view does not exist")})
+    with pytest.raises(DictionaryUnreadableError) as raised:
+        profile_names(cursor)
+    assert raised.value.code == "ORA-00942"
+    assert "DBA_PROFILES" in str(raised.value)
+
+
+def test_the_session_surveys_its_profiles(session_module: Any) -> None:
+    class _Profiles(_Connection):
+        def cursor(self) -> Any:
+            return _Cursor({SURVEY_PROFILES_QUERY: [("DEFAULT",)]})
+
+    session = session_module.OracleSession(
+        connection=_Profiles(),
+        target=ExpandedTarget(
+            target=Target(name="orders", type="oracle", dsn="db.example.com:1521/orders"),
+            index=0,
+        ),
+        correlation_id="00000000-0000-0000-0000-000000000000",
+    )
+    assert session.survey_profiles() == frozenset({"DEFAULT"})

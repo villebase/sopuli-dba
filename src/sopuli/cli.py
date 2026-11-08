@@ -5663,7 +5663,11 @@ def report_accounts_command(
     document.results = report_view.build_results(reports)
     document.finish(
         report_states.exit_code(
-            rows, unreachable=unreachable, unsupported=unsupported, targets=len(reports)
+            rows,
+            unreachable=unreachable,
+            unsupported=unsupported,
+            targets=len(reports),
+            missing=[missing for report in reports for missing in report.missing],
         ),
         report_view.summarise(reports),
     )
@@ -5693,9 +5697,10 @@ def _report_target(
         except Exception as error:  # noqa: BLE001 -- a per-target finding
             return report_view.TargetReport(target=target.name, error=_finding(error))
         survey = getattr(session, "survey_accounts", None)
-        if survey is None:
+        survey_profiles = getattr(session, "survey_profiles", None)
+        if survey is None or survey_profiles is None:
             # No driver but Oracle's reaches this command (the registry), and
-            # Oracle's session has the method. A driver that does is not
+            # Oracle's session has both methods. A driver that does is not
             # written for this report: not checked there, never unreachable.
             missing = DriverError(f"{target.name}: this driver cannot survey its accounts")
             return report_view.TargetReport(
@@ -5703,6 +5708,7 @@ def _report_target(
             )
         try:
             surveyed = survey()
+            profiles = survey_profiles()
         except Exception as error:  # noqa: BLE001 -- a per-target finding
             # Connected, then could not read: said as such, not as "could not
             # connect", though the target still gave no answer (exit 1).
@@ -5714,6 +5720,7 @@ def _report_target(
             release=session.scope().release,
             read=len(surveyed),
             rows=report_states.evaluate(target.name, config, surveyed),
+            missing=report_states.missing_profiles(target.name, config, profiles),
         )
     finally:
         if session is not None:

@@ -1126,6 +1126,10 @@ SURVEY_LIMITS_QUERY_LEGACY = (
     "where p.resource_name in ('PASSWORD_LIFE_TIME', 'FAILED_LOGIN_ATTEMPTS')"
 )
 
+#: Every profile on this target, so a report can say that a profile the config
+#: expects is missing (#1390). ``DBA_PROFILES`` is in the baseline grant set.
+SURVEY_PROFILES_QUERY = "select distinct profile from dba_profiles"
+
 #: Every account's failed-login count, behind the optional ``SELECT ON
 #: SYS.USER$`` grant and sent only with ``offline_verify``. ``NAME`` and
 #: ``LCOUNT`` only: no verifier column. ``TYPE# = 1`` is a user; roles are 0.
@@ -1265,6 +1269,16 @@ def survey(
             )
         )
     return tuple(sorted(surveyed, key=lambda account: account.name))
+
+
+def profile_names(cursor: Cursor) -> frozenset[str]:
+    """Every profile on this target, as ``DBA_PROFILES`` spells it, for UC-5.
+
+    One statement, nothing bound. A refused read raises
+    :class:`DictionaryUnreadableError`, as :func:`survey` does.
+    """
+    _, rows = first_shape(cursor, (SURVEY_PROFILES_QUERY,), "DBA_PROFILES", fetch_all)
+    return frozenset(str(row[0]) for row in rows)
 
 
 #: Why no failed-login count was read, where the optional grant was not made.

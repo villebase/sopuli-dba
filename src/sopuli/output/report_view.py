@@ -19,10 +19,12 @@ from sopuli.report_accounts import (
     ACCOUNT_MISSING,
     NO_RULE,
     NOT_CHECKED,
+    PROFILE_MISSING,
     REPORT_OK,
     REPORT_PROBLEM,
     UNDECLARED,
     AccountRow,
+    MissingProfile,
 )
 
 #: The `account` of a result that is about a target and no account.
@@ -42,6 +44,9 @@ class TargetReport:
     release: str | None = None
     read: int = 0
     rows: tuple[AccountRow, ...] = ()
+    #: Each profile the file expects here that the target does not have: one
+    #: problem for the target, not one per account (#1390).
+    missing: tuple[MissingProfile, ...] = ()
     error: Error | None = None
     #: The target is of a product this report is not written for, refused
     #: before connecting. Not checked, rather than unreachable (UC-5 §3).
@@ -91,6 +96,10 @@ def _section(report: TargetReport, *, show_all: bool) -> list[str]:
             what = "could not connect"
         return [f"{paint(report.target, Role.HEADING)}  {what}: {report.error.message}"]
     lines = [f"{paint(report.target, Role.HEADING)}  ({_head(report)})"]
+    lines.extend(
+        f"  {paint('profile missing', Role.BAD)}: {_missing_detail(missing)}"
+        for missing in report.missing
+    )
     shown = [row for row in report.rows if show_all or row.state != REPORT_OK]
     if shown:
         lines.extend(
@@ -123,6 +132,8 @@ def _section(report: TargetReport, *, show_all: bool) -> list[str]:
 def _head(report: TargetReport) -> str:
     counts = _counts(report.rows)
     parts = [report.release or "release unknown", f"{_count(report.read, 'account')} read"]
+    if report.missing:
+        parts.append(f"{_count(len(report.missing), 'profile')} missing")
     parts.extend(
         f"{counts[state]} {label}"
         for state, label in (
@@ -142,6 +153,14 @@ def _counts(rows: Sequence[AccountRow]) -> dict[str, int]:
         # A missing account is a problem in the head line's count.
         counts[REPORT_PROBLEM if row.state == ACCOUNT_MISSING else row.state] += 1
     return counts
+
+
+def _missing_detail(missing: MissingProfile) -> str:
+    """What a missing profile's finding says, in the table and in the JSON."""
+    return (
+        f"{missing.profile} does not exist on this target; "
+        f"expected by {' and '.join(missing.expected_by)}"
+    )
 
 
 def _count(number: int, noun: str) -> str:
@@ -194,8 +213,24 @@ def build_results(reports: Sequence[TargetReport]) -> list[dict[str, Any]]:
                 }
             )
             continue
+        results.extend(_missing_result(missing) for missing in report.missing)
         results.extend(_result(row) for row in report.rows)
     return results
+
+
+def _missing_result(missing: MissingProfile) -> dict[str, Any]:
+    """A profile missing on a target: about the target, so no account."""
+    return {
+        "account": ABSENT,
+        "target": missing.target,
+        "state": PROFILE_MISSING,
+        "changed": False,
+        "profile": missing.profile,
+        "expected_by": list(missing.expected_by),
+        "findings": [
+            {"check": "profile", "outcome": "problem", "detail": _missing_detail(missing)}
+        ],
+    }
 
 
 def _result(row: AccountRow) -> dict[str, Any]:
@@ -222,16 +257,19 @@ def summarise(reports: Sequence[TargetReport]) -> Summary:
     """The run's counts. ``failed`` counts unreachable targets and problems."""
     rows = [row for report in reports for row in report.rows]
     unreachable, unsupported = target_counts(reports)
-    problems = sum(1 for row in rows if row.state in (REPORT_PROBLEM, ACCOUNT_MISSING))
+    missing = sum(len(report.missing) for report in reports)
+    problems = sum(1 for row in rows if row.state in (REPORT_PROBLEM, ACCOUNT_MISSING)) + missing
     counts: dict[str, int] = {}
     for row in rows:
         counts[row.state] = counts.get(row.state, 0) + 1
+    if missing:
+        counts[PROFILE_MISSING] = missing
     if unreachable:
         counts[ERROR] = unreachable
     if unsupported:
         counts[NOT_CHECKED] = counts.get(NOT_CHECKED, 0) + unsupported
     return Summary(
-        total=len(rows) + unreachable + unsupported,
+        total=len(rows) + missing + unreachable + unsupported,
         ok=sum(1 for row in rows if row.state == REPORT_OK),
         changed=0,
         failed=problems + unreachable,

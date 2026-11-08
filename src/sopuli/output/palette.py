@@ -52,7 +52,14 @@ from sopuli.check import (
     UNVERIFIABLE,
 )
 from sopuli.generate import VAULT_ONLY
-from sopuli.report_accounts import NO_RULE, NOT_CHECKED, REPORT_OK, REPORT_PROBLEM, UNDECLARED
+from sopuli.report_accounts import (
+    NO_RULE,
+    NOT_CHECKED,
+    PROFILE_MISSING,
+    REPORT_OK,
+    REPORT_PROBLEM,
+    UNDECLARED,
+)
 from sopuli.reset import RESET
 from sopuli.store.protocol import DEGRADED, OK, UNREACHABLE
 
@@ -183,6 +190,7 @@ _STATE_ROLES: dict[str, Role] = {
     # wrong, not that a credential is healthy, so `IN_SYNC` stays the only state
     # a reader can stop at.
     REPORT_PROBLEM: Role.BAD,
+    PROFILE_MISSING: Role.BAD,
     NOT_CHECKED: Role.INCONCLUSIVE,
     NO_RULE: Role.INCONCLUSIVE,
     UNDECLARED: Role.INCONCLUSIVE,

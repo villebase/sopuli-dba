@@ -52,6 +52,7 @@ from sopuli.driver.oracle.accounts import (
     is_common,
     login_state,
     password_constraints,
+    profile_names,
     resolve_name,
     resolve_profile,
     resolve_role,
@@ -454,6 +455,16 @@ class OracleSession(ClosesConnection):
                 user_dollar=scope.supports(OFFLINE_VERIFY),
                 application=scope.type in APPLICATION_SCOPES,
             )
+
+    def survey_profiles(self) -> frozenset[str]:
+        """Every profile on this target, for UC-5's reports (#1390).
+
+        Oracle only, and not in the :class:`~sopuli.driver.protocol.Session`
+        protocol, like :meth:`survey_accounts`. Read-only, on the baseline grant
+        set (:func:`~sopuli.driver.oracle.accounts.profile_names`).
+        """
+        with traced_cursor(self.connection) as cursor:
+            return profile_names(cursor)
 
     def survey_privileges(self, accounts: Sequence[str], *, public: bool) -> GrantSurvey:
         """Every privilege ``accounts`` hold, with each path, for UC-5's reports.

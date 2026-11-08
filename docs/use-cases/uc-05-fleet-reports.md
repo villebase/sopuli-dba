@@ -167,7 +167,17 @@ count cannot be read truthfully, the report shows `unknown`, never 0.
 
    Only the settings a rule lists are compared.
 
-A profile missing on a target is one finding, not one per account.
+**A profile missing on a target is one finding for the target**, however many
+accounts are expected on it. A profile is expected on a target where a rule
+that covers the target names it, or where an application's policy names it
+for an account bound there. Where it is expected and absent, the report says
+so once, under the target's head line, and it is a problem: the run exits 3.
+Each account expected on it still shows its own wrong-profile problem, because
+it is on another profile. A `db_profiles` entry alone expects nothing: it says
+what a profile's limits must be where the profile is, not that every target
+has it. Nor does a personal rule's `profile:`, which only selects accounts.
+The survey reads the target's profile names from `DBA_PROFILES`, which the
+service account already reads (#1390).
 
 ---
 

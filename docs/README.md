@@ -64,7 +64,7 @@ on which Oracle release, and what it showed.
 | File | Purpose |
 |---|---|
 | [schemas/sopuli-config-3.7.schema.json](schemas/sopuli-config-3.7.schema.json) | JSON Schema (2020-12) for the config file (P3). Generated from the config layer by `python -m sopuli.config.schema` — never edited by hand |
-| [schemas/sopuli-run-1.83.schema.json](schemas/sopuli-run-1.83.schema.json) | JSON Schema (2020-12) for the `--output json` document — the current one; earlier minors stay published beside it, with the exceptions that `design/03-json-output.md` §8 names, because a build emitting `schema_version: "1.20"` has to be able to fetch what it validates against |
+| [schemas/sopuli-run-1.84.schema.json](schemas/sopuli-run-1.84.schema.json) | JSON Schema (2020-12) for the `--output json` document — the current one; earlier minors stay published beside it, with the exceptions that `design/03-json-output.md` §8 names, because a build emitting `schema_version: "1.20"` has to be able to fetch what it validates against |
 | [schemas/sopuli-event-1.24.schema.json](schemas/sopuli-event-1.24.schema.json) | JSON Schema for `--output jsonl` events |
 | [schemas/example-creds-check-drift.json](schemas/example-creds-check-drift.json) | Worked example: a scheduled check finding drift in one of two PDBs |
 | [schemas/example-creds-status-rollover.json](schemas/example-creds-status-rollover.json) | Worked example: `creds status` with a rollover window open, a password in its grace period, and a run-level warning |
@@ -1005,8 +1005,9 @@ install, and in what form.
 ### UC-5 — account, privilege and rotation reports across a fleet
 
 Specified in [`use-cases/uc-05-fleet-reports.md`](use-cases/uc-05-fleet-reports.md),
-and not built. It reads every declared target, changes nothing, and is the only
-place that lists the accounts the config does not declare
+and built on Oracle: `report accounts`, `report privileges` and
+`report history`. It reads every declared target, changes nothing, and is the
+only place that lists the accounts the config does not declare
 ([#1376](decisions/log.md#1376)).
 
 ### UC-1b — self-rotation, where there is no admin credential

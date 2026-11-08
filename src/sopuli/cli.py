@@ -83,6 +83,7 @@ from sopuli import generate as staging
 from sopuli import plan as plan_builder
 from sopuli import repair as repair_module
 from sopuli import report_accounts as report_states
+from sopuli import report_history as history_states
 from sopuli import report_privileges as privilege_states
 from sopuli import rotate as rotation
 from sopuli import status as status_states
@@ -277,7 +278,7 @@ from sopuli.orphans import commands as orphan_commands
 from sopuli.orphans import declared_by as orphans_declared_by
 from sopuli.orphans import find as find_orphans
 from sopuli.orphans import survey_prefix
-from sopuli.output import privileges_view, report_view
+from sopuli.output import history_view, privileges_view, report_view
 from sopuli.output.about_view import render as render_about
 from sopuli.output.account_list_view import build_result as build_account_list_result
 from sopuli.output.account_list_view import render_account_list
@@ -406,7 +407,13 @@ from sopuli.store.credentials import (
 from sopuli.store.credentials import apply_patch as write_credential
 from sopuli.store.native_view import LayoutChangedError, NativeStagedStore
 from sopuli.store.native_view import wrap as native_staged
-from sopuli.store.protocol import NativeNames, PinnedVersionError, VersionLimited
+from sopuli.store.protocol import (
+    VERSIONING,
+    NativeNames,
+    PinnedVersionError,
+    VersionHistory,
+    VersionLimited,
+)
 from sopuli.store.survey import VaultReport
 from sopuli.store.survey import survey as vault_survey
 from sopuli.strategy import STRATEGIES
@@ -5852,6 +5859,315 @@ def _privileges_target(
         if session is not None:
             with suppress(Exception):
                 session.close()
+
+
+@report_group.command("history")
+@target_selector_options
+@click.option(
+    "--account",
+    "account",
+    metavar="NAME",
+    help="Show only this account.",
+)
+@global_options
+def report_history_command(
+    selectors: tuple[str, ...],
+    targets: tuple[str, ...],
+    groups: tuple[str, ...],
+    account: str | None,
+    run: Invocation,
+) -> str:
+    """Show when each managed password was rotated or reset, from the store.
+
+    For each application account, every change of its own `rotated_at` stamp
+    the store still keeps; for each personal account, every version of its
+    reset record. Each history says where it starts and how many earlier
+    versions are gone. The database's own date of the last password change is
+    shown beside it and never compared. No password is read into the report.
+
+    Exit 0 when every history was read, 1 when a target or a store gave no
+    answer, and 4 when a history has a gap or the store keeps no versions.
+    Only Oracle can run this report yet.
+    """
+    document = run.document
+    selection = selected(selectors, targets, (), groups, ())
+    refuse_unknown(run.config, selection)
+    config = _narrow(run.config, selection)
+    document.selection = selection.as_json() or None
+    config = binding_stores.complete(config, env=os.environ, estate=run.config)
+
+    reads: dict[tuple[str, str], _SecretVersions | Error] = {}
+    reports = [
+        _history_target(target, run, config, wanted=account, reads=reads)
+        for target in config.expanded_targets
+    ]
+    histories = [one for report in reports for one in report.accounts]
+    unreachable, unsupported = history_view.target_counts(reports)
+    document.results = history_view.build_results(reports)
+    document.finish(
+        history_states.exit_code(
+            histories,
+            unreachable=unreachable,
+            unsupported=unsupported,
+            targets=len(reports),
+            unanswered=sum(len(report.failures) for report in reports),
+        ),
+        history_view.summarise(reports),
+    )
+    return history_view.render(reports)
+
+
+@dataclass(frozen=True)
+class _SecretVersions:
+    """What one path's versions gave, read once for every account in it."""
+
+    history: VersionHistory | None
+    documents: Mapping[int, Any]
+    versioning: bool
+    native: bool = False
+    latest: Any = None
+    attributes: Mapping[str, Any] = field(default_factory=dict)
+
+
+def _secret_versions(store: SecretStore, path: str) -> _SecretVersions:
+    """Every readable version of ``path``, and what is needed to read it.
+
+    A native-staging secret is read without the adapter, so each version still
+    carries its ``generated_at`` (UC-1 §3). A deleted or destroyed version is
+    not asked for: the history counts it as gone or as a gap.
+    """
+    native = isinstance(store, NativeStagedStore) and store.is_native(path)
+    source = store.inner if isinstance(store, NativeStagedStore) and native else store
+    versioning = VERSIONING in source.supports()
+    if not versioning:
+        latest = source.read(path)
+        return _SecretVersions(None, {}, False, latest=latest.data if latest else None)
+    history = source.versions(path)
+    if history is None:
+        # Unknown here, or held with no version listed, as OCI lists none of a
+        # secret pending deletion. Only the latest read tells them apart.
+        latest = source.read(path)
+        return _SecretVersions(None, {}, True, latest=latest.data if latest else None)
+    documents: dict[int, Any] = {}
+    for info in history.versions:
+        if info.deleted or info.destroyed:
+            continue
+        stored = source.read(path, version=info.version)
+        if stored is not None:
+            documents[info.version] = stored.data
+    attributes: Mapping[str, Any] = {}
+    if native:
+        latest = source.read(path)
+        attributes = latest.attributes if latest is not None else {}
+    return _SecretVersions(history, documents, True, native=native, attributes=attributes)
+
+
+def _read_once(
+    reads: dict[tuple[str, str], _SecretVersions | Error],
+    stores: Mapping[str, SecretStore],
+    vault: str,
+    path: str,
+) -> _SecretVersions | Error:
+    key = (vault, path)
+    if key not in reads:
+        try:
+            reads[key] = _secret_versions(stores[vault], path)
+        except Exception as error:  # noqa: BLE001 -- a per-account finding
+            reads[key] = _finding(error)
+    return reads[key]
+
+
+def _history_target(
+    target: ExpandedTarget,
+    run: Invocation,
+    config: Config,
+    *,
+    wanted: str | None,
+    reads: dict[tuple[str, str], _SecretVersions | Error],
+) -> history_view.TargetHistory:
+    """One target: its managed accounts' histories, and the database's dates.
+
+    A target of another product is refused before anything is read. A target
+    that cannot be reached still gets its histories, which come from the
+    store, without the database's dates.
+    """
+    session = None
+    error: Error | None = None
+    read_failed = False
+    try:
+        try:
+            session = _open_session(target, run, config)
+        except (DriverNotImplementedError, NotWrittenError) as refused:
+            return history_view.TargetHistory(
+                target=target.name, error=_finding(refused), unsupported=True
+            )
+        except Exception as failed:  # noqa: BLE001 -- a per-target finding
+            error = _finding(failed)
+
+        spelled = wanted.upper() if wanted is not None else None
+        bindings = [
+            one
+            for one in config.bindings
+            if one.target == target.name and (spelled is None or one.account.upper() == spelled)
+        ]
+        found, failures = _application_histories(target.name, bindings, run, config, reads)
+        more, lost = _personal_histories(target.name, run, config, reads, spelled)
+        found.extend(more)
+        failures.extend(lost)
+
+        release = None
+        if session is not None:
+            try:
+                release = session.scope().db_version
+                found = [
+                    history_states.with_database(one, session.describe_user(one.account))
+                    for one in found
+                ]
+            except Exception as failed:  # noqa: BLE001 -- a per-target finding
+                error, read_failed = _finding(failed), True
+        return history_view.TargetHistory(
+            target=target.name,
+            release=release,
+            accounts=tuple(found),
+            failures=tuple(failures),
+            error=error,
+            read_failed=read_failed,
+            absent=wanted if wanted is not None and not found and not failures else None,
+        )
+    finally:
+        if session is not None:
+            with suppress(Exception):
+                session.close()
+
+
+def _application_histories(
+    target: str,
+    bindings: Sequence[Binding],
+    run: Invocation,
+    config: Config,
+    reads: dict[tuple[str, str], _SecretVersions | Error],
+) -> tuple[list[history_states.AccountHistory], list[history_view.StoreFailure]]:
+    found: list[history_states.AccountHistory] = []
+    failures: list[history_view.StoreFailure] = []
+    for binding in bindings:
+        kind = history_states.APPLICATION
+        if binding.secret is None or binding.vault is None:
+            found.append(
+                history_states.AccountHistory(
+                    target,
+                    binding.account,
+                    kind,
+                    not_checked=("the config resolves no store for this account",),
+                )
+            )
+            continue
+        try:
+            stores = _staged_stores(
+                _stores_for(
+                    {binding.vault}, config, token_file=run.vault_token_file, cache=run.stores
+                ),
+                run,
+            )
+        except Exception as failed:  # noqa: BLE001 -- a per-account finding
+            failures.append(history_view.StoreFailure(binding.account, kind, _finding(failed)))
+            continue
+        read = _read_once(reads, stores, binding.vault, normalise_path(binding.secret.path))
+        if isinstance(read, Error):
+            failures.append(history_view.StoreFailure(binding.account, kind, read))
+        elif read.native and read.history is not None:
+            found.append(
+                history_states.native(
+                    target, binding, read.history, read.documents, read.attributes
+                )
+            )
+        else:
+            found.append(
+                history_states.application(
+                    target,
+                    binding,
+                    read.history,
+                    read.documents,
+                    versioning=read.versioning,
+                    latest=read.latest,
+                )
+            )
+    return found, failures
+
+
+def _personal_histories(
+    target: str,
+    run: Invocation,
+    config: Config,
+    reads: dict[tuple[str, str], _SecretVersions | Error],
+    spelled: str | None,
+) -> tuple[list[history_states.AccountHistory], list[history_view.StoreFailure]]:
+    """Every reset record under this target's prefix, and every personal
+    account a rule names here, which has an empty history if it has no record.
+
+    An account a predicate admits is listed only where it has a record:
+    resolving the predicate would need the database.
+    """
+    kind = history_states.PERSONAL
+    named = {
+        name.upper(): name
+        for rule in rules_for(config, target)
+        for name in rule.accounts
+        if spelled is None or name.upper() == spelled
+    }
+    records = config.reset_records
+    if records is None:
+        return [
+            history_states.AccountHistory(
+                target, name, kind, note="no `reset_records:` store is declared"
+            )
+            for name in named.values()
+        ], []
+    try:
+        store = _stores_for(
+            {records.vault}, config, token_file=run.vault_token_file, cache=run.stores
+        )[records.vault]
+        paths = store.list(normalise_path(f"{records.prefix}/{target}"))
+    except Exception as failed:  # noqa: BLE001 -- the records store gave no answer
+        reported = _finding(failed)
+        return [], [history_view.StoreFailure(name, kind, reported) for name in named.values()]
+
+    found: list[history_states.AccountHistory] = []
+    failures: list[history_view.StoreFailure] = []
+    seen: set[str] = set()
+    for path in paths:
+        read = _read_once(reads, {records.vault: store}, records.vault, path)
+        name = _record_account(read, path)
+        if spelled is not None and name.upper() != spelled:
+            continue
+        seen.add(name.upper())
+        if isinstance(read, Error):
+            failures.append(history_view.StoreFailure(name, kind, read))
+            continue
+        found.append(
+            history_states.personal(
+                target,
+                name,
+                read.history,
+                read.documents,
+                versioning=read.versioning,
+                latest=read.latest,
+            )
+        )
+    found.extend(
+        history_states.AccountHistory(target, name, kind, note="no reset record")
+        for upper, name in sorted(named.items())
+        if upper not in seen
+    )
+    return found, failures
+
+
+def _record_account(read: _SecretVersions | Error, path: str) -> str:
+    """The account a reset record is for, as its newest readable version says."""
+    if not isinstance(read, Error):
+        for document in [read.latest, *(read.documents[v] for v in sorted(read.documents))][::-1]:
+            if isinstance(document, Mapping) and isinstance(document.get("account"), str):
+                return str(document["account"])
+    return path.rsplit("/", 1)[-1].upper()
 
 
 @cli.group("creds")

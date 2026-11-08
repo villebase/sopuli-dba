@@ -88,6 +88,10 @@ ESTATE: dict[str, tuple[SurveyedAccount, ...]] = {
 }
 
 
+#: Every target has the profiles the rules name.
+PROFILES = frozenset({"DEFAULT", "APP_USERS", "TECH_NOEXP"})
+
+
 class FakeSession:
     def __init__(self, target: str) -> None:
         self.target = target
@@ -102,6 +106,13 @@ class FakeSession:
 
     def survey_accounts(self) -> tuple[SurveyedAccount, ...]:
         return ESTATE[self.target]
+
+    def profiles(self) -> frozenset[str]:
+        return PROFILES
+
+    def survey_with_profiles(self) -> tuple[tuple[SurveyedAccount, ...], frozenset[str]]:
+        # Through the two methods above, so a test can replace either one.
+        return self.survey_accounts(), self.profiles()
 
     def close(self) -> None:
         return None
@@ -208,6 +219,49 @@ def test_a_clean_target_exits_0(write_config: WriteConfig, sessions: Any) -> Non
     result = report(write_config, "--target", "qa-alpha")
     assert result.exit_code == ExitCode.SUCCESS, result.output
     assert "2 accounts OK" in click.unstyle(result.output)
+
+
+def test_a_profile_missing_on_a_target_is_one_problem_exit_3(
+    write_config: WriteConfig, sessions: dict[str, Opener]
+) -> None:
+    """#1390: qa-alpha lacks TECH_NOEXP, which the ORDS_* rule names. No
+    account there is on it, so only the target-level finding says so."""
+
+    class NoTechProfile(FakeSession):
+        def profiles(self) -> frozenset[str]:
+            return frozenset({"DEFAULT", "APP_USERS"})
+
+    sessions["qa-alpha"] = lambda target, run, config: NoTechProfile(target.name)
+    result = report(write_config, "--target", "qa-alpha")
+    text = click.unstyle(result.output)
+    assert result.exit_code == ExitCode.DRIFT, result.output
+    assert "qa-alpha  (23.26.3.0.0, 2 accounts read, 1 profile missing)" in text
+    assert (
+        "  profile missing: TECH_NOEXP does not exist on this target; "
+        "expected by a reports.accounts rule"
+    ) in text
+
+    document = json.loads(report(write_config, "--target", "qa-alpha", json_out=True).output)
+    Draft202012Validator(RUN_SCHEMA).validate(document)
+    [missing] = [row for row in document["results"] if row["state"] == "PROFILE_MISSING"]
+    assert missing == {
+        "account": "-",
+        "target": "qa-alpha",
+        "state": "PROFILE_MISSING",
+        "changed": False,
+        "missing_profile": "TECH_NOEXP",
+        "expected_by": ["reports.accounts"],
+        "findings": [
+            {
+                "check": "profile",
+                "outcome": "problem",
+                "detail": "TECH_NOEXP does not exist on this target; "
+                "expected by a reports.accounts rule",
+            }
+        ],
+    }
+    assert document["summary"]["failed"] == 1
+    assert document["summary"]["by_state"]["PROFILE_MISSING"] == 1
 
 
 def test_only_not_checked_exits_4(
@@ -339,6 +393,8 @@ reports:
       settings: {{ password_lifetime: unlimited }}
     - accounts: [acme_rptt_gone]
       profile: ACME_RPTT_PROF
+    - accounts: ["ACME_RPTT_NONE_*"]
+      profile: ACME_RPTT_NOPROF
 """
 
 
@@ -387,6 +443,12 @@ def test_a_live_report_finds_the_expiring_password_and_the_missing_account(
         } in by_name["ACME_RPTT_USER"]["findings"]
         assert by_name["ACME_RPTT_GONE"]["state"] == "ACCOUNT_MISSING"
         assert "SYSTEM" not in by_name
+        # A rule's profile the database lacks is one result for the target
+        # (#1390); the profile the other rule names exists, so it is not one.
+        missing = [row for row in document["results"] if row["state"] == "PROFILE_MISSING"]
+        assert [(row["account"], row["missing_profile"]) for row in missing] == [
+            ("-", "ACME_RPTT_NOPROF")
+        ]
     finally:
         oracle_harness.execute(
             sysdba,

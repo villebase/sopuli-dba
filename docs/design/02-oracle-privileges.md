@@ -785,7 +785,7 @@ account, so none binds anything, and none reads a password or verifier column.
 | Statement | Reads | Needs |
 |---|---|---|
 | every account: `USERNAME`, `ACCOUNT_STATUS`, `PROFILE`, `COMMON`, `ORACLE_MAINTAINED` | `DBA_USERS` | the grants above |
-| `PASSWORD_LIFE_TIME` and `FAILED_LOGIN_ATTEMPTS` for every profile, as shown, resolved through this container's `DEFAULT` profile, and the profile's `COMMON` | `DBA_PROFILES` | the grants above |
+| `PASSWORD_LIFE_TIME` and `FAILED_LOGIN_ATTEMPTS` for every profile, as shown, resolved through this container's `DEFAULT` profile, and the profile's `COMMON`. Every profile has these rows, so they also give the target's profile names, which `report accounts` compares with the profiles the config expects (`survey_with_profiles`, #1390) | `DBA_PROFILES` | the grants above |
 | `NAME` and `LCOUNT` for every user | `SYS.USER$` | the optional grant; sent only with `offline_verify` |
 
 On a release that answers `ORA-00904` to `COMMON` or `ORACLE_MAINTAINED`, as
@@ -1394,22 +1394,25 @@ control, not optional housekeeping. Enable it before the first rotation, not
 after the first incident. `sql/oracle/01_audit_policy.sql` creates it.
 
 **Correlation.** The tool calls `DBMS_SESSION.SET_IDENTIFIER(<correlation_id>)`
-on every session it opens, so its UUID lands in `UNIFIED_AUDIT_TRAIL.CLIENT_ID`. That
-joins the tool's JSON output, the database trail and the vault's secret
-metadata. This query finds one run's records:
+on every session it opens, so its UUID lands in
+`UNIFIED_AUDIT_TRAIL.CLIENT_IDENTIFIER`. That joins the tool's JSON output and
+the database trail. How a vault version is tied to its run is in
+`03-json-output.md` §2, `invocation.correlation_id`. This query finds one run's
+records:
 
 ```sql
 SELECT event_timestamp, dbusername, action_name, object_name, return_code
   FROM unified_audit_trail
- WHERE client_id = '9f1c2e7a-4d3b-4a51-9d2c-0b7f8e6a1234'
+ WHERE client_identifier = '9f1c2e7a-4d3b-4a51-9d2c-0b7f8e6a1234'
  ORDER BY event_timestamp;
 ```
 
-On 11.2, use `AUDIT ALTER USER` and `DBA_AUDIT_TRAIL` instead. `CLIENT_ID`
-exists there too.
+On 11.2, use `AUDIT ALTER USER` and `DBA_AUDIT_TRAIL` instead, where the
+column is `CLIENT_ID`. On 26ai Free 23.26.3.0.0, `UNIFIED_AUDIT_TRAIL` has
+`CLIENT_IDENTIFIER` and no `CLIENT_ID`, and `DBA_AUDIT_TRAIL` has `CLIENT_ID`.
 
 - **The identifier is set on every session**, not only on sessions that change
-  something. A session in the trail with no `CLIENT_ID` is one somebody must
+  something. A session in the trail with no client identifier is one somebody must
   explain later, and setting it costs one round trip on a connection that is
   already open.
 - **On a session that runs statements, it is set before anything else runs**,
@@ -1430,7 +1433,7 @@ exists there too.
 
 Tier 1 checks it from the database's side, by reading
 `SYS_CONTEXT('USERENV','CLIENT_IDENTIFIER')`. That is the value
-`UNIFIED_AUDIT_TRAIL.CLIENT_ID` comes from, so the test needs no audit policy on
+`UNIFIED_AUDIT_TRAIL.CLIENT_IDENTIFIER` comes from, so the test needs no audit policy on
 the test container.
 
 Also audit failed logons by the service account. That is what credential

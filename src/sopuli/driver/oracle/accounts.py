@@ -1175,7 +1175,23 @@ _HELD_IN_APPLICATION = {
 def survey(
     cursor: Cursor, *, own_container: bool, user_dollar: bool, application: bool = False
 ) -> tuple[SurveyedAccount, ...]:
-    """Every account on this target, ordered by name, for UC-5's reports.
+    """Every account on this target, ordered by name: :func:`survey_with_profiles`'
+    accounts, for a report that does not need the profile names."""
+    accounts, _ = survey_with_profiles(
+        cursor, own_container=own_container, user_dollar=user_dollar, application=application
+    )
+    return accounts
+
+
+def survey_with_profiles(
+    cursor: Cursor, *, own_container: bool, user_dollar: bool, application: bool = False
+) -> tuple[tuple[SurveyedAccount, ...], frozenset[str]]:
+    """Every account on this target, ordered by name, for UC-5's reports, and
+    every profile on it.
+
+    The profile names come from the limits statement's rows: ``DBA_PROFILES``
+    lists every resource of every profile, so each profile has a
+    ``PASSWORD_LIFE_TIME`` row. No statement is added for them (#1390).
 
     ``own_container`` is whether this container holds every account's own lock,
     limits and failed-login count: true in ``CDB$ROOT`` and in a non-CDB. In
@@ -1264,7 +1280,8 @@ def survey(
                 unreadable=tuple(reasons),
             )
         )
-    return tuple(sorted(surveyed, key=lambda account: account.name))
+    accounts = tuple(sorted(surveyed, key=lambda account: account.name))
+    return accounts, frozenset(str(row[0]) for row in limit_rows)
 
 
 #: Why no failed-login count was read, where the optional grant was not made.

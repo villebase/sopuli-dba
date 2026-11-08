@@ -6,7 +6,7 @@ for text output that keep it consistent with both.
 `sopuli/output/` produces them, and CI validates the output against the
 published schemas.
 
-Schemas: [`../schemas/sopuli-run-1.85.schema.json`](../schemas/sopuli-run-1.85.schema.json),
+Schemas: [`../schemas/sopuli-run-1.86.schema.json`](../schemas/sopuli-run-1.86.schema.json),
 [`../schemas/sopuli-event-1.24.schema.json`](../schemas/sopuli-event-1.24.schema.json)
 Examples, each from a real run:
 [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json),
@@ -356,7 +356,7 @@ its `config` section emits.
 | `production` | the `prod` environment wherever it appears | `environment` |
 | `good` | a state a reader can stop reading at | `state` = `IN_SYNC` |
 | `attention` | something true that a person has to act on, the run being fine | `state` ∈ `DRIFT`, `PENDING_APPLY`, `ROLLOVER_ACTIVE`, `VAULT_ONLY`, `RESET` |
-| `bad` | the tool could not do the job, or the estate is not in a state it can | `state` ∈ `ERROR`, `ACCOUNT_MISSING`, `LOCKED`, `EXPIRED`, `REPORT_PROBLEM` |
+| `bad` | the tool could not do the job, or the estate is not in a state it can | `state` ∈ `ERROR`, `ACCOUNT_MISSING`, `LOCKED`, `EXPIRED`, `REPORT_PROBLEM`, `PROFILE_MISSING` |
 | `inconclusive` | no answer, and the absence is the finding | `state` ∈ `UNVERIFIABLE`, `SKIPPED`, `DECLARED`, `NOT_CHECKED`, `NO_RULE`, `UNDECLARED`, `REPORT_OK` |
 
 The same roles also colour a second vocabulary, the health of a store or an
@@ -458,8 +458,8 @@ This sketch shows the run document's shape:
                  account_status, changed, actions[], verification, rollover,
                  password_age_days, started_at, duration_ms, error, warnings[],
                  overridden[], redraws, kind, findings[], failed_logins,
-                 privileges, history, failed_logins_reason, declared_by,
-                 reset_at } ],
+                 privileges, history, failed_logins_reason, missing_profile,
+                 expected_by[], declared_by, reset_at } ],
   targets    [ { target, reachable, scope, asserted, duration_ms, privileges,
                  error, warnings[] } ],
   install    { backends[], drivers[] },
@@ -860,16 +860,27 @@ and found nothing, which is a different statement.
 
 ### `invocation.correlation_id`
 
-A UUID for each run. The tool also:
+A UUID for each run. The tool also sets it as the Oracle **client identifier**
+on every session (`DBMS_SESSION.SET_IDENTIFIER`), so it lands in
+`UNIFIED_AUDIT_TRAIL.CLIENT_IDENTIFIER`. So one id joins the tool's JSON and
+the database audit trail. With it, "something rotated at 03:00 and half of it
+failed" has an answer.
 
-- sets it as the Oracle **client identifier** on every session
-  (`DBMS_SESSION.SET_IDENTIFIER`), so it lands in
-  `UNIFIED_AUDIT_TRAIL.CLIENT_ID`;
-- writes it into the **vault secret metadata** on every write.
+**An application secret's versions do not carry the id.** Such a version is
+tied to its run in these ways:
 
-So one id joins the tool's JSON, the database audit trail and the vault's
-version history. With it, "something rotated at 03:00 and half of it failed"
-has an answer.
+- the run document's `results[].secret.version`, beside
+  `invocation.correlation_id`;
+- under `--output jsonl`, the `vault.write` and `vault.promote` events, which
+  carry the id and the version number;
+- the `rotated_at` stamp a promotion writes, a time during the run;
+- the lock record, which names the run's id. A released record keeps it until
+  the next run takes the lock, and on KV v2 the lock path's older versions
+  keep it after that.
+
+[#1374](https://github.com/villebase/sopuli-dba/issues/1374) chose this over
+writing the id into each version. A **personal account's reset record** does
+carry the id (UC-2 §3.1), so a reset is joined to its run directly.
 
 ### `invocation.options`
 
@@ -2257,17 +2268,27 @@ or renaming one is major.
 **`state`** — `IN_SYNC`, `DRIFT`, `PENDING_APPLY`, `ROLLOVER_ACTIVE`,
 `ACCOUNT_MISSING`, `LOCKED`, `EXPIRED`, `UNVERIFIABLE`, `SKIPPED`, `ERROR`,
 `VAULT_ONLY`, `DECLARED`, `RESET`, `REPORT_OK`, `REPORT_PROBLEM`, `NOT_CHECKED`,
-`NO_RULE`, `UNDECLARED`
+`NO_RULE`, `UNDECLARED`, `PROFILE_MISSING`
 
-**`report accounts` has five states of its own** (UC-5 §3): every check had a
+**`report accounts` has six states of its own** (UC-5 §3): every check had a
 rule, ran and passed (`REPORT_OK`); a check found a problem
 (`REPORT_PROBLEM`); a check could not run truthfully on this target
 (`NOT_CHECKED`); nothing in the file states a profile or a setting for the
-account (`NO_RULE`); the file does not declare the account (`UNDECLARED`). An
+account (`NO_RULE`); the file does not declare the account (`UNDECLARED`); a
+profile the file expects is not on the target (`PROFILE_MISSING`). An
 undeclared account is information and never changes the exit code. A missing
 account is `ACCOUNT_MISSING`, as in the other verbs. `REPORT_OK` is not
 `IN_SYNC`: it says the rules found nothing wrong, not that a credential is
 healthy.
+
+`PROFILE_MISSING`, from run schema 1.86, is about a target, not an account, so
+its `account` is `-`. A profile that a `reports.accounts` rule or an
+application's policy expects on the target does not exist there. It is one
+result for the target, however many accounts are expected on the profile, and
+it is a problem: the run exits 3. `missing_profile` names the profile, and
+`expected_by` says what expects it as config paths, `reports.accounts` or
+`policies.<name>`. A `db_profiles` entry alone never expects a profile to
+exist ([#1390](../use-cases/uc-05-fleet-reports.md#4-the-accounts-report)).
 
 **`VAULT_ONLY` is what `creds generate --promote` reports**: the vault holds this
 password, and no database has been asked. No other value would be true of that
@@ -3235,7 +3256,8 @@ sopuli creds check --application acme --output jsonl \
 # join to the database audit trail
 jq -r .invocation.correlation_id result.json
 # → SELECT event_timestamp, dbusername, action_name, object_name, return_code
-#     FROM unified_audit_trail WHERE client_id = '<that>' ORDER BY event_timestamp;
+#     FROM unified_audit_trail WHERE client_identifier = '<that>'
+#    ORDER BY event_timestamp;
 ```
 
 ---

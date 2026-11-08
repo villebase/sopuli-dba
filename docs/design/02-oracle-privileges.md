@@ -810,12 +810,21 @@ reason names the grant. A limit that is not a whole number, such as a
 `PASSWORD_LIFE_TIME` of a fraction of a day, is unreadable too, and the reason
 gives the value.
 
-**The privilege survey sends four statements per grantee.** UC-5's privilege
-report reads the surveyed accounts' grants through
+**The privilege survey sends four statements for each 250 grantees.** UC-5's
+privilege report reads the surveyed accounts' grants through
 `OracleSession.survey_privileges()` (`src/sopuli/driver/oracle/grants.py`).
 `PUBLIC` is a grantee only when the caller asks, and then once. Each statement
-binds the grantee's name and nothing else. None reads a password or verifier
+is anchored on `grantee IN (:g0, :g1, …)`, binds the grantees' names and
+nothing else, and gives each row its grantee. None reads a password or verifier
 column.
+
+Probe 20 (`sql/oracle/20_grant_chunk_probe.py`) timed the survey on
+23.26.3.0.0 ([measurements](../measurements.md)). One grantee per statement
+took about a minute for 303 accounts and nearly four for 1,103. Chunks of 100,
+250 and 1,000 each took a few seconds and returned the same rows. The first
+parse of a statement grows faster than its `IN` list, so with the shared pool
+flushed, chunks of 250 were twice as fast as chunks of 1,000 for 1,103
+accounts. Oracle's limit is 1,000 (`ORA-01795`).
 
 | Statement | Reads | Needs |
 |---|---|---|
@@ -836,8 +845,8 @@ release that needs it.
 A refused grant view makes its part unreadable, never empty, with the code the
 server sent and the grant that fixes it. Measured on 23.26.3.0.0, a service
 account without `grant_report_reads` gets `ORA-00942` from each view. The view
-is not asked again for the next grantee, and a narrower query shape, once
-accepted, is kept for the next grantee too. A refused `DBA_ROLE_PRIVS` raises,
+is not asked again for the next chunk of grantees, and a narrower query shape,
+once accepted, is kept for the next chunk too. A refused `DBA_ROLE_PRIVS` raises,
 as it does for every other command. `DBA_ROLES` is granted by the install but
 required by no pre-flight. Without the `role_lookup` capability the roles are
 read from `DBA_ROLE_PRIVS` alone, each role's authentication is `UNKNOWN`, and

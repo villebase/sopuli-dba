@@ -63,6 +63,7 @@ from sopuli.store.protocol import (
     Stored,
     StoreError,
     StoreHealth,
+    VersionHistory,
     WriteMechanism,
 )
 
@@ -279,6 +280,13 @@ class NativeStagedStore:
 
     def metadata(self, path: str) -> PathMetadata | None:
         return self.inner.metadata(path)
+
+    def versions(self, path: str) -> VersionHistory | None:
+        """The inner store's versions, refused where the layout is not settled,
+        as a read is: the numbers are generations on a native path and payload
+        versions on another, so they mean nothing until the layout is known."""
+        self._refuse_if_unsure(path)
+        return self.inner.versions(path)
 
     def require_cas(self, path: str) -> None:
         self.inner.require_cas(path)

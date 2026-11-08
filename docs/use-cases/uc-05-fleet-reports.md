@@ -4,10 +4,11 @@ Depends on: `../design/00-principles.md`, `../design/01-configuration.md`,
 `../design/02-oracle-privileges.md`
 
 This document specifies `sopuli report accounts`, `sopuli report privileges`
-and `sopuli report history`. **Nothing in it is built yet.** Oracle comes
-first; PostgreSQL, MySQL and MariaDB come later. §9 lists the decisions. The
-command names, flags and config keys in this document are proposals until the
-PR that builds each one fixes them.
+and `sopuli report history`. **`report accounts` and `report privileges` are
+built, on Oracle**, with the `reports:` rules (§4, §5, §7). `report history`
+is not built yet, and its name and flags are proposals until the PR that
+builds it fixes them. PostgreSQL, MySQL and MariaDB come later: on them the
+reports are refused before they connect. §9 lists the decisions.
 
 ---
 
@@ -110,21 +111,28 @@ refused the whole fleet for one old target would answer nothing.
 
 ## 4. The accounts report
 
-**Not built.** One table per target, in the config's target order. The head of
-each table names the target, the release read from it, and how many accounts
-were read, how many have a problem, how many were not checked, and how many have
-no rule. Then:
+**Built, on Oracle:** `sopuli report accounts [--all]`, with the usual target
+selectors. `docs/local-testing.md` §9a has a run. One table per target, in the
+config's target order. The head of each table names the target, the release
+read from it (`V$INSTANCE.VERSION`), and how many accounts were read, how many
+have a problem, how many were not checked, how many have no rule, and how many
+are undeclared. Then:
 
 - **problems first, worst first:** a password that will expire on an account
-  whose rule says it must not; a locked account; settings that differ from the
-  rule; a declared account missing from a target it is declared for; then
-  accounts not checked;
-- **then information, which never sets exit 3:** an account the config does
-  not declare, and failed logins on an account that is not locked;
-- **then a count of the accounts that passed everything.** A flag lists them.
+  whose rule says it must not; a locked account; the wrong profile; another
+  setting that differs from the rule; a declared account missing from a target
+  it is declared for;
+- **then the accounts not checked, with no rule, and undeclared.** An
+  undeclared account is information and never sets exit 3;
+- **then a count of the accounts that passed everything.** `--all` lists them.
 
 Every row has the account, its kind (application, technical, personal, or
-undeclared), its profile, its status, and what is wrong in plain words.
+undeclared), its profile, its status, its failed-login count (`unknown` where
+it cannot be read truthfully, never 0), its state, and what is wrong in plain
+words. The checks are the lock and whatever the rules state: a setting no rule
+names is not compared. A `personal_accounts:` rule over a **role** is not
+resolved here, because the survey reads no roles, so such an account shows as
+undeclared.
 Accounts that Oracle maintains (`ORACLE_MAINTAINED = 'Y'`) are left out unless a
 rule names them, as a rule for `DBSNMP` does. On 11.2, which has no such
 column, the report uses the same list of Oracle's own accounts that the
@@ -167,7 +175,13 @@ A profile missing on a target is one finding, not one per account.
 
 ## 5. The privilege report
 
-**Not built.** Two views, for one account or for every account on a target.
+**Built, on Oracle:** `sopuli report privileges [--detail] [--account NAME]
+[--public]`, for the same accounts `report accounts` covers.
+`docs/local-testing.md` §9a has a run. It needs the optional grant on the
+privilege views (`00_install.sql`, `grant_report_reads=Y`); without it, the
+part it could not read is *not checked* and the run exits 4. It judges nothing,
+so it never exits 3. Schema privileges (23ai) are not read yet, and the output
+says so (#1389). Two views, for one account or for every account on a target.
 
 **The summary** shows:
 
@@ -242,19 +256,28 @@ For an account the tool does not manage, only the database's date is shown.
 
 ## 7. Rules in the config
 
-**Not built.** The rules are written in words that are not specific to one
-database product, such as "the password never expires", "locks after 5 failed
-logins" or "expires within 90 days". On Oracle the values are read through the
-account's profile. A list of database profiles and their expected settings,
-and the check of an account's profile by name, are an addition for Oracle on
-top of that. On another product, a rule reports *not checked* until that
-product's driver reads the settings. The format does not change when it does.
+**Built.** The rules are the `reports:` section (`01-configuration.md` §8a),
+and `report accounts` (§4) reads them. Where a rule and a `db_profiles` entry,
+or two rules, set one setting two ways, that check is *not checked* on the
+account, and its other checks still run.
 
-- Rules name accounts by name or pattern, give them a kind and their expected
-  settings or profile, and select targets as `applications:` and
-  `personal_accounts:` do.
-- The list of database profiles cannot be called `profiles:`, because that key
-  already means run profiles (`01-configuration.md`, C10).
+The settings are written in words that are not specific to one database
+product: `password_lifetime` and `failed_login_limit`, each `unlimited` or a
+largest allowed value. On Oracle the values are read through the account's
+profile. `reports.db_profiles`, a list of database profiles and their expected
+settings, and a rule's `profile:`, the check of an account's profile by name,
+are an addition for Oracle on top of that. On another product, a rule reports
+*not checked* until that product's driver reads the settings. The format does
+not change when it does.
+
+- `reports.accounts` rules name accounts by name or `*` pattern, give them
+  their expected settings or profile, and select targets as `applications:`
+  and `personal_accounts:` do. A rule does not write a kind: the report
+  derives it from where the file declares the account.
+- The list of database profiles is `db_profiles`, not `profiles:`, because
+  that key already means run profiles (`01-configuration.md`, C10).
+- An application account's profile comes from its policy, so a rule may give
+  it settings and not a profile.
 - **There are no built-in rules.** Nothing is assumed about any kind of
   account. A technical account's password never expiring is a rule the DBA
   writes. A DBA who later rotates technical accounts with the tool may want

@@ -718,9 +718,10 @@ measured what they can read on 26ai Free 23.26.3.0.0
   are made `CONTAINER = ALL`, reading in a PDB.
 - **The privilege views need a grant each.** `DBA_SYS_PRIVS`, `DBA_TAB_PRIVS`
   and `DBA_COL_PRIVS` give `ORA-00942: table or view does not exist` until
-  `SELECT` on each is granted. All three grants are `SELECT` only. They are
-  added to `00_install.sql` as an optional grant by the PR that first reads
-  them, not before.
+  `SELECT` on each is granted. All three grants are `SELECT` only.
+  `00_install.sql` makes them as parameter 8, `grant_report_reads`, off by
+  default. No other command reads these views, and `doctor` does not probe
+  them.
 - **A column grant is in `DBA_COL_PRIVS` only.** `UPDATE` on one column of a
   table has no row in `DBA_TAB_PRIVS`, so a report that reads only
   `DBA_TAB_PRIVS` misses it.
@@ -764,6 +765,79 @@ measured what they can read on 26ai Free 23.26.3.0.0
   privilege views. `PASSWORD_CHANGE_DATE` is absent on 18.4.0.0.0,
   12.2.0.1.0 and 11.2.0.2.0 (above), and 11.2.0.2.0 has no
   `ORACLE_MAINTAINED` (§4, check 5). This probe ran on no other release.
+
+**The account survey sends three statements.** UC-5's account report reads
+every account on a target through `OracleSession.survey_accounts()`
+(`src/sopuli/driver/oracle/accounts.py`, `survey`). No statement names an
+account, so none binds anything, and none reads a password or verifier column.
+
+| Statement | Reads | Needs |
+|---|---|---|
+| every account: `USERNAME`, `ACCOUNT_STATUS`, `PROFILE`, `COMMON`, `ORACLE_MAINTAINED` | `DBA_USERS` | the grants above |
+| `PASSWORD_LIFE_TIME` and `FAILED_LOGIN_ATTEMPTS` for every profile, as shown, resolved through this container's `DEFAULT` profile, and the profile's `COMMON` | `DBA_PROFILES` | the grants above |
+| `NAME` and `LCOUNT` for every user | `SYS.USER$` | the optional grant; sent only with `offline_verify` |
+
+On a release that answers `ORA-00904` to `COMMON` or `ORACLE_MAINTAINED`, as
+11.2.0.2.0 does, the first two statements are sent again with `NULL` in those
+positions. Then an account is vendor-maintained when its name is on check 5's
+list (§4). In a non-CDB no account is common. In any other container an account
+named with the `C##` prefix is taken as common, as the lockout guard does, and
+every profile is taken as common.
+
+The survey reports a value as unreadable, with a reason, where the findings
+above say a container cannot read it. It never reports the value the container
+shows instead. In any container but `CDB$ROOT` or a non-CDB:
+
+- a common account's lock, both limits and failed-login count are unreadable;
+- a limit that a common profile leaves at `DEFAULT` is unreadable, for local
+  accounts too.
+
+In an application container, where these values are kept was not measured, and
+the reasons say so.
+
+Without the optional grant every failed-login count is unreadable, and the
+reason names the grant. A limit that is not a whole number, such as a
+`PASSWORD_LIFE_TIME` of a fraction of a day, is unreadable too, and the reason
+gives the value.
+
+**The privilege survey sends four statements per grantee.** UC-5's privilege
+report reads the surveyed accounts' grants through
+`OracleSession.survey_privileges()` (`src/sopuli/driver/oracle/grants.py`).
+`PUBLIC` is a grantee only when the caller asks, and then once. Each statement
+binds the grantee's name and nothing else. None reads a password or verifier
+column.
+
+| Statement | Reads | Needs |
+|---|---|---|
+| the roles granted directly, with `ADMIN_OPTION`, `DEFAULT_ROLE` and the role's `AUTHENTICATION_TYPE` | `DBA_ROLE_PRIVS`, and `DBA_ROLES` with `role_lookup` | the grants above |
+| system privileges, direct and through every role, one row per path | `DBA_SYS_PRIVS` | `grant_report_reads` |
+| object privileges, the same way, with `TYPE` and `GRANTABLE` | `DBA_TAB_PRIVS` | `grant_report_reads` |
+| column privileges, the same way | `DBA_COL_PRIVS` | `grant_report_reads` |
+
+The last three each start with the recursive `WITH` the probe measured. A
+`CYCLE` clause stops it if a role is reached again, though Oracle refuses a
+circular grant (`ORA-01934`). The role path is joined with `CHR(0)`, which no
+identifier can contain. On a release that answers `ORA-00904` to
+`DBA_TAB_PRIVS.TYPE`, the object type is `NULL`. On one that answers it to
+`DBA_ROLES.AUTHENTICATION_TYPE`, `PASSWORD_REQUIRED` is read instead, with
+`YES` and `NO` given as `PASSWORD` and `NONE`. Neither fallback has run on a
+release that needs it.
+
+A refused grant view makes its part unreadable, never empty, with the code the
+server sent and the grant that fixes it. Measured on 23.26.3.0.0, a service
+account without `grant_report_reads` gets `ORA-00942` from each view. The view
+is not asked again for the next grantee, and a narrower query shape, once
+accepted, is kept for the next grantee too. A refused `DBA_ROLE_PRIVS` raises,
+as it does for every other command. `DBA_ROLES` is granted by the install but
+required by no pre-flight. Without the `role_lookup` capability the roles are
+read from `DBA_ROLE_PRIVS` alone, each role's authentication is `UNKNOWN`, and
+the reason names the grant. `DBA_TAB_PRIVS` and `DBA_COL_PRIVS` hold one row
+per grantor, so the survey merges rows that differ only in grantor. The merged
+row is grantable when any of them is.
+
+The survey does not read `DBA_SCHEMA_PRIVS`, where 23ai keeps schema-level
+privileges such as `SELECT ANY TABLE ON SCHEMA`. No probe has measured that
+view.
 
 ---
 

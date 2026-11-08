@@ -28,7 +28,7 @@ from typing import Any
 
 from sopuli.config import Binding, Config, ExpandedTarget, as_dict
 from sopuli.config.locking import LOCK_REQUIRED
-from sopuli.config.model import Pairs, Safety, Target, Vault
+from sopuli.config.model import Pairs, Safety, Settings, Target, Vault
 from sopuli.config.selection import matches
 from sopuli.config.sharing import SharedSecret, shared_secrets
 from sopuli.config.targets import MARIADB, MYSQL, POSTGRESQL
@@ -281,8 +281,57 @@ def _declared_sections(config: Config) -> list[tuple[str, list[str]]]:
         ("applications", _application_rows(config)),
         ("personal_accounts", _personal_account_rows(config)),
         ("reset_records", _reset_record_rows(config)),
+        ("reports", _report_rows(config)),
         ("safety", _safety_rows(config)),
     ]
+
+
+def _report_rows(config: Config) -> list[str]:
+    """UC-5's rules (``reports:``). One row per rule and per database profile.
+
+    ``ACCOUNTS`` is the names and patterns as written: which accounts a pattern
+    matches is a fact about a database, and this command describes the file.
+    """
+    rules = render_table(
+        [
+            Column("ACCOUNTS", _NAME),
+            Column("TARGETS", _NAME),
+            Column("PROFILE", _NAME),
+            Column("SETTINGS"),
+        ],
+        [
+            [
+                ", ".join(rule.accounts),
+                _selector(rule),
+                _or_dash(rule.profile),
+                _or_dash(_settings_text(rule.settings)),
+            ]
+            for rule in config.reports.accounts
+        ],
+    )
+    # A table of its own: a database profile has no target selector, and a row
+    # in the rules table would show one the file never wrote.
+    profiles = render_table(
+        [Column("DB PROFILE", _NAME), Column("SETTINGS")],
+        [
+            [profile.name, _or_dash(_settings_text(profile.settings))]
+            for profile in config.reports.db_profiles
+        ],
+    )
+    return [*rules, *([""] if rules and profiles else []), *profiles]
+
+
+def _settings_text(settings: Settings) -> str | None:
+    """``password_lifetime unlimited, failed_login_limit 10``, or ``None`` for none."""
+    parts = [
+        f"{name} {value}"
+        for name, value in (
+            ("password_lifetime", settings.password_lifetime),
+            ("failed_login_limit", settings.failed_login_limit),
+        )
+        if value is not None
+    ]
+    return ", ".join(parts) or None
 
 
 def _reset_record_rows(config: Config) -> list[str]:

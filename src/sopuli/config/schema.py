@@ -31,7 +31,7 @@ the intended division.
 
 Regenerate the committed artefact with::
 
-    python -m sopuli.config.schema > docs/schemas/sopuli-config-3.6.schema.json
+    python -m sopuli.config.schema > docs/schemas/sopuli-config-3.7.schema.json
 """
 
 from __future__ import annotations
@@ -53,6 +53,7 @@ from sopuli.config import (
     personal_accounts,
     policies,
     profiles,
+    reports,
     reset_records,
     safety,
     target_sets,
@@ -64,7 +65,7 @@ from sopuli.config import (
 #: `01-configuration.md` §9b says when it changes. What each shape accepts and
 #: refuses, and why, is in the function that builds it: its docstring or its
 #: ``description``.
-SCHEMA_VERSION = "3.6"
+SCHEMA_VERSION = "3.7"
 
 SCHEMA_FILENAME = f"sopuli-config-{SCHEMA_VERSION}.schema.json"
 
@@ -994,6 +995,96 @@ def _personal_account() -> Schema:
     )
 
 
+def _reports() -> Schema:
+    """The `reports:` section: the rules UC-5's reports check."""
+    return _object(
+        keys=reports.REPORTS_KEYS,
+        types={
+            "accounts": _array(
+                _ref("report_account_rule"),
+                minItems=1,
+                description="Accounts the report checks, by name or `*` pattern.",
+            ),
+            "db_profiles": _array(
+                _ref("db_profile_rule"),
+                minItems=1,
+                description="The settings a database profile must have.",
+            ),
+        },
+        min_properties=1,
+        description=(
+            "Rules for UC-5's `report accounts`. A rule lets the report check an "
+            "account; it declares nothing a changing command may act on (invariant 5)."
+        ),
+    )
+
+
+def _report_account_rule() -> Schema:
+    """One `reports.accounts` entry. Needing `profile:` or `settings:` stays with the builder."""
+    return _object(
+        keys=reports.REPORT_ACCOUNT_KEYS,
+        types={
+            "accounts": _array(
+                STRING,
+                minItems=1,
+                description="Account names, or patterns whose only wildcard is `*`.",
+            ),
+            "targets": _ref("application_targets"),
+            "profile": {
+                **STRING,
+                "description": (
+                    "The database profile these accounts must be on (Oracle). Not allowed "
+                    "for an application account, whose profile comes from its policy."
+                ),
+            },
+            "settings": _ref("report_settings"),
+        },
+        required=("accounts",),
+        description="Accounts the report checks, and what it expects of them.",
+    )
+
+
+def _db_profile_rule() -> Schema:
+    """One `reports.db_profiles` entry."""
+    return _object(
+        keys=reports.DB_PROFILE_KEYS,
+        types={
+            "name": {**STRING, "description": "The database profile's name."},
+            "settings": _ref("report_settings"),
+        },
+        required=("name", "settings"),
+        description="A database profile, and the settings it must have.",
+    )
+
+
+def _report_settings() -> Schema:
+    """The settings a rule expects, in words common to every product (UC-5 §7)."""
+    limit: Schema = {
+        "oneOf": [{"const": reports.UNLIMITED}, POSITIVE_INT],
+    }
+    return _object(
+        keys=reports.SETTINGS_KEYS,
+        types={
+            "password_lifetime": {
+                **limit,
+                "description": (
+                    "`unlimited`, or the most days a password may live. On Oracle, the "
+                    "profile's PASSWORD_LIFE_TIME."
+                ),
+            },
+            "failed_login_limit": {
+                **limit,
+                "description": (
+                    "`unlimited`, or the most failed logins before the account locks. On "
+                    "Oracle, the profile's FAILED_LOGIN_ATTEMPTS."
+                ),
+            },
+        },
+        min_properties=1,
+        description="What a rule expects. A setting it does not name is not compared.",
+    )
+
+
 def _delivery() -> Schema:
     """The `delivery:` block -- how UC-2 hands a password over (§6).
 
@@ -1261,7 +1352,10 @@ specials a charset does not have; `allow:` belongs to `charset: custom`; an \
 `auth:` block may carry only the keys its own `method:` takes; every vault, \
 policy, group, profile and target name written anywhere must be declared in the \
 section that declares it; a `for_each` must use one inner dimension throughout; \
-and a profile may not set a key that would change scope. A file this \
+a profile may not set a key that would change scope; a `reports.accounts` rule \
+needs `profile:` or `settings:`, names each account once across the rules, and may \
+not give an application account a `profile:`; and a `reports.db_profiles` name \
+appears once. A file this \
 schema accepts may still be refused there.\
 """
 
@@ -1302,6 +1396,7 @@ def _root() -> Schema:
         ),
         "reset_records": _ref("reset_records"),
         "delivery": _ref("delivery"),
+        "reports": _ref("reports"),
     }
     # The inline form is one unnamed application entry hoisted to the top level,
     # so its keys take the entry's own subschemas rather than copies of them.
@@ -1353,6 +1448,10 @@ def build_schema() -> Schema:
             "personal_account": _personal_account(),
             "reset_records": _reset_records(),
             "delivery": _delivery(),
+            "reports": _reports(),
+            "report_account_rule": _report_account_rule(),
+            "db_profile_rule": _db_profile_rule(),
+            "report_settings": _report_settings(),
             "policy": _policy(),
             "password_policy": _password_policy(),
             "require": _require(),

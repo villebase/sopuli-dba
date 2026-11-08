@@ -60,6 +60,7 @@ from sopuli.config.policies import build_policies
 from sopuli.config.products import check_personal_mysql_accounts, check_products
 from sopuli.config.profiles import build_profiles, select_profile
 from sopuli.config.references import check_references
+from sopuli.config.reports import build_reports, reject_profile_on_application_accounts
 from sopuli.config.reset_records import build_reset_records
 from sopuli.config.target_sets import build_target_sets
 from sopuli.config.targets import build_targets
@@ -108,6 +109,8 @@ TOP_LEVEL_KEYS = (
     "reset_records",
     # UC-2's delivery: how the new password reaches the person.
     "delivery",
+    # UC-5's report rules: what a report checks, never what a command may change.
+    "reports",
 )
 
 
@@ -568,12 +571,15 @@ def build_config(
         personal_accounts=build_personal_accounts(document),
         reset_records=build_reset_records(document),
         delivery=build_delivery(document),
+        reports=build_reports(document),
     )
     # Before anything else looks at either section: a name in both makes the
     # whitelist ambiguous about which guarantee applies, and every later step --
     # expansion, references, bindings -- would be reasoning about an account
     # that means two things (H1).
     reject_cross_declaration(config.applications, config.personal_accounts)
+    # An application account's expected profile is its policy's (UC-5 §4).
+    reject_profile_on_application_accounts(config.applications, config.reports)
     # Exactly one profile is active (§5 rule 1), and it has to be settled before
     # the vault layers are merged: layer 3 *is* the active profile's `vaults:`
     # block, and a merge that ran first would have nothing to put there.

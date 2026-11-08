@@ -130,6 +130,150 @@ def test_the_effective_limit_is_resolved_and_never_the_word_default(account: Any
     assert state.failed_login_limit == "5", "set on the profile, so its own value"
 
 
+def test_the_survey_reads_every_account_and_resolves_default(account: Any) -> None:
+    """UC-5's survey against a real dictionary: the account's row, with its
+    `DEFAULT` lifetime resolved through this container's `DEFAULT` profile, the
+    vendor's own accounts marked, and the list in name order."""
+    with account.connection.cursor() as cursor:
+        cursor.execute(
+            "select limit from dba_profiles "
+            "where profile = 'DEFAULT' and resource_name = 'PASSWORD_LIFE_TIME'"
+        )
+        (default_lifetime,) = cursor.fetchone()
+    expected = "unlimited" if default_lifetime == "UNLIMITED" else int(default_lifetime)
+
+    surveyed = account.survey_accounts()
+    names = [row.name for row in surveyed]
+    assert names == sorted(names)
+    by_name = {row.name: row for row in surveyed}
+
+    row = by_name[ACCOUNT.upper()]
+    assert row.profile == PROFILE.upper()
+    assert row.status == "OPEN"
+    assert row.locked is False
+    assert row.common is False
+    assert row.vendor_maintained is False
+    assert row.failed_login_limit == 5, "set on the profile, so its own value"
+    assert row.password_lifetime == expected, "DEFAULT, resolved through this container"
+    if account.scope().supports(OFFLINE_VERIFY):
+        assert row.failed_logins == 0
+        assert row.unreadable == ()
+    else:
+        assert row.failed_logins is None
+        assert row.unreadable == (
+            "the failed-login count is in SYS.USER$; GRANT SELECT ON SYS.USER$ to the "
+            "service account to read it",
+        )
+
+    system = by_name["SYSTEM"]
+    assert system.vendor_maintained is True
+    if system.common and account.scope().type == "pdb":
+        assert system.locked is None, "a PDB does not show a common account's lock"
+        assert system.password_lifetime is None
+        assert system.failed_logins is None
+
+
+GRANTS_OWNER = "acme_gr_owner"
+GRANTS_APP = "acme_gr_app"
+GRANTS_ROLES = ("acme_gr_outer", "acme_gr_read", "acme_gr_dup", "acme_gr_extra")
+
+
+def _drop_grant_fixtures(session: Any) -> None:
+    statements = [
+        f"drop user {GRANTS_APP} cascade",
+        f"drop user {GRANTS_OWNER} cascade",
+        *(f"drop role {role}" for role in GRANTS_ROLES),
+    ]
+    for statement in statements:
+        # Absent is the desired state, so "it was not there" is a success.
+        with contextlib.suppress(Exception):
+            _run(session, statement)
+
+
+@pytest.fixture
+def grant_fixtures(session: Any) -> Iterator[Any]:
+    """Probe 19's RR4 shape: direct grants, nested roles, a column grant and a
+    role that is not a default role."""
+    _drop_grant_fixtures(session)
+    _run(
+        session,
+        f'create user {GRANTS_OWNER} identified by "{FIRST}" quota 1m on users',
+        f"create table {GRANTS_OWNER}.t1 (n number)",
+        f"create table {GRANTS_OWNER}.t2 (n number)",
+        f"create table {GRANTS_OWNER}.t3 (n number)",
+        *(f"create role {role}" for role in GRANTS_ROLES),
+        f"grant select on {GRANTS_OWNER}.t3 to acme_gr_read",
+        "grant create table to acme_gr_read",
+        f"grant select on {GRANTS_OWNER}.t2 to acme_gr_dup",
+        "grant acme_gr_read, acme_gr_dup to acme_gr_outer",
+        f"grant insert on {GRANTS_OWNER}.t1 to acme_gr_extra",
+        f'create user {GRANTS_APP} identified by "{FIRST}"',
+        f"grant create session to {GRANTS_APP}",
+        f"grant select on {GRANTS_OWNER}.t1 to {GRANTS_APP} with grant option",
+        f"grant select on {GRANTS_OWNER}.t2 to {GRANTS_APP}",
+        f"grant update (n) on {GRANTS_OWNER}.t3 to {GRANTS_APP}",
+        f"grant acme_gr_outer, acme_gr_dup, acme_gr_extra to {GRANTS_APP}",
+        f"alter user {GRANTS_APP} default role acme_gr_outer, acme_gr_dup",
+    )
+    try:
+        yield session
+    finally:
+        _drop_grant_fixtures(session)
+
+
+def test_the_privilege_survey_gives_one_row_per_path(grant_fixtures: Any) -> None:
+    """UC-5's privilege survey against a real dictionary: the recursive query
+    reaches the role two levels down, returns SELECT on T2 once per path, finds
+    the column grant in DBA_COL_PRIVS, and marks the non-default role."""
+    app = GRANTS_APP.upper()
+    survey = grant_fixtures.survey_privileges([app], public=False)
+    assert survey.unreadable == ()
+    assert survey.objects is not None
+    assert survey.system is not None
+    assert survey.columns is not None
+
+    objects = {
+        (row.privilege, row.name, row.path): row
+        for row in survey.objects
+        if row.owner == GRANTS_OWNER.upper()
+    }
+    assert sorted(key for key in objects if key[:2] == ("SELECT", "T2")) == [
+        ("SELECT", "T2", ()),
+        ("SELECT", "T2", ("ACME_GR_DUP",)),
+        ("SELECT", "T2", ("ACME_GR_OUTER", "ACME_GR_DUP")),
+    ]
+    assert ("SELECT", "T3", ("ACME_GR_OUTER", "ACME_GR_READ")) in objects
+    direct = objects[("SELECT", "T1", ())]
+    assert direct.grantable is True
+    assert direct.first_role_default is None
+    assert direct.object_type == "TABLE"
+    assert objects[("INSERT", "T1", ("ACME_GR_EXTRA",))].first_role_default is False
+    assert len(objects) == 6
+
+    system = {(row.privilege, row.path) for row in survey.system}
+    assert ("CREATE SESSION", ()) in system
+    assert ("CREATE TABLE", ("ACME_GR_OUTER", "ACME_GR_READ")) in system
+
+    assert [(row.privilege, row.name, row.column) for row in survey.columns] == [
+        ("UPDATE", "T3", "N")
+    ]
+    roles = {grant.role: grant for grant in survey.roles}
+    assert set(roles) == {"ACME_GR_OUTER", "ACME_GR_DUP", "ACME_GR_EXTRA"}
+    assert roles["ACME_GR_EXTRA"].default_role is False
+    assert roles["ACME_GR_OUTER"].authentication == "NONE"
+    assert all(row.grantee == app for row in survey.objects)
+
+
+def test_the_privilege_survey_reads_public_only_when_asked(grant_fixtures: Any) -> None:
+    app = GRANTS_APP.upper()
+    without = grant_fixtures.survey_privileges([app], public=False)
+    with_public = grant_fixtures.survey_privileges([app], public=True)
+    assert without.objects is not None
+    assert with_public.objects is not None
+    assert {row.grantee for row in without.objects} == {app}
+    assert {row.grantee for row in with_public.objects} == {app, "PUBLIC"}
+
+
 @pytest.mark.requires_capability(PASSWORD_ROLLOVER)
 def test_a_rotation_opens_a_rollover_window_the_status_reports(account: Any) -> None:
     """The finding this module rests on.

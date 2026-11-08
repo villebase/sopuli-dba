@@ -52,6 +52,7 @@ from sopuli.check import (
     UNVERIFIABLE,
 )
 from sopuli.generate import VAULT_ONLY
+from sopuli.report_accounts import NO_RULE, NOT_CHECKED, REPORT_OK, REPORT_PROBLEM, UNDECLARED
 from sopuli.reset import RESET
 from sopuli.store.protocol import DEGRADED, OK, UNREACHABLE
 
@@ -176,6 +177,16 @@ _STATE_ROLES: dict[str, Role] = {
     # see* would be wrong about the one path whose whole premise is that
     # somebody is watching it.
     RESET: Role.ATTENTION,
+    # `report accounts` (UC-5). A problem is `BAD`, as a missing account is. The
+    # other four are dim: none is news a reader must act on. `REPORT_OK` is dim
+    # rather than `GOOD` for `DECLARED`'s reason: it says the rules found nothing
+    # wrong, not that a credential is healthy, so `IN_SYNC` stays the only state
+    # a reader can stop at.
+    REPORT_PROBLEM: Role.BAD,
+    NOT_CHECKED: Role.INCONCLUSIVE,
+    NO_RULE: Role.INCONCLUSIVE,
+    UNDECLARED: Role.INCONCLUSIVE,
+    REPORT_OK: Role.INCONCLUSIVE,
 }
 
 

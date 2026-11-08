@@ -101,6 +101,7 @@ Excluding ``(GRACE)`` from ``expired`` cannot make a locked account read as open
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import datetime
 from typing import Any
@@ -110,7 +111,9 @@ from sopuli.driver.oracle.capabilities import read
 from sopuli.driver.oracle.errors import INSTALL_SCRIPT, from_error
 from sopuli.driver.oracle.privileges import is_yes
 from sopuli.driver.oracle.rollover import days, is_enabled, window_end
+from sopuli.driver.oracle.statements import COMMON_PREFIX
 from sopuli.driver.protocol import Cursor, DriverError, UserState
+from sopuli.driver.survey import Limit, SurveyedAccount
 
 #: The roles guardrail 4 refuses (`02-oracle-privileges.md` §4), reported as
 #: :attr:`UserState.admin_roles`. Upper-cased, because that is how a database
@@ -851,17 +854,41 @@ def _user_row(cursor: Cursor, account: str) -> tuple[str, Any] | None:
     query that answered with no row is the account's absence -- asking the narrower shapes the same
     question cannot change that answer.
     """
-    shapes = (USER_QUERY, USER_QUERY_NO_CHANGE_DATE, USER_QUERY_LEGACY)
-    for query in shapes:
+    query, row = first_shape(
+        cursor,
+        (USER_QUERY, USER_QUERY_NO_CHANGE_DATE, USER_QUERY_LEGACY),
+        "DBA_USERS",
+        lambda answered: answered.fetchone(),
+        {"name": account.upper()},
+    )
+    return (query, row) if row is not None else None
+
+
+def first_shape(
+    cursor: Cursor,
+    shapes: tuple[str, ...],
+    view: str,
+    fetch: Callable[[Cursor], Any],
+    binds: dict[str, Any] | None = None,
+) -> tuple[str, Any]:
+    """The first of ``shapes`` the server accepts, with what ``fetch`` read from it.
+
+    Only ``ORA-00904`` moves to the next shape. Any other failure raises, and so
+    does a failure of the last shape: a refused grant as
+    :class:`DictionaryUnreadableError`, anything else classified.
+    """
+    for query in shapes[:-1]:
         try:
-            cursor.execute(query, {"name": account.upper()})
-            row = cursor.fetchone()
+            cursor.execute(query, binds)
+            return query, fetch(cursor)
         except Exception as error:  # noqa: BLE001 -- classified, never swallowed
-            if query is not shapes[-1] and from_error(error).code == _NO_SUCH_COLUMN:
-                continue
-            raise _unreadable(error, "DBA_USERS") from error
-        return (query, row) if row is not None else None
-    return None
+            if from_error(error).code != _NO_SUCH_COLUMN:
+                raise _unreadable(error, view) from error
+    try:
+        cursor.execute(shapes[-1], binds)
+        return shapes[-1], fetch(cursor)
+    except Exception as error:  # noqa: BLE001 -- classified, never swallowed
+        raise _unreadable(error, view) from error
 
 
 def _limits(cursor: Cursor, profile: str) -> dict[str, str]:
@@ -1057,6 +1084,248 @@ def is_common(cursor: Cursor, name: str) -> bool | None:
     except Exception:  # noqa: BLE001 -- any failure is "could not tell", reported as a gap
         return None
     return is_yes(row[0]) if row else None
+
+
+#: Every account, for UC-5's reports (``02-oracle-privileges.md`` §2, *What the
+#: report commands read*). ``DBA_USERS`` only, on the baseline grant set. No
+#: column that holds or describes a password is read. ``COMMON`` and
+#: ``ORACLE_MAINTAINED`` exist from 12.1; :data:`SURVEY_USERS_QUERY_LEGACY` is
+#: the shape for a release that answers ``ORA-00904`` to them.
+SURVEY_USERS_QUERY = (
+    "select username, account_status, profile, common, oracle_maintained from dba_users"
+)
+
+#: :data:`SURVEY_USERS_QUERY` with ``NULL`` in place of the two columns, in the
+#: same positions. Measured on 11.2.0.2.0, which has neither.
+SURVEY_USERS_QUERY_LEGACY = (
+    "select username, account_status, profile, "
+    "cast(null as varchar2(3)), cast(null as varchar2(1)) "
+    "from dba_users"
+)
+
+#: The two limits UC-5 checks, for every profile. Each row has the limit as
+#: ``DBA_PROFILES`` shows it, the limit resolved through the ``DEFAULT`` profile
+#: of this container, and whether the profile is common. The raw value is kept
+#: because a ``DEFAULT`` on a common profile follows the root's ``DEFAULT``
+#: profile, and a PDB cannot read that (§2).
+SURVEY_LIMITS_QUERY = (
+    "select p.profile, p.resource_name, p.limit, "
+    "case when p.limit = 'DEFAULT' then d.limit else p.limit end, p.common "
+    "from dba_profiles p "
+    "join dba_profiles d on d.profile = 'DEFAULT' and d.resource_name = p.resource_name "
+    "where p.resource_name in ('PASSWORD_LIFE_TIME', 'FAILED_LOGIN_ATTEMPTS')"
+)
+
+#: :data:`SURVEY_LIMITS_QUERY` for a release with no ``DBA_PROFILES.COMMON``.
+SURVEY_LIMITS_QUERY_LEGACY = (
+    "select p.profile, p.resource_name, p.limit, "
+    "case when p.limit = 'DEFAULT' then d.limit else p.limit end, "
+    "cast(null as varchar2(3)) "
+    "from dba_profiles p "
+    "join dba_profiles d on d.profile = 'DEFAULT' and d.resource_name = p.resource_name "
+    "where p.resource_name in ('PASSWORD_LIFE_TIME', 'FAILED_LOGIN_ATTEMPTS')"
+)
+
+#: Every account's failed-login count, behind the optional ``SELECT ON
+#: SYS.USER$`` grant and sent only with ``offline_verify``. ``NAME`` and
+#: ``LCOUNT`` only: no verifier column. ``TYPE# = 1`` is a user; roles are 0.
+SURVEY_LCOUNT_QUERY = "select name, lcount from sys.user$ where type# = 1"
+
+PASSWORD_LIFE_TIME = "PASSWORD_LIFE_TIME"
+
+#: What ``DBA_PROFILES`` shows for a limit that the profile inherits.
+_INHERITED = "DEFAULT"
+
+#: The root, where a common account's lock, limits and count are kept.
+_ROOT = "CDB$ROOT"
+
+#: Why a common account's values are ``None``, by what is held elsewhere. In a
+#: PDB they are in the root (§2). In an application container where they are
+#: kept was not measured, as :mod:`sopuli.driver.oracle.session`'s guard says.
+_HELD_IN_ROOT = {
+    "lock": (
+        "{name} is a common account, and this container does not show its lock, "
+        f"which is kept in {_ROOT}"
+    ),
+    "limit": (
+        "{name} is a common account, so its {resource} comes from its profile in "
+        f"{_ROOT}, which this container cannot read"
+    ),
+    "count": (
+        "{name} is a common account, and its failed logins are counted in "
+        f"{_ROOT}, which this container cannot read"
+    ),
+}
+_HELD_IN_APPLICATION = {
+    "lock": (
+        "{name} is a common account, and where an application container keeps "
+        "its lock has not been measured"
+    ),
+    "limit": (
+        "{name} is a common account, and which profile sets its {resource} in an "
+        "application container has not been measured"
+    ),
+    "count": (
+        "{name} is a common account, and where an application container counts "
+        "its failed logins has not been measured"
+    ),
+}
+
+
+def survey(
+    cursor: Cursor, *, own_container: bool, user_dollar: bool, application: bool = False
+) -> tuple[SurveyedAccount, ...]:
+    """Every account on this target, ordered by name, for UC-5's reports.
+
+    ``own_container`` is whether this container holds every account's own lock,
+    limits and failed-login count: true in ``CDB$ROOT`` and in a non-CDB. In
+    any other container a common account's values are kept in the root, so they
+    are ``None`` here, each with a reason. So is a ``DEFAULT`` limit on a common
+    profile, which follows the root's ``DEFAULT`` profile. These were measured
+    with ``sql/oracle/19_report_read_probe.sql`` (``02-oracle-privileges.md`` §2).
+    ``application`` is whether this is an application container, which only
+    changes how the reasons are worded.
+
+    ``user_dollar`` is whether the session may read ``SYS.USER$``. Without it no
+    statement goes there, and every count is ``None`` with the grant named.
+
+    Three statements, or two without the grant. Nothing is bound: no statement
+    names an account. A refused ``DBA_USERS`` or ``DBA_PROFILES`` read raises
+    :class:`DictionaryUnreadableError`. Only ``ORA-00904`` narrows a query.
+
+    Where the narrowed shape leaves ``COMMON`` unread outside ``CDB$ROOT`` and
+    a non-CDB, an account named with the ``C##`` prefix is taken as common and
+    a profile is taken as common, so a value that may be held elsewhere is
+    ``None`` rather than the value this container shows.
+    """
+    _, users = first_shape(
+        cursor, (SURVEY_USERS_QUERY, SURVEY_USERS_QUERY_LEGACY), "DBA_USERS", fetch_all
+    )
+    _, limit_rows = first_shape(
+        cursor, (SURVEY_LIMITS_QUERY, SURVEY_LIMITS_QUERY_LEGACY), "DBA_PROFILES", fetch_all
+    )
+    limits = {(str(row[0]), str(row[1])): row for row in limit_rows}
+    counts, counts_gap = _lcounts(cursor) if user_dollar else ({}, _NO_GRANT)
+    held_reason = _HELD_IN_APPLICATION if application else _HELD_IN_ROOT
+
+    surveyed = []
+    for row in users:
+        name, status, profile = str(row[0]), str(row[1] or ""), str(row[2] or "")
+        if row[3] is not None:
+            common = is_yes(row[3])
+        else:
+            common = not own_container and name.upper().startswith(COMMON_PREFIX)
+        maintained = _maintained(row)
+        vendor = maintained if maintained is not None else name.upper() in ORACLE_SUPPLIED
+        held_elsewhere = common and not own_container
+        reasons: list[str] = []
+
+        locked: bool | None = LOCKED in status
+        if held_elsewhere:
+            locked = None
+            reasons.append(held_reason["lock"].format(name=name))
+
+        resolved: dict[str, Limit] = {}
+        for resource in (PASSWORD_LIFE_TIME, FAILED_LOGIN_ATTEMPTS):
+            if held_elsewhere:
+                resolved[resource] = None
+                reasons.append(held_reason["limit"].format(name=name, resource=resource))
+                continue
+            value, reason = _limit(
+                limits.get((profile, resource)), profile, resource, own_container
+            )
+            resolved[resource] = value
+            if reason is not None:
+                reasons.append(reason)
+
+        failed: int | None = None
+        if held_elsewhere:
+            reasons.append(held_reason["count"].format(name=name))
+        elif counts_gap is not None:
+            reasons.append(counts_gap)
+        elif name not in counts:
+            reasons.append(f"SYS.USER$ has no row for {name}")
+        elif counts[name] is None:
+            reasons.append(f"SYS.USER$.LCOUNT is empty for {name}")
+        else:
+            failed = counts[name]
+
+        surveyed.append(
+            SurveyedAccount(
+                name=name,
+                status=status,
+                locked=locked,
+                profile=profile,
+                common=common,
+                vendor_maintained=vendor,
+                password_lifetime=resolved[PASSWORD_LIFE_TIME],
+                failed_login_limit=resolved[FAILED_LOGIN_ATTEMPTS],
+                failed_logins=failed,
+                unreadable=tuple(reasons),
+            )
+        )
+    return tuple(sorted(surveyed, key=lambda account: account.name))
+
+
+#: Why no failed-login count was read, where the optional grant was not made.
+_NO_GRANT = (
+    "the failed-login count is in SYS.USER$; GRANT SELECT ON SYS.USER$ to the "
+    "service account to read it"
+)
+
+
+def fetch_all(cursor: Cursor) -> list[Any]:
+    """Every row of the statement ``cursor`` just ran, for :func:`first_shape`."""
+    return list(cursor.fetchall())
+
+
+def _lcounts(cursor: Cursor) -> tuple[dict[str, int | None], str | None]:
+    """Every user's ``LCOUNT``, by name as ``SYS.USER$`` spells it.
+
+    A ``NULL`` count is kept as ``None``, so the caller can tell it from a
+    missing row. The capability probe found the table readable. If the read is
+    refused now, each count is ``None`` with the server's words as the reason.
+    Any other failure raises.
+    """
+    try:
+        cursor.execute(SURVEY_LCOUNT_QUERY)
+        rows = cursor.fetchall()
+    except Exception as error:  # noqa: BLE001 -- classified, never swallowed
+        diagnosis = from_error(error)
+        if diagnosis.code not in _GRANT_CODES:
+            raise diagnosis.as_error() from error
+        return {}, f"SYS.USER$ could not be read: {diagnosis.code}: {diagnosis.message}"
+    return {str(name): None if count is None else int(count) for name, count in rows}, None
+
+
+def _limit(row: Any, profile: str, resource: str, own_container: bool) -> tuple[Limit, str | None]:
+    """One limit from :data:`SURVEY_LIMITS_QUERY`'s row, or ``None`` and why.
+
+    Outside ``CDB$ROOT`` and a non-CDB, a ``DEFAULT`` limit is ``None`` on a
+    common profile, and on a profile whose ``COMMON`` the narrowed shape could
+    not read.
+    """
+    if row is None:
+        return None, f"DBA_PROFILES has no {resource} for profile {profile}"
+    shown, value, profile_common = row[2], row[3], row[4]
+    if str(shown).upper() == _INHERITED and not own_container:
+        if profile_common is None:
+            return None, (
+                f"{resource} on profile {profile} is DEFAULT, and whether the profile "
+                f"is common, so that the DEFAULT profile in {_ROOT} applies, could not "
+                "be read"
+            )
+        if is_yes(profile_common):
+            return None, (
+                f"{resource} on common profile {profile} is DEFAULT, which follows the "
+                f"DEFAULT profile in {_ROOT}, and this container cannot read it"
+            )
+    text = str(value or "").strip().upper()
+    if text == "UNLIMITED":
+        return "unlimited", None
+    if text.isdigit():
+        return int(text), None
+    return None, f"{resource} on profile {profile} reads {value!r}, not a whole number"
 
 
 def stored_verifiers(cursor: Cursor, name: str) -> str | None:

@@ -82,6 +82,8 @@ from sopuli import finish_rollover as windows
 from sopuli import generate as staging
 from sopuli import plan as plan_builder
 from sopuli import repair as repair_module
+from sopuli import report_accounts as report_states
+from sopuli import report_privileges as privilege_states
 from sopuli import rotate as rotation
 from sopuli import status as status_states
 from sopuli import strategy as strategies
@@ -229,10 +231,13 @@ from sopuli.driver.protocol import (
 )
 from sopuli.driver.registry import (
     DRIVERS,
+    DriverNotImplementedError,
+    NotWrittenError,
     driver_for,
     installed,
     require_command,
 )
+from sopuli.driver.survey import SurveyedAccount
 from sopuli.exit_codes import ExitCode
 from sopuli.extras import MISSING_MODULE, missing_kind
 from sopuli.generate import Candidate, DocumentWrite
@@ -272,6 +277,7 @@ from sopuli.orphans import commands as orphan_commands
 from sopuli.orphans import declared_by as orphans_declared_by
 from sopuli.orphans import find as find_orphans
 from sopuli.orphans import survey_prefix
+from sopuli.output import privileges_view, report_view
 from sopuli.output.about_view import render as render_about
 from sopuli.output.account_list_view import build_result as build_account_list_result
 from sopuli.output.account_list_view import render_account_list
@@ -5597,6 +5603,255 @@ def _confirm(question: str, **options: Any) -> bool:
     would overwrite the question being answered.
     """
     return bool(click.confirm(printable(question, colour=False), **options))
+
+
+@cli.group("report")
+def report_group() -> None:
+    """Read-only reports across the declared targets (UC-5).
+
+    A report reads every account on each declared target, declared or not, and
+    changes nothing. These are the only commands that list the accounts the
+    config does not declare (invariant 5).
+    """
+
+
+@report_group.command("accounts")
+@target_selector_options
+@click.option(
+    "--all",
+    "show_all",
+    is_flag=True,
+    help="List every account, including the ones that passed every check.",
+)
+@global_options
+def report_accounts_command(
+    selectors: tuple[str, ...],
+    targets: tuple[str, ...],
+    groups: tuple[str, ...],
+    show_all: bool,
+    run: Invocation,
+) -> str:
+    """Check every account on each target against the `reports:` rules.
+
+    One table per target, problems first. A check ends as a problem, OK, not
+    checked (the target cannot read the value truthfully, such as a common
+    account's lock on a PDB), or no rule (the config states nothing to compare).
+    An account counts as OK only when every check had a rule and passed.
+
+    Exit 0 when nothing is wrong, 1 when a target could not be reached, 3 when a
+    check found a problem, and 4 when something could not be checked. An account
+    the config does not declare is listed as information and never changes the
+    exit code. Only Oracle can run this report yet.
+    """
+    document = run.document
+    selection = selected(selectors, targets, (), groups, ())
+    refuse_unknown(run.config, selection)
+    config = _narrow(run.config, selection)
+    document.selection = selection.as_json() or None
+
+    reached = config.expanded_targets
+    reports = [_report_target(target, run, config) for target in reached]
+    rows = [row for report in reports for row in report.rows]
+    unreachable, unsupported = report_view.target_counts(reports)
+    document.results = report_view.build_results(reports)
+    document.finish(
+        report_states.exit_code(
+            rows, unreachable=unreachable, unsupported=unsupported, targets=len(reports)
+        ),
+        report_view.summarise(reports),
+    )
+    return report_view.render(reports, show_all=show_all)
+
+
+def _report_target(
+    target: ExpandedTarget, run: Invocation, config: Config
+) -> report_view.TargetReport:
+    """One target: survey its accounts on one connection, then evaluate them.
+
+    A target that cannot be reached is one unreachable section and not a failed
+    run: the report still covers the others (UC-5 §3). Another product never
+    gets here, because ``_open_session`` asks the driver registry first, and
+    only Oracle lists this command.
+    """
+    session = None
+    try:
+        try:
+            session = _open_session(target, run, config)
+        except (DriverNotImplementedError, NotWrittenError) as error:
+            # Another product: refused before connecting. Not checked on this
+            # target, rather than unreachable (UC-5 §3).
+            return report_view.TargetReport(
+                target=target.name, error=_finding(error), unsupported=True
+            )
+        except Exception as error:  # noqa: BLE001 -- a per-target finding
+            return report_view.TargetReport(target=target.name, error=_finding(error))
+        survey = getattr(session, "survey_accounts", None)
+        if survey is None:
+            # No driver but Oracle's reaches this command (the registry), and
+            # Oracle's session has the method. A driver that does is not
+            # written for this report: not checked there, never unreachable.
+            missing = DriverError(f"{target.name}: this driver cannot survey its accounts")
+            return report_view.TargetReport(
+                target=target.name, error=_finding(missing), unsupported=True
+            )
+        try:
+            surveyed = survey()
+        except Exception as error:  # noqa: BLE001 -- a per-target finding
+            # Connected, then could not read: said as such, not as "could not
+            # connect", though the target still gave no answer (exit 1).
+            return report_view.TargetReport(
+                target=target.name, error=_finding(error), read_failed=True
+            )
+        return report_view.TargetReport(
+            target=target.name,
+            release=session.scope().db_version,
+            read=len(surveyed),
+            rows=report_states.evaluate(target.name, config, surveyed),
+        )
+    finally:
+        if session is not None:
+            with suppress(Exception):
+                session.close()
+
+
+@report_group.command("privileges")
+@target_selector_options
+@click.option(
+    "--account",
+    "account",
+    metavar="NAME",
+    help="Show only this account. It may be one the config does not declare.",
+)
+@click.option("--detail", is_flag=True, help="List every privilege, with each role path.")
+@click.option(
+    "--public",
+    "public",
+    is_flag=True,
+    help="Also list the grants to PUBLIC, once per target.",
+)
+@global_options
+def report_privileges_command(
+    selectors: tuple[str, ...],
+    targets: tuple[str, ...],
+    groups: tuple[str, ...],
+    account: str | None,
+    detail: bool,
+    public: bool,
+    run: Invocation,
+) -> str:
+    """Show each account's effective privileges, through every role.
+
+    For each account `report accounts` covers: its roles, its system privileges
+    with where each comes from, and its object and column privileges as counts
+    by privilege and object type. `--detail` lists every privilege with each
+    role path. A privilege held through a role that is not a default role counts
+    too, and is marked. The report judges nothing.
+
+    Exit 0 when every part was read, 1 when a target could not be reached, and 4
+    when a part could not be read, such as without the optional grant on the
+    privilege views. Only Oracle can run this report yet.
+    """
+    document = run.document
+    selection = selected(selectors, targets, (), groups, ())
+    refuse_unknown(run.config, selection)
+    config = _narrow(run.config, selection)
+    document.selection = selection.as_json() or None
+
+    reports = [
+        _privileges_target(target, run, config, wanted=account, public=public)
+        for target in config.expanded_targets
+    ]
+    accounts = [one for report in reports for one in report.accounts]
+    unreachable, unsupported = privileges_view.target_counts(reports)
+    document.results = privileges_view.build_results(reports)
+    document.finish(
+        privilege_states.exit_code(
+            accounts,
+            unreachable=unreachable,
+            unsupported=unsupported,
+            targets=len(reports),
+            unreadable=any(report.unreadable for report in reports),
+        ),
+        privileges_view.summarise(reports),
+    )
+    return privileges_view.render(reports, detail=detail)
+
+
+def _wanted_rows(
+    target: str,
+    rows: Sequence[report_states.AccountRow],
+    surveyed: Sequence[SurveyedAccount],
+    wanted: str,
+) -> tuple[report_states.AccountRow, ...]:
+    """The one account ``--account`` names, by ``upper()``, as the selectors match.
+
+    Also an account the accounts report leaves out, such as one Oracle maintains
+    that no rule names: naming it on the command line asks for it. Empty where
+    the target has no such account, which the view then says.
+    """
+    spelled = wanted.upper()
+    found = tuple(
+        row
+        for row in rows
+        if row.account.upper() == spelled and row.state != report_states.ACCOUNT_MISSING
+    )
+    if found:
+        return found
+    return tuple(
+        report_states.undeclared_row(target, one) for one in surveyed if one.name.upper() == spelled
+    )
+
+
+def _privileges_target(
+    target: ExpandedTarget,
+    run: Invocation,
+    config: Config,
+    *,
+    wanted: str | None,
+    public: bool,
+) -> privileges_view.TargetPrivileges:
+    """One target: survey its accounts, then their privileges, on one connection."""
+    session = None
+    try:
+        try:
+            session = _open_session(target, run, config)
+        except (DriverNotImplementedError, NotWrittenError) as error:
+            return privileges_view.TargetPrivileges(
+                target=target.name, error=_finding(error), unsupported=True
+            )
+        except Exception as error:  # noqa: BLE001 -- a per-target finding
+            return privileges_view.TargetPrivileges(target=target.name, error=_finding(error))
+        survey_accounts = getattr(session, "survey_accounts", None)
+        survey_privileges = getattr(session, "survey_privileges", None)
+        if survey_accounts is None or survey_privileges is None:
+            missing = DriverError(f"{target.name}: this driver cannot survey its privileges")
+            return privileges_view.TargetPrivileges(
+                target=target.name, error=_finding(missing), unsupported=True
+            )
+        try:
+            surveyed = survey_accounts()
+            rows = report_states.evaluate(target.name, config, surveyed)
+            absent = None
+            if wanted is not None:
+                rows = _wanted_rows(target.name, rows, surveyed, wanted)
+                absent = None if rows else wanted
+            names = [row.account for row in rows if row.state != report_states.ACCOUNT_MISSING]
+            grants = survey_privileges(names, public=public)
+        except Exception as error:  # noqa: BLE001 -- a per-target finding
+            return privileges_view.TargetPrivileges(
+                target=target.name, error=_finding(error), read_failed=True
+            )
+        return privileges_view.TargetPrivileges(
+            target=target.name,
+            release=session.scope().db_version,
+            accounts=privilege_states.per_account(target.name, rows, grants, public=public),
+            unreadable=grants.unreadable,
+            absent=absent,
+        )
+    finally:
+        if session is not None:
+            with suppress(Exception):
+                session.close()
 
 
 @cli.group("creds")

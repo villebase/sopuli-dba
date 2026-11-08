@@ -27,7 +27,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sopuli.config.applications import build_target_selector
+from sopuli.config.applications import account_owners, build_target_selector
 from sopuli.config.errors import ROOT, ConfigError, KeyPath
 from sopuli.config.fields import (
     mapping,
@@ -145,10 +145,7 @@ def reject_cross_declaration(
     accepted and stated, and the verb that resolves the predicate is where it has
     to be caught.
     """
-    owners: dict[str, str] = {}
-    for application in applications:
-        for account in application.accounts:
-            owners[account.upper()] = application.label
+    owners = account_owners(applications)
 
     for index, entry in enumerate(personal):
         for position, account in enumerate(entry.accounts):

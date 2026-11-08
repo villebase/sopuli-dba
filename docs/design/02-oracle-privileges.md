@@ -729,7 +729,8 @@ measured what they can read on 26ai Free 23.26.3.0.0
 - **The privilege views need a grant each.** `DBA_SYS_PRIVS`, `DBA_TAB_PRIVS`
   and `DBA_COL_PRIVS` give `ORA-00942: table or view does not exist` until
   `SELECT` on each is granted, and so does `DBA_SCHEMA_PRIVS` on 23ai (probe
-  21, #1389). The grants are `SELECT` only. `00_install.sql` makes them as
+  21, `sql/oracle/21_schema_privs_probe.py`, #1389). The grants are `SELECT`
+  only. `00_install.sql` makes them as
   parameter 8, `grant_report_reads`, off by default, and grants
   `DBA_SCHEMA_PRIVS` only where `DBA_VIEWS` lists it. No other command reads
   these views, and `doctor` does not probe them.
@@ -856,7 +857,8 @@ row is grantable when any of them is.
 
 The survey does not read `DBA_SCHEMA_PRIVS` yet. 23ai keeps schema-level
 privileges such as `SELECT ANY TABLE ON SCHEMA` there and in none of the other
-grant views. Probe 21 measured on 23.26.3.0.0 that:
+grant views. Probe 21 (`sql/oracle/21_schema_privs_probe.py`) measured on
+23.26.3.0.0 that:
 
 - the view has `GRANTEE`, `PRIVILEGE`, `SCHEMA`, `ADMIN_OPTION`, `COMMON` and
   `INHERITED`, one row per grantee, privilege and schema;

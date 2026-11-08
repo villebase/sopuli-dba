@@ -505,7 +505,7 @@ BEGIN
     END IF;
   ELSE
     DBMS_OUTPUT.PUT_LINE('grant views not granted: the privilege report gives '
-      || 'system, object and column privileges as not checked');
+      || 'system, object, column and schema privileges as not checked');
   END IF;
 END;
 /
@@ -550,6 +550,39 @@ SELECT granted_role FROM dba_role_privs WHERE grantee = UPPER('&eff_user');
 PROMPT --- object privileges
 SELECT owner, table_name, privilege FROM dba_tab_privs
  WHERE grantee = UPPER('&eff_user') ORDER BY table_name;
+
+-- Schema privileges (23ai) are in DBA_SCHEMA_PRIVS and in no view above, so an
+-- account holding one would otherwise look clean here. The view is missing
+-- before 23ai, so it is read through dynamic SQL, under the same DBA_VIEWS
+-- check as section 8, and its absence is said rather than failing the install.
+PROMPT --- schema privileges (expect none)
+DECLARE
+  n_schema_view NUMBER;
+  n_rows        NUMBER := 0;
+  c             SYS_REFCURSOR;
+  v_privilege   VARCHAR2(128);
+  v_schema      VARCHAR2(128);
+BEGIN
+  SELECT COUNT(*) INTO n_schema_view FROM dba_views
+   WHERE owner = 'SYS' AND view_name = 'DBA_SCHEMA_PRIVS';
+  IF n_schema_view = 0 THEN
+    DBMS_OUTPUT.PUT_LINE('this release has no schema privileges');
+    RETURN;
+  END IF;
+  OPEN c FOR 'SELECT privilege, schema FROM dba_schema_privs WHERE grantee = :g'
+    USING UPPER('&eff_user');
+  LOOP
+    FETCH c INTO v_privilege, v_schema;
+    EXIT WHEN c%NOTFOUND;
+    n_rows := n_rows + 1;
+    DBMS_OUTPUT.PUT_LINE(v_privilege || ' ON SCHEMA ' || v_schema);
+  END LOOP;
+  CLOSE c;
+  IF n_rows = 0 THEN
+    DBMS_OUTPUT.PUT_LINE('none');
+  END IF;
+END;
+/
 
 PROMPT --- things that should NOT appear above
 SELECT privilege AS over_granted FROM dba_sys_privs

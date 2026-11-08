@@ -1,4 +1,4 @@
-"""sopuli-dba : what DBA_SCHEMA_PRIVS holds, and who can read it   (v2)
+"""sopuli-dba : what DBA_SCHEMA_PRIVS holds, and who can read it   (v3)
 
 #1389. 23ai grants a system privilege on one schema, such as ``GRANT SELECT
 ANY TABLE ON SCHEMA acme_sp_owner TO acme_sp_app``. UC-5's privilege survey
@@ -21,7 +21,8 @@ DBA_COL_PRIVS. This measures where a schema privilege shows instead:
        a COUNT(*) from DBA_SCHEMA_PRIVS, USER_SCHEMA_PRIVS,
        SESSION_SCHEMA_PRIVS and the three views the survey reads
   SP4  as ACME_SP_SVC, the survey's recursive WITH from ACME_SP_APP and
-       PUBLIC, joined to DBA_SCHEMA_PRIVS, with the role path
+       PUBLIC, as grants.py sends it, joined to DBA_SCHEMA_PRIVS, with the
+       role path (joined with CHR(0), printed with " > ")
   SP5  drops the fixtures, and ACME_SP_SVC with 99_uninstall.sql
 
 It MEASURES and decides nothing. No statement reads a password or verifier
@@ -34,7 +35,9 @@ v1 ran three times, before 00_install.sql granted DBA_SCHEMA_PRIVS; with
 grant_report_reads=Y it got ORA-00942 from the view. Its first run stopped,
 because SYSTEM cannot grant SELECT on a SYS view (ORA-01031). v2, with the
 grant in the install script and SP3 run with N and with Y, ran three times;
-the last two printed the same results, quoted here.
+the last two printed the same results. v3 sends SP4 as grants.py's own text
+(grants._ROLES, with its CHR(0) path) and revokes PUBLIC's grant before the
+schema's owner is dropped; it ran twice and printed v2's results, quoted here.
 
 RESULTS -- 26ai Free 23.26.3.0.0
 
@@ -88,6 +91,7 @@ from pathlib import Path
 
 import oracledb
 
+from sopuli.driver.oracle import grants
 from sopuli.driver.oracle import session as oracle_session
 
 CONTAINER = os.environ.get(
@@ -103,23 +107,19 @@ SVC = "ACME_SP_SVC"
 SCRIPTS = Path(__file__).resolve().parent
 IN_CONTAINER = "/tmp/sopuli-probe-21"
 
-#: The survey's recursive WITH (grants._ROLES), joined to DBA_SCHEMA_PRIVS.
-SCHEMA_PRIVS_QUERY = (
-    "with roles (grantee, granted_role, path, first_default) as ("
-    "select grantee, granted_role, cast(granted_role as varchar2(4000)), default_role "
-    "from dba_role_privs where grantee in (:g0, :g1) "
-    "union all "
-    "select r.grantee, p.granted_role, r.path || ' > ' || p.granted_role, r.first_default "
-    "from dba_role_privs p join roles r on p.grantee = r.granted_role"
-    ") cycle granted_role set is_cycle to 'Y' default 'N' "
-    "select s.grantee, cast(null as varchar2(4000)), cast(null as varchar2(3)), "
+#: The survey's own recursive WITH (``grants._ROLES``, path joined with
+#: ``CHR(0)``), joined to DBA_SCHEMA_PRIVS, for the two grantees SP4 binds.
+SCHEMA_PRIVS_QUERY = grants.statement(
+    grants._ROLES  # noqa: SLF001 -- the survey's text, measured as it is sent
+    + "select s.grantee, cast(null as varchar2(4000)), cast(null as varchar2(3)), "
     "s.privilege, s.schema, s.admin_option "
-    "from dba_schema_privs s where s.grantee in (:g0, :g1) "
+    f"from dba_schema_privs s where s.grantee in ({grants.GRANTEES}) "
     "union all "
     "select r.grantee, r.path, r.first_default, s.privilege, s.schema, s.admin_option "
     "from roles r join dba_schema_privs s on s.grantee = r.granted_role "
     "where r.is_cycle = 'N' "
-    "order by 1, 5, 4, 2 nulls first"
+    "order by 1, 5, 4, 2 nulls first",
+    2,
 )
 
 
@@ -166,6 +166,18 @@ def rows(cursor: oracledb.Cursor, sql: str, binds: dict[str, str] | None = None)
 
 
 def drop(cursor: oracledb.Cursor) -> None:
+    """PUBLIC's schema privilege first, while its schema still exists; then the
+    roles and the accounts."""
+    for privilege, schema in rows(
+        cursor,
+        "select privilege, schema from dba_schema_privs where grantee = 'PUBLIC' "
+        "and schema like 'ACME\\_SP\\_%' escape '\\'",
+    ):
+        cursor.execute(f"revoke {privilege} on schema {schema} from public")
+    for (role,) in rows(
+        cursor, "select role from dba_roles where role like 'ACME\\_SP\\_%' escape '\\'"
+    ):
+        cursor.execute(f"drop role {role}")
     for (name,) in rows(
         cursor, "select username from dba_users where username like 'ACME\\_SP\\_%' escape '\\'"
     ):
@@ -173,16 +185,6 @@ def drop(cursor: oracledb.Cursor) -> None:
             dba(f"@{IN_CONTAINER}/99_uninstall.sql {SVC} N")
         else:
             cursor.execute(f"drop user {name} cascade")
-    for (role,) in rows(
-        cursor, "select role from dba_roles where role like 'ACME\\_SP\\_%' escape '\\'"
-    ):
-        cursor.execute(f"drop role {role}")
-    for privilege, schema in rows(
-        cursor,
-        "select privilege, schema from dba_schema_privs where grantee = 'PUBLIC' "
-        "and schema like 'ACME\\_SP\\_%' escape '\\'",
-    ):
-        cursor.execute(f"revoke {privilege} on schema {schema} from public")
 
 
 def sp0(cursor: oracledb.Cursor) -> None:
@@ -279,8 +281,9 @@ def sp4(password: str) -> None:
     print("       (grantee, path, first_default, privilege, schema, admin_option)")
     with oracledb.connect(user=SVC, password=password, dsn=DSN) as connection:
         binds = {"g0": "ACME_SP_APP", "g1": "PUBLIC"}
-        for row in rows(connection.cursor(), SCHEMA_PRIVS_QUERY, binds):
-            print(f"       {row}")
+        for grantee, path, *rest in rows(connection.cursor(), SCHEMA_PRIVS_QUERY, binds):
+            shown = path.replace(grants.PATH_SEPARATOR, " > ") if path else path
+            print(f"       {(grantee, shown, *rest)}")
 
 
 def main() -> None:

@@ -95,7 +95,8 @@ def observe(cursor: Cursor, *, target: str, encryption: Encryption | None = None
     session is encrypted.
 
     ``db_version`` is the part of ``VERSION()`` before the first ``-``, so
-    ``11.8.9-MariaDB-ubu2404-log`` is reported as ``11.8.9``. A server whose
+    ``11.8.9-MariaDB-ubu2404-log`` is reported as ``11.8.9``. It is also
+    ``db_release``: the number is already the full release. A server whose
     version does not name MariaDB is refused (:class:`NotMariadbError`) before
     anything else is read. ``encryption`` is the session's, where the session
     already read it; otherwise it is read here.
@@ -119,9 +120,11 @@ def observe(cursor: Cursor, *, target: str, encryption: Encryption | None = None
     if encryption is None:
         encryption = read_encryption(cursor, block="mariadb")
 
+    release = version.split("-")[0]
     return Scope(
         type=SERVER,
-        db_version=version.split("-")[0],
+        db_version=release,
+        db_release=release,
         open_mode=READ_WRITE if can_write else READ_ONLY,
         read_write=can_write,
         encryption=encryption,

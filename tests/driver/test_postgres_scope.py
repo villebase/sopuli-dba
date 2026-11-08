@@ -89,6 +89,7 @@ def test_a_primary_is_a_read_write_cluster() -> None:
     assert scope.type == CLUSTER
     assert scope.container is None
     assert scope.db_version == "16.15"
+    assert scope.db_release == "16.15", "already the full release"
     assert scope.open_mode == READ_WRITE
     assert scope.read_write is True
 

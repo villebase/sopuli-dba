@@ -126,7 +126,8 @@ def observe(cursor: Cursor, *, target: str) -> Scope:
     standby.
 
     ``db_version`` is the first word of ``server_version``. A packaged build
-    adds its own after it, such as ``16.4 (Debian 16.4-1.pgdg120+1)``.
+    adds its own after it, such as ``16.4 (Debian 16.4-1.pgdg120+1)``. It is
+    also ``db_release``: the number is already the full release.
     """
     cursor.execute(SESSION_FACTS)
     version, in_recovery, read_only, user, superuser, superuser_role = cursor.fetchone()
@@ -144,9 +145,11 @@ def observe(cursor: Cursor, *, target: str) -> Scope:
     cursor.execute(SSL_ROW)
     encryption = encryption_of(cursor.fetchone())
 
+    release = str(version).split()[0]
     return Scope(
         type=CLUSTER,
-        db_version=str(version).split()[0],
+        db_version=release,
+        db_release=release,
         open_mode=open_mode,
         read_write=open_mode == READ_WRITE,
         capabilities=frozenset({ROLE_LOOKUP}),

@@ -6,7 +6,7 @@ for text output that keep it consistent with both.
 `sopuli/output/` produces them, and CI validates the output against the
 published schemas.
 
-Schemas: [`../schemas/sopuli-run-1.84.schema.json`](../schemas/sopuli-run-1.84.schema.json),
+Schemas: [`../schemas/sopuli-run-1.85.schema.json`](../schemas/sopuli-run-1.85.schema.json),
 [`../schemas/sopuli-event-1.24.schema.json`](../schemas/sopuli-event-1.24.schema.json)
 Examples, each from a real run:
 [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json),
@@ -288,18 +288,20 @@ Each part of the tool writes these lines:
   gets back.
 - **`webhook`**: the host only. The rest of a webhook URL can be its token.
 
-These lines are from `sopuli creds rotate --confirm --debug` against the tier-1
-stack, part way through the first account:
+These lines are selected from `sopuli creds rotate --confirm --debug` against
+the tier-1 stack, part way through the first account. The run prints a line
+for every query, and most are left out here:
 
 ```
-sopuli: debug:   1.028s oracle: connect to free-pdb as SYSTEM in 0.071s
-sopuli: debug:   1.031s oracle: call dbms_session.set_identifier in 0.003s
-sopuli: debug:   1.062s oracle: free-pdb is pdb FREEPDB1, version 23.0.0.0.0, READ WRITE; capabilities account_lock_state, expire_password, offline_verify, password_reuse_policy, password_rollover, profile_management, role_lookup
-sopuli: debug:   1.185s vault: PATCH /v1/kv/data/acme/dev/acme: 200 in 0.003s
-sopuli: debug:   2.373s oracle: login as ACME_APP_USER: fail in 1.056s
-sopuli: debug:   2.378s oracle: select username from dba_users where username = :name (binds :name) in 0.003s
-sopuli: debug:   2.399s oracle: ALTER USER "ACME_APP_USER" IDENTIFIED BY *** in 0.019s
-sopuli: debug:   2.489s oracle: login as ACME_APP_USER: pass in 0.067s
+sopuli: debug:   1.555s oracle: connect to free-pdb as SYSTEM in 0.079s
+sopuli: debug:   1.557s oracle: call dbms_session.set_identifier in 0.002s
+sopuli: debug:   1.567s oracle: select version, version_full from v$instance in 0.002s
+sopuli: debug:   1.590s oracle: free-pdb is pdb, FREEPDB1, 23.26.3.0.0, READ WRITE; capabilities account_lock_state, expire_password, offline_verify, password_reuse_policy, password_rollover, profile_management, role_lookup
+sopuli: debug:   2.744s oracle: login as ACME_APP_USER: fail in 1.069s
+sopuli: debug:   2.748s vault: GET /v1/kv/data/locks/acme/dev/acme: 200 in 0.004s
+sopuli: debug:   2.753s oracle: select username from dba_users where username = :name (binds :name) in 0.004s
+sopuli: debug:   2.769s oracle: ALTER USER "ACME_APP_USER" IDENTIFIED BY *** in 0.014s
+sopuli: debug:   2.865s oracle: login as ACME_APP_USER: pass in 0.066s
 ```
 
 These lines are from a second `sopuli creds apply --confirm --debug`, after the
@@ -1451,6 +1453,7 @@ and new states, because that is a major change: a consumer that reads
       "type": "pdb",
       "container": "ORDERS",
       "db_version": "23.0.0.0.0",
+      "db_release": "23.26.3.0.0",
       "open_mode": "READ WRITE",
       "read_write": true,
       "capabilities": ["account_lock_state", "expire_password", "password_rollover"],
@@ -1510,6 +1513,13 @@ alerts on an unencrypted connection should treat it as a finding of its own.
 `unknown`. It says what to do, or why the driver could not tell, in the
 product's own words.
 `02-oracle-privileges.md` §2 says how the Oracle driver reads the answer.
+
+**`scope.db_release` is the full release**, from run schema 1.85, such as
+`23.26.3.0.0`. On Oracle `db_version` is `V$INSTANCE.VERSION`, which from 18c
+holds only the base release, `23.0.0.0.0`. `db_release` is `VERSION_FULL`. On
+an Oracle release without that column, and on every other product, the two
+are equal.
+`02-oracle-privileges.md` §2 says how the Oracle driver reads them.
 
 **A PostgreSQL target's `scope.type` is `cluster`**, from run schema 1.62.
 `container` and `db_unique_name` are null. `open_mode` is `READ WRITE`,

@@ -4918,6 +4918,31 @@ the register.
   service account needs read grants that the credential commands do not, and
   which grants is measured in #1377.
 
+## #1386
+
+- **Decided:** 2026-11-08, #1386
+- **Question:** `scope.db_version` on Oracle is `V$INSTANCE.VERSION`, which
+  from 18c holds only the base release, `23.0.0.0.0`. How does the run
+  document give the full release, such as `23.26.3.0.0`?
+- **Decision:** B, the maintainer's choice. `db_version` keeps its meaning.
+  A new optional field, `scope.db_release`, is `VERSION_FULL`, or `VERSION`
+  where only `ORA-00904` says the column is missing. Run schema minor bump.
+  Other products give it the value of `db_version`. `doctor`'s JSON and the
+  `report` head lines show it. The password-limit floor still reads
+  `db_version`.
+- **Why:** `03-json-output.md` §8 calls a changed meaning a major change.
+  A new field is a minor one, and loses nothing: a consumer that wants the
+  full release reads `db_release`, and one that relied on `db_version` sees
+  the same value as before.
+- **Rejected:**
+  1. A: make `db_version` the full release, with a major bump of the run
+     schema and an overlap release. The first major bump, for one field's
+     value, and every consumer must check again.
+  2. C: make `db_version` the full release, and record an exception to §8.
+     It sets a precedent for changing a field's meaning without a bump.
+- **Known cost:** two version fields on Oracle, which hold the same value
+  before 18c and on every other product.
+
 ## #1398
 
 - **Decided:** 2026-11-08, #1398

@@ -730,6 +730,10 @@ class Scope:
     container: str | None = None
     db_unique_name: str | None = None
     db_version: str | None = None
+    #: The full release, including the release update. On Oracle 18c and later
+    #: ``db_version`` is only the base release, ``23.0.0.0.0``, so this is the
+    #: one to show a person. Every other driver gives ``db_version`` here.
+    db_release: str | None = None
     open_mode: str | None = None
     read_write: bool | None = None
     capabilities: frozenset[str] = frozenset()
@@ -752,6 +756,15 @@ class Scope:
     def supports(self, capability: str) -> bool:
         """Whether this connection reported ``capability``."""
         return capability in self.capabilities
+
+    @property
+    def release(self) -> str | None:
+        """The release to show a person: ``db_release``, else ``db_version``.
+
+        Where ``VERSION_FULL`` reads empty and ``VERSION`` does not, the base
+        release still says more than "release unknown".
+        """
+        return self.db_release or self.db_version
 
 
 @dataclass(frozen=True)

@@ -363,7 +363,7 @@ class OracleSession(ClosesConnection):
                 self._scope = observe(cursor)
             scope = self._scope
             if LOG.isEnabledFor(logging.DEBUG):
-                found = (scope.type, scope.container, scope.db_version, scope.open_mode)
+                found = (scope.type, scope.container, scope.release, scope.open_mode)
                 LOG.debug(
                     "%s is %s; capabilities %s",
                     self.target.name,

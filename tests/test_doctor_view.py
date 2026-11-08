@@ -61,6 +61,7 @@ def _found(**kwargs: Any) -> Scope:
         "container": "ORDERS",
         "db_unique_name": "ORDERSDB",
         "db_version": "23.0.0.0.0",
+        "db_release": "23.26.3.0.0",
         "open_mode": "READ WRITE",
         "read_write": True,
         "capabilities": frozenset({"expire_password", "password_rollover"}),
@@ -85,6 +86,8 @@ def test_a_reachable_target_reports_what_it_found() -> None:
     assert entry["reachable"] is True
     assert entry["scope"]["type"] == "pdb"
     assert entry["scope"]["capabilities"] == ["expire_password", "password_rollover"]
+    assert entry["scope"]["db_version"] == "23.0.0.0.0"
+    assert entry["scope"]["db_release"] == "23.26.3.0.0"
 
 
 def test_an_unreachable_target_has_no_scope_at_all() -> None:

@@ -147,6 +147,20 @@ looks like a broken probe. Nothing in the statements says who must issue them.
 Each dictionary read has a consumer, and a missing grant is never read as an
 empty answer.
 
+- **`V$INSTANCE`** gives the release twice, in one query.
+  `scope.db_version` is `VERSION`. Since 18c that column holds only the base
+  release: 19.3.0.0.0 reports `19.0.0.0.0`, and 23.26.3.0.0 reports
+  `23.0.0.0.0`. `scope.db_release` is `VERSION_FULL`, the full release, such
+  as `23.26.3.0.0`. Oracle's reference dates `VERSION_FULL` from 18c. A
+  release without it answers `ORA-00904`, and the driver then reads `VERSION`
+  alone, which before 18c is the full release, such as `12.2.0.1.0`, and gives
+  it as both. The tool has not read a release before 18c this way yet. Only
+  `ORA-00904` falls back. A refused `V$INSTANCE` leaves both empty and is not
+  asked again. `doctor --output json` shows `db_release`, and the `report`
+  head lines show it, or `db_version` where it is empty. Only the
+  password-limit floor in `driver/oracle/limits.py` uses a release to decide
+  anything. It reads `db_version` and compares the first two parts only.
+
 - **`DBA_ROLE_PRIVS`** is what guardrail 4 reads (§4). Check 4 refuses an
   account that holds `DBA`, `PDB_DBA`, `CDB_DBA` or `AUDIT_ADMIN`, and this view
   is the only place to see another account's roles. An empty role set means "this
@@ -277,12 +291,9 @@ ADB takes some things away for good:
   sweep cannot run there. Its `SYSDBA` positions do not apply to ADB; they are
   not merely unrun. Do not carry 26ai Free's result over to ADB because both are
   26ai.
-- **`db_version` is the base release**, `23.0.0.0.0`, because it comes from
-  `V$INSTANCE.VERSION`. Since 18c that column holds only the base release: 19.3
-  reports `19.0.0.0.0`, with `VERSION_FULL` `19.3.0.0.0`. `doctor` shows it as
-  `scope.db_version`. Only the password-limit floor in
-  `driver/oracle/limits.py` uses it to decide anything, and that compares the
-  first two parts only.
+- **`db_release` has not been read on ADB yet.** `db_version` there is
+  `23.0.0.0.0`, the base release, as on every 18c and later (§2, the
+  dictionary reads).
 - **Not tried:** whether `ADMIN` can grant `SELECT ON SYS.V_$PWFILE_USERS` (§4
   check 3), and whether `01_audit_policy.sql` runs on ADB, where unified auditing
   is on by default.

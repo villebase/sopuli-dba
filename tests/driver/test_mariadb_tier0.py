@@ -75,6 +75,7 @@ def test_a_mariadb_server_is_a_server_with_its_version() -> None:
 
     assert scope.type == SERVER
     assert scope.db_version == "11.8.9"
+    assert scope.db_release == "11.8.9", "already the full release"
     assert scope.open_mode == READ_WRITE
     assert scope.encryption.method == ENCRYPTION_TLS
     assert scope.capabilities == frozenset()

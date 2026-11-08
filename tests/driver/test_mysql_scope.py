@@ -86,6 +86,7 @@ def test_a_writable_server_over_tls() -> None:
 
     assert scope.type == SERVER
     assert scope.db_version == "8.4.13"
+    assert scope.db_release == "8.4.13", "already the full release"
     assert scope.open_mode == READ_WRITE
     assert scope.read_write is True
     assert scope.encryption.method == ENCRYPTION_TLS

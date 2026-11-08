@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Protocol
 
 from sopuli.output.document import Error, Summary
 from sopuli.output.palette import Role, paint, state_cell
@@ -52,10 +52,21 @@ class TargetReport:
     read_failed: bool = False
 
 
-def target_counts(reports: Sequence[TargetReport]) -> tuple[int, int]:
+class TargetAnswer(Protocol):
+    """What a report knows of one target's answer, whichever report it is."""
+
+    @property
+    def error(self) -> Error | None: ...
+
+    @property
+    def unsupported(self) -> bool: ...
+
+
+def target_counts(reports: Sequence[TargetAnswer]) -> tuple[int, int]:
     """How many targets gave no answer, and how many of another product.
 
-    The one place both are counted, so the exit code and the summary agree.
+    The one place both are counted, for every report, so a report's exit code
+    and its summary agree, and the reports agree with each other.
     """
     unsupported = sum(1 for report in reports if report.unsupported)
     unanswered = sum(1 for report in reports if report.error is not None) - unsupported

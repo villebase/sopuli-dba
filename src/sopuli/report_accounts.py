@@ -422,6 +422,16 @@ def _state(findings: Sequence[Finding]) -> str:
     return REPORT_OK
 
 
+def undeclared_row(target: str, surveyed: SurveyedAccount) -> AccountRow:
+    """An account no rule covers, as this module builds it, reasons included.
+
+    For a caller that asks for one account by name, such as
+    ``report privileges --account``, where the account is one :func:`evaluate`
+    leaves out (one Oracle maintains, that nothing names).
+    """
+    return _row(target, surveyed, UNDECLARED_KIND, (), UNDECLARED)
+
+
 def _row(
     target: str,
     surveyed: SurveyedAccount,

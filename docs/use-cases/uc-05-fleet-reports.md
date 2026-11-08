@@ -4,11 +4,11 @@ Depends on: `../design/00-principles.md`, `../design/01-configuration.md`,
 `../design/02-oracle-privileges.md`
 
 This document specifies `sopuli report accounts`, `sopuli report privileges`
-and `sopuli report history`. **`report accounts` is built, on Oracle**, with
-its `reports:` rules (§4, §7). `report privileges` and `report history` are
-not built yet, and their names and flags are proposals until the PR that
-builds each one fixes them. PostgreSQL, MySQL and MariaDB come later: on them
-`report accounts` is refused before it connects. §9 lists the decisions.
+and `sopuli report history`. **`report accounts` and `report privileges` are
+built, on Oracle**, with the `reports:` rules (§4, §5, §7). `report history`
+is not built yet, and its name and flags are proposals until the PR that
+builds it fixes them. PostgreSQL, MySQL and MariaDB come later: on them the
+reports are refused before they connect. §9 lists the decisions.
 
 ---
 
@@ -175,7 +175,13 @@ A profile missing on a target is one finding, not one per account.
 
 ## 5. The privilege report
 
-**Not built.** Two views, for one account or for every account on a target.
+**Built, on Oracle:** `sopuli report privileges [--detail] [--account NAME]
+[--public]`, for the same accounts `report accounts` covers.
+`docs/local-testing.md` §9a has a run. It needs the optional grant on the
+privilege views (`00_install.sql`, `grant_report_reads=Y`); without it, the
+part it could not read is *not checked* and the run exits 4. It judges nothing,
+so it never exits 3. Schema privileges (23ai) are not read yet, and the output
+says so (#1389). Two views, for one account or for every account on a target.
 
 **The summary** shows:
 

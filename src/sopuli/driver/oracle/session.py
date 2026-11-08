@@ -55,6 +55,7 @@ from sopuli.driver.oracle.accounts import (
     resolve_profile,
     resolve_role,
     stored_verifiers,
+    survey,
 )
 from sopuli.driver.oracle.audit import coverage_of
 from sopuli.driver.oracle.capabilities import (
@@ -144,6 +145,7 @@ from sopuli.driver.protocol import (
     VerifyResult,
     require_capability,
 )
+from sopuli.driver.survey import SurveyedAccount
 from sopuli.exit_codes import ExitCode
 from sopuli.output.debug import logger
 from sopuli.passwords import ByteLimit
@@ -431,6 +433,25 @@ class OracleSession(ClosesConnection):
         """
         with traced_cursor(self.connection) as cursor:
             return password_constraints(cursor, account)
+
+    def survey_accounts(self) -> tuple[SurveyedAccount, ...]:
+        """Every account on this target, ordered by name, for UC-5's reports.
+
+        Oracle only, and not in the :class:`~sopuli.driver.protocol.Session`
+        protocol: a caller finds it with ``getattr``. Read-only, on the baseline
+        grant set, plus ``SYS.USER$`` for the failed-login counts where the
+        session has ``offline_verify``. Outside :data:`OWN_COUNT_SCOPES` a
+        common account's lock, limits and count are ``None``, each with a
+        reason (:func:`~sopuli.driver.oracle.accounts.survey`).
+        """
+        scope = self.scope()
+        with traced_cursor(self.connection) as cursor:
+            return survey(
+                cursor,
+                own_container=scope.type in OWN_COUNT_SCOPES,
+                user_dollar=scope.supports(OFFLINE_VERIFY),
+                application=scope.type in APPLICATION_SCOPES,
+            )
 
     def byte_limit(self) -> ByteLimit:
         """How long a password may be here, in this database's character set.

@@ -13,6 +13,7 @@ import pytest
 
 from sopuli.config.model import ExpandedTarget, Target
 from sopuli.driver.grants import COLUMN, OBJECT, SYSTEM, GrantRow, GrantSurvey, RoleGrant
+from sopuli.driver.oracle import grants
 from sopuli.driver.oracle.accounts import DictionaryUnreadableError
 from sopuli.driver.oracle.grants import (
     COL_PRIVS_QUERY,
@@ -23,6 +24,7 @@ from sopuli.driver.oracle.grants import (
     TAB_PRIVS_QUERY,
     TAB_PRIVS_QUERY_LEGACY,
     UNKNOWN_AUTHENTICATION,
+    statement,
     survey_grants,
 )
 from sopuli.driver.protocol import ROLE_LOOKUP, DriverError, Scope
@@ -31,25 +33,49 @@ APP = "ACME_RR_APP"
 OWNER = "ACME_RR_OWNER"
 SEP = "\x00"
 
+_QUERIES = (
+    ROLE_GRANTS_QUERY,
+    ROLE_GRANTS_QUERY_LEGACY,
+    ROLE_GRANTS_QUERY_NO_ROLES,
+    SYS_PRIVS_QUERY,
+    TAB_PRIVS_QUERY,
+    TAB_PRIVS_QUERY_LEGACY,
+    COL_PRIVS_QUERY,
+)
+
 
 class _Cursor:
-    """Answers per (statement, grantee). An exception is raised on fetch."""
+    """Answers per (query, grantee), as the server would for a chunk.
+
+    A statement for several grantees gets each one's rows, its grantee first.
+    ``asked`` holds each statement as its query and the grantees it bound. An
+    exception is raised on fetch.
+    """
 
     def __init__(self, answers: dict[tuple[str, str], Any]) -> None:
         self.answers = answers
-        self.asked: list[tuple[str, Any]] = []
-        self.current: tuple[str, str] = ("", "")
+        self.asked: list[tuple[str, tuple[str, ...]]] = []
+        self.sent: list[tuple[str, dict[str, Any]]] = []
+        self.current: tuple[str, tuple[str, ...]] = ("", ())
 
     def execute(self, sql: str, parameters: Any = None, /) -> _Cursor:
-        self.asked.append((sql, parameters))
-        self.current = (sql, (parameters or {}).get("grantee", ""))
+        values = dict(parameters or {})
+        grantees = tuple(values[f"g{index}"] for index in range(len(values)))
+        (query,) = [query for query in _QUERIES if statement(query, len(grantees)) == sql]
+        self.sent.append((sql, values))
+        self.current = (query, grantees)
+        self.asked.append(self.current)
         return self
 
     def fetchall(self) -> Any:
-        answer = self.answers.get(self.current, [])
-        if isinstance(answer, Exception):
-            raise answer
-        return answer
+        query, grantees = self.current
+        rows: list[tuple[Any, ...]] = []
+        for grantee in grantees:
+            answer = self.answers.get((query, grantee), [])
+            if isinstance(answer, Exception):
+                raise answer
+            rows.extend((grantee, *row) for row in answer)
+        return rows
 
     def fetchone(self) -> Any:
         raise AssertionError("the survey reads every row")
@@ -208,7 +234,10 @@ def test_roles_carry_their_authentication() -> None:
     )
 
 
-def test_a_refused_view_is_none_not_empty_and_names_the_grant() -> None:
+def test_a_refused_view_is_none_not_empty_and_names_the_grant(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(grants, "CHUNK", 1)
     refused = _ora("ORA-00942", "table or view does not exist")
     cursor = _Cursor(_answers(objects=refused))
     survey = survey_grants(cursor, [APP, "ACME_WEB_USER"], public=False)
@@ -218,8 +247,8 @@ def test_a_refused_view_is_none_not_empty_and_names_the_grant() -> None:
     (reason,) = survey.unreadable
     assert "SELECT ON SYS.DBA_TAB_PRIVS" in reason
     assert "ORA-00942" in reason
-    # Once refused, the view is not asked again for the next account.
-    tab = [sql for sql, _ in cursor.asked if sql in (TAB_PRIVS_QUERY, TAB_PRIVS_QUERY_LEGACY)]
+    # Once refused, the view is not asked again for the next chunk.
+    tab = [query for query, _ in cursor.asked if query in (TAB_PRIVS_QUERY, TAB_PRIVS_QUERY_LEGACY)]
     assert len(tab) == 1
 
 
@@ -253,7 +282,7 @@ def test_another_failure_is_raised_not_read_as_unreadable() -> None:
 def test_public_false_sends_no_public_branch() -> None:
     cursor = _Cursor(_answers())
     survey_grants(cursor, [APP], public=False)
-    assert {(parameters or {}).get("grantee") for _, parameters in cursor.asked} == {APP}
+    assert {grantee for _, grantees in cursor.asked for grantee in grantees} == {APP}
 
 
 def test_public_true_reads_public_once() -> None:
@@ -262,8 +291,7 @@ def test_public_true_reads_public_once() -> None:
     answers[(SYS_PRIVS_QUERY, "PUBLIC")] = [(_path("ACME_RR_PUB"), "YES", "CREATE SYNONYM", "NO")]
     cursor = _Cursor(answers)
     survey = survey_grants(cursor, [APP, "PUBLIC"], public=True)
-    grantees = [(parameters or {}).get("grantee") for sql, parameters in cursor.asked]
-    assert grantees.count("PUBLIC") == 4
+    assert [grantees.count("PUBLIC") for _, grantees in cursor.asked] == [1, 1, 1, 1]
     assert survey.system is not None
     public = [row for row in survey.system if row.grantee == "PUBLIC"]
     assert public == [
@@ -309,7 +337,7 @@ def test_without_role_lookup_roles_are_read_without_dba_roles() -> None:
     assert survey.objects is not None
     (reason,) = survey.unreadable
     assert "GRANT SELECT ON SYS.DBA_ROLES" in reason
-    assert ROLE_GRANTS_QUERY not in [sql for sql, _ in cursor.asked]
+    assert ROLE_GRANTS_QUERY not in [query for query, _ in cursor.asked]
 
 
 def test_an_empty_authentication_is_unknown_not_blank() -> None:
@@ -332,34 +360,74 @@ def test_rows_from_two_grantors_are_one_row_and_grantable_if_either_is() -> None
     assert row.grantable is True
 
 
-def test_a_narrower_shape_is_kept_for_the_next_grantee() -> None:
+def test_a_narrower_shape_is_kept_for_the_next_chunk(monkeypatch: pytest.MonkeyPatch) -> None:
     """A release without DBA_TAB_PRIVS.TYPE refuses the wider query once, not
-    once per account."""
+    once per chunk, and the narrower one is sent for a chunk of another size."""
+    monkeypatch.setattr(grants, "CHUNK", 2)
     no_column = _ora("ORA-00904", '"T"."TYPE": invalid identifier')
     answers = _answers(objects=no_column)
     answers[(TAB_PRIVS_QUERY_LEGACY, APP)] = []
-    answers[(TAB_PRIVS_QUERY, "ACME_WEB_USER")] = no_column
     cursor = _Cursor(answers)
-    survey_grants(cursor, [APP, "ACME_WEB_USER"], public=False)
-    asked = [sql for sql, _ in cursor.asked]
-    assert asked.count(TAB_PRIVS_QUERY) == 1
-    assert asked.count(TAB_PRIVS_QUERY_LEGACY) == 2
+    survey_grants(cursor, [APP, "ACME_WEB_USER", "ACME_BATCH_USER"], public=False)
+    asked = [(query, len(grantees)) for query, grantees in cursor.asked]
+    assert asked.count((TAB_PRIVS_QUERY, 2)) == 1
+    assert [count for query, count in asked if query == TAB_PRIVS_QUERY_LEGACY] == [2, 1]
 
 
-def test_every_statement_binds_only_the_grantee_and_reads_no_verifier() -> None:
+def test_grantees_are_surveyed_a_chunk_at_a_time(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Four statements per chunk, not per grantee (#1396)."""
+    monkeypatch.setattr(grants, "CHUNK", 2)
+    accounts = [f"ACME_{index}_USER" for index in range(5)]
+    cursor = _Cursor({})
+    survey_grants(cursor, accounts, public=False)
+    assert len(cursor.asked) == 12
+    chunks = [grantees for query, grantees in cursor.asked if query == SYS_PRIVS_QUERY]
+    assert chunks == [tuple(accounts[0:2]), tuple(accounts[2:4]), tuple(accounts[4:])]
+
+
+def test_a_chunk_stays_within_oracles_in_list_limit() -> None:
+    """ORA-01795 refuses an IN list of more than 1,000 expressions."""
+    accounts = [f"ACME_{index}_USER" for index in range(2 * grants.CHUNK + 1)]
+    cursor = _Cursor({})
+    survey_grants(cursor, accounts, public=True)
+    assert 1 <= grants.CHUNK <= 1000
+    assert max(len(grantees) for _, grantees in cursor.asked) == grants.CHUNK
+    surveyed = [grantees for query, grantees in cursor.asked if query == SYS_PRIVS_QUERY]
+    assert [name for chunk in surveyed for name in chunk] == [*accounts, "PUBLIC"]
+
+
+def test_rows_keep_their_grantee_within_a_chunk() -> None:
+    answers = _answers()
+    answers[(ROLE_GRANTS_QUERY, "ACME_WEB_USER")] = [("ACME_RR_EXTRA", "NO", "YES", "NONE")]
+    answers[(SYS_PRIVS_QUERY, "ACME_WEB_USER")] = [(None, None, "CREATE VIEW", "NO")]
+    cursor = _Cursor(answers)
+    survey = survey_grants(cursor, [APP, "ACME_WEB_USER"], public=False)
+    assert {grantees for _, grantees in cursor.asked} == {(APP, "ACME_WEB_USER")}
+    assert survey.system is not None
+    web = [(row.grantee, row.privilege) for row in survey.system if row.grantee != APP]
+    assert web == [("ACME_WEB_USER", "CREATE VIEW")]
+    assert [grant.role for grant in survey.roles if grant.grantee == "ACME_WEB_USER"] == [
+        "ACME_RR_EXTRA"
+    ]
+    assert {row.grantee for row in survey.objects or ()} == {APP}
+
+
+def test_every_statement_binds_only_the_grantees_and_reads_no_verifier() -> None:
     cursor = _Cursor(_answers())
-    survey_grants(cursor, [APP], public=False)
-    for sql, parameters in cursor.asked:
-        assert set(parameters) == {"grantee"}
+    survey_grants(cursor, [APP, "ACME_WEB_USER"], public=True)
+    for sql, values in cursor.sent:
+        assert values == {"g0": APP, "g1": "ACME_WEB_USER", "g2": "PUBLIC"}
         lowered = sql.lower()
+        for name in values.values():
+            assert name.lower() not in lowered
         assert "user$" not in lowered
         assert "spare4" not in lowered
         assert "password" not in lowered.replace("password_required", "")
 
 
 def test_the_recursion_cannot_loop() -> None:
-    for statement in (SYS_PRIVS_QUERY, TAB_PRIVS_QUERY, COL_PRIVS_QUERY):
-        assert "cycle granted_role set" in statement.lower()
+    for query in (SYS_PRIVS_QUERY, TAB_PRIVS_QUERY, COL_PRIVS_QUERY):
+        assert "cycle granted_role set" in query.lower()
 
 
 class _Connection:

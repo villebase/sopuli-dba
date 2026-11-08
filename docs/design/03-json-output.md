@@ -6,7 +6,7 @@ for text output that keep it consistent with both.
 `sopuli/output/` produces them, and CI validates the output against the
 published schemas.
 
-Schemas: [`../schemas/sopuli-run-1.84.schema.json`](../schemas/sopuli-run-1.84.schema.json),
+Schemas: [`../schemas/sopuli-run-1.85.schema.json`](../schemas/sopuli-run-1.85.schema.json),
 [`../schemas/sopuli-event-1.24.schema.json`](../schemas/sopuli-event-1.24.schema.json)
 Examples, each from a real run:
 [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json),
@@ -458,7 +458,8 @@ This sketch shows the run document's shape:
                  account_status, changed, actions[], verification, rollover,
                  password_age_days, started_at, duration_ms, error, warnings[],
                  overridden[], redraws, kind, findings[], failed_logins,
-                 privileges, failed_logins_reason, declared_by, reset_at } ],
+                 privileges, history, failed_logins_reason, declared_by,
+                 reset_at } ],
   targets    [ { target, reachable, scope, asserted, duration_ms, privileges,
                  error, warnings[] } ],
   install    { backends[], drivers[] },
@@ -1513,7 +1514,7 @@ alerts on an unencrypted connection should treat it as a finding of its own.
 product's own words.
 `02-oracle-privileges.md` §2 says how the Oracle driver reads the answer.
 
-**`scope.db_release` is the full release**, from run schema 1.84, such as
+**`scope.db_release` is the full release**, from run schema 1.85, such as
 `23.26.3.0.0`. On Oracle `db_version` is `V$INSTANCE.VERSION`, which from 18c
 holds only the base release, `23.0.0.0.0`. `db_release` is `VERSION_FULL`. On
 an Oracle release without that column, and on every other product, the two

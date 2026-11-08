@@ -4942,3 +4942,26 @@ the register.
      It sets a precedent for changing a field's meaning without a bump.
 - **Known cost:** two version fields on Oracle, which hold the same value
   before 18c and on every other product.
+
+## #1398
+
+- **Decided:** 2026-11-08, #1398
+- **Question:** UC-5 §6 flagged an account, as information, when no
+  `pending` is staged and the database's password changed after the last
+  promotion, on the grounds that nothing in the tool changed it then. The
+  usual first run, `creds generate --promote` then `creds apply`, stamps
+  `rotated_at` first and changes the database after it, and `apply` writes
+  nothing to the store; `apply --source current` does the same. Should
+  `report history` keep the flag?
+- **Decision:** the maintainer's. No flag. The report shows the database's
+  date of the last password change beside the last rotation, as `creds status`
+  shows it, and never compares the two.
+- **Why:** the flag would fire on every account seeded the usual way, so a
+  reader would learn to ignore it. Two dates side by side mislead no one.
+- **Rejected:**
+  1. Keep the rule and word the flag neutrally. It still fires on every
+     seeded account.
+  2. Flag only after a rotation through `pending`. `apply --source current`
+     after a rotation would still be flagged falsely.
+- **Known cost:** a database change that nothing in the tool made is not
+  pointed out. The reader sees it only by comparing the two dates.

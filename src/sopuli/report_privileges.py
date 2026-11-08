@@ -21,8 +21,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from sopuli.driver.grants import GrantRow, GrantSurvey, RoleGrant
-from sopuli.exit_codes import ExitCode
 from sopuli.report_accounts import ACCOUNT_MISSING, AccountRow
+from sopuli.report_exit import exit_code_for
 
 #: The pseudo-account grants to ``PUBLIC`` are listed under, once per target.
 PUBLIC = "PUBLIC"
@@ -164,10 +164,9 @@ def exit_code(
     such as ``DBA_ROLES`` for the roles' authentication, even where every
     account's three parts were read.
     """
-    if targets and unsupported == targets:
-        return int(ExitCode.UNSUPPORTED_CAPABILITY)
-    if unreachable:
-        return int(ExitCode.FAILURE)
-    if unsupported or unreadable or any(not one.complete for one in reports):
-        return int(ExitCode.PARTIAL)
-    return int(ExitCode.SUCCESS)
+    return exit_code_for(
+        unreachable=unreachable,
+        unsupported=unsupported,
+        targets=targets,
+        incomplete=unreadable or any(not one.complete for one in reports),
+    )

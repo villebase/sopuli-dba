@@ -439,7 +439,7 @@ def test_observe_reports_what_it_found() -> None:
     assert found.type == "cdb_root"
     assert found.container == "CDB$ROOT"
     assert found.db_unique_name == "FREE"
-    assert found.db_version == "23.0.0.0.0", "V$INSTANCE.VERSION, as before 1.84"
+    assert found.db_version == "23.0.0.0.0", "V$INSTANCE.VERSION, as before 1.85"
     assert found.db_release == "23.26.3.0.0", "the full release"
     assert found.read_write is True
     assert found.supports(COMMON_USERS)

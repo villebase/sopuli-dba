@@ -60,6 +60,8 @@ from sopuli.store.protocol import (
     Stored,
     StoreError,
     StoreHealth,
+    VersionHistory,
+    VersionInfo,
     bounded_prefix,
 )
 
@@ -85,6 +87,9 @@ class _Path:
     #: pre-flight reads the setting and nothing in tier 0 depends on the pruning
     #: itself happening.
     history: dict[int, Any] = field(default_factory=dict)
+    #: When each version (or, with native staging, each generation) was made,
+    #: by the store's :attr:`MemoryStore.clock`, for :meth:`MemoryStore.versions`.
+    created: dict[int, datetime] = field(default_factory=dict)
     #: Native staging only. ``version`` stays the compare-and-set token, moved
     #: by every mutation; the content's own version numbers are generations,
     #: and each stage names at most one of them.
@@ -215,6 +220,7 @@ class MemoryStore:
         entry.version += 1
         entry.data = copy.deepcopy(data)
         entry.history[entry.version] = entry.data
+        entry.created[entry.version] = self.clock()
         entry.deleted = False
         self._create_metadata(entry)
         return entry.version
@@ -297,6 +303,40 @@ class MemoryStore:
     def metadata(self, path: str) -> PathMetadata | None:
         entry = self.paths.get(path)
         return None if entry is None else entry.metadata
+
+    def versions(self, path: str) -> VersionHistory | None:
+        """Every version written at ``path``, as KV v2's metadata lists them.
+
+        ``None`` for a path never written or configured, and on an instance
+        whose capabilities leave out ``versioning``. Nothing is pruned here
+        (:class:`_Path`), so every version is listed. A delete marks the latest
+        version deleted, as KV v2's soft delete does. With native staging the
+        versions are the generations, and a deleted path is ``None``, as OCI
+        answers for a secret being deleted.
+        """
+        entry = self.paths.get(path)
+        if entry is None or VERSIONING not in self.capabilities:
+            return None
+        if STAGING in self.capabilities:
+            if not entry.stages:
+                return None
+            numbers, current = sorted(entry.generations), entry.generation
+        else:
+            numbers, current = sorted(entry.history), entry.version
+        listed = tuple(
+            VersionInfo(
+                version=number,
+                created_at=entry.created.get(number),
+                deleted=STAGING not in self.capabilities and entry.deleted and number == current,
+                destroyed=False,
+            )
+            for number in numbers
+        )
+        return VersionHistory(
+            current=current,
+            oldest_kept=numbers[0] if numbers else None,
+            versions=listed,
+        )
 
     def require_cas(self, path: str) -> None:
         """Set ``cas_required`` on ``path``, creating its metadata if need be.
@@ -435,6 +475,7 @@ class MemoryStore:
     def _add_generation(self, entry: _Path, data: Any, *, stage: str) -> None:
         entry.generation += 1
         entry.generations[entry.generation] = copy.deepcopy(data)
+        entry.created[entry.generation] = self.clock()
         if stage == CURRENT_STAGE and CURRENT_STAGE in entry.stages:
             entry.stages[PREVIOUS_STAGE] = entry.stages[CURRENT_STAGE]
         entry.stages[stage] = entry.generation

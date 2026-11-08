@@ -35,6 +35,33 @@ Options:
 
 It also takes the [global options](README.md#global-options).
 
+## sopuli report history
+
+```
+sopuli report history [OPTIONS]
+```
+
+Show when each managed password was rotated or reset, from the store.
+
+For each application account, every change of its own `rotated_at` stamp
+the store still keeps; for each personal account, every version of its
+reset record. Each history says where it starts and how many earlier
+versions are gone. The database's own date of the last password change is
+shown beside it and never compared. No password is read into the report.
+
+Exit 0 when every history was read, 1 when a target or a store gave no
+answer, and 4 when a history has a gap or the store keeps no versions.
+Only Oracle can run this report yet.
+
+Options:
+
+- `--select` `K=V[,K=V]` (repeatable): Keep only targets carrying every label given. Repeat for more labels.
+- `--target` `NAME` (repeatable): Keep only this target. Repeat to add more.
+- `--group` `NAME` (repeatable): Keep only targets in this group. Repeat to add more.
+- `--account` `NAME`: Show only this account.
+
+It also takes the [global options](README.md#global-options).
+
 ## sopuli report privileges
 
 ```

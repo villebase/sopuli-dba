@@ -56,6 +56,7 @@ __all__ = [
     "decide",
     "exceeds",
     "rotated_at",
+    "rotation_stamp",
 ]
 
 #: A rotation nobody finished: the vault holds a `pending` the database has not
@@ -112,16 +113,28 @@ def rotated_at(document: Any, binding: Binding) -> datetime | None:
     somebody else's document, and refusing to display a whole inventory over one
     malformed field would be the wrong trade for a read-only verb.
     """
+    return rotation_stamp(document, binding)[1]
+
+
+def rotation_stamp(document: Any, binding: Binding) -> tuple[bool, datetime | None]:
+    """Whether the account's own ``rotated_at`` is there, and when it says.
+
+    The one reading of the stamp, for `creds status` and `report history`. The
+    second needs the first part as well: a stamp that is there and does not
+    parse is a gap in a history, where a stamp never written is not (UC-5 §6).
+    """
     ref = binding.secret
     if ref is None or document is None:
-        return None
+        return False, None
     written = stage_layout(ref).read(document, ROTATED_AT)
+    if written is None:
+        return False, None
     if not isinstance(written, str):
-        return None
+        return True, None
     try:
-        return from_rfc3339(written)
+        return True, from_rfc3339(written)
     except ValueError:
-        return None
+        return True, None
 
 
 def age_days(moment: datetime | None, *, now: datetime | None = None) -> float | None:

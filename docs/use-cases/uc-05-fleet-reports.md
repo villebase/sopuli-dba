@@ -4,11 +4,9 @@ Depends on: `../design/00-principles.md`, `../design/01-configuration.md`,
 `../design/02-oracle-privileges.md`
 
 This document specifies `sopuli report accounts`, `sopuli report privileges`
-and `sopuli report history`. **`report accounts` and `report privileges` are
-built, on Oracle**, with the `reports:` rules (§4, §5, §7). `report history`
-is not built yet, and its name and flags are proposals until the PR that
-builds it fixes them. PostgreSQL, MySQL and MariaDB come later: on them the
-reports are refused before they connect. §9 lists the decisions.
+and `sopuli report history`. **All three are built, on Oracle**, with the
+`reports:` rules (§4, §5, §7). PostgreSQL, MySQL and MariaDB come later: on
+them the reports are refused before they connect. §9 lists the decisions.
 
 ---
 
@@ -209,8 +207,21 @@ Grants to `PUBLIC` are left out unless a flag asks for them.
 
 ## 6. Rotation history
 
-**Not built.** The history comes from what the tool wrote, and it reads no
-password.
+**Built, on Oracle:** `sopuli report history [--account NAME]`, with the
+usual target selectors. `docs/local-testing.md` §9a has a run. The history
+comes from what the tool wrote, and it reads no password. It judges nothing,
+so it never exits 3: 1 where a target or a store gave no answer, and 4 where a
+history is not checked.
+
+- **Which accounts:** each application account the config binds to the
+  target, and each personal account with a reset record under the target in
+  `reset_records:`. A personal account a rule names and that was never reset
+  is listed with nothing recorded. One a profile or role predicate admits is
+  listed only where it has a record, because resolving the predicate needs
+  the database. `--account` may name an account the tool does not manage:
+  only its database date is shown.
+- **An unreachable target** still gets its histories, which come from the
+  store, without the database's dates, and the run exits 1.
 
 - **An application account (UC-1)** has its history in the store's versions.
   A rotation writes more than one version: UC-1 stages `pending`, then
@@ -219,8 +230,9 @@ password.
   several accounts, each stamp is a map keyed by account, so the report
   compares the account's own entry, never the whole field. A change of that
   entry is a change of `current`: a rotation, a rollback, or a
-  `creds generate --promote --overwrite-current`. The report lists each one.
-  Whether it can tell them apart is for the PR that builds it to establish.
+  `creds generate --promote --overwrite-current`. The report lists each one
+  as a rotation. The stamps cannot tell the three apart: each writes the same
+  `rotated_at` and `rotated_by`.
 - **On an OCI store with native staging** the stamps are the secret's
   metadata, not part of a version, and each promotion overwrites them
   (UC-1 §3). So only the current version's promotion time is known. The
@@ -235,18 +247,24 @@ password.
   the history is *not checked*, with the capability named, and only the
   latest stamps or record and the database's date are shown.
 
-**The history says where it ends.** When a store has pruned or destroyed older
-versions, the report says from which version and date it starts, and how many
-earlier versions are gone. It never presents the oldest version kept as the
-first rotation.
+**The history says where it ends.** It starts at the oldest version that can
+be read. When a store has pruned, deleted or destroyed older versions, the
+report says from which version and date it starts, and how many earlier
+versions are gone. It never presents the oldest version kept as the first
+rotation. A rotation first seen in that version, or just after a gap, may have
+been written by an earlier version, and the report says so.
+
+**After the start, every version up to the store's current one is read.** A
+version number the store does not list, a version that is deleted, destroyed
+or cannot be read, and a stamp that is malformed or has disappeared are each a
+gap a rotation could hide in. The history is then *not checked*, and the
+version is named.
 
 The database's own date of the last password change is shown beside the last
-rotation. The database usually changes before the promotion, because `apply`
-changes the target first and a promotion can wait days, and on MySQL and
-MariaDB `apply` sets the staged `pending` again on each run while the
-promotion is held. So only one case is flagged, as information: no `pending`
-is staged, and the database changed after the last promotion. With no rotation
-in progress, nothing in the tool changed it.
+rotation, as information, and never compared with it
+([#1398](../decisions/log.md#1398)). The two often differ for good reasons:
+`apply` changes the target before the promotion, and after
+`creds generate --promote` it changes the target after it.
 
 A store version does not carry the run's correlation id, so a version is tied
 to its run only through its stamps ([#1374](https://github.com/villebase/sopuli-dba/issues/1374)).

@@ -66,7 +66,8 @@
         "account.reset-password",
         "account.expire-password",
         "report.accounts",
-        "report.privileges"
+        "report.privileges",
+        "report.history"
       ]
     },
     "invocation": {
@@ -1420,13 +1421,6 @@
             "null"
           ]
         },
-        "db_release": {
-          "type": [
-            "string",
-            "null"
-          ],
-          "description": "The full release, such as `23.26.3.0.0` (added in 1.84). On Oracle 18c and later `db_version` is `V$INSTANCE.VERSION`, which holds only the base release, `23.0.0.0.0`; this is `V$INSTANCE.VERSION_FULL`. On an Oracle release without `VERSION_FULL`, and on every other product, it equals `db_version`."
-        },
         "open_mode": {
           "type": [
             "string",
@@ -1920,6 +1914,75 @@
             "system": {"$ref": "#/$defs/privilege_list"},
             "objects": {"$ref": "#/$defs/privilege_list"},
             "columns": {"$ref": "#/$defs/privilege_list"}
+          }
+        },
+        "history": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["events", "start", "unread", "not_checked", "note", "db_changed_at", "db_unknown"],
+          "description": "An account's rotation or reset history, from `report history` (added in 1.84, UC-5 §6), from the store's versions. No password is read. The history is complete only when `unread` and `not_checked` are both empty.",
+          "properties": {
+            "events": {
+              "type": "array",
+              "description": "Newest first.",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["kind", "at", "version", "exact", "by", "seen"],
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": ["rotation", "generated", "reset"],
+                    "description": "`rotation`: the account's own `rotated_at` changed, which is a rotation, a rollback or `creds generate --promote`. `generated`: a version of a native-staging secret, by when its password was made. `reset`: a version of a personal account's reset record."
+                  },
+                  "at": {"type": "string", "format": "date-time"},
+                  "version": {
+                    "type": ["integer", "null"],
+                    "description": "The first version read that shows it; `null` where no version is known, such as the latest document of a store that keeps no versions."
+                  },
+                  "exact": {
+                    "type": "boolean",
+                    "description": "False where the version before `version` was not read, so an earlier version may have written it."
+                  },
+                  "by": {"type": ["string", "null"]},
+                  "seen": {
+                    "type": ["boolean", "null"],
+                    "description": "A reset only: whether a DBA saw the password (UC-2)."
+                  }
+                }
+              }
+            },
+            "start": {
+              "type": ["object", "null"],
+              "additionalProperties": false,
+              "required": ["version", "at", "gone"],
+              "description": "Where the history starts: the oldest readable version, and how many earlier versions are gone. `null` where no version was read.",
+              "properties": {
+                "version": {"type": "integer"},
+                "at": {"type": ["string", "null"], "format": "date-time"},
+                "gone": {"type": "integer", "minimum": 0}
+              }
+            },
+            "unread": {
+              "type": "array",
+              "items": {"type": "integer"},
+              "description": "Versions after `start` that could not be read: not listed, deleted, destroyed, unreadable, or with a malformed or missing stamp."
+            },
+            "not_checked": {
+              "type": "array",
+              "items": {"type": "string"},
+              "description": "Why the history is not complete beyond `unread`, such as a store that keeps no versions."
+            },
+            "note": {"type": ["string", "null"]},
+            "db_changed_at": {
+              "type": ["string", "null"],
+              "format": "date-time",
+              "description": "The database's own date of the last password change. Shown beside the history and never compared with it (#1398)."
+            },
+            "db_unknown": {
+              "type": ["string", "null"],
+              "description": "Why `db_changed_at` is `null`, where the target was reached."
+            }
           }
         },
         "failed_logins_reason": {

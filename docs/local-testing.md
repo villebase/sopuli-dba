@@ -38,6 +38,7 @@ sopuli policy sample        sopuli creds rotate           sopuli account expire-
 sopuli lock status          sopuli creds status           sopuli doctor
 sopuli lock break           sopuli creds finish-rollover  sopuli about
 sopuli vault orphans        sopuli report accounts        sopuli report privileges
+sopuli report history
 ```
 
 The `creds` commands manage application credentials (UC-1). The `account`
@@ -2321,6 +2322,63 @@ Without `--detail` the same account reads as a summary:
 
 `SELECT` on `ORDERS` is granted directly and through a role, and is counted
 once, as direct. `--public` adds the grants to `PUBLIC`, once per target.
+
+`report history` shows when each password the tool manages was rotated or
+reset, from the store's versions, with the database's own date of the last
+change beside it. It reads no password. This run used §5's config with fresh
+accounts: `acme_rh_app` and `acme_rh_batch` in `acme`, and `acme_rh_alice` and
+`acme_rh_bob` in `personal_accounts:`. Then `creds generate`, `creds apply`,
+two `creds rotate --account acme_rh_app --confirm` runs, and two
+`account reset-password` runs for `acme_rh_alice`:
+
+```
+$ sopuli --config history.yaml report history
+free-pdb  (23.0.0.0.0, 4 accounts)
+  acme_rh_app  (application)
+    database changed: 2026-11-08T10:57:18Z
+    WHEN                  CHANGE    VERSION  BY
+    2026-11-08T10:57:18Z  rotation  v6       jdba@admin-ws
+    2026-11-08T10:57:13Z  rotation  v4       jdba@admin-ws
+    2026-11-08T10:57:08Z  rotation  v2       jdba@admin-ws
+    history from v1 (2026-11-08T10:57:04Z); 0 earlier versions gone
+  acme_rh_batch  (application)
+    database changed: 2026-11-08T10:57:08Z
+    WHEN                  CHANGE    VERSION  BY
+    2026-11-08T10:57:08Z  rotation  v2       jdba@admin-ws
+    history from v1 (2026-11-08T10:57:04Z); 0 earlier versions gone
+  acme_rh_alice  (personal)
+    database changed: 2026-11-08T10:57:36Z
+    WHEN                  CHANGE            VERSION  BY
+    2026-11-08T10:57:36Z  reset (not seen)  v2       jdba@admin-ws
+    2026-11-08T10:57:32Z  reset (not seen)  v1       jdba@admin-ws
+    history from v1 (2026-11-08T10:57:32Z); 0 earlier versions gone
+  acme_rh_bob  (personal)
+    database changed: 2026-11-08T10:56:42Z
+    nothing recorded
+    note: no reset record
+```
+
+A rotation writes two versions: `creds generate` stages `pending`, and the
+promotion writes the next one. Only the promotion moves the account's own
+`rotated_at`, so each rotation is listed once. When the store prunes old
+versions, the history says where it starts. With `max_versions` 3 on the
+secret and one more rotation:
+
+```
+$ sopuli --config history.yaml report history --account acme_rh_app
+free-pdb  (23.0.0.0.0, 1 account)
+  acme_rh_app  (application)
+    database changed: 2026-11-08T10:58:56Z
+    WHEN                  CHANGE    VERSION        BY
+    2026-11-08T10:58:56Z  rotation  v8             jdba@admin-ws
+    2026-11-08T10:57:18Z  rotation  v6 or earlier  jdba@admin-ws
+    history from v6 (2026-11-08T10:57:18Z); 5 earlier versions gone
+```
+
+`v6 or earlier`: version 5 is gone, so it may be the one that wrote that
+stamp. A version that is listed and cannot be read, a gap in the numbers, or a
+store that keeps no versions makes the history *not checked*, and the run exits
+4.
 
 ---
 

@@ -133,6 +133,7 @@ def _scope(scope: Scope, target: ExpandedTarget) -> dict[str, Any]:
         "container": scope.container,
         "db_unique_name": scope.db_unique_name,
         "db_version": scope.db_version,
+        "db_release": scope.db_release,
         "open_mode": scope.open_mode,
         "read_write": scope.read_write,
         "capabilities": sorted(scope.capabilities),

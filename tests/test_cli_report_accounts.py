@@ -93,7 +93,12 @@ class FakeSession:
         self.target = target
 
     def scope(self) -> Scope:
-        return Scope(type="pdb", db_version="23.26.3.0.0", capabilities=frozenset())
+        return Scope(
+            type="pdb",
+            db_version="23.0.0.0.0",
+            db_release="23.26.3.0.0",
+            capabilities=frozenset(),
+        )
 
     def survey_accounts(self) -> tuple[SurveyedAccount, ...]:
         return ESTATE[self.target]

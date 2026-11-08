@@ -2256,7 +2256,8 @@ It exits 3, because a check found a problem. The accounts Oracle maintains,
 such as `SYSTEM`, are left out unless a rule names them. An undeclared account
 is listed as information and never changes the exit code. `--all` also lists
 the accounts that passed, here `ACME_RPT_OK`. The release in the head line is
-`V$INSTANCE.VERSION`, which `doctor` shows too.
+the full release, `V$INSTANCE.VERSION_FULL`. `doctor --output json` shows it
+as `scope.db_release`.
 
 `report privileges` shows each account's effective privileges, through every
 role, for the same accounts. The service account needs `SELECT` on

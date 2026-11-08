@@ -94,7 +94,12 @@ class FakeSession:
         self.asked: tuple[Sequence[str], bool] | None = None
 
     def scope(self) -> Scope:
-        return Scope(type="pdb", db_version="23.0.0.0.0", capabilities=frozenset())
+        return Scope(
+            type="pdb",
+            db_version="23.0.0.0.0",
+            db_release="23.26.3.0.0",
+            capabilities=frozenset(),
+        )
 
     def survey_accounts(self) -> tuple[SurveyedAccount, ...]:
         return (SurveyedAccount(APP, "OPEN", False, "DEFAULT", False, False, 180, 10, 0),)
@@ -184,7 +189,7 @@ def test_public_json_validates_and_is_not_counted_as_an_account(
 ) -> None:
     document = json_run(write_config, "--public")
     assert any(entry["kind"] == "public" for entry in document["results"])
-    assert "(23.0.0.0.0, 1 account)" in click.unstyle(report(write_config, "--public").output)
+    assert "(23.26.3.0.0, 1 account)" in click.unstyle(report(write_config, "--public").output)
 
 
 def test_the_summary_agrees_with_the_results(

@@ -36,6 +36,7 @@ from sopuli.driver.oracle.capabilities import (
     observe,
     probe,
     read,
+    release_of,
     require_read_write,
     scope_type,
 )
@@ -439,40 +440,77 @@ def test_observe_reports_what_it_found() -> None:
     assert found.type == "cdb_root"
     assert found.container == "CDB$ROOT"
     assert found.db_unique_name == "FREE"
-    assert found.db_version == "23.26.3.0.0", "the full release, not the base one"
+    assert found.db_version == "23.0.0.0.0", "V$INSTANCE.VERSION, as before 1.84"
+    assert found.db_release == "23.26.3.0.0", "the full release"
     assert found.read_write is True
     assert found.supports(COMMON_USERS)
     assert found.encryption.method == ENCRYPTION_NATIVE
     assert found.encryption.algorithm == "AES256"
 
 
-def test_a_release_without_version_full_reports_version() -> None:
+#: What the release tests need besides V$INSTANCE: an open database.
+_OPEN = {
+    CONTAINER_NAME: "CDB$ROOT",
+    "select db_unique_name, open_mode from v$database": ("ORCL", "READ WRITE"),
+}
+
+
+def test_a_release_without_version_full_gives_version_as_its_release() -> None:
     """11.2 and 12c answer ORA-00904 to VERSION_FULL, and their VERSION is
     already the full release."""
     cursor = _Cursor(
         {
-            CONTAINER_NAME: "CDB$ROOT",
-            "select db_unique_name, open_mode from v$database": ("ORCL", "READ WRITE"),
-            VERSION_FULL: RuntimeError('ORA-00904: "VERSION_FULL": invalid identifier'),
+            **_OPEN,
+            VERSION_FULL: _ora("ORA-00904", '"VERSION_FULL": invalid identifier'),
             VERSION: "12.2.0.1.0",
         }
     )
 
-    assert observe(cursor).db_version == "12.2.0.1.0"
+    found = observe(cursor)
+
+    assert found.db_version == "12.2.0.1.0"
+    assert found.db_release == "12.2.0.1.0"
 
 
-def test_a_refused_version_read_is_no_version() -> None:
-    refused = RuntimeError("ORA-00942: table or view does not exist")
+def test_a_refused_version_is_not_asked_again() -> None:
+    cursor = _Cursor({**_OPEN, VERSION: _ora("ORA-00942", "table or view does not exist")})
+
+    found = observe(cursor)
+
+    assert found.db_version is None
+    assert found.db_release is None
+    assert VERSION_FULL not in cursor.asked, "one refusal of V$INSTANCE is enough"
+
+
+def test_a_refused_version_full_is_no_release() -> None:
+    """Only ORA-00904 falls back: a refusal is not a missing column."""
     cursor = _Cursor(
         {
-            CONTAINER_NAME: "CDB$ROOT",
-            "select db_unique_name, open_mode from v$database": ("ORCL", "READ WRITE"),
-            VERSION_FULL: refused,
-            VERSION: refused,
+            **_OPEN,
+            VERSION: "23.0.0.0.0",
+            VERSION_FULL: _ora("ORA-01031", "insufficient privileges"),
         }
     )
 
-    assert observe(cursor).db_version is None
+    found = observe(cursor)
+
+    assert found.db_version == "23.0.0.0.0"
+    assert found.db_release is None
+
+
+def test_a_failure_reading_version_full_raises() -> None:
+    cursor = _Cursor(
+        {
+            VERSION: "23.0.0.0.0",
+            VERSION_FULL: _ora("ORA-03113", "end-of-file on communication channel"),
+        }
+    )
+
+    with pytest.raises(ProbeError) as raised:
+        release_of(cursor, "23.0.0.0.0")
+
+    assert raised.value.code == "ORA-03113"
+    assert cursor.asked == [VERSION_FULL], "asked once, not retried"
 
 
 def test_a_standby_is_reported_read_only() -> None:

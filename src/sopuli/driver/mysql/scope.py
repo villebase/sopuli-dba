@@ -114,7 +114,8 @@ def observe(cursor: Cursor, *, target: str, encryption: Encryption | None = None
     session is encrypted.
 
     ``db_version`` is the part of ``VERSION()`` before the first ``-``, so
-    ``8.0.46-log`` is reported as ``8.0.46``. A server whose version names
+    ``8.0.46-log`` is reported as ``8.0.46``. It is also ``db_release``: the
+    number is already the full release. A server whose version names
     another product is refused (:class:`NotMysqlError`), before anything else is
     read. Then an account that can use ``SYSTEM_USER`` is refused
     (:class:`SystemUserError`). ``encryption`` is the session's, where :func:`read_encryption`
@@ -144,6 +145,7 @@ def observe(cursor: Cursor, *, target: str, encryption: Encryption | None = None
     return Scope(
         type=SERVER,
         db_version=version.split("-")[0],
+        db_release=version.split("-")[0],
         open_mode=open_mode,
         read_write=writable,
         encryption=encryption,

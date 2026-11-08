@@ -6,7 +6,7 @@ for text output that keep it consistent with both.
 `sopuli/output/` produces them, and CI validates the output against the
 published schemas.
 
-Schemas: [`../schemas/sopuli-run-1.83.schema.json`](../schemas/sopuli-run-1.83.schema.json),
+Schemas: [`../schemas/sopuli-run-1.84.schema.json`](../schemas/sopuli-run-1.84.schema.json),
 [`../schemas/sopuli-event-1.24.schema.json`](../schemas/sopuli-event-1.24.schema.json)
 Examples, each from a real run:
 [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json),
@@ -1450,7 +1450,8 @@ and new states, because that is a major change: a consumer that reads
     "scope": {
       "type": "pdb",
       "container": "ORDERS",
-      "db_version": "23.26.3.0.0",
+      "db_version": "23.0.0.0.0",
+      "db_release": "23.26.3.0.0",
       "open_mode": "READ WRITE",
       "read_write": true,
       "capabilities": ["account_lock_state", "expire_password", "password_rollover"],
@@ -1511,10 +1512,11 @@ alerts on an unencrypted connection should treat it as a finding of its own.
 product's own words.
 `02-oracle-privileges.md` §2 says how the Oracle driver reads the answer.
 
-**An Oracle target's `db_version` is the full release**, such as
-`23.26.3.0.0`, from `V$INSTANCE.VERSION_FULL`. A release that answers
-`ORA-00904` to that column, as 11.2 and 12c do, gives `VERSION`, which there is
-already the full release, such as `12.2.0.1.0`.
+**`scope.db_release` is the full release**, from run schema 1.84, such as
+`23.26.3.0.0`. On Oracle `db_version` is `V$INSTANCE.VERSION`, which from 18c
+holds only the base release, `23.0.0.0.0`. `db_release` is `VERSION_FULL`. On
+11.2 and 12c, and on every other product, the two are equal.
+`02-oracle-privileges.md` §2 says how the Oracle driver reads them.
 
 **A PostgreSQL target's `scope.type` is `cluster`**, from run schema 1.62.
 `container` and `db_unique_name` are null. `open_mode` is `READ WRITE`,

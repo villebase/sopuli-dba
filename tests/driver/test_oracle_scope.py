@@ -156,6 +156,8 @@ def test_the_scope_is_what_the_database_says_it_is(
         assert scope.type in SCOPE_TYPES
         assert scope.type != UNKNOWN, "a reachable database should resolve to a real scope"
         assert scope.db_version, "V$INSTANCE is in the documented grant set"
+        assert scope.db_release, "VERSION_FULL, or VERSION where the column is missing"
+        assert scope.db_release.split(".")[0] == scope.db_version.split(".")[0]
         assert scope.read_write is True, "the tier-1 container is not a standby"
 
 

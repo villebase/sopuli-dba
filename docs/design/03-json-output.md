@@ -288,19 +288,21 @@ Each part of the tool writes these lines:
   gets back.
 - **`webhook`**: the host only. The rest of a webhook URL can be its token.
 
-These lines are from `sopuli creds rotate --confirm --debug` against the tier-1
-stack, part way through the first account:
+These lines are selected from `sopuli creds rotate --confirm --debug` against
+the tier-1 stack, part way through the first account. The run prints a line
+for every query, and most are left out here:
 
 ```
-sopuli: debug:   2.234s oracle: connect to free-pdb as SYSTEM in 0.058s
-sopuli: debug:   2.237s oracle: call dbms_session.set_identifier in 0.003s
-sopuli: debug:   2.248s oracle: select version_full from v$instance in 0.002s
-sopuli: debug:   2.281s oracle: free-pdb is pdb, FREEPDB1, 23.26.3.0.0, READ WRITE; capabilities account_lock_state, expire_password, offline_verify, password_reuse_policy, password_rollover, profile_management, role_lookup
-sopuli: debug:   3.416s oracle: login as ACME_APP_USER: fail in 1.054s
-sopuli: debug:   3.419s vault: GET /v1/kv/data/locks/acme/dev/acme: 200 in 0.003s
-sopuli: debug:   3.431s oracle: select username from dba_users where username = :name (binds :name) in 0.012s
-sopuli: debug:   3.462s oracle: ALTER USER "ACME_APP_USER" IDENTIFIED BY *** in 0.023s
-sopuli: debug:   3.535s oracle: login as ACME_APP_USER: pass in 0.048s
+sopuli: debug:   1.620s oracle: connect to free-pdb as SYSTEM in 0.087s
+sopuli: debug:   1.623s oracle: call dbms_session.set_identifier in 0.003s
+sopuli: debug:   1.634s oracle: select version from v$instance in 0.002s
+sopuli: debug:   1.635s oracle: select version_full from v$instance in 0.002s
+sopuli: debug:   1.657s oracle: free-pdb is pdb, FREEPDB1, 23.26.3.0.0, READ WRITE; capabilities account_lock_state, expire_password, offline_verify, password_reuse_policy, password_rollover, profile_management, role_lookup
+sopuli: debug:   2.784s oracle: login as ACME_APP_USER: fail in 1.059s
+sopuli: debug:   2.788s vault: GET /v1/kv/data/locks/acme/dev/acme: 200 in 0.004s
+sopuli: debug:   2.791s oracle: select username from dba_users where username = :name (binds :name) in 0.003s
+sopuli: debug:   2.805s oracle: ALTER USER "ACME_APP_USER" IDENTIFIED BY *** in 0.011s
+sopuli: debug:   2.899s oracle: login as ACME_APP_USER: pass in 0.061s
 ```
 
 These lines are from a second `sopuli creds apply --confirm --debug`, after the

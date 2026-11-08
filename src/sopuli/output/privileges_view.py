@@ -12,7 +12,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from sopuli.driver.grants import RoleGrant
+from sopuli.driver.grants import SCHEMA, RoleGrant
 from sopuli.output import report_view
 from sopuli.output.document import Error, Summary
 from sopuli.output.palette import Role, paint
@@ -177,7 +177,7 @@ def _detail(one: AccountPrivileges) -> list[str]:
                 label,
                 p.privilege,
                 ".".join(x for x in (p.owner, p.name, p.column) if x) or ABSENT,
-                SCHEMA_TYPE if label == "schema" else p.object_type or ABSENT,
+                SCHEMA_TYPE if p.kind == SCHEMA else p.object_type or ABSENT,
                 _sources(p),
                 "yes" if p.grantable else "no",
             ]

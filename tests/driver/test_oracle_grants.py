@@ -515,14 +515,28 @@ def test_a_release_without_schema_privileges_has_none_and_nothing_unread(
     assert asked.count(HAS_SCHEMA_PRIVS) == 1
 
 
-def test_another_refusal_of_the_schema_view_does_not_ask_the_release() -> None:
-    """Only a missing-view code can mean the release has none."""
+@pytest.mark.parametrize("code", ["ORA-01031", "ORA-41900"])
+def test_another_refusal_of_the_schema_view_does_not_ask_the_release(code: str) -> None:
+    """Only ORA-00942 can mean the release has none; these admit the view exists."""
     answers = _answers()
-    answers[(SCHEMA_PRIVS_QUERY, APP)] = _ora("ORA-01031", "insufficient privileges")
+    answers[(SCHEMA_PRIVS_QUERY, APP)] = _ora(code, "insufficient privileges")
     cursor = _Cursor(answers)
     survey = survey_grants(cursor, [APP], public=False)
     assert survey.schemas is None
     assert HAS_SCHEMA_PRIVS not in [query for query, _ in cursor.asked]
+
+
+@pytest.mark.parametrize("code", ["ORA-01031", "ORA-41900"])
+def test_a_refused_release_question_is_a_missing_grant_never_none(code: str) -> None:
+    """USER_SCHEMA_PRIVS refused with a code that admits it exists: the report
+    cannot tell, so it must not call the accounts clean."""
+    answers = _answers()
+    answers[(SCHEMA_PRIVS_QUERY, APP)] = _ora("ORA-00942", "table or view does not exist")
+    answers[HAS] = _ora(code, "insufficient privileges")
+    survey = survey_grants(_Cursor(answers), [APP], public=False)
+    assert survey.schemas is None
+    (reason,) = survey.unreadable
+    assert "SELECT ON SYS.DBA_SCHEMA_PRIVS" in reason
 
 
 def test_a_failure_asking_the_release_raises() -> None:
@@ -532,6 +546,7 @@ def test_a_failure_asking_the_release_raises() -> None:
     with pytest.raises(DriverError) as raised:
         survey_grants(_Cursor(answers), [APP], public=False)
     assert raised.value.code == "ORA-03113"
+    assert "capability probe" not in str(raised.value)
 
 
 class _Connection:

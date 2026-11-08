@@ -4999,4 +4999,8 @@ the register.
      exist.
 - **Known cost:** the release-without-the-view branch has not run: no release
   before 23ai was at hand. `USER_SCHEMA_PRIVS` is expected to be missing
-  there, as `DBA_SCHEMA_PRIVS` is.
+  there, as `DBA_SCHEMA_PRIVS` is. On 23ai, a site that revoked `PUBLIC`'s
+  read of `USER_SCHEMA_PRIVS` and did not grant `DBA_SCHEMA_PRIVS` reads as
+  having no schema privileges, because both answer `ORA-00942`. An install
+  made before the grant reports schema privileges as not checked, and exits
+  4, until `00_install.sql` is run again with `grant_report_reads=Y`.

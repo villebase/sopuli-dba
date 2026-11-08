@@ -23,15 +23,17 @@ read only with the ``role_lookup`` capability. The four grant views are behind
 the optional ``grant_report_reads`` switch: a refusal there makes that part
 ``None``, with a reason naming the grant, and the view is not asked again in
 this survey. ``DBA_SCHEMA_PRIVS`` answers ``ORA-00942`` also on a release
-without schema privileges, so after a refusal :data:`HAS_SCHEMA_PRIVS` asks
+without schema privileges, so after that code :data:`HAS_SCHEMA_PRIVS` asks
 ``USER_SCHEMA_PRIVS``, which needs no grant, whether the release has them.
-Where it has not, the part is empty and nothing is unread (#1389).
+Where it answers ``ORA-00942`` too, the part is empty and nothing is unread
+(#1389).
 
 **A statement surveys up to :data:`CHUNK` grantees.** Each one is anchored on
 ``grantee IN (:g0, :g1, …)``, and the recursive ``WITH`` carries the grantee it
-started from, so each row keeps its grantee. The survey sends five statements
-for each chunk. ``PUBLIC``, when asked for, is one more grantee in the last
-chunk.
+started from, so each row keeps its grantee. The survey sends one statement per
+chunk for the roles and one for each grant view not yet refused or found
+missing, and :data:`HAS_SCHEMA_PRIVS` at most once. ``PUBLIC``, when asked for,
+is one more grantee in the last chunk.
 
 No statement reads a password or verifier column. The only binds are the
 grantees' names, as the dictionary spells them; no name is written into the
@@ -53,8 +55,8 @@ from sopuli.driver.grants import (
     RoleGrant,
 )
 from sopuli.driver.oracle.accounts import DictionaryUnreadableError, fetch_all, first_shape
-from sopuli.driver.oracle.capabilities import read
-from sopuli.driver.oracle.errors import INSTALL_SCRIPT
+from sopuli.driver.oracle.capabilities import UNREADABLE_CODES
+from sopuli.driver.oracle.errors import INSTALL_SCRIPT, from_error
 from sopuli.driver.oracle.privileges import is_yes
 from sopuli.driver.protocol import Cursor
 
@@ -155,13 +157,15 @@ SCHEMA_PRIVS_QUERY = (
 )
 
 #: Whether the release has schema privileges at all, asked only after
-#: ``DBA_SCHEMA_PRIVS`` is refused. ``USER_SCHEMA_PRIVS`` needs no grant (probe
-#: 21), so a refusal of it means the release has no such view.
+#: ``DBA_SCHEMA_PRIVS`` answers :data:`MISSING_VIEW`. ``USER_SCHEMA_PRIVS``
+#: needs no grant (probe 21), so :data:`MISSING_VIEW` from it means the release
+#: has no such view.
 HAS_SCHEMA_PRIVS = "select count(*) from user_schema_privs where rownum = 1"
 
-#: The codes a missing view answers with (``capabilities.ABSENT_CODES``' two
-#: for a view): only these send the survey to :data:`HAS_SCHEMA_PRIVS`.
-_NO_VIEW = frozenset({"ORA-00942", "ORA-41900"})
+#: The one code a missing view answers with, which a hidden grant also gives
+#: (``capabilities.ABSENT_CODES``). ``ORA-41900`` and ``ORA-01031`` admit the
+#: view exists, so they are a missing grant and never "no such view".
+MISSING_VIEW = "ORA-00942"
 
 #: The roles granted directly to each grantee, each with its own
 #: authentication: (grantee, granted_role, admin_option, default_role,
@@ -246,23 +250,25 @@ def survey_grants(
     roles: list[RoleGrant] = []
     parts: dict[str, list[GrantRow] | None] = {SYSTEM: [], OBJECT: [], COLUMN: [], SCHEMA: []}
     reasons: dict[str, str] = {}
-    #: Parts not asked again: none, or a release without schema privileges.
-    settled: set[str] = set()
+    #: The parts still to ask. A release without schema privileges drops
+    #: SCHEMA, whose rows stay empty.
+    asking = list(_PARTS)
     for start in range(0, len(grantees), CHUNK):
         chunk = grantees[start : start + CHUNK]
         values = binds(chunk)
         query, role_rows = _first(cursor, role_shapes, len(chunk), "DBA_ROLE_PRIVS", values)
         role_shapes = (query,)
         roles.extend(_roles(role_rows, legacy=query == ROLE_GRANTS_QUERY_LEGACY))
-        for kind, _, view in _PARTS:
+        for part in list(asking):
+            kind, _, view = part
             rows = parts[kind]
-            if rows is None or kind in settled:
+            if rows is None:
                 continue
             try:
                 query, answered = _first(cursor, shapes[kind], len(chunk), view, values)
             except DictionaryUnreadableError as refused:
-                if _no_schema_privileges(cursor, kind, refused):
-                    settled.add(kind)
+                if kind == SCHEMA and refused.code == MISSING_VIEW and _no_such_view(cursor):
+                    asking.remove(part)
                     continue
                 parts[kind] = None
                 reasons[kind] = (
@@ -296,17 +302,25 @@ _PARTS: tuple[tuple[str, tuple[str, ...], str], ...] = (
 )
 
 
-def _no_schema_privileges(cursor: Cursor, kind: str, refused: DictionaryUnreadableError) -> bool:
-    """Whether ``refused`` is ``DBA_SCHEMA_PRIVS`` missing from a release with
-    no schema privileges, rather than a grant missing.
+def _no_such_view(cursor: Cursor) -> bool:
+    """Whether :data:`HAS_SCHEMA_PRIVS` says the release has no schema privileges.
 
-    Asks :data:`HAS_SCHEMA_PRIVS` only for the schema part and a missing-view
-    code. An absent answer (``capabilities.read``) means the release has no
-    such view; any other failure raises, as every probe's does.
+    Only :data:`MISSING_VIEW` says so. Any other refusal admits the view
+    exists, so the caller reports ``DBA_SCHEMA_PRIVS`` as a missing grant, and
+    never as "none": a report that cannot tell must not call an account clean.
+    Any other failure raises, classified as every survey statement's is.
     """
-    if kind != SCHEMA or refused.code not in _NO_VIEW:
-        return False
-    return read(cursor, HAS_SCHEMA_PRIVS) is None
+    try:
+        cursor.execute(HAS_SCHEMA_PRIVS)
+        cursor.fetchone()
+    except Exception as error:  # noqa: BLE001 -- classified, never swallowed
+        diagnosis = from_error(error)
+        if diagnosis.code == MISSING_VIEW:
+            return True
+        if diagnosis.code in UNREADABLE_CODES:
+            return False
+        raise diagnosis.as_error() from error
+    return False
 
 
 def _first(

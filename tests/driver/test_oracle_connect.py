@@ -47,8 +47,8 @@ PASSWORD = os.environ.get("SOPULI_TEST_ORACLE_PASSWORD", "sopuli-test")
 #: property being relied on here.
 NOBODY = "acme_no_such_user"
 
-#: Shaped like the real thing (a UUID), because that is what goes into
-#: `CLIENT_ID`, and the column is only 64 characters wide.
+#: Shaped like the real thing (a UUID), because that is what becomes the
+#: session's client identifier, which holds at most 64 characters.
 CORRELATION_ID = "9f1c2e7a-4d3b-4a51-9d2c-0b7f8e6a1234"
 
 
@@ -101,8 +101,8 @@ def test_the_correlation_id_is_on_the_session(
     Free image does not have.
 
     This is what replaced the rejected package's local audit table (ADR-001):
-    the run's id in the tool's JSON, in the database's trail and against the
-    vault's metadata is what makes the three line up afterwards.
+    the run's id in the tool's JSON and in the database's trail is what makes
+    the two line up afterwards.
     """
     session = driver(session_module).connect(target(live_oracle.dsn), credential())
     try:

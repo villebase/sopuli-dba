@@ -369,8 +369,8 @@ SELECT event_timestamp, dbusername, dbproxy_username, return_code
 --
 --    The tool calls DBMS_SESSION.SET_IDENTIFIER(<correlation_id>) on every
 --    connection, so its UUID lands in UNIFIED_AUDIT_TRAIL.CLIENT_IDENTIFIER.
---    That is the join between the tool's JSON output, this trail, and the
---    vault's secret metadata. Take the id from the tool's output:
+--    That is the join between the tool's JSON output and this trail. Take the
+--    id from the tool's output:
 --
 --      jq -r .invocation.correlation_id result.json
 --------------------------------------------------------------------------------

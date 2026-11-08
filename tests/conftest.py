@@ -928,7 +928,8 @@ def oracle_client() -> None:
 
 
 #: The correlation ID on every :func:`session`. Shaped like the real thing, a
-#: UUID, because it goes into `CLIENT_ID`, which is 64 characters wide.
+#: UUID, because it becomes the session's client identifier, which holds at
+#: most 64 characters.
 SESSION_CORRELATION_ID = "6d3a9e1f-2b84-4c57-a0e6-8f1d7b3c5a92"
 
 

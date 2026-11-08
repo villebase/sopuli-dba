@@ -58,11 +58,14 @@ class AccountPrivileges:
     system: tuple[Privilege, ...] | None
     objects: tuple[Privilege, ...] | None
     columns: tuple[Privilege, ...] | None
+    #: Schema privileges (23ai), each with its schema as ``owner``. ``()`` on a
+    #: release that has none.
+    schemas: tuple[Privilege, ...] | None
 
     @property
     def complete(self) -> bool:
         """Whether every part was read."""
-        return None not in (self.system, self.objects, self.columns)
+        return None not in (self.system, self.objects, self.columns, self.schemas)
 
 
 def collapse(rows: Sequence[GrantRow]) -> tuple[Privilege, ...]:
@@ -147,6 +150,7 @@ def _one(target: str, account: str, kind: str, survey: GrantSurvey) -> AccountPr
         system=part(survey.system),
         objects=part(survey.objects),
         columns=part(survey.columns),
+        schemas=part(survey.schemas),
     )
 
 
@@ -162,7 +166,7 @@ def exit_code(
 
     ``unreadable`` is any target's survey saying it could not read something,
     such as ``DBA_ROLES`` for the roles' authentication, even where every
-    account's three parts were read.
+    account's four parts were read.
     """
     return exit_code_for(
         unreachable=unreachable,

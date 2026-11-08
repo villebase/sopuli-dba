@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sopuli.driver.grants import COLUMN, OBJECT, SYSTEM, GrantRow, GrantSurvey, RoleGrant
+from sopuli.driver.grants import COLUMN, OBJECT, SCHEMA, SYSTEM, GrantRow, GrantSurvey, RoleGrant
 from sopuli.report_accounts import REPORT_OK, AccountRow
 from sopuli.report_privileges import collapse, counts, exit_code, per_account
 
@@ -81,6 +81,21 @@ def test_grantable_if_any_path_is() -> None:
     assert collapse(rows)[0].grantable is True
 
 
+#: Probe 21's direct schema privilege: its schema is ``owner``.
+SCHEMA_ROW = GrantRow(
+    grantee=APP,
+    kind=SCHEMA,
+    privilege="SELECT ANY TABLE",
+    owner="ACME_SP_OWNER",
+    name=None,
+    object_type=None,
+    column=None,
+    path=(),
+    first_role_default=None,
+    grantable=False,
+)
+
+
 def account_row(name: str, kind: str = "technical") -> AccountRow:
     return AccountRow("free-pdb", name, kind, "DEFAULT", "OPEN", (), REPORT_OK, 0)
 
@@ -91,6 +106,7 @@ def survey(**parts: Any) -> GrantSurvey:
         "system": (grant("CREATE SESSION", kind=SYSTEM),),
         "objects": RR4,
         "columns": (grant("UPDATE", "T4", kind=COLUMN, column="N"),),
+        "schemas": (SCHEMA_ROW,),
         "unreadable": (),
     }
     values.update(parts)
@@ -107,6 +123,9 @@ def test_per_account_splits_the_parts_and_keeps_kind() -> None:
     assert len(one.objects) == 7
     assert one.columns is not None
     assert one.columns[0].column == "N"
+    assert one.schemas is not None
+    assert [(p.privilege, p.owner) for p in one.schemas] == [("SELECT ANY TABLE", "ACME_SP_OWNER")]
+    assert one.complete is True
 
 
 def test_an_unreadable_part_is_none_not_empty() -> None:
@@ -115,6 +134,18 @@ def test_an_unreadable_part_is_none_not_empty() -> None:
     )
     assert one.objects is None
     assert one.system is not None
+
+
+def test_unread_schema_privileges_leave_the_account_incomplete() -> None:
+    (one,) = per_account("free-pdb", [account_row(APP)], survey(schemas=None))
+    assert one.schemas is None
+    assert one.complete is False
+
+
+def test_a_release_without_schema_privileges_is_complete() -> None:
+    (one,) = per_account("free-pdb", [account_row(APP)], survey(schemas=()))
+    assert one.schemas == ()
+    assert one.complete is True
 
 
 def test_public_is_one_block_not_repeated() -> None:

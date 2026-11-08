@@ -18,7 +18,7 @@ from jsonschema import Draft202012Validator
 
 from conftest import WriteConfig
 from sopuli.cli import cli
-from sopuli.driver.grants import COLUMN, OBJECT, SYSTEM, GrantRow, GrantSurvey, RoleGrant
+from sopuli.driver.grants import COLUMN, OBJECT, SCHEMA, SYSTEM, GrantRow, GrantSurvey, RoleGrant
 from sopuli.driver.protocol import Scope
 from sopuli.driver.survey import SurveyedAccount
 from sopuli.exit_codes import ExitCode
@@ -85,6 +85,7 @@ GRANTS = GrantSurvey(
         row("INSERT", "T1", path=("ACME_RR_EXTRA",), first_role_default=False),
     ),
     columns=(row("UPDATE", "T4", kind=COLUMN, column="N"),),
+    schemas=(row("SELECT ANY TABLE", kind=SCHEMA, owner="ACME_SP_OWNER"),),
 )
 
 
@@ -137,7 +138,8 @@ def test_the_summary(write_config: WriteConfig, session: Any) -> None:
         in text
     )
     assert "UPDATE on 1 column (1 direct, 0 via roles)" in text
-    assert "schema privileges" in text
+    assert "schemas: SELECT ANY TABLE on ACME_SP_OWNER (direct)" in text
+    assert "not read yet" not in text
     assert session["session"].asked == ((APP,), False)
 
 
@@ -155,6 +157,7 @@ def test_an_unread_roles_view_exits_4(
             system=GRANTS.system,
             objects=GRANTS.objects,
             columns=GRANTS.columns,
+            schemas=GRANTS.schemas,
             unreadable=("DBA_ROLES could not be read",),
         )
     )
@@ -167,6 +170,9 @@ def test_detail_lists_every_privilege_with_its_path(
     text = click.unstyle(report(write_config, "--detail").output)
     assert "via ACME_RR_EXTRA, not a default role" in text
     assert "ACME_RR_OWNER.T4.N" in text
+    schema_line = next(line for line in text.splitlines() if line.strip().startswith("schema "))
+    assert schema_line.split()[:5] == ["schema", "SELECT", "ANY", "TABLE", "ACME_SP_OWNER"]
+    assert "SCHEMA" in schema_line
 
 
 def test_public_is_asked_for_only_with_the_flag(write_config: WriteConfig, session: Any) -> None:
@@ -201,6 +207,7 @@ def test_the_summary_agrees_with_the_results(
             system=GRANTS.system,
             objects=GRANTS.objects,
             columns=GRANTS.columns,
+            schemas=GRANTS.schemas,
             unreadable=("DBA_ROLES could not be read",),
         )
     )
@@ -230,6 +237,7 @@ def test_an_unread_part_is_not_checked_exit_4(
             system=GRANTS.system,
             objects=None,
             columns=GRANTS.columns,
+            schemas=GRANTS.schemas,
             unreadable=("DBA_TAB_PRIVS could not be read (ORA-00942)",),
         )
     )
@@ -253,6 +261,35 @@ def test_the_json_validates(write_config: WriteConfig, session: Any) -> None:
     insert = next(p for p in entry["privileges"]["objects"] if p["privilege"] == "INSERT")
     assert insert["paths"] == [["ACME_RR_EXTRA"]]
     assert insert["via_default_role"] is False
+    assert entry["privileges"]["schema_privileges_read"] is True
+    (schema,) = entry["privileges"]["schemas"]
+    assert (schema["privilege"], schema["owner"], schema["name"]) == (
+        "SELECT ANY TABLE",
+        "ACME_SP_OWNER",
+        None,
+    )
+
+
+def test_unread_schema_privileges_are_not_checked_exit_4(
+    write_config: WriteConfig, session: dict[str, FakeSession]
+) -> None:
+    reason = "DBA_SCHEMA_PRIVS could not be read (ORA-00942)"
+    session["session"] = FakeSession(
+        GrantSurvey(
+            roles=GRANTS.roles,
+            system=GRANTS.system,
+            objects=GRANTS.objects,
+            columns=GRANTS.columns,
+            schemas=None,
+            unreadable=(reason,),
+        )
+    )
+    result = report(write_config)
+    assert result.exit_code == ExitCode.PARTIAL, result.output
+    assert "schemas: not checked" in click.unstyle(result.output)
+    entry = json_run(write_config)["results"][0]
+    assert entry["privileges"]["schemas"] is None
+    assert entry["privileges"]["schema_privileges_read"] is False
 
 
 def test_account_filter_may_name_an_undeclared_account(

@@ -13,16 +13,23 @@ Probe 19 measured the shapes these queries take (``02-oracle-privileges.md`` §2
 * **``PUBLIC``'s grants are reached only from ``PUBLIC``.** They are read once,
   as the grantee ``PUBLIC``, and only when the caller asks.
 
+Probe 21 measured 23ai's schema privileges: they are in ``DBA_SCHEMA_PRIVS``
+only, one row per grantee, privilege and schema, and one held through a role
+is under the role, so the same recursive ``WITH`` reaches it.
+
 ``DBA_ROLE_PRIVS`` is in the baseline grants, so a refusal there raises.
 ``DBA_ROLES`` is granted by the install but required by no pre-flight, so it is
-read only with the ``role_lookup`` capability. The three grant views are
-behind the optional
-``grant_report_reads`` switch: a refusal there makes that part ``None``, with a
-reason naming the grant, and the view is not asked again in this survey.
+read only with the ``role_lookup`` capability. The four grant views are behind
+the optional ``grant_report_reads`` switch: a refusal there makes that part
+``None``, with a reason naming the grant, and the view is not asked again in
+this survey. ``DBA_SCHEMA_PRIVS`` answers ``ORA-00942`` also on a release
+without schema privileges, so after a refusal :data:`HAS_SCHEMA_PRIVS` asks
+``USER_SCHEMA_PRIVS``, which needs no grant, whether the release has them.
+Where it has not, the part is empty and nothing is unread (#1389).
 
 **A statement surveys up to :data:`CHUNK` grantees.** Each one is anchored on
 ``grantee IN (:g0, :g1, …)``, and the recursive ``WITH`` carries the grantee it
-started from, so each row keeps its grantee. The survey sends four statements
+started from, so each row keeps its grantee. The survey sends five statements
 for each chunk. ``PUBLIC``, when asked for, is one more grantee in the last
 chunk.
 
@@ -36,8 +43,17 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
-from sopuli.driver.grants import COLUMN, OBJECT, SYSTEM, GrantRow, GrantSurvey, RoleGrant
+from sopuli.driver.grants import (
+    COLUMN,
+    OBJECT,
+    SCHEMA,
+    SYSTEM,
+    GrantRow,
+    GrantSurvey,
+    RoleGrant,
+)
 from sopuli.driver.oracle.accounts import DictionaryUnreadableError, fetch_all, first_shape
+from sopuli.driver.oracle.capabilities import read
 from sopuli.driver.oracle.errors import INSTALL_SCRIPT
 from sopuli.driver.oracle.privileges import is_yes
 from sopuli.driver.protocol import Cursor
@@ -126,6 +142,27 @@ COL_PRIVS_QUERY = (
     "where r.is_cycle = 'N'"
 )
 
+#: Schema privileges, 23ai: (grantee, path, first_default, privilege, schema,
+#: admin_option).
+SCHEMA_PRIVS_QUERY = (
+    _ROLES + "select s.grantee, cast(null as varchar2(4000)), cast(null as varchar2(3)), "
+    "s.privilege, s.schema, s.admin_option "
+    f"from dba_schema_privs s where s.grantee in ({GRANTEES}) "
+    "union all "
+    "select r.grantee, r.path, r.first_default, s.privilege, s.schema, s.admin_option "
+    "from roles r join dba_schema_privs s on s.grantee = r.granted_role "
+    "where r.is_cycle = 'N'"
+)
+
+#: Whether the release has schema privileges at all, asked only after
+#: ``DBA_SCHEMA_PRIVS`` is refused. ``USER_SCHEMA_PRIVS`` needs no grant (probe
+#: 21), so a refusal of it means the release has no such view.
+HAS_SCHEMA_PRIVS = "select count(*) from user_schema_privs where rownum = 1"
+
+#: The codes a missing view answers with (``capabilities.ABSENT_CODES``' two
+#: for a view): only these send the survey to :data:`HAS_SCHEMA_PRIVS`.
+_NO_VIEW = frozenset({"ORA-00942", "ORA-41900"})
+
 #: The roles granted directly to each grantee, each with its own
 #: authentication: (grantee, granted_role, admin_option, default_role,
 #: authentication_type).
@@ -207,8 +244,10 @@ def survey_grants(
     )
     shapes = {kind: part_shapes for kind, part_shapes, _ in _PARTS}
     roles: list[RoleGrant] = []
-    parts: dict[str, list[GrantRow] | None] = {SYSTEM: [], OBJECT: [], COLUMN: []}
+    parts: dict[str, list[GrantRow] | None] = {SYSTEM: [], OBJECT: [], COLUMN: [], SCHEMA: []}
     reasons: dict[str, str] = {}
+    #: Parts not asked again: none, or a release without schema privileges.
+    settled: set[str] = set()
     for start in range(0, len(grantees), CHUNK):
         chunk = grantees[start : start + CHUNK]
         values = binds(chunk)
@@ -217,11 +256,14 @@ def survey_grants(
         roles.extend(_roles(role_rows, legacy=query == ROLE_GRANTS_QUERY_LEGACY))
         for kind, _, view in _PARTS:
             rows = parts[kind]
-            if rows is None:
+            if rows is None or kind in settled:
                 continue
             try:
                 query, answered = _first(cursor, shapes[kind], len(chunk), view, values)
             except DictionaryUnreadableError as refused:
+                if _no_schema_privileges(cursor, kind, refused):
+                    settled.add(kind)
+                    continue
                 parts[kind] = None
                 reasons[kind] = (
                     f"{view} could not be read ({refused.code}): GRANT SELECT ON "
@@ -232,7 +274,7 @@ def survey_grants(
             shapes[kind] = (query,)
             rows.extend(_row(kind, answered_row) for answered_row in answered)
 
-    unreadable = [reasons[kind] for kind in (SYSTEM, OBJECT, COLUMN) if kind in reasons]
+    unreadable = [reasons[kind] for kind in (SYSTEM, OBJECT, COLUMN, SCHEMA) if kind in reasons]
     if not role_lookup:
         unreadable.append(_NO_ROLE_LOOKUP)
     return GrantSurvey(
@@ -240,6 +282,7 @@ def survey_grants(
         system=_merged(parts[SYSTEM]),
         objects=_merged(parts[OBJECT]),
         columns=_merged(parts[COLUMN]),
+        schemas=_merged(parts[SCHEMA]),
         unreadable=tuple(unreadable),
     )
 
@@ -249,7 +292,21 @@ _PARTS: tuple[tuple[str, tuple[str, ...], str], ...] = (
     (SYSTEM, (SYS_PRIVS_QUERY,), "DBA_SYS_PRIVS"),
     (OBJECT, (TAB_PRIVS_QUERY, TAB_PRIVS_QUERY_LEGACY), "DBA_TAB_PRIVS"),
     (COLUMN, (COL_PRIVS_QUERY,), "DBA_COL_PRIVS"),
+    (SCHEMA, (SCHEMA_PRIVS_QUERY,), "DBA_SCHEMA_PRIVS"),
 )
+
+
+def _no_schema_privileges(cursor: Cursor, kind: str, refused: DictionaryUnreadableError) -> bool:
+    """Whether ``refused`` is ``DBA_SCHEMA_PRIVS`` missing from a release with
+    no schema privileges, rather than a grant missing.
+
+    Asks :data:`HAS_SCHEMA_PRIVS` only for the schema part and a missing-view
+    code. An absent answer (``capabilities.read``) means the release has no
+    such view; any other failure raises, as every probe's does.
+    """
+    if kind != SCHEMA or refused.code not in _NO_VIEW:
+        return False
+    return read(cursor, HAS_SCHEMA_PRIVS) is None
 
 
 def _first(
@@ -302,6 +359,19 @@ def _row(kind: str, answered: Any) -> GrantRow:
             path=path,
             first_role_default=first_default,
             grantable=is_yes(row[3]),
+        )
+    if kind == SCHEMA:
+        return GrantRow(
+            grantee=grantee,
+            kind=kind,
+            privilege=str(row[2]),
+            owner=str(row[3]),
+            name=None,
+            object_type=None,
+            column=None,
+            path=path,
+            first_role_default=first_default,
+            grantable=is_yes(row[4]),
         )
     return GrantRow(
         grantee=grantee,

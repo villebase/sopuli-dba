@@ -23,6 +23,9 @@ SYSTEM = "system"
 OBJECT = "object"
 #: :attr:`GrantRow.kind` for a privilege on one column of a table or view.
 COLUMN = "column"
+#: :attr:`GrantRow.kind` for a system privilege on one schema, such as Oracle
+#: 23ai's ``SELECT ANY TABLE ON SCHEMA``. :attr:`GrantRow.owner` is the schema.
+SCHEMA = "schema"
 
 
 @dataclass(frozen=True)
@@ -34,8 +37,8 @@ class GrantRow:
     whether ``path[0]`` is a default role of the grantee, so the privilege is
     active without ``SET ROLE``; it is ``None`` for a direct grant.
     ``grantable`` is whether the holder may grant it on: ``GRANTABLE`` for an
-    object or column privilege, ``ADMIN_OPTION`` for a system privilege, on
-    the last grant of the path.
+    object or column privilege, ``ADMIN_OPTION`` for a system or schema
+    privilege, on the last grant of the path.
     """
 
     grantee: str
@@ -70,9 +73,10 @@ class RoleGrant:
 class GrantSurvey:
     """What the target says about the surveyed accounts' privileges.
 
-    ``system``, ``objects`` and ``columns`` are ``None`` where the view that
-    holds them cannot be read, and ``unreadable`` then holds one reason for
-    each, naming the grant that would make it readable. ``roles`` is always
+    ``system``, ``objects``, ``columns`` and ``schemas`` are ``None`` where the
+    view that holds them cannot be read, and ``unreadable`` then holds one
+    reason for each, naming the grant that would make it readable. ``schemas``
+    is ``()`` on a database that has no schema privileges. ``roles`` is always
     read, because the baseline grants cover it.
     """
 
@@ -80,4 +84,5 @@ class GrantSurvey:
     system: tuple[GrantRow, ...] | None
     objects: tuple[GrantRow, ...] | None
     columns: tuple[GrantRow, ...] | None
+    schemas: tuple[GrantRow, ...] | None
     unreadable: tuple[str, ...] = ()

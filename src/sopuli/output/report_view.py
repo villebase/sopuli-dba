@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from sopuli.output.document import Error, Summary
-from sopuli.output.palette import Role, paint, state_cell
+from sopuli.output.palette import Role, paint, role_for_state, state_cell
 from sopuli.output.table import Cell, Column, render_table
 from sopuli.report_accounts import (
     ACCOUNT_MISSING,
@@ -99,7 +99,7 @@ def _section(report: TargetReport, *, show_all: bool) -> list[str]:
         return [f"{paint(report.target, Role.HEADING)}  {what}: {report.error.message}"]
     lines = [f"{paint(report.target, Role.HEADING)}  ({_head(report)})"]
     lines.extend(
-        f"  {paint('profile missing', Role.BAD)}: {_missing_detail(missing)}"
+        f"  {paint('profile missing', role_for_state(PROFILE_MISSING))}: {_missing_detail(missing)}"
         for missing in report.missing
     )
     shown = [row for row in report.rows if show_all or row.state != REPORT_OK]

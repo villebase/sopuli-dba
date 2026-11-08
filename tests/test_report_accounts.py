@@ -457,6 +457,25 @@ def test_a_rules_profile_never_names_an_application_account() -> None:
         config(**APPLICATION, **rule(accounts=["ACME_APP_USER"], profile="OTHER_PROF"))
 
 
+def test_a_rule_that_covers_the_target_expects_its_profile_with_no_account_matching() -> None:
+    """The maintainer's decision for #1390, kept after the second review of
+    #1402: the rule says what the target must have, whether or not an account
+    there matches it. `targets:` is how a rule expects a profile only on some."""
+    cfg = config(**APPLICATION, **rule(accounts=["ACME_*_USER"], profile="TECH"))
+    missing = missing_profiles(TARGET, cfg, {"DEFAULT", "ACME_APP_PROF"})
+    assert [(m.profile, m.expected_by) for m in missing] == [("TECH", ("reports.accounts",))]
+
+
+def test_a_binding_without_a_policy_expects_no_profile() -> None:
+    unbound = {
+        "name": "acme",
+        "accounts": ["acme_app_user"],
+        "secret": "acme/app#password",
+    }
+    cfg = config(**{**APPLICATION, "applications": [unbound]})
+    assert missing_profiles(TARGET, cfg, {"DEFAULT"}) == ()
+
+
 def test_a_db_profiles_entry_alone_never_requires_the_profile() -> None:
     """The maintainer's narrowing of #1390: `db_profiles` sets the limits where
     the profile is; it does not say the profile must be on every target."""

@@ -5646,7 +5646,8 @@ def report_accounts_command(
     An account counts as OK only when every check had a rule and passed.
 
     Exit 0 when nothing is wrong, 1 when a target could not be reached, 3 when a
-    check found a problem, and 4 when something could not be checked. An account
+    check found a problem or a profile a rule or policy expects is missing on a
+    target, and 4 when something could not be checked. An account
     the config does not declare is listed as information and never changes the
     exit code. Only Oracle can run this report yet.
     """

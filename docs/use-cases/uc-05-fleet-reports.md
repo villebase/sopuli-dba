@@ -169,15 +169,18 @@ count cannot be read truthfully, the report shows `unknown`, never 0.
 
 **A profile missing on a target is one finding for the target**, however many
 accounts are expected on it. A profile is expected on a target where a rule
-that covers the target names it, or where an application's policy names it
-for an account bound there. Where it is expected and absent, the report says
+that covers the target names it, even where no account there matches the
+rule, or where an application's policy names it for an account bound there.
+To expect a profile only on some targets, give the rule `targets:`. Where it
+is expected and absent, the report says
 so once, under the target's head line, and it is a problem: the run exits 3.
 Each account expected on it still shows its own wrong-profile problem, because
 it is on another profile. A `db_profiles` entry alone expects nothing: it says
 what a profile's limits must be where the profile is, not that every target
-has it. Nor does a personal rule's `profile:`, which only selects accounts,
-or a rule whose names are all application accounts, whose profile is their
-policy's. The profile names come from the `DBA_PROFILES` rows the survey
+has it. Nor does a personal rule's `profile:`, which only selects accounts.
+A rule cannot give `profile:` to an application account it names by name: the
+config refuses that, because the account's profile is its policy's. The
+profile names come from the `DBA_PROFILES` rows the survey
 already reads, so no statement is added (#1390).
 
 ---

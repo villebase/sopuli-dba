@@ -21,7 +21,14 @@ from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from fnmatch import fnmatchcase
 
-from sopuli.config.model import Config, DbProfileRule, Limit, ReportAccountRule, Settings
+from sopuli.config.model import (
+    Config,
+    DbProfileRule,
+    Limit,
+    Policy,
+    ReportAccountRule,
+    Settings,
+)
 from sopuli.config.reports import UNLIMITED, is_pattern
 from sopuli.config.selection import select
 from sopuli.driver.survey import SurveyedAccount
@@ -215,9 +222,11 @@ def missing_profiles(
     application's policy names it for an account bound there. A ``db_profiles``
     entry alone expects nothing: it says what a profile's limits must be where
     the profile is, not that every target has it (#1390). Nor does a personal
-    rule's ``profile:``, which selects accounts. A rule's ``profile:`` never
-    names an application account by name: the config refuses that, because the
-    account's profile is its policy's. Names are compared by ``upper()``.
+    rule's ``profile:``, which selects accounts. A rule that covers the target
+    expects its profile there even where no account on the target matches it,
+    as the maintainer decided for #1390: the rule says what the target must
+    have. A rule cannot name an application account by name with a
+    ``profile:``; the config refuses that. Names are compared by ``upper()``.
     """
     present = {name.upper() for name in profiles}
     expected: dict[str, tuple[str, list[str]]] = {}
@@ -230,11 +239,7 @@ def missing_profiles(
     for rule in _rules_on(config, target):
         if rule.profile is not None:
             expect(rule.profile, BY_RULE)
-    policies = {policy.name: policy for policy in config.policies}
-    for binding in config.bindings:
-        if binding.target != target or binding.policy is None:
-            continue
-        policy = policies.get(binding.policy)
+    for policy in _bound_policies(config, target).values():
         if policy is not None and policy.account.profile is not None:
             expect(policy.account.profile, f"{BY_POLICY}{policy.name}")
     return tuple(
@@ -281,16 +286,29 @@ def _rules_on(config: Config, target: str) -> tuple[ReportAccountRule, ...]:
     )
 
 
+def _bound_policies(config: Config, target: str) -> dict[str, Policy | None]:
+    """Each application account on ``target``, by ``upper()``, with its policy.
+
+    ``None`` where the binding names no policy, or one the config lacks. The
+    one walk of the bindings that :func:`evaluate` and :func:`missing_profiles`
+    both use, so the two cannot disagree on what a policy expects.
+    """
+    policies = {policy.name: policy for policy in config.policies}
+    return {
+        binding.account.upper(): (
+            policies.get(binding.policy) if binding.policy is not None else None
+        )
+        for binding in config.bindings
+        if binding.target == target
+    }
+
+
 def _application_profiles(config: Config, target: str) -> dict[str, str | None]:
     """Each application account on ``target``, with its policy's expected profile."""
-    policies = {policy.name: policy for policy in config.policies}
-    bound: dict[str, str | None] = {}
-    for binding in config.bindings:
-        if binding.target != target:
-            continue
-        policy = policies.get(binding.policy) if binding.policy is not None else None
-        bound[binding.account.upper()] = policy.account.profile if policy is not None else None
-    return bound
+    return {
+        account: policy.account.profile if policy is not None else None
+        for account, policy in _bound_policies(config, target).items()
+    }
 
 
 def _personal_on(config: Config, target: str) -> tuple[set[str], set[str]]:

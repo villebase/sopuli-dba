@@ -386,6 +386,19 @@ def test_the_database_date_is_shown_beside_it() -> None:
     assert found.complete
 
 
+def test_a_naive_database_date_is_read_as_utc_not_local_time() -> None:
+    """Oracle's DATE has no zone. Found on a tier-1 run on a UTC+2 laptop: the
+    change read two hours before the rotation that made it."""
+    naive = datetime(2026, 11, 8, 10, 57, 18)
+
+    found = history.with_database(
+        app(TARGET, binding(), listed(1), {1: shared(None)}),
+        UserState(name="ACME_WEB_USER", status="OPEN", password_changed_at=naive),
+    )
+
+    assert found.db_changed_at == datetime(2026, 11, 8, 10, 57, 18, tzinfo=UTC)
+
+
 def test_an_unknown_database_date_says_why() -> None:
     found = history.with_database(
         app(TARGET, binding(), listed(1), {1: shared(None)}),

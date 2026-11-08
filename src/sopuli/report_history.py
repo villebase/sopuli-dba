@@ -29,7 +29,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Any
 
-from sopuli.clock import from_rfc3339
+from sopuli.clock import as_utc, from_rfc3339
 from sopuli.config.model import Binding
 from sopuli.driver.protocol import UserState
 from sopuli.lock.record import Holder
@@ -267,7 +267,9 @@ def with_database(found: AccountHistory, user: UserState | None) -> AccountHisto
     if user is None:
         return replace(found, db_changed_at=None, db_unknown=NO_ACCOUNT)
     if user.password_changed_at is not None:
-        return replace(found, db_changed_at=user.password_changed_at, db_unknown=None)
+        # Oracle's DATE has no zone: read as UTC, as `creds status` reads it,
+        # never as this machine's local time (`clock.as_utc`).
+        return replace(found, db_changed_at=as_utc(user.password_changed_at), db_unknown=None)
     return replace(found, db_changed_at=None, db_unknown=user.password_changed_unknown or NO_DATE)
 
 

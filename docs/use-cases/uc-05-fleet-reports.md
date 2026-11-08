@@ -219,8 +219,9 @@ password.
   several accounts, each stamp is a map keyed by account, so the report
   compares the account's own entry, never the whole field. A change of that
   entry is a change of `current`: a rotation, a rollback, or a
-  `creds generate --promote --overwrite-current`. The report lists each one.
-  Whether it can tell them apart is for the PR that builds it to establish.
+  `creds generate --promote --overwrite-current`. The report lists each one
+  as a rotation. The stamps cannot tell the three apart: each writes the same
+  `rotated_at` and `rotated_by`.
 - **On an OCI store with native staging** the stamps are the secret's
   metadata, not part of a version, and each promotion overwrites them
   (UC-1 §3). So only the current version's promotion time is known. The

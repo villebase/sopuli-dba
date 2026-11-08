@@ -230,6 +230,43 @@ def test_an_unknown_path_on_a_versioned_store_is_an_empty_true_history() -> None
     assert found.complete
 
 
+def test_a_held_secret_with_no_versions_listed_is_not_checked() -> None:
+    """OCI lists no versions of a secret pending deletion."""
+    latest = shared({"acme_web_user": stamp(7)})
+
+    found = app(TARGET, binding(), None, {}, latest=latest)
+
+    assert [e.at for e in found.events] == [at(7)]
+    assert found.not_checked == (history.NO_VERSIONS_LISTED,)
+    assert not found.complete
+
+
+def test_a_live_version_below_the_first_readable_one_is_a_gap_not_gone() -> None:
+    documents = {2: shared({"acme_web_user": stamp(2)})}
+
+    found = app(TARGET, binding(), listed(1, 2), documents)
+
+    assert found.start == history.Start(version=1, at=at(1, 1), gone=0)
+    assert found.unread == (1,)
+    assert not found.complete
+
+
+def test_no_listed_versions_of_a_written_path_is_not_checked() -> None:
+    nothing = VersionHistory(current=3, oldest_kept=None, versions=())
+
+    found = app(TARGET, binding(), nothing, {})
+
+    assert found.start is None
+    assert not found.complete
+    assert "none of the 3 versions" in found.reasons[0]
+
+
+def test_only_destroyed_versions_is_not_checked() -> None:
+    found = app(TARGET, binding(), listed(1, destroyed=(1,)), {})
+
+    assert not found.complete
+
+
 def test_a_seeded_secret_with_no_stamp_has_no_rotation() -> None:
     found = app(TARGET, binding(), listed(1), {1: shared(None)})
 
@@ -278,6 +315,17 @@ def test_native_staging_lists_versions_by_generation_and_says_why() -> None:
     ]
     assert found.note == history.NATIVE_NOTE
     assert found.complete
+
+
+def test_a_malformed_native_promotion_stamp_is_not_checked() -> None:
+    raw = {1: {"password": Secret("a"), "generated_at": stamp(1)}}
+
+    found = history.native(
+        TARGET, binding(ref="apps/acme/web#password"), listed(1), raw, {"rotated_at": "2026-13-40"}
+    )
+
+    assert found.not_checked == (history.MALFORMED_PROMOTION,)
+    assert not found.complete
 
 
 # ---------------------------------------------------------- personal ---

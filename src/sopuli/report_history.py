@@ -34,8 +34,8 @@ from sopuli.config.model import Binding
 from sopuli.driver.protocol import UserState
 from sopuli.lock.record import Holder
 from sopuli.payload import GENERATED_AT, GENERATED_BY, ROTATED_AT, ROTATED_BY, stage_layout
-from sopuli.report_accounts import read_only_exit_code
-from sopuli.status import rotated_at
+from sopuli.report_exit import exit_code_for
+from sopuli.status import rotation_stamp
 from sopuli.store.protocol import VersionHistory
 
 __all__ = [
@@ -76,6 +76,10 @@ NO_VERSIONING = "the store keeps no versions (versioning), so only the latest is
 #: A store that keeps versions has nothing at the path: a secret not written
 #: yet, or a personal account never reset. An empty history, and a true one.
 NOTHING_STORED = "the store has nothing at this path"
+#: A store that keeps versions holds the path and lists none of them, as OCI
+#: does for a secret pending deletion.
+NO_VERSIONS_LISTED = "the store holds this secret and lists no versions of it"
+MALFORMED_PROMOTION = "the promotion stamp the store keeps is malformed"
 NO_ACCOUNT = "no such account on this target"
 NO_DATE = "the database gives no date"
 
@@ -168,8 +172,7 @@ def application(
     layout = stage_layout(binding.secret)
 
     def event(document: Mapping[str, Any], version: int | None) -> tuple[Event | None, bool]:
-        present = layout.read(document, ROTATED_AT) is not None
-        moment = rotated_at(document, binding)
+        present, moment = rotation_stamp(document, binding)
         if moment is None:
             return None, present
         by = layout.read(document, ROTATED_BY)
@@ -210,6 +213,8 @@ def native(
     )
     promoted = _moment(attributes.get(ROTATED_AT))
     if promoted is None:
+        if ROTATED_AT in attributes:
+            return replace(found, not_checked=(*found.not_checked, MALFORMED_PROMOTION))
         return found
     by = attributes.get(ROTATED_BY)
     top = Event(ROTATION, promoted, None, by=by if isinstance(by, str) else None)
@@ -276,7 +281,7 @@ def exit_code(
 ) -> int:
     """UC-5 §3's rule for a report that judges nothing: 5, then 1 for a target
     or store that gave no answer, then 4 for anything not read."""
-    return read_only_exit_code(
+    return exit_code_for(
         unreachable=unreachable + unanswered,
         unsupported=unsupported,
         targets=targets,
@@ -295,12 +300,13 @@ def _history(
     own: bool = False,
 ) -> AccountHistory:
     if history is None:
-        if versioning:
+        if versioning and latest is None:
             return replace(empty, note=empty.note or NOTHING_STORED)
         found = read(latest, None)[0] if isinstance(latest, Mapping) else None
-        return replace(empty, events=(found,) if found else (), not_checked=(NO_VERSIONING,))
-    events, start, unread = _walk(history, documents, read, own=own)
-    return replace(empty, events=events, start=start, unread=unread)
+        why = NO_VERSIONS_LISTED if versioning else NO_VERSIONING
+        return replace(empty, events=(found,) if found else (), not_checked=(why,))
+    events, start, unread, not_checked = _walk(history, documents, read, own=own)
+    return replace(empty, events=events, start=start, unread=unread, not_checked=not_checked)
 
 
 def _walk(
@@ -309,30 +315,32 @@ def _walk(
     read: Read,
     *,
     own: bool,
-) -> tuple[tuple[Event, ...], Start | None, tuple[int, ...]]:
-    """Every version from the oldest readable one to the store's current one.
+) -> tuple[tuple[Event, ...], Start | None, tuple[int, ...], tuple[str, ...]]:
+    """Every version from the oldest one the store keeps to its current one.
 
-    Versions before the oldest readable one are gone, and :class:`Start` counts
-    them. After it, a number the store does not list or could not read is a
-    gap. An event is kept where it differs from the last one read, so a stamp
-    that did not move across a gap is not counted twice. ``own`` says each
-    version's event is its own, as ``generated_at`` is, so none is inherited.
+    The start is the oldest version listed and neither deleted nor destroyed.
+    Versions before it are gone, and :class:`Start` counts them. From it on, a
+    number the store does not list, or could not be read, is a gap. An event is
+    kept where it differs from the last one read, so a stamp that did not move
+    across a gap is not counted twice. ``own`` says each version's event is its
+    own, as ``generated_at`` is, so none is inherited.
     """
     listed = {info.version: info for info in history.versions}
-    readable = sorted(
-        number
-        for number, info in listed.items()
-        if not info.deleted and not info.destroyed and isinstance(documents.get(number), Mapping)
+    kept = sorted(
+        number for number, info in listed.items() if not info.deleted and not info.destroyed
     )
-    if not readable:
-        return (), None, tuple(sorted(listed))
-    first = readable[0]
+    top = max(history.current, max(listed, default=0))
+    if not kept:
+        gone = (f"the store keeps none of the {top} versions it has made",) if top else ()
+        return (), None, (), gone
+    readable = {number for number in kept if isinstance(documents.get(number), Mapping)}
+    first = kept[0]
     start = Start(first, listed[first].created_at, gone=first - 1)
     events: list[Event] = []
     unread: list[int] = []
     last: Event | None = None
-    previous_ok = first - 1 if first == 1 else None
-    for number in range(first, max(history.current, readable[-1]) + 1):
+    previous_ok = 0 if first == 1 else None
+    for number in range(first, top + 1):
         if number not in readable:
             unread.append(number)
             continue
@@ -349,7 +357,7 @@ def _walk(
             events.append(replace(found, exact=exact))
         last = found
         previous_ok = number
-    return tuple(reversed(events)), start, tuple(unread)
+    return tuple(reversed(events)), start, tuple(unread), ()
 
 
 def _moment(value: Any) -> datetime | None:

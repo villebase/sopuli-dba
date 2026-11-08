@@ -25,8 +25,8 @@ from sopuli.config.model import Config, DbProfileRule, Limit, ReportAccountRule,
 from sopuli.config.reports import UNLIMITED, is_pattern
 from sopuli.config.selection import select
 from sopuli.driver.survey import SurveyedAccount
-from sopuli.exit_codes import ExitCode
 from sopuli.personal import rules_for
+from sopuli.report_exit import exit_code_for
 
 REPORT_OK = "REPORT_OK"
 REPORT_PROBLEM = "REPORT_PROBLEM"
@@ -191,39 +191,13 @@ def exit_code(
     only some are, those targets are not checked, which is exit 4 at most.
     """
     states = {row.state for row in rows}
-    return read_only_exit_code(
+    return exit_code_for(
         unreachable=unreachable,
         unsupported=unsupported,
         targets=targets,
         problem=bool(states & {REPORT_PROBLEM, ACCOUNT_MISSING}),
         incomplete=NOT_CHECKED in states,
     )
-
-
-def read_only_exit_code(
-    *,
-    unreachable: int,
-    unsupported: int,
-    targets: int,
-    problem: bool = False,
-    incomplete: bool = False,
-) -> int:
-    """UC-5 §3's order, the one place every report takes it from.
-
-    5 when every target is of a product the report is not written for; 1 when
-    a target gave no answer; 3 for a problem; 4 for anything not checked,
-    an unsupported target included; else 0. A report that judges nothing
-    passes no ``problem``, so it never exits 3.
-    """
-    if targets and unsupported == targets:
-        return int(ExitCode.UNSUPPORTED_CAPABILITY)
-    if unreachable:
-        return int(ExitCode.FAILURE)
-    if problem:
-        return int(ExitCode.DRIFT)
-    if incomplete or unsupported:
-        return int(ExitCode.PARTIAL)
-    return int(ExitCode.SUCCESS)
 
 
 # ---------------------------------------------------------------- the file ---

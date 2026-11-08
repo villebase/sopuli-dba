@@ -21,7 +21,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from sopuli.driver.grants import GrantRow, GrantSurvey, RoleGrant
-from sopuli.report_accounts import ACCOUNT_MISSING, AccountRow, read_only_exit_code
+from sopuli.report_accounts import ACCOUNT_MISSING, AccountRow
+from sopuli.report_exit import exit_code_for
 
 #: The pseudo-account grants to ``PUBLIC`` are listed under, once per target.
 PUBLIC = "PUBLIC"
@@ -163,7 +164,7 @@ def exit_code(
     such as ``DBA_ROLES`` for the roles' authentication, even where every
     account's three parts were read.
     """
-    return read_only_exit_code(
+    return exit_code_for(
         unreachable=unreachable,
         unsupported=unsupported,
         targets=targets,

@@ -658,7 +658,7 @@
       "properties": {
         "correlation_id": {
           "type": "string",
-          "description": "UUID. Also set as the Oracle client identifier via DBMS_SESSION.SET_IDENTIFIER, so it lands in UNIFIED_AUDIT_TRAIL.CLIENT_ID, and written into the vault secret metadata. One id ties all three trails together."
+          "description": "UUID. Also set as the Oracle client identifier via DBMS_SESSION.SET_IDENTIFIER, so it lands in UNIFIED_AUDIT_TRAIL.CLIENT_IDENTIFIER. It joins this document to the database audit trail. An application secret's versions do not carry it; a personal account's reset record does (`03-json-output.md` §2)."
         },
         "started_at": {
           "$ref": "#/$defs/timestamp"

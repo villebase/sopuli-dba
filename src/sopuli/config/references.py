@@ -84,6 +84,11 @@ def _personal_at(index: int) -> KeyPath:
     return ROOT.key("personal_accounts").index(index)
 
 
+def _report_at(index: int) -> KeyPath:
+    """Where a `reports.accounts` rule lives, for a message to point at."""
+    return ROOT.key("reports").key("accounts").index(index)
+
+
 def check_references(config: Config) -> tuple[ConfigWarning, ...]:
     """Resolve every name in the file against what the file declares.
 
@@ -269,6 +274,12 @@ def _check_groups(config: Config) -> None:
                 _Reference(entry.targets.group, _personal_at(index).key("targets").key("group"))
             )
 
+    for index, rule in enumerate(config.reports.accounts):
+        if rule.targets.group is not None:
+            found.append(
+                _Reference(rule.targets.group, _report_at(index).key("targets").key("group"))
+            )
+
     _resolve(found, declared, noun="group", section="groups")
 
 
@@ -305,6 +316,10 @@ def _check_label_keys(config: Config) -> None:
     for index, entry in enumerate(config.personal_accounts):
         match = _personal_at(index).key("targets").key("match")
         found.extend(_Reference(key, match.key(key)) for key, _ in entry.targets.match)
+
+    for index, rule in enumerate(config.reports.accounts):
+        match = _report_at(index).key("targets").key("match")
+        found.extend(_Reference(key, match.key(key)) for key, _ in rule.targets.match)
 
     for reference in found:
         if reference.name not in carried:
@@ -348,6 +363,11 @@ def _check_targets(config: Config) -> None:
     for index, entry in enumerate(config.personal_accounts):
         at = _personal_at(index).key("targets")
         for position, name in enumerate(entry.targets.names):
+            found.append(_Reference(name, at.index(position)))
+
+    for index, rule in enumerate(config.reports.accounts):
+        at = _report_at(index).key("targets")
+        for position, name in enumerate(rule.targets.names):
             found.append(_Reference(name, at.index(position)))
 
     _resolve(found, declared, noun="target", section="targets")

@@ -44,6 +44,7 @@ from sopuli.config import (
     personal_accounts,
     policies,
     profiles,
+    reports,
     reset_records,
     safety,
     target_sets,
@@ -98,6 +99,10 @@ KEY_SETS: dict[str, tuple[str, ...]] = {
     "personal_account": personal_accounts.PERSONAL_ACCOUNT_KEYS,
     "reset_records": reset_records.RESET_RECORDS_KEYS,
     "delivery": delivery.DELIVERY_KEYS,
+    "reports": reports.REPORTS_KEYS,
+    "report_account_rule": reports.REPORT_ACCOUNT_KEYS,
+    "db_profile_rule": reports.DB_PROFILE_KEYS,
+    "report_settings": reports.SETTINGS_KEYS,
 }
 
 #: Every closed set, beside the tuple :func:`~sopuli.config.fields.choice` is

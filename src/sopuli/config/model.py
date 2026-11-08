@@ -20,6 +20,7 @@ stable order sorts at render time.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Literal
 
 from sopuli.config.secret_refs import SecretRef
 from sopuli.settings import Resolved
@@ -939,6 +940,64 @@ class PersonalAccountRule:
         return "accounts " + ", ".join(repr(account) for account in self.accounts)
 
 
+#: A limit a report rule expects: ``"unlimited"``, or a whole number of days or
+#: failed logins that the database's value must not exceed.
+Limit = int | Literal["unlimited"]
+
+
+@dataclass(frozen=True)
+class Settings:
+    """What a UC-5 rule expects of an account, in words common to every product.
+
+    ``None`` means the rule says nothing about that setting, so the report does
+    not compare it. The names are not Oracle's: on Oracle ``password_lifetime``
+    is the profile's ``PASSWORD_LIFE_TIME`` and ``failed_login_limit`` its
+    ``FAILED_LOGIN_ATTEMPTS``, and another product reads them from where it
+    keeps them (UC-5 §7).
+    """
+
+    password_lifetime: Limit | None = None
+    failed_login_limit: Limit | None = None
+
+    @property
+    def is_empty(self) -> bool:
+        """Whether the rule states no setting at all."""
+        return self.password_lifetime is None and self.failed_login_limit is None
+
+
+@dataclass(frozen=True)
+class ReportAccountRule:
+    """One entry in ``reports.accounts``: accounts UC-5's report checks.
+
+    ``accounts`` holds names and patterns whose only wildcard is ``*``. A rule
+    declares nothing a changing command may act on: a name here is not a
+    declaration for invariant 5 (UC-5 §7). ``profile`` is the profile the
+    accounts must be on, an Oracle addition; ``settings`` is what their
+    password limits must be.
+    """
+
+    accounts: tuple[str, ...]
+    targets: TargetSelector = field(default_factory=TargetSelector)
+    profile: str | None = None
+    settings: Settings = field(default_factory=Settings)
+
+
+@dataclass(frozen=True)
+class DbProfileRule:
+    """One entry in ``reports.db_profiles``: the settings a database profile must have."""
+
+    name: str
+    settings: Settings
+
+
+@dataclass(frozen=True)
+class Reports:
+    """The ``reports:`` section: the rules of UC-5's reports. Absent means none."""
+
+    accounts: tuple[ReportAccountRule, ...] = ()
+    db_profiles: tuple[DbProfileRule, ...] = ()
+
+
 @dataclass(frozen=True)
 class ResetRecords:
     """Where UC-2 journals a reset -- a store and a prefix (H2).
@@ -1220,6 +1279,9 @@ class Config:
     #: name may not appear in both -- see
     #: :func:`~sopuli.config.personal_accounts.reject_cross_declaration`.
     personal_accounts: tuple[PersonalAccountRule, ...] = ()
+    #: The rules UC-5's reports check. They declare nothing a changing command
+    #: may act on (invariant 5).
+    reports: Reports = field(default_factory=Reports)
     #: Where UC-2's reset journal lives, or `None` where the file declares no
     #: destination. `None` is a documented mode rather than a default
     #: waiting to be filled in: a reset with nowhere to journal warns and runs,

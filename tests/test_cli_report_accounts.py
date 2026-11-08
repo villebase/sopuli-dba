@@ -236,7 +236,7 @@ def test_a_postgres_target_is_refused_before_connecting(write_config: WriteConfi
     )
     document = json.loads(result.output)
     row = document["results"][0]
-    assert row["state"] == "ERROR"
+    assert row["state"] == "NOT_CHECKED"
     assert "SOPULI-20006" in json.dumps(row["error"])
     # No target can run the report: exit 5, UC-5 §3.
     assert result.exit_code == ExitCode.UNSUPPORTED_CAPABILITY
@@ -260,6 +260,64 @@ def test_an_unsupported_target_beside_a_reached_one_is_not_checked(
     sessions["prod-alpha"] = unwritten
     result = report(write_config)
     assert result.exit_code == ExitCode.PARTIAL, result.output
+
+    document = json.loads(report(write_config, json_out=True).output)
+    Draft202012Validator(RUN_SCHEMA).validate(document)
+    refused = next(row for row in document["results"] if row["target"] == "prod-alpha")
+    # Not checked, as the exit code says, and not counted as a failure.
+    assert refused["state"] == "NOT_CHECKED"
+    assert document["summary"]["failed"] == 0
+
+
+def test_a_survey_that_fails_after_connecting_says_could_not_read(
+    write_config: WriteConfig, sessions: dict[str, Opener]
+) -> None:
+    class Refusing(FakeSession):
+        def survey_accounts(self) -> tuple[SurveyedAccount, ...]:
+            raise DriverError("DBA_PROFILES could not be read (ORA-00942)")
+
+    sessions["prod-alpha"] = lambda target, run, config: Refusing(target.name)
+    result = report(write_config)
+    assert result.exit_code == ExitCode.FAILURE, result.output
+    assert "prod-alpha  could not read: DBA_PROFILES" in click.unstyle(result.output)
+
+
+def test_a_session_without_a_survey_is_unsupported_not_unreachable(
+    write_config: WriteConfig, sessions: dict[str, Opener]
+) -> None:
+    class NoSurvey:
+        def close(self) -> None:
+            return None
+
+    sessions["prod-alpha"] = lambda target, run, config: NoSurvey()
+    result = report(write_config)
+    assert result.exit_code == ExitCode.PARTIAL, result.output
+    assert "prod-alpha  not supported: " in click.unstyle(result.output)
+
+
+def test_an_unreadable_count_says_why_once_per_target(
+    write_config: WriteConfig, sessions: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setitem(
+        ESTATE,
+        "qa-alpha",
+        (
+            surveyed(
+                "DBSNMP",
+                vendor_maintained=True,
+                password_lifetime="unlimited",
+                failed_logins=None,
+                unreadable=("SYS.USER$ is not readable: grant SELECT ON SYS.USER$",),
+            ),
+        ),
+    )
+    result = report(write_config, "--target", "qa-alpha")
+    text = click.unstyle(result.output)
+    assert text.count("SYS.USER$ is not readable") == 1
+    document = json.loads(report(write_config, "--target", "qa-alpha", json_out=True).output)
+    Draft202012Validator(RUN_SCHEMA).validate(document)
+    dbsnmp = next(row for row in document["results"] if row["account"] == "DBSNMP")
+    assert dbsnmp["failed_logins_reason"].startswith("SYS.USER$")
 
 
 # ------------------------------------------------------------------ tier 1 ---

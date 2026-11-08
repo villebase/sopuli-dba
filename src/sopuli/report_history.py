@@ -4,22 +4,22 @@ Pure, like the other report modules: the command reads the store and the
 database, and this module decides what the history says.
 
 **The history comes from the store's versions.** An application account's
-rotation is a change of the account's own ``rotated_at`` stamp, in the version
-that first shows it; a personal account's reset is a version of its reset
-record. Nothing here reads a password: only the stamps and the record's fields
-are taken from a document, and the document is not kept.
+rotation is a change of the account's own ``rotated_at`` stamp; a personal
+account's reset is a version of its reset record. Nothing here reads a
+password: only the stamps and the record's fields are taken from a document,
+and the document is not kept.
 
-**It never looks complete when it is not.** A version the store lists and
-nobody could read is a gap, and the history is then *not checked*. So is a
-store that keeps no versions. The oldest version kept is never presented as
-the first rotation: :class:`Start` says where the history starts and how many
-earlier versions are gone.
+**It never looks complete when it is not.** The history starts at the oldest
+version that can be read, and says how many earlier versions are gone, so the
+oldest version kept is never presented as the first rotation. After that
+start, every version number up to the store's current one must be read. A
+number the store does not list, a version that is deleted, destroyed or could
+not be read, and a stamp that is malformed or has disappeared are each a gap a
+rotation could hide in, and the history is then *not checked*. So is a store
+that keeps no versions.
 
 **The database's date is information.** It is shown beside the history and
-never compared. UC-5 §6 once flagged a database change after the last
-promotion, but the usual first run, ``creds generate --promote`` then
-``creds apply``, does exactly that, so the flag would fire on every account
-seeded that way (#1398).
+never compared with it (UC-5 §6).
 """
 
 from __future__ import annotations
@@ -32,16 +32,19 @@ from typing import Any
 from sopuli.clock import from_rfc3339
 from sopuli.config.model import Binding
 from sopuli.driver.protocol import UserState
-from sopuli.exit_codes import ExitCode
 from sopuli.lock.record import Holder
-from sopuli.payload import GENERATED_AT, GENERATED_BY, ROTATED_AT, stage_layout
+from sopuli.payload import GENERATED_AT, GENERATED_BY, ROTATED_AT, ROTATED_BY, stage_layout
+from sopuli.report_accounts import read_only_exit_code
+from sopuli.status import rotated_at
 from sopuli.store.protocol import VersionHistory
 
 __all__ = [
     "APPLICATION",
     "GENERATED",
     "NATIVE_NOTE",
+    "NOTHING_STORED",
     "NO_ACCOUNT",
+    "NO_VERSIONING",
     "PERSONAL",
     "RESET",
     "ROTATION",
@@ -65,13 +68,14 @@ GENERATED = "generated"
 #: A version of a personal account's reset record.
 RESET = "reset"
 
-ROTATED_BY = "rotated_by"
-
 NATIVE_NOTE = (
     "the store keeps the promotion time of the current version only; "
     "the other versions are listed by when each was generated"
 )
 NO_VERSIONING = "the store keeps no versions (versioning), so only the latest is shown"
+#: A store that keeps versions has nothing at the path: a secret not written
+#: yet, or a personal account never reset. An empty history, and a true one.
+NOTHING_STORED = "the store has nothing at this path"
 NO_ACCOUNT = "no such account on this target"
 NO_DATE = "the database gives no date"
 
@@ -80,9 +84,11 @@ NO_DATE = "the database gives no date"
 class Event:
     """One change, newest first in a history.
 
-    ``version`` is the store version that first shows it, or ``None`` where no
+    ``version`` is the first version read that shows it, or ``None`` where no
     version is known: the latest document of a store that keeps no versions, or
-    the promotion of a native-staging secret.
+    the promotion of a native-staging secret. ``exact`` is ``False`` where the
+    version before it was not read, being gone or unreadable: then that earlier
+    version may be the one that wrote it.
     """
 
     kind: str
@@ -91,15 +97,16 @@ class Event:
     by: str | None = None
     #: A reset only: whether a DBA saw the password (UC-2).
     seen: bool | None = None
+    exact: bool = True
 
 
 @dataclass(frozen=True)
 class Start:
-    """Where a history starts: the oldest version kept, and what is gone."""
+    """Where a history starts: the oldest version read, and what is gone."""
 
     version: int
     at: datetime | None
-    #: The versions below ``version``, pruned or never listed.
+    #: The versions below ``version``: pruned, deleted or destroyed.
     gone: int
 
 
@@ -112,8 +119,9 @@ class AccountHistory:
     kind: str
     events: tuple[Event, ...] = ()
     start: Start | None = None
-    #: Listed versions whose stamps could not be read: deleted, destroyed, or
-    #: unreadable. Each is a gap a rotation could hide in.
+    #: Versions after :attr:`start` that could not be read: not listed, deleted,
+    #: destroyed, unreadable, or with a malformed or missing stamp. Each is a
+    #: gap a rotation could hide in.
     unread: tuple[int, ...] = ()
     #: Why the history is not complete, beyond the gaps.
     not_checked: tuple[str, ...] = ()
@@ -128,10 +136,14 @@ class AccountHistory:
 
     @property
     def reasons(self) -> tuple[str, ...]:
-        gaps = tuple(
-            f"version {version} is listed and could not be read" for version in self.unread
-        )
+        gaps = tuple(f"version {version} could not be read" for version in self.unread)
         return (*self.not_checked, *gaps)
+
+
+#: What reading one version gives: its event, or ``None``, and whether the
+#: field the event comes from is there at all. A field that is there and gives
+#: no event is malformed.
+Read = Callable[[Mapping[str, Any], int | None], tuple[Event | None, bool]]
 
 
 def application(
@@ -140,31 +152,30 @@ def application(
     history: VersionHistory | None,
     documents: Mapping[int, Any],
     *,
+    versioning: bool,
     latest: Any = None,
 ) -> AccountHistory:
     """An application account's rotations, from its secret's versions.
 
     ``documents`` maps a version to its document, for the versions that could
-    be read. ``history`` is ``None`` where the store keeps no versions; then
-    ``latest`` is the document as it is now, and only its stamp is shown.
+    be read. ``history`` is ``None`` where the store keeps no versions
+    (``versioning`` false), and then ``latest`` is the document as it is now;
+    or where the path is unknown to a store that keeps them.
     """
     empty = AccountHistory(target, binding.account, APPLICATION)
     if binding.secret is None:
         return replace(empty, not_checked=("the config names no secret for this account",))
     layout = stage_layout(binding.secret)
 
-    def event(document: Any, version: int | None) -> Event | None:
-        moment = _moment(layout.read(document, ROTATED_AT))
+    def event(document: Mapping[str, Any], version: int | None) -> tuple[Event | None, bool]:
+        present = layout.read(document, ROTATED_AT) is not None
+        moment = rotated_at(document, binding)
         if moment is None:
-            return None
+            return None, present
         by = layout.read(document, ROTATED_BY)
-        return Event(ROTATION, moment, version, by=by if isinstance(by, str) else None)
+        return Event(ROTATION, moment, version, by=by if isinstance(by, str) else None), present
 
-    if history is None:
-        found = event(latest, None) if isinstance(latest, Mapping) else None
-        return replace(empty, events=(found,) if found else (), not_checked=(NO_VERSIONING,))
-    events, unread = _walk(history, documents, event, same=lambda a, b: a.at == b.at)
-    return replace(empty, events=events, start=_start(history), unread=unread)
+    return _history(empty, history, documents, event, versioning=versioning, latest=latest)
 
 
 def native(
@@ -182,27 +193,28 @@ def native(
     version's promotion is known.
     """
 
-    def generated(document: Any, version: int | None) -> Event | None:
+    def generated(document: Mapping[str, Any], version: int | None) -> tuple[Event | None, bool]:
         moment = _moment(document.get(GENERATED_AT))
         if moment is None:
-            return None
+            return None, GENERATED_AT in document
         by = document.get(GENERATED_BY)
-        return Event(GENERATED, moment, version, by=by if isinstance(by, str) else None)
+        return Event(GENERATED, moment, version, by=by if isinstance(by, str) else None), True
 
-    events, unread = _walk(history, documents, generated, same=lambda a, b: False)
+    found = _history(
+        AccountHistory(target, binding.account, APPLICATION, note=NATIVE_NOTE),
+        history,
+        documents,
+        generated,
+        versioning=True,
+        own=True,
+    )
     promoted = _moment(attributes.get(ROTATED_AT))
-    if promoted is not None:
-        by = attributes.get(ROTATED_BY)
-        top = Event(ROTATION, promoted, None, by=by if isinstance(by, str) else None)
-        events = tuple(sorted((top, *events), key=lambda one: one.at, reverse=True))
-    return AccountHistory(
-        target,
-        binding.account,
-        APPLICATION,
-        events=events,
-        start=_start(history),
-        unread=unread,
-        note=NATIVE_NOTE,
+    if promoted is None:
+        return found
+    by = attributes.get(ROTATED_BY)
+    top = Event(ROTATION, promoted, None, by=by if isinstance(by, str) else None)
+    return replace(
+        found, events=tuple(sorted((top, *found.events), key=lambda one: one.at, reverse=True))
     )
 
 
@@ -212,15 +224,15 @@ def personal(
     history: VersionHistory | None,
     documents: Mapping[int, Any],
     *,
+    versioning: bool,
     latest: Any = None,
 ) -> AccountHistory:
     """A personal account's resets, from its reset record's versions (UC-2 §3)."""
-    empty = AccountHistory(target, account, PERSONAL)
 
-    def reset(document: Any, version: int | None) -> Event | None:
+    def reset(document: Mapping[str, Any], version: int | None) -> tuple[Event | None, bool]:
         moment = _moment(document.get("reset_at"))
         if moment is None:
-            return None
+            return None, "reset_at" in document
         holder = Holder.from_dict(document.get("by"))
         seen = document.get("seen")
         return Event(
@@ -229,13 +241,16 @@ def personal(
             version,
             by=f"{holder.os_user}@{holder.host}" if holder else None,
             seen=seen if isinstance(seen, bool) else None,
-        )
+        ), True
 
-    if history is None:
-        found = reset(latest, None) if isinstance(latest, Mapping) else None
-        return replace(empty, events=(found,) if found else (), not_checked=(NO_VERSIONING,))
-    events, unread = _walk(history, documents, reset, same=lambda a, b: a.at == b.at)
-    return replace(empty, events=events, start=_start(history), unread=unread)
+    return _history(
+        AccountHistory(target, account, PERSONAL),
+        history,
+        documents,
+        reset,
+        versioning=versioning,
+        latest=latest,
+    )
 
 
 def with_database(found: AccountHistory, user: UserState | None) -> AccountHistory:
@@ -259,64 +274,86 @@ def exit_code(
     targets: int,
     unanswered: int = 0,
 ) -> int:
-    """5 if no target could run, 1 if a target or store gave no answer, 4 if
-    anything was not read. The report judges nothing else (UC-5 §6)."""
-    if targets and unsupported == targets:
-        return int(ExitCode.UNSUPPORTED_CAPABILITY)
-    if unreachable or unanswered:
-        return int(ExitCode.FAILURE)
-    if unsupported or any(not one.complete for one in histories):
-        return int(ExitCode.PARTIAL)
-    return int(ExitCode.SUCCESS)
+    """UC-5 §3's rule for a report that judges nothing: 5, then 1 for a target
+    or store that gave no answer, then 4 for anything not read."""
+    return read_only_exit_code(
+        unreachable=unreachable + unanswered,
+        unsupported=unsupported,
+        targets=targets,
+        incomplete=any(not one.complete for one in histories),
+    )
+
+
+def _history(
+    empty: AccountHistory,
+    history: VersionHistory | None,
+    documents: Mapping[int, Any],
+    read: Read,
+    *,
+    versioning: bool,
+    latest: Any = None,
+    own: bool = False,
+) -> AccountHistory:
+    if history is None:
+        if versioning:
+            return replace(empty, note=empty.note or NOTHING_STORED)
+        found = read(latest, None)[0] if isinstance(latest, Mapping) else None
+        return replace(empty, events=(found,) if found else (), not_checked=(NO_VERSIONING,))
+    events, start, unread = _walk(history, documents, read, own=own)
+    return replace(empty, events=events, start=start, unread=unread)
 
 
 def _walk(
     history: VersionHistory,
     documents: Mapping[int, Any],
-    read: Callable[[Mapping[str, Any], int], Event | None],
+    read: Read,
     *,
-    same: Callable[[Event, Event], bool],
-) -> tuple[tuple[Event, ...], tuple[int, ...]]:
-    """Oldest first: each version's event, kept where it differs from the last.
+    own: bool,
+) -> tuple[tuple[Event, ...], Start | None, tuple[int, ...]]:
+    """Every version from the oldest readable one to the store's current one.
 
-    A version that is deleted, destroyed or missing from ``documents`` is a
-    gap. The last event read before a gap is still compared after it, so a
-    stamp that did not move across a gap is not counted twice.
+    Versions before the oldest readable one are gone, and :class:`Start` counts
+    them. After it, a number the store does not list or could not read is a
+    gap. An event is kept where it differs from the last one read, so a stamp
+    that did not move across a gap is not counted twice. ``own`` says each
+    version's event is its own, as ``generated_at`` is, so none is inherited.
     """
+    listed = {info.version: info for info in history.versions}
+    readable = sorted(
+        number
+        for number, info in listed.items()
+        if not info.deleted and not info.destroyed and isinstance(documents.get(number), Mapping)
+    )
+    if not readable:
+        return (), None, tuple(sorted(listed))
+    first = readable[0]
+    start = Start(first, listed[first].created_at, gone=first - 1)
     events: list[Event] = []
     unread: list[int] = []
     last: Event | None = None
-    for info in history.versions:
-        document = documents.get(info.version)
-        if info.deleted or info.destroyed or not isinstance(document, Mapping):
-            unread.append(info.version)
+    previous_ok = first - 1 if first == 1 else None
+    for number in range(first, max(history.current, readable[-1]) + 1):
+        if number not in readable:
+            unread.append(number)
             continue
-        found = read(document, info.version)
+        found, present = read(documents[number], number)
         if found is None:
+            if present or last is not None:
+                # Malformed, or gone after an earlier version had it.
+                unread.append(number)
+            else:
+                previous_ok = number
             continue
-        if last is None or not same(found, last):
-            events.append(found)
+        if last is None or found.at != last.at or own:
+            exact = own or previous_ok == number - 1
+            events.append(replace(found, exact=exact))
         last = found
-    return tuple(reversed(events)), tuple(unread)
-
-
-def _start(history: VersionHistory) -> Start | None:
-    if history.oldest_kept is None:
-        return None
-    oldest = next((one for one in history.versions if one.version == history.oldest_kept), None)
-    return Start(
-        version=history.oldest_kept,
-        at=oldest.created_at if oldest else None,
-        gone=history.oldest_kept - 1,
-    )
+        previous_ok = number
+    return tuple(reversed(events)), start, tuple(unread)
 
 
 def _moment(value: Any) -> datetime | None:
-    """A stamp, or ``None`` for anything that is not one.
-
-    A malformed stamp is somebody else's string in somebody else's document,
-    as ``creds status`` reads it: skipped, not a crash.
-    """
+    """A stamp, or ``None`` for anything that is not one."""
     if not isinstance(value, str):
         return None
     try:

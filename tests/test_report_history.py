@@ -61,6 +61,17 @@ def shared(rotated: dict[str, str] | None, by: dict[str, str] | None = None) -> 
     return document
 
 
+def app(target: str, bound: Binding, *args: Any, **kwargs: Any) -> history.AccountHistory:
+    """`application` on a store that keeps versions, unless a test says not."""
+    kwargs.setdefault("versioning", True)
+    return history.application(target, bound, *args, **kwargs)
+
+
+def pers(target: str, account: str, *args: Any, **kwargs: Any) -> history.AccountHistory:
+    kwargs.setdefault("versioning", True)
+    return history.personal(target, account, *args, **kwargs)
+
+
 # --------------------------------------------------------- application ---
 
 
@@ -72,7 +83,7 @@ def test_each_change_of_the_accounts_own_stamp_is_a_rotation_newest_first() -> N
         3: shared({"acme_web_user": stamp(3)}, {"acme_web_user": "jdoe"}),
     }
 
-    found = history.application(TARGET, binding(), listed(1, 2, 3), documents)
+    found = app(TARGET, binding(), listed(1, 2, 3), documents)
 
     assert [(e.at, e.by, e.version) for e in found.events] == [
         (at(3), "jdoe", 3),
@@ -88,7 +99,7 @@ def test_another_accounts_rotation_in_a_shared_document_is_not_this_ones() -> No
         2: shared({"acme_web_user": stamp(1), "acme_batch_user": stamp(2)}),
     }
 
-    found = history.application(TARGET, binding(), listed(1, 2), documents)
+    found = app(TARGET, binding(), listed(1, 2), documents)
 
     assert [e.version for e in found.events] == [1]
 
@@ -99,9 +110,7 @@ def test_a_single_account_document_reads_the_root_stamp() -> None:
         2: {"password": Secret("b"), "rotated_at": stamp(2), "rotated_by": "ville"},
     }
 
-    found = history.application(
-        TARGET, binding(ref="apps/acme/web#password"), listed(1, 2), documents
-    )
+    found = app(TARGET, binding(ref="apps/acme/web#password"), listed(1, 2), documents)
 
     assert [e.at for e in found.events] == [at(2), at(1)]
 
@@ -112,7 +121,7 @@ def test_where_the_history_starts_is_said_and_counts_what_is_gone() -> None:
         5: shared({"acme_web_user": stamp(5)}),
     }
 
-    found = history.application(TARGET, binding(), listed(4, 5), documents)
+    found = app(TARGET, binding(), listed(4, 5), documents)
 
     assert found.start == history.Start(version=4, at=at(4, 1), gone=3)
     # The stamp the oldest kept version carries is listed: it is a real
@@ -127,7 +136,7 @@ def test_a_deleted_or_destroyed_version_is_a_gap_and_not_checked() -> None:
         3: shared({"acme_web_user": stamp(3)}),
     }
 
-    found = history.application(TARGET, binding(), listed(1, 2, 3, destroyed=(2,)), documents)
+    found = app(TARGET, binding(), listed(1, 2, 3, destroyed=(2,)), documents)
 
     assert found.unread == (2,)
     assert not found.complete
@@ -137,25 +146,92 @@ def test_a_deleted_or_destroyed_version_is_a_gap_and_not_checked() -> None:
 def test_a_listed_version_with_no_document_is_a_gap() -> None:
     documents = {1: shared({"acme_web_user": stamp(1)})}
 
-    found = history.application(TARGET, binding(), listed(1, 2), documents)
+    found = app(TARGET, binding(), listed(1, 2), documents)
 
     assert found.unread == (2,)
     assert not found.complete
 
 
-def test_a_malformed_stamp_is_skipped_not_a_crash() -> None:
+def test_a_malformed_stamp_is_a_gap_not_a_crash() -> None:
     documents = {
-        1: shared({"acme_web_user": "not a date"}),
-        2: shared({"acme_web_user": stamp(2)}),
+        1: shared({"acme_web_user": stamp(1)}),
+        2: shared({"acme_web_user": "not a date"}),
+        3: shared({"acme_web_user": stamp(3)}),
     }
 
-    found = history.application(TARGET, binding(), listed(1, 2), documents)
+    found = app(TARGET, binding(), listed(1, 2, 3), documents)
 
-    assert [e.version for e in found.events] == [2]
+    assert [e.version for e in found.events] == [3, 1]
+    assert found.unread == (2,)
+    assert not found.complete
+    # The rotation may have been written by version 2, which was not read.
+    assert not found.events[0].exact
+
+
+def test_a_stamp_that_disappears_is_a_gap() -> None:
+    documents = {1: shared({"acme_web_user": stamp(1)}), 2: shared(None)}
+
+    found = app(TARGET, binding(), listed(1, 2), documents)
+
+    assert found.unread == (2,)
+    assert not found.complete
+
+
+def test_a_version_number_the_store_does_not_list_is_a_gap() -> None:
+    """OCI drops a deleted version from its list once its deletion time passes."""
+    documents = {5: shared({"acme_web_user": stamp(5)}), 7: shared({"acme_web_user": stamp(7)})}
+
+    found = app(TARGET, binding(), listed(5, 7), documents)
+
+    assert found.unread == (6,)
+    assert not found.complete
+
+
+def test_versions_up_to_the_current_one_must_be_listed() -> None:
+    documents = {1: shared({"acme_web_user": stamp(1)})}
+    known = VersionHistory(current=3, oldest_kept=1, versions=listed(1).versions)
+
+    found = app(TARGET, binding(), known, documents)
+
+    assert found.unread == (2, 3)
+
+
+def test_deleted_versions_before_the_oldest_readable_one_are_gone_not_gaps() -> None:
+    """OCI deletes the oldest version itself when a secret is full."""
+    documents = {2: shared({"acme_web_user": stamp(2)}), 3: shared({"acme_web_user": stamp(3)})}
+
+    found = app(TARGET, binding(), listed(1, 2, 3, deleted=(1,)), documents)
+
+    assert found.start == history.Start(version=2, at=at(2, 1), gone=1)
+    assert found.complete
+
+
+def test_a_rotation_first_seen_after_pruning_is_not_exact() -> None:
+    documents = {4: shared({"acme_web_user": stamp(3)})}
+
+    found = app(TARGET, binding(), listed(4), documents)
+
+    assert [(e.version, e.exact) for e in found.events] == [(4, False)]
+
+
+def test_a_rotation_written_by_the_version_is_exact() -> None:
+    documents = {1: shared(None), 2: shared({"acme_web_user": stamp(2)})}
+
+    found = app(TARGET, binding(), listed(1, 2), documents)
+
+    assert [(e.version, e.exact) for e in found.events] == [(2, True)]
+
+
+def test_an_unknown_path_on_a_versioned_store_is_an_empty_true_history() -> None:
+    found = app(TARGET, binding(), None, {})
+
+    assert found.events == ()
+    assert found.note == history.NOTHING_STORED
+    assert found.complete
 
 
 def test_a_seeded_secret_with_no_stamp_has_no_rotation() -> None:
-    found = history.application(TARGET, binding(), listed(1), {1: shared(None)})
+    found = app(TARGET, binding(), listed(1), {1: shared(None)})
 
     assert found.events == ()
     assert found.complete
@@ -164,7 +240,7 @@ def test_a_seeded_secret_with_no_stamp_has_no_rotation() -> None:
 def test_no_versioning_shows_the_latest_stamp_and_is_not_checked() -> None:
     latest = shared({"acme_web_user": stamp(7)}, {"acme_web_user": "ville"})
 
-    found = history.application(TARGET, binding(), None, {}, latest=latest)
+    found = app(TARGET, binding(), None, {}, versioning=False, latest=latest)
 
     assert [(e.at, e.version) for e in found.events] == [(at(7), None)]
     assert found.start is None
@@ -175,7 +251,7 @@ def test_no_versioning_shows_the_latest_stamp_and_is_not_checked() -> None:
 def test_the_history_holds_no_password() -> None:
     documents = {1: shared({"acme_web_user": stamp(1)}, {"acme_web_user": "ville"})}
 
-    found = history.application(TARGET, binding(), listed(1), documents)
+    found = app(TARGET, binding(), listed(1), documents)
 
     assert "live" not in repr(found)
     assert "other" not in repr(found)
@@ -222,7 +298,7 @@ def record(day: int, *, seen: bool = False, user: str = "ville") -> dict[str, An
 def test_each_reset_record_version_is_a_reset() -> None:
     documents = {1: record(1, seen=True), 2: record(4, user="jdba")}
 
-    found = history.personal(TARGET, "JDOE", listed(1, 2), documents)
+    found = pers(TARGET, "JDOE", listed(1, 2), documents)
 
     assert [(e.kind, e.at, e.by, e.seen) for e in found.events] == [
         (history.RESET, at(4), "jdba@laptop", False),
@@ -235,13 +311,13 @@ def test_each_reset_record_version_is_a_reset() -> None:
 def test_a_record_version_that_repeats_a_reset_is_one_reset() -> None:
     documents = {1: record(1), 2: record(1)}
 
-    found = history.personal(TARGET, "JDOE", listed(1, 2), documents)
+    found = pers(TARGET, "JDOE", listed(1, 2), documents)
 
     assert [e.version for e in found.events] == [1]
 
 
 def test_a_personal_account_with_no_versioning_shows_the_last_reset() -> None:
-    found = history.personal(TARGET, "JDOE", None, {}, latest=record(9))
+    found = pers(TARGET, "JDOE", None, {}, versioning=False, latest=record(9))
 
     assert [e.at for e in found.events] == [at(9)]
     assert not found.complete
@@ -252,7 +328,7 @@ def test_a_personal_account_with_no_versioning_shows_the_last_reset() -> None:
 
 def test_the_database_date_is_shown_beside_it() -> None:
     found = history.with_database(
-        history.application(TARGET, binding(), listed(1), {1: shared(None)}),
+        app(TARGET, binding(), listed(1), {1: shared(None)}),
         UserState(name="ACME_WEB_USER", status="OPEN", password_changed_at=at(2)),
     )
 
@@ -264,7 +340,7 @@ def test_the_database_date_is_shown_beside_it() -> None:
 
 def test_an_unknown_database_date_says_why() -> None:
     found = history.with_database(
-        history.application(TARGET, binding(), listed(1), {1: shared(None)}),
+        app(TARGET, binding(), listed(1), {1: shared(None)}),
         UserState(name="X", status="OPEN", password_changed_unknown="needs SELECT ON SYS.USER$"),
     )
 
@@ -273,9 +349,7 @@ def test_an_unknown_database_date_says_why() -> None:
 
 
 def test_no_account_on_the_target_is_said() -> None:
-    found = history.with_database(
-        history.application(TARGET, binding(), listed(1), {1: shared(None)}), None
-    )
+    found = history.with_database(app(TARGET, binding(), listed(1), {1: shared(None)}), None)
 
     assert found.db_unknown == history.NO_ACCOUNT
 
@@ -284,11 +358,11 @@ def test_no_account_on_the_target_is_said() -> None:
 
 
 def complete() -> history.AccountHistory:
-    return history.application(TARGET, binding(), listed(1), {1: shared(None)})
+    return app(TARGET, binding(), listed(1), {1: shared(None)})
 
 
 def gap() -> history.AccountHistory:
-    return history.application(TARGET, binding(), listed(1), {})
+    return app(TARGET, binding(), listed(1), {})
 
 
 def test_exit_codes() -> None:

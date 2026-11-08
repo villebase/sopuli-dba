@@ -107,6 +107,8 @@ from sopuli.payload import (
     REMOVE,
     RETAINING,
     ROLLOVER,
+    ROTATED_AT,
+    ROTATED_BY,
     SUPPLIED,
     TARGETS,
     StageLayout,
@@ -838,8 +840,8 @@ def promotion_patch(entries: Sequence[Promotable], *, at: datetime, by: str) -> 
         # reaching-login mark (#1316).
         patches.append(layout.patch(ROLLOVER, REMOVE))
         patches.append(layout.patch(REACHED, REMOVE))
-        patches.append(layout.patch("rotated_at", stamp))
-        patches.append(layout.patch("rotated_by", by))
+        patches.append(layout.patch(ROTATED_AT, stamp))
+        patches.append(layout.patch(ROTATED_BY, by))
         if entry.policy is not None:
             patches.append(layout.patch("policy", entry.policy))
         if entry.targets:

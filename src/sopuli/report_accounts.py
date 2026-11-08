@@ -190,14 +190,38 @@ def exit_code(
     for. Where every target is one, nothing could run, which is exit 5. Where
     only some are, those targets are not checked, which is exit 4 at most.
     """
+    states = {row.state for row in rows}
+    return read_only_exit_code(
+        unreachable=unreachable,
+        unsupported=unsupported,
+        targets=targets,
+        problem=bool(states & {REPORT_PROBLEM, ACCOUNT_MISSING}),
+        incomplete=NOT_CHECKED in states,
+    )
+
+
+def read_only_exit_code(
+    *,
+    unreachable: int,
+    unsupported: int,
+    targets: int,
+    problem: bool = False,
+    incomplete: bool = False,
+) -> int:
+    """UC-5 §3's order, the one place every report takes it from.
+
+    5 when every target is of a product the report is not written for; 1 when
+    a target gave no answer; 3 for a problem; 4 for anything not checked,
+    an unsupported target included; else 0. A report that judges nothing
+    passes no ``problem``, so it never exits 3.
+    """
     if targets and unsupported == targets:
         return int(ExitCode.UNSUPPORTED_CAPABILITY)
     if unreachable:
         return int(ExitCode.FAILURE)
-    states = {row.state for row in rows}
-    if states & {REPORT_PROBLEM, ACCOUNT_MISSING}:
+    if problem:
         return int(ExitCode.DRIFT)
-    if NOT_CHECKED in states or unsupported:
+    if incomplete or unsupported:
         return int(ExitCode.PARTIAL)
     return int(ExitCode.SUCCESS)
 

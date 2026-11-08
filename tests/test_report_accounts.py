@@ -8,6 +8,9 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
+from sopuli.config.errors import ConfigError
 from sopuli.config.loading import build_config
 from sopuli.config.model import Config
 from sopuli.driver.survey import SurveyedAccount
@@ -416,7 +419,7 @@ def test_a_rules_profile_missing_on_the_target_is_one_problem() -> None:
     cfg = config(**rule(accounts=["DBSNMP", "ORDS_*"], profile="tech_noexp"))
     missing = missing_profiles(TARGET, cfg, {"DEFAULT", "APP_USERS"})
     assert [(m.target, m.profile, m.expected_by) for m in missing] == [
-        (TARGET, "tech_noexp", ("a reports.accounts rule",))
+        (TARGET, "tech_noexp", ("reports.accounts",))
     ]
 
 
@@ -428,7 +431,7 @@ def test_a_profile_the_target_has_is_not_missing_compared_by_upper_case() -> Non
 def test_an_application_policys_profile_missing_is_a_problem() -> None:
     cfg = config(**APPLICATION)
     missing = missing_profiles(TARGET, cfg, {"DEFAULT"})
-    assert [(m.profile, m.expected_by) for m in missing] == [("ACME_APP_PROF", ("policy app",))]
+    assert [(m.profile, m.expected_by) for m in missing] == [("ACME_APP_PROF", ("policies.app",))]
 
 
 def test_one_finding_names_every_source_that_expects_the_profile() -> None:
@@ -443,7 +446,15 @@ def test_one_finding_names_every_source_that_expects_the_profile() -> None:
     )
     missing = missing_profiles(TARGET, cfg, {"DEFAULT"})
     assert len(missing) == 1
-    assert missing[0].expected_by == ("a reports.accounts rule", "policy app")
+    assert missing[0].expected_by == ("reports.accounts", "policies.app")
+
+
+def test_a_rules_profile_never_names_an_application_account() -> None:
+    """From the review of #1402. The config refuses a rule's `profile:` on an
+    application account named by name, so every rule profile that
+    `missing_profiles` counts is one some non-application account may need."""
+    with pytest.raises(ConfigError, match="its profile comes from its policy"):
+        config(**APPLICATION, **rule(accounts=["ACME_APP_USER"], profile="OTHER_PROF"))
 
 
 def test_a_db_profiles_entry_alone_never_requires_the_profile() -> None:

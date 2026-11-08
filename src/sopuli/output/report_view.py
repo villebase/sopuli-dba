@@ -17,6 +17,8 @@ from sopuli.output.palette import Role, paint, state_cell
 from sopuli.output.table import Cell, Column, render_table
 from sopuli.report_accounts import (
     ACCOUNT_MISSING,
+    BY_POLICY,
+    BY_RULE,
     NO_RULE,
     NOT_CHECKED,
     PROFILE_MISSING,
@@ -157,10 +159,15 @@ def _counts(rows: Sequence[AccountRow]) -> dict[str, int]:
 
 def _missing_detail(missing: MissingProfile) -> str:
     """What a missing profile's finding says, in the table and in the JSON."""
-    return (
-        f"{missing.profile} does not exist on this target; "
-        f"expected by {' and '.join(missing.expected_by)}"
-    )
+    sources = " and ".join(_source(source) for source in missing.expected_by)
+    return f"{missing.profile} does not exist on this target; expected by {sources}"
+
+
+def _source(source: str) -> str:
+    """A config path from :attr:`MissingProfile.expected_by`, in words."""
+    if source == BY_RULE:
+        return "a reports.accounts rule"
+    return f"policy {source.removeprefix(BY_POLICY)}"
 
 
 def _count(number: int, noun: str) -> str:
@@ -225,7 +232,7 @@ def _missing_result(missing: MissingProfile) -> dict[str, Any]:
         "target": missing.target,
         "state": PROFILE_MISSING,
         "changed": False,
-        "profile": missing.profile,
+        "missing_profile": missing.profile,
         "expected_by": list(missing.expected_by),
         "findings": [
             {"check": "profile", "outcome": "problem", "detail": _missing_detail(missing)}

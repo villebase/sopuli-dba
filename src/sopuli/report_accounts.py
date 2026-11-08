@@ -38,8 +38,10 @@ ACCOUNT_MISSING = "ACCOUNT_MISSING"
 #: not have (UC-5 §4). About the target, not an account.
 PROFILE_MISSING = "PROFILE_MISSING"
 
-#: Who expects a profile, as :attr:`MissingProfile.expected_by` says it.
-BY_RULE = "a reports.accounts rule"
+#: What expects a profile, as :attr:`MissingProfile.expected_by` names it: the
+#: config's own path, ``reports.accounts`` or ``policies.<name>``.
+BY_RULE = "reports.accounts"
+BY_POLICY = "policies."
 
 #: The states this report gives an account, worst first. ``ERROR`` (a target
 #: that could not be reached) is not here: it belongs to a target, not an
@@ -103,7 +105,7 @@ class MissingProfile:
     target: str
     #: As the file first spells it.
     profile: str
-    #: What expects it: :data:`BY_RULE`, and ``policy <name>`` for each
+    #: What expects it: :data:`BY_RULE`, then ``policies.<name>`` for each
     #: application policy, in that order.
     expected_by: tuple[str, ...]
 
@@ -213,14 +215,15 @@ def missing_profiles(
     application's policy names it for an account bound there. A ``db_profiles``
     entry alone expects nothing: it says what a profile's limits must be where
     the profile is, not that every target has it (#1390). Nor does a personal
-    rule's ``profile:``, which selects accounts. Names are compared by
-    ``upper()``.
+    rule's ``profile:``, which selects accounts. A rule's ``profile:`` never
+    names an application account by name: the config refuses that, because the
+    account's profile is its policy's. Names are compared by ``upper()``.
     """
     present = {name.upper() for name in profiles}
     expected: dict[str, tuple[str, list[str]]] = {}
 
     def expect(profile: str, source: str) -> None:
-        spelled, sources = expected.setdefault(profile.upper(), (profile, []))
+        _, sources = expected.setdefault(profile.upper(), (profile, []))
         if source not in sources:
             sources.append(source)
 
@@ -233,7 +236,7 @@ def missing_profiles(
             continue
         policy = policies.get(binding.policy)
         if policy is not None and policy.account.profile is not None:
-            expect(policy.account.profile, f"policy {policy.name}")
+            expect(policy.account.profile, f"{BY_POLICY}{policy.name}")
     return tuple(
         MissingProfile(target, spelled, tuple(sources))
         for key, (spelled, sources) in sorted(expected.items())

@@ -784,7 +784,7 @@ account, so none binds anything, and none reads a password or verifier column.
 | Statement | Reads | Needs |
 |---|---|---|
 | every account: `USERNAME`, `ACCOUNT_STATUS`, `PROFILE`, `COMMON`, `ORACLE_MAINTAINED` | `DBA_USERS` | the grants above |
-| `PASSWORD_LIFE_TIME` and `FAILED_LOGIN_ATTEMPTS` for every profile, as shown, resolved through this container's `DEFAULT` profile, and the profile's `COMMON` | `DBA_PROFILES` | the grants above |
+| `PASSWORD_LIFE_TIME` and `FAILED_LOGIN_ATTEMPTS` for every profile, as shown, resolved through this container's `DEFAULT` profile, and the profile's `COMMON`. Every profile has these rows, so they also give the target's profile names, which `report accounts` compares with the profiles the config expects (`survey_with_profiles`, #1390) | `DBA_PROFILES` | the grants above |
 | `NAME` and `LCOUNT` for every user | `SYS.USER$` | the optional grant; sent only with `offline_verify` |
 
 On a release that answers `ORA-00904` to `COMMON` or `ORACLE_MAINTAINED`, as

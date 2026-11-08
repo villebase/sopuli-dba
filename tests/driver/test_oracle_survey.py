@@ -16,12 +16,11 @@ from sopuli.driver.oracle.accounts import (
     SURVEY_LCOUNT_QUERY,
     SURVEY_LIMITS_QUERY,
     SURVEY_LIMITS_QUERY_LEGACY,
-    SURVEY_PROFILES_QUERY,
     SURVEY_USERS_QUERY,
     SURVEY_USERS_QUERY_LEGACY,
     DictionaryUnreadableError,
-    profile_names,
     survey,
+    survey_with_profiles,
 )
 from sopuli.driver.protocol import OFFLINE_VERIFY, Scope
 from sopuli.driver.survey import SurveyedAccount
@@ -451,35 +450,44 @@ def test_a_refused_dba_users_read_names_the_grant() -> None:
 # --------------------------------------------- the target's profiles (#1390) ---
 
 
-def test_every_profile_name_is_read_in_one_unbound_statement() -> None:
+def test_the_profile_names_come_from_the_limits_rows_with_no_statement_added() -> None:
+    """Every profile has a row per resource, so the limits statement already
+    names every profile, including one no account is on (#1390)."""
     cursor = _Cursor(
-        {SURVEY_PROFILES_QUERY: [("DEFAULT",), ("TECH_NOEXP",), ("ORA_STIG_PROFILE",)]}
+        {
+            SURVEY_USERS_QUERY: [("ACME_APP_USER", "OPEN", "APP_USERS", "NO", "N")],
+            SURVEY_LIMITS_QUERY: _limits("DEFAULT") + _limits("APP_USERS") + _limits("UNUSED"),
+            SURVEY_LCOUNT_QUERY: [],
+        }
     )
-    assert profile_names(cursor) == frozenset({"DEFAULT", "TECH_NOEXP", "ORA_STIG_PROFILE"})
-    assert cursor.asked == [SURVEY_PROFILES_QUERY]
-    assert cursor.binds == [None]
-    assert SURVEY_PROFILES_QUERY == "select distinct profile from dba_profiles"
+    accounts, profiles = survey_with_profiles(
+        cursor, own_container=True, user_dollar=False, application=False
+    )
+    assert [account.name for account in accounts] == ["ACME_APP_USER"]
+    assert profiles == frozenset({"DEFAULT", "APP_USERS", "UNUSED"})
+    assert cursor.asked == [SURVEY_USERS_QUERY, SURVEY_LIMITS_QUERY]
 
 
-def test_a_refused_profile_list_names_the_view() -> None:
-    cursor = _Cursor({SURVEY_PROFILES_QUERY: _ora("ORA-00942", "table or view does not exist")})
-    with pytest.raises(DictionaryUnreadableError) as raised:
-        profile_names(cursor)
-    assert raised.value.code == "ORA-00942"
-    assert "DBA_PROFILES" in str(raised.value)
+def test_the_session_surveys_accounts_and_profiles_on_one_scope(
+    session_module: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen: dict[str, bool] = {}
 
+    def fake(
+        cursor: Any, *, own_container: bool, user_dollar: bool, application: bool
+    ) -> tuple[tuple[SurveyedAccount, ...], frozenset[str]]:
+        seen.update(own_container=own_container, user_dollar=user_dollar, application=application)
+        return (), frozenset({"DEFAULT"})
 
-def test_the_session_surveys_its_profiles(session_module: Any) -> None:
-    class _Profiles(_Connection):
-        def cursor(self) -> Any:
-            return _Cursor({SURVEY_PROFILES_QUERY: [("DEFAULT",)]})
-
+    monkeypatch.setattr(session_module, "survey_with_profiles", fake)
     session = session_module.OracleSession(
-        connection=_Profiles(),
+        connection=_Connection(),
         target=ExpandedTarget(
             target=Target(name="orders", type="oracle", dsn="db.example.com:1521/orders"),
             index=0,
         ),
         correlation_id="00000000-0000-0000-0000-000000000000",
     )
-    assert session.survey_profiles() == frozenset({"DEFAULT"})
+    session._scope = Scope(type="pdb", capabilities=frozenset({OFFLINE_VERIFY}))
+    assert session.survey_with_profiles() == ((), frozenset({"DEFAULT"}))
+    assert seen == {"own_container": False, "user_dollar": True, "application": False}

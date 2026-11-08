@@ -1553,7 +1553,7 @@
         "UNDECLARED",
         "PROFILE_MISSING"
       ],
-      "description": "`PROFILE_MISSING` (added in 1.86) is a `report accounts` result about a target, with `account` `-`: a profile that a `reports.accounts` rule or an application's policy expects on this target does not exist there. One result for the target, however many accounts are expected on it; it is a problem, and the run exits 3. `profile` and `expected_by` say which profile and what expects it. `REPORT_OK`,`REPORT_PROBLEM`, `NOT_CHECKED`, `NO_RULE` and `UNDECLARED` (added in 1.82) are `report accounts`' states (UC-5 §3): every check had a rule, ran and passed; a check found a problem; a check could not run truthfully on this target; nothing in the file states a profile or a setting for the account; the file does not declare the account at all, which is information and never a problem. `VAULT_ONLY` (added in 1.20) is what `creds generate --promote` reports: the vault holds this password and no database has been asked. Distinct from `PENDING_APPLY`, which says a rotation is in flight — here there is none, and `creds apply` is what makes a database match. See `03-json-output.md` §3 for why none of the other values would have been true. `DECLARED` (added in 1.25) is `account list`'s ordinary row: the declaration matched this account and the database has it. It is not a claim about the password — that verb never asks — which is why it is a word of its own rather than `IN_SYNC`, and why an account the declaration names and the database does not have is `ACCOUNT_MISSING`, the value that already meant exactly that."
+      "description": "`PROFILE_MISSING` (added in 1.86) is a `report accounts` result about a target, with `account` `-`: a profile that a `reports.accounts` rule or an application's policy expects on this target does not exist there. One result for the target, however many accounts are expected on it; it is a problem, and the run exits 3. `missing_profile` and `expected_by` say which profile and what expects it. `REPORT_OK`, `REPORT_PROBLEM`, `NOT_CHECKED`, `NO_RULE` and `UNDECLARED` (added in 1.82) are `report accounts`' states (UC-5 §3): every check had a rule, ran and passed; a check found a problem; a check could not run truthfully on this target; nothing in the file states a profile or a setting for the account; the file does not declare the account at all, which is information and never a problem. `VAULT_ONLY` (added in 1.20) is what `creds generate --promote` reports: the vault holds this password and no database has been asked. Distinct from `PENDING_APPLY`, which says a rotation is in flight — here there is none, and `creds apply` is what makes a database match. See `03-json-output.md` §3 for why none of the other values would have been true. `DECLARED` (added in 1.25) is `account list`'s ordinary row: the declaration matched this account and the database has it. It is not a claim about the password — that verb never asks — which is why it is a word of its own rather than `IN_SYNC`, and why an account the declaration names and the database does not have is `ACCOUNT_MISSING`, the value that already meant exactly that."
     },
     "verification": {
       "type": "object",
@@ -1843,7 +1843,7 @@
         },
         "findings": {
           "type": "array",
-          "description": "Each check `report accounts` made on this account (added in 1.82). A setting no rule names is not a check, so it has no entry.",
+          "description": "Each check `report accounts` made on this account (added in 1.82), or, on a `PROFILE_MISSING` result, the one `profile` finding about the target (from 1.86). A setting no rule names is not a check, so it has no entry.",
           "items": {
             "type": "object",
             "additionalProperties": false,
@@ -1997,16 +1997,17 @@
           "type": "string",
           "description": "Why `failed_logins` is `null`, as the target's survey said it (added in 1.82), such as a missing `SELECT ON SYS.USER$` grant. Present only where `failed_logins` is `null`."
         },
-        "profile": {
+        "missing_profile": {
           "type": "string",
           "description": "The profile a `PROFILE_MISSING` result is about (added in 1.86), as the config file first spells it."
         },
         "expected_by": {
           "type": "array",
           "items": {
-            "type": "string"
+            "type": "string",
+            "pattern": "^(reports\\.accounts|policies\\..+)$"
           },
-          "description": "What expects the profile of a `PROFILE_MISSING` result (added in 1.86): `a reports.accounts rule`, and `policy <name>` for each application policy that names it for an account bound to the target. A `db_profiles` entry alone never expects a profile to exist."
+          "description": "What expects the profile of a `PROFILE_MISSING` result (added in 1.86), as config paths: `reports.accounts` for a rule that covers the target, then `policies.<name>` for each application policy that names it for an account bound there. A `db_profiles` entry alone never expects a profile to exist, and neither does a rule whose names are all application accounts."
         },
         "declared_by": {
           "type": [

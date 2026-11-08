@@ -458,7 +458,7 @@ This sketch shows the run document's shape:
                  account_status, changed, actions[], verification, rollover,
                  password_age_days, started_at, duration_ms, error, warnings[],
                  overridden[], redraws, kind, findings[], failed_logins,
-                 privileges, history, failed_logins_reason, profile,
+                 privileges, history, failed_logins_reason, missing_profile,
                  expected_by[], declared_by, reset_at } ],
   targets    [ { target, reachable, scope, asserted, duration_ms, privileges,
                  error, warnings[] } ],
@@ -2263,7 +2263,8 @@ or renaming one is major.
 rule, ran and passed (`REPORT_OK`); a check found a problem
 (`REPORT_PROBLEM`); a check could not run truthfully on this target
 (`NOT_CHECKED`); nothing in the file states a profile or a setting for the
-account (`NO_RULE`); the file does not declare the account (`UNDECLARED`). An
+account (`NO_RULE`); the file does not declare the account (`UNDECLARED`); a
+profile the file expects is not on the target (`PROFILE_MISSING`). An
 undeclared account is information and never changes the exit code. A missing
 account is `ACCOUNT_MISSING`, as in the other verbs. `REPORT_OK` is not
 `IN_SYNC`: it says the rules found nothing wrong, not that a credential is
@@ -2273,9 +2274,10 @@ healthy.
 its `account` is `-`. A profile that a `reports.accounts` rule or an
 application's policy expects on the target does not exist there. It is one
 result for the target, however many accounts are expected on the profile, and
-it is a problem: the run exits 3. `profile` names the profile, and
-`expected_by` says what expects it. A `db_profiles` entry alone never expects a
-profile to exist ([#1390](../use-cases/uc-05-fleet-reports.md#4-the-accounts-report)).
+it is a problem: the run exits 3. `missing_profile` names the profile, and
+`expected_by` says what expects it as config paths, `reports.accounts` or
+`policies.<name>`. A `db_profiles` entry alone never expects a profile to
+exist ([#1390](../use-cases/uc-05-fleet-reports.md#4-the-accounts-report)).
 
 **`VAULT_ONLY` is what `creds generate --promote` reports**: the vault holds this
 password, and no database has been asked. No other value would be true of that

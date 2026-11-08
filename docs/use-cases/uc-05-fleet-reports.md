@@ -175,9 +175,10 @@ so once, under the target's head line, and it is a problem: the run exits 3.
 Each account expected on it still shows its own wrong-profile problem, because
 it is on another profile. A `db_profiles` entry alone expects nothing: it says
 what a profile's limits must be where the profile is, not that every target
-has it. Nor does a personal rule's `profile:`, which only selects accounts.
-The survey reads the target's profile names from `DBA_PROFILES`, which the
-service account already reads (#1390).
+has it. Nor does a personal rule's `profile:`, which only selects accounts,
+or a rule whose names are all application accounts, whose profile is their
+policy's. The profile names come from the `DBA_PROFILES` rows the survey
+already reads, so no statement is added (#1390).
 
 ---
 

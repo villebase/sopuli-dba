@@ -101,8 +101,8 @@ def test_the_correlation_id_is_on_the_session(
     Free image does not have.
 
     This is what replaced the rejected package's local audit table (ADR-001):
-    the run's id in the tool's JSON, in the database's trail and against the
-    vault's metadata is what makes the three line up afterwards.
+    the run's id in the tool's JSON and in the database's trail is what makes
+    the two line up afterwards.
     """
     session = driver(session_module).connect(target(live_oracle.dsn), credential())
     try:

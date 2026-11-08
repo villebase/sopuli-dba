@@ -860,16 +860,22 @@ and found nothing, which is a different statement.
 
 ### `invocation.correlation_id`
 
-A UUID for each run. The tool also:
+A UUID for each run. The tool also sets it as the Oracle **client identifier**
+on every session (`DBMS_SESSION.SET_IDENTIFIER`), so it lands in
+`UNIFIED_AUDIT_TRAIL.CLIENT_ID`. So one id joins the tool's JSON and the
+database audit trail. With it, "something rotated at 03:00 and half of it
+failed" has an answer.
 
-- sets it as the Oracle **client identifier** on every session
-  (`DBMS_SESSION.SET_IDENTIFIER`), so it lands in
-  `UNIFIED_AUDIT_TRAIL.CLIENT_ID`;
-- writes it into the **vault secret metadata** on every write.
+The id is **not written into a secret**. A vault version is tied to its run
+in other ways:
 
-So one id joins the tool's JSON, the database audit trail and the vault's
-version history. With it, "something rotated at 03:00 and half of it failed"
-has an answer.
+- the event stream's `vault.write` and `vault.promote` events carry the id
+  and the version number;
+- a version a promotion wrote has a `rotated_at` stamp, a time during the run;
+- while the run holds the lock, the lock record carries the id.
+
+[#1374](https://github.com/villebase/sopuli-dba/issues/1374) chose this over
+writing the id into each version.
 
 ### `invocation.options`
 

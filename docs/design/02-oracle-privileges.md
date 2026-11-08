@@ -1379,8 +1379,9 @@ after the first incident. `sql/oracle/01_audit_policy.sql` creates it.
 
 **Correlation.** The tool calls `DBMS_SESSION.SET_IDENTIFIER(<correlation_id>)`
 on every session it opens, so its UUID lands in `UNIFIED_AUDIT_TRAIL.CLIENT_ID`. That
-joins the tool's JSON output, the database trail and the vault's secret
-metadata. This query finds one run's records:
+joins the tool's JSON output and the database trail. The id is not written
+into a secret (`03-json-output.md` §2, `invocation.correlation_id`). This
+query finds one run's records:
 
 ```sql
 SELECT event_timestamp, dbusername, action_name, object_name, return_code

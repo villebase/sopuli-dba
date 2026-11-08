@@ -133,8 +133,8 @@ The Oracle driver also follows these rules:
   per target, a PDB that cannot be reached fails alone and does not affect the
   others.
 - **It sets the correlation id on every session**, including a session that
-  reads nothing. §5's `DBMS_SESSION.SET_IDENTIFIER` joins the tool's JSON, the
-  database's audit trail and the vault's metadata. A session without the label
+  reads nothing. §5's `DBMS_SESSION.SET_IDENTIFIER` joins the tool's JSON and
+  the database's audit trail. A session without the label
   appears in the audit trail and nobody can say which run it belonged to.
 
 `Scope` is the run document's `scope` object without `labels`. Labels come from

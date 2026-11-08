@@ -639,8 +639,9 @@ the register.
 - **Question:** Does the run document carry a host name and a process id for
   log correlation?
 - **Decision:** The host, as `invocation.actor.host`. No process id.
-- **Why:** `correlation_id` already ties a run to the audit and vault trails. A
-  process id means nothing once the process has exited.
+- **Why:** `correlation_id` already ties a run to the database's audit trail,
+  and to the vault versions it wrote through the run's events. A process id
+  means nothing once the process has exited.
 - **Rejected:**
   - A process id: it adds nothing that `correlation_id` does not give.
 

@@ -854,7 +854,7 @@ def _user_row(cursor: Cursor, account: str) -> tuple[str, Any] | None:
     query that answered with no row is the account's absence -- asking the narrower shapes the same
     question cannot change that answer.
     """
-    query, row = _first_shape(
+    query, row = first_shape(
         cursor,
         (USER_QUERY, USER_QUERY_NO_CHANGE_DATE, USER_QUERY_LEGACY),
         "DBA_USERS",
@@ -864,7 +864,7 @@ def _user_row(cursor: Cursor, account: str) -> tuple[str, Any] | None:
     return (query, row) if row is not None else None
 
 
-def _first_shape(
+def first_shape(
     cursor: Cursor,
     shapes: tuple[str, ...],
     view: str,
@@ -1198,11 +1198,11 @@ def survey(
     a profile is taken as common, so a value that may be held elsewhere is
     ``None`` rather than the value this container shows.
     """
-    _, users = _first_shape(
-        cursor, (SURVEY_USERS_QUERY, SURVEY_USERS_QUERY_LEGACY), "DBA_USERS", _fetch_all
+    _, users = first_shape(
+        cursor, (SURVEY_USERS_QUERY, SURVEY_USERS_QUERY_LEGACY), "DBA_USERS", fetch_all
     )
-    _, limit_rows = _first_shape(
-        cursor, (SURVEY_LIMITS_QUERY, SURVEY_LIMITS_QUERY_LEGACY), "DBA_PROFILES", _fetch_all
+    _, limit_rows = first_shape(
+        cursor, (SURVEY_LIMITS_QUERY, SURVEY_LIMITS_QUERY_LEGACY), "DBA_PROFILES", fetch_all
     )
     limits = {(str(row[0]), str(row[1])): row for row in limit_rows}
     counts, counts_gap = _lcounts(cursor) if user_dollar else ({}, _NO_GRANT)
@@ -1274,7 +1274,8 @@ _NO_GRANT = (
 )
 
 
-def _fetch_all(cursor: Cursor) -> list[Any]:
+def fetch_all(cursor: Cursor) -> list[Any]:
+    """Every row of the statement ``cursor`` just ran, for :func:`first_shape`."""
     return list(cursor.fetchall())
 
 

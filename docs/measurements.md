@@ -51,6 +51,7 @@ other than 19.24 and 19.32. One release update is not every release update.
 | Script | Release | Date | Issue | Result |
 |---|---|---|---|---|
 | `00_install.sql` | `23.26.2.0.0` | 2026-08-26 | — | All three modes, create and already-exists paths, both mode guards. `grant_pwfile` added and run 2026-09-05 (#296); `grant_connect_info` 2026-10-09 (#697) |
+| `00_install.sql` | `23.26.3.0.0` | 2026-11-07 | #1387 | `grant_report_reads` added: PDB mode by hand with `Y` and `N`, and the install-script tests |
 | `00_install.sql` | `21.3.0.0.0` | 2026-09-08 | #380 | PDB and `CDB$ROOT`. Ran only after the service account's random password was cut from 31 to 30 bytes |
 | `00_install.sql` | `18.4.0.0.0` | 2026-09-08 | #381 | PDB and `CDB$ROOT` |
 | `00_install.sql` | `11.2.0.2.0` | 2026-09-08 | #382 | `NONCDB` mode, after two fixes for a non-CDB |

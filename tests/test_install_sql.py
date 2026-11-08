@@ -39,6 +39,7 @@ from pathlib import Path
 from repo_files import requires_repo
 from sopuli.driver.oracle.privileges import (
     PREDICATE_READS,
+    REPORT_READS,
     REQUIRED_PRIVILEGES,
     REQUIRED_READS,
     ROOT_ONLY_READS,
@@ -138,7 +139,13 @@ def test_the_script_issues_nothing_the_tool_did_not_ask_for() -> None:
     over-granting, and it would be reporting it about an account that did exactly
     what the documentation said.
     """
-    accounted = required() | frozenset(ROOT_ONLY_READS) | frozenset(PREDICATE_READS) | OPTIONAL
+    accounted = (
+        required()
+        | frozenset(ROOT_ONLY_READS)
+        | frozenset(PREDICATE_READS)
+        | frozenset(REPORT_READS)
+        | OPTIONAL
+    )
 
     assert granted() <= accounted, f"in the script and not in §2: {sorted(granted() - accounted)}"
 
@@ -158,6 +165,14 @@ def test_the_predicate_grant_is_in_the_script_and_not_in_the_default_set() -> No
     instead (decision #531)."""
     assert frozenset(PREDICATE_READS) <= granted()
     assert not frozenset(PREDICATE_READS) & required()
+
+
+def test_the_report_grants_are_offered_and_not_required() -> None:
+    """The three grant views are behind `grant_report_reads`. Only UC-5's
+    privilege report reads them, and without them it reports each part as not
+    checked, so no install may need them."""
+    assert frozenset(REPORT_READS) <= granted()
+    assert not frozenset(REPORT_READS) & required()
 
 
 def test_the_optional_grants_are_optional_on_both_sides() -> None:

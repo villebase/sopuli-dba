@@ -32,7 +32,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass, field, replace
 from typing import Any
@@ -41,6 +41,7 @@ import oracledb
 
 from sopuli.config.model import ExpandedTarget, Runtime
 from sopuli.constraints import AccountConstraints
+from sopuli.driver.grants import GrantSurvey
 from sopuli.driver.oracle.accounts import (
     SESSION_USER_QUERY,
     accounts_with_profile,
@@ -73,6 +74,7 @@ from sopuli.driver.oracle.client import (
     reach_floor,
 )
 from sopuli.driver.oracle.errors import INSTALL_SCRIPT, from_error
+from sopuli.driver.oracle.grants import survey_grants
 from sopuli.driver.oracle.limits import resolve as resolve_limit
 from sopuli.driver.oracle.privileges import CDB_ROOT, audit
 from sopuli.driver.oracle.rollover import alter_profile_ddl, is_enabled
@@ -452,6 +454,21 @@ class OracleSession(ClosesConnection):
                 user_dollar=scope.supports(OFFLINE_VERIFY),
                 application=scope.type in APPLICATION_SCOPES,
             )
+
+    def survey_privileges(self, accounts: Sequence[str], *, public: bool) -> GrantSurvey:
+        """Every privilege ``accounts`` hold, with each path, for UC-5's reports.
+
+        Oracle only, and not in the :class:`~sopuli.driver.protocol.Session`
+        protocol: a caller finds it with ``getattr``. ``PUBLIC``'s grants are
+        read once, as their own grantee, only when ``public`` is true. A grant
+        view the session cannot read makes its part ``None`` with a reason
+        (:func:`~sopuli.driver.oracle.grants.survey_grants`). Without the
+        ``role_lookup`` capability, roles are read without ``DBA_ROLES`` and
+        their authentication is unknown.
+        """
+        role_lookup = self.scope().supports(ROLE_LOOKUP)
+        with traced_cursor(self.connection) as cursor:
+            return survey_grants(cursor, accounts, public=public, role_lookup=role_lookup)
 
     def byte_limit(self) -> ByteLimit:
         """How long a password may be here, in this database's character set.

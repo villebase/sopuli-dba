@@ -217,6 +217,12 @@ REQUIRED_READS = {
 #: listing uses the grant.
 PREDICATE_READS = {"SELECT ON DBA_ROLES": "select count(*) from dba_roles where rownum = 1"}
 
+#: The grant views UC-5's privilege report reads, behind the install script's
+#: ``grant_report_reads`` switch (§2). Optional: without them the report gives
+#: each part as not checked, and no other command reads them. Not probed by
+#: ``doctor``: the privilege survey reads each view and reports a refusal itself.
+REPORT_READS = ("SELECT ON DBA_SYS_PRIVS", "SELECT ON DBA_TAB_PRIVS", "SELECT ON DBA_COL_PRIVS")
+
 #: §2 grants this one **in the root only**, so its absence in a PDB is the
 #: documented install and not a finding. Kept apart from :data:`REQUIRED_READS`
 #: rather than filtered out of it at the call site, because "not required here"

@@ -818,13 +818,12 @@ is anchored on `grantee IN (:g0, :g1, …)`, binds the grantees' names and
 nothing else, and gives each row its grantee. None reads a password or verifier
 column.
 
-Probe 20 (`sql/oracle/20_grant_chunk_probe.py`) timed the survey on
-23.26.3.0.0 ([measurements](../measurements.md)). One grantee per statement
-took about a minute for 303 accounts and nearly four for 1,103. Chunks of 100,
-250 and 1,000 each took a few seconds and returned the same rows. The first
-parse of a statement grows faster than its `IN` list, so with the shared pool
-flushed, chunks of 250 were twice as fast as chunks of 1,000 for 1,103
-accounts. Oracle's limit is 1,000 (`ORA-01795`).
+Oracle refuses an `IN` list of more than 1,000 (`ORA-01795`). The survey
+binds 250, because the first parse of a statement grows faster than its list:
+with a cold shared pool, a large target is surveyed faster in chunks of 250
+than of 1,000. Probe 20 (`sql/oracle/20_grant_chunk_probe.py`) timed one
+grantee per statement and chunks of 100, 250 and 1,000, which all returned the
+same rows. [`measurements.md`](../measurements.md) has the times.
 
 | Statement | Reads | Needs |
 |---|---|---|

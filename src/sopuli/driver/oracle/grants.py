@@ -22,9 +22,9 @@ reason naming the grant, and the view is not asked again in this survey.
 
 **A statement surveys up to :data:`CHUNK` grantees.** Each one is anchored on
 ``grantee IN (:g0, :g1, …)``, and the recursive ``WITH`` carries the grantee it
-started from, so each row keeps its grantee. A target with 500 accounts sends
-eight statements, and four more for ``PUBLIC``, not four for each account
-(#1396, probe 20).
+started from, so each row keeps its grantee. The survey sends four statements
+for each chunk. ``PUBLIC``, when asked for, is one more grantee in the last
+chunk.
 
 No statement reads a password or verifier column. The only binds are the
 grantees' names, as the dictionary spells them; no name is written into the
@@ -51,9 +51,10 @@ PATH_SEPARATOR = "\x00"
 
 #: The most grantees one statement binds. Oracle refuses an ``IN`` list of more
 #: than 1,000 expressions (``ORA-01795``). 250, not 1,000, because the first
-#: parse of a statement grows faster than its list: on 26ai Free 23.26.3.0.0,
-#: with the shared pool flushed, 1,103 accounts took about 12 seconds in
-#: chunks of 1,000 and 6 in chunks of 250 (probe 20, #1396).
+#: parse of a statement grows faster than its list, so a large target surveyed
+#: with a cold shared pool is faster in smaller chunks. Probe 20
+#: (``sql/oracle/20_grant_chunk_probe.py``) measured it; the result is in
+#: ``docs/measurements.md``.
 CHUNK = 250
 
 #: Where :func:`statement` puts the bind list in each query below.

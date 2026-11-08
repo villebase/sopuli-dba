@@ -41,7 +41,11 @@ from sopuli.store.protocol import VersionHistory
 __all__ = [
     "APPLICATION",
     "GENERATED",
+    "HISTORY_FIELDS",
     "NATIVE_NOTE",
+    "NOT_MANAGED",
+    "NO_RESET_RECORDS",
+    "UNDECLARED",
     "NOTHING_STORED",
     "NO_ACCOUNT",
     "NO_VERSIONING",
@@ -59,6 +63,24 @@ __all__ = [
 ]
 
 APPLICATION, PERSONAL = "application", "personal"
+#: An account ``--account`` names that the tool does not manage: only the
+#: database's date is shown for it (UC-5 §6).
+UNDECLARED = "undeclared"
+
+#: Every field this module reads from a document: the stamps, and a reset
+#: record's fields. A caller may keep only these from each version it reads,
+#: so no password stays in memory; a field this module starts to read must be
+#: added here.
+HISTORY_FIELDS = (
+    ROTATED_AT,
+    ROTATED_BY,
+    GENERATED_AT,
+    GENERATED_BY,
+    "reset_at",
+    "by",
+    "seen",
+    "account",
+)
 
 #: A change of ``current``: a rotation, a rollback, or ``creds generate
 #: --promote``. The stamps cannot tell these apart (UC-5 §6).
@@ -82,6 +104,11 @@ NO_VERSIONS_LISTED = "the store holds this secret and lists no versions of it"
 MALFORMED_PROMOTION = "the promotion stamp the store keeps is malformed"
 NO_ACCOUNT = "no such account on this target"
 NO_DATE = "the database gives no date"
+NOT_MANAGED = "the tool does not manage this account's password, so it keeps no history of it"
+#: A personal account where no reset can be recorded: a reset with no
+#: `reset_records:` block writes none (UC-2 §3). Only the database's date is
+#: shown for it (UC-5 §6).
+NO_RESET_RECORDS = "no `reset_records:` store is declared, so resets are not recorded"
 
 
 @dataclass(frozen=True)

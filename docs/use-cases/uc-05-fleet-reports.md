@@ -4,11 +4,9 @@ Depends on: `../design/00-principles.md`, `../design/01-configuration.md`,
 `../design/02-oracle-privileges.md`
 
 This document specifies `sopuli report accounts`, `sopuli report privileges`
-and `sopuli report history`. **`report accounts` and `report privileges` are
-built, on Oracle**, with the `reports:` rules (§4, §5, §7). `report history`
-is not built yet, and its name and flags are proposals until the PR that
-builds it fixes them. PostgreSQL, MySQL and MariaDB come later: on them the
-reports are refused before they connect. §9 lists the decisions.
+and `sopuli report history`. **All three are built, on Oracle**, with the
+`reports:` rules (§4, §5, §7). PostgreSQL, MySQL and MariaDB come later: on
+them the reports are refused before they connect. §9 lists the decisions.
 
 ---
 
@@ -209,8 +207,21 @@ Grants to `PUBLIC` are left out unless a flag asks for them.
 
 ## 6. Rotation history
 
-**Not built.** The history comes from what the tool wrote, and it reads no
-password.
+**Built, on Oracle:** `sopuli report history [--account NAME]`, with the
+usual target selectors. `docs/local-testing.md` §9a has a run. The history
+comes from what the tool wrote, and it reads no password. It judges nothing,
+so it never exits 3: 1 where a target or a store gave no answer, and 4 where a
+history is not checked.
+
+- **Which accounts:** each application account the config binds to the
+  target, and each personal account with a reset record under the target in
+  `reset_records:`. A personal account a rule names and that was never reset
+  is listed with nothing recorded. One a profile or role predicate admits is
+  listed only where it has a record, because resolving the predicate needs
+  the database. `--account` may name an account the tool does not manage:
+  only its database date is shown.
+- **An unreachable target** still gets its histories, which come from the
+  store, without the database's dates, and the run exits 1.
 
 - **An application account (UC-1)** has its history in the store's versions.
   A rotation writes more than one version: UC-1 stages `pending`, then

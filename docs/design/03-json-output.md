@@ -862,20 +862,25 @@ and found nothing, which is a different statement.
 
 A UUID for each run. The tool also sets it as the Oracle **client identifier**
 on every session (`DBMS_SESSION.SET_IDENTIFIER`), so it lands in
-`UNIFIED_AUDIT_TRAIL.CLIENT_ID`. So one id joins the tool's JSON and the
-database audit trail. With it, "something rotated at 03:00 and half of it
+`UNIFIED_AUDIT_TRAIL.CLIENT_IDENTIFIER`. So one id joins the tool's JSON and
+the database audit trail. With it, "something rotated at 03:00 and half of it
 failed" has an answer.
 
-The id is **not written into a secret**. A vault version is tied to its run
-in other ways:
+**An application secret's versions do not carry the id.** Such a version is
+tied to its run in these ways:
 
-- the event stream's `vault.write` and `vault.promote` events carry the id
-  and the version number;
-- a version a promotion wrote has a `rotated_at` stamp, a time during the run;
-- while the run holds the lock, the lock record carries the id.
+- the run document's `results[].secret.version`, beside
+  `invocation.correlation_id`;
+- under `--output jsonl`, the `vault.write` and `vault.promote` events, which
+  carry the id and the version number;
+- the `rotated_at` stamp a promotion writes, a time during the run;
+- the lock record, which names the run's id. A released record keeps it until
+  the next run takes the lock, and on KV v2 the lock path's older versions
+  keep it after that.
 
 [#1374](https://github.com/villebase/sopuli-dba/issues/1374) chose this over
-writing the id into each version.
+writing the id into each version. A **personal account's reset record** does
+carry the id (UC-2 §3.1), so a reset is joined to its run directly.
 
 ### `invocation.options`
 
@@ -3241,7 +3246,8 @@ sopuli creds check --application acme --output jsonl \
 # join to the database audit trail
 jq -r .invocation.correlation_id result.json
 # → SELECT event_timestamp, dbusername, action_name, object_name, return_code
-#     FROM unified_audit_trail WHERE client_id = '<that>' ORDER BY event_timestamp;
+#     FROM unified_audit_trail WHERE client_identifier = '<that>'
+#    ORDER BY event_timestamp;
 ```
 
 ---

@@ -90,7 +90,7 @@ common one alike
 
 **Correlation survived.** The package's local audit table was useful because it
 joined a database row to a tool run. `DBMS_SESSION.SET_IDENTIFIER` puts the run's
-correlation id into `UNIFIED_AUDIT_TRAIL.CLIENT_ID`, preserving that join with no
+correlation id into `UNIFIED_AUDIT_TRAIL.CLIENT_IDENTIFIER`, preserving that join with no
 table.
 
 ## When to revisit

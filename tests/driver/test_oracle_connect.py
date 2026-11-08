@@ -47,8 +47,8 @@ PASSWORD = os.environ.get("SOPULI_TEST_ORACLE_PASSWORD", "sopuli-test")
 #: property being relied on here.
 NOBODY = "acme_no_such_user"
 
-#: Shaped like the real thing (a UUID), because that is what goes into
-#: `CLIENT_ID`, and the column is only 64 characters wide.
+#: Shaped like the real thing (a UUID), because that is what becomes the
+#: session's client identifier, which holds at most 64 characters.
 CORRELATION_ID = "9f1c2e7a-4d3b-4a51-9d2c-0b7f8e6a1234"
 
 

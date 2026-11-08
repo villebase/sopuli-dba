@@ -1867,7 +1867,7 @@ def _who(credential: Credential) -> str:
 def set_identifier(connection: Any, correlation_id: str) -> None:
     """``DBMS_SESSION.SET_IDENTIFIER`` -- the join, in one call (§5).
 
-    The run's UUID lands in ``UNIFIED_AUDIT_TRAIL.CLIENT_ID``, which is what
+    The run's UUID lands in ``UNIFIED_AUDIT_TRAIL.CLIENT_IDENTIFIER``, which is what
     makes the tool's JSON output and the database's own trail line up
     afterwards. It is the property the rejected
     definer-rights package's local audit table would have provided (ADR-001),

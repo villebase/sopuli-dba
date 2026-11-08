@@ -640,8 +640,8 @@ the register.
   log correlation?
 - **Decision:** The host, as `invocation.actor.host`. No process id.
 - **Why:** `correlation_id` already ties a run to the database's audit trail,
-  and to the vault versions it wrote through the run's events. A process id
-  means nothing once the process has exited.
+  to the reset records it wrote, and to its lock records. A process id means
+  nothing once the process has exited.
 - **Rejected:**
   - A process id: it adds nothing that `correlation_id` does not give.
 

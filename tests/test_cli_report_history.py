@@ -18,6 +18,8 @@ from click.testing import CliRunner, Result
 from jsonschema import Draft202012Validator
 
 from conftest import WriteConfig
+from native_estate import OCI_VAULT, seed, staging_store
+from sopuli import cli as cli_module
 from sopuli.admin import Resolved
 from sopuli.cli import cli
 from sopuli.config.model import Vault
@@ -26,6 +28,7 @@ from sopuli.driver.protocol import Credential, Scope, UserState
 from sopuli.exit_codes import ExitCode
 from sopuli.output.document import SCHEMA_VERSION
 from sopuli.store import MemoryStore, SecretStore
+from sopuli.store.native_view import LayoutChangedError
 
 RUN_SCHEMA = json.loads(
     (
@@ -88,9 +91,9 @@ def app_document(web: str | None, batch: str | None) -> dict[str, Any]:
     }
 
 
-def reset_record(day: int) -> dict[str, Any]:
+def reset_record(day: int, account: str = "JDOE") -> dict[str, Any]:
     return {
-        "account": "JDOE",
+        "account": account,
         "target": "appdb-dev-alpha",
         "reset_at": stamp(day),
         "seen": False,
@@ -121,18 +124,28 @@ class FakeSession:
 
 Harness = Callable[..., MemoryStore]
 
+#: The targets a test's driver connected to, so a test can say none was.
+connected: list[Any] = []
+
 
 @pytest.fixture
 def estate(monkeypatch: pytest.MonkeyPatch) -> Harness:
-    def install(*, connect_error: Exception | None = None) -> MemoryStore:
-        store = MemoryStore()
-        # v1: both seeded; v2: web rotated; v3: batch rotated.
-        store.write("apps/acme/db", app_document(stamp(1), stamp(1)), cas=0)
-        store.write("apps/acme/db", app_document(stamp(2), stamp(1)), cas=1)
-        store.write("apps/acme/db", app_document(stamp(2), stamp(3)), cas=2)
-        record = "sopuli/personal-resets/appdb-dev-alpha/jdoe"
-        store.write(record, reset_record(4), cas=0)
-        store.write(record, reset_record(6), cas=1)
+    def install(
+        *, connect_error: Exception | None = None, store: MemoryStore | None = None
+    ) -> MemoryStore:
+        connected.clear()
+        if store is None:
+            store = MemoryStore()
+            # v1: both seeded; v2: web rotated; v3: batch rotated.
+            store.write("apps/acme/db", app_document(stamp(1), stamp(1)), cas=0)
+            store.write("apps/acme/db", app_document(stamp(2), stamp(1)), cas=1)
+            store.write("apps/acme/db", app_document(stamp(2), stamp(3)), cas=2)
+            record = "sopuli/personal-resets/appdb-dev-alpha/jdoe"
+            store.write(record, reset_record(4), cas=0)
+            store.write(record, reset_record(6), cas=1)
+            store.write(
+                "sopuli/personal-resets/appdb-dev-alpha/kroe", reset_record(5, "KROE"), cas=0
+            )
 
         users = {
             "ACME_WEB_USER": UserState(
@@ -149,6 +162,7 @@ def estate(monkeypatch: pytest.MonkeyPatch) -> Harness:
         def fake_connect(
             vault: Vault, *, env: Mapping[str, str], token_file: Path | None = None
         ) -> SecretStore:
+            assert store is not None
             return store
 
         class FakeDriver:
@@ -156,6 +170,7 @@ def estate(monkeypatch: pytest.MonkeyPatch) -> Harness:
                 pass
 
             def connect(self, target: Any, credential: Any) -> FakeSession:
+                connected.append(target)
                 if connect_error is not None:
                     raise connect_error
                 return FakeSession(users)
@@ -278,3 +293,128 @@ def test_account_names_one_nobody_manages(write_config: WriteConfig, estate: Har
     text = click.unstyle(report(write_config, "--account", "acme_typo_user").output)
 
     assert "no managed account acme_typo_user on this target" in text
+    # Nothing to describe, so the database is not connected to.
+    assert connected == []
+
+
+# ------------------------------------------------- what #1401's review found ---
+
+NO_RECORDS_CONFIG = CONFIG.split("reset_records:")[0]
+RECORDS_ONLY_CONFIG = CONFIG.replace("personal_accounts:\n  - accounts: [jdoe, asmith]\n", "")
+
+
+def test_a_records_listing_that_fails_is_said_even_with_no_named_account(
+    write_config: WriteConfig, estate: Harness
+) -> None:
+    store = estate()
+
+    def refused(prefix: str) -> tuple[str, ...]:
+        raise ConnectionError("vault sealed")
+
+    store.list = refused  # type: ignore[method-assign]
+    result = report(write_config, config=RECORDS_ONLY_CONFIG)
+
+    assert result.exit_code == ExitCode.FAILURE, result.output
+    assert "reset records (personal)" in flat(result)
+    assert "the store gave no answer" in flat(result)
+
+
+def test_without_reset_records_a_named_account_is_not_checked(
+    write_config: WriteConfig, estate: Harness
+) -> None:
+    estate()
+    result = report(write_config, "--account", "jdoe", config=NO_RECORDS_CONFIG)
+
+    assert result.exit_code == ExitCode.PARTIAL, result.output
+    assert "no `reset_records:` store is declared" in flat(result)
+
+
+def test_a_version_whose_read_fails_is_a_gap_not_a_failure(
+    write_config: WriteConfig, estate: Harness
+) -> None:
+    store = estate()
+    original = store.read
+
+    def failing_v2(path: str, *, version: int | None = None) -> Any:
+        if path == "apps/acme/db" and version == 2:
+            raise ConnectionError("one read failed")
+        return original(path, version=version)
+
+    store.read = failing_v2  # type: ignore[method-assign]
+    result = report(write_config)
+
+    assert result.exit_code == ExitCode.PARTIAL, result.output
+    assert "version 2 could not be read" in flat(result)
+
+
+def test_only_the_stamps_are_kept_from_a_version() -> None:
+    document = {**app_document(stamp(1), stamp(1)), "previous": {"acme_web_user": "old"}}
+
+    kept = cli_module._history_fields(document)
+
+    assert kept is not None
+    assert set(kept) == {"rotated_at", "rotated_by"}
+    assert SECRET not in json.dumps(kept)
+
+
+def test_account_reads_only_the_record_it_names(write_config: WriteConfig, estate: Harness) -> None:
+    store = estate()
+    asked: list[str] = []
+    original = store.read
+
+    def watched(path: str, *, version: int | None = None) -> Any:
+        asked.append(path)
+        return original(path, version=version)
+
+    store.read = watched  # type: ignore[method-assign]
+    report(write_config, "--account", "jdoe")
+
+    assert not any(path.endswith("/kroe") for path in asked)
+
+
+def test_a_layout_the_adapter_refuses_is_not_checked_not_unanswered(
+    write_config: WriteConfig, estate: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    estate()
+
+    def refuse(store: Any, path: str) -> Any:
+        raise LayoutChangedError("the secret's layout changed")
+
+    monkeypatch.setattr("sopuli.cli._secret_versions", refuse)
+    result = report(write_config, "--account", "acme_web_user")
+
+    assert result.exit_code == ExitCode.PARTIAL, result.output
+    assert "not checked: the secret's layout changed" in flat(result)
+
+
+NATIVE_CONFIG = (
+    CONFIG.replace(
+        "vaults:\n  vault-dev:\n    type: hashicorp\n"
+        "    addr: https://vault-dev.example.com:8200\n",
+        OCI_VAULT,
+    )
+    .replace("vault: vault-dev", "vault: vault-oci")
+    .replace("[acme_web_user, acme_batch_user]", "[acme_web_user]")
+    .replace('"apps/acme/db#DB_CREDENTIALS/{account}"', '"acme-db#password"')
+    .split("personal_accounts:")[0]
+)
+
+
+def test_a_native_secret_lists_its_versions_by_generation(
+    write_config: WriteConfig, estate: Harness
+) -> None:
+    store = staging_store()
+    seed(store, "acme-db", {"password": "first"}, {"password": "second", "previous": "first"})
+    estate(store=store)
+    path = write_config(NATIVE_CONFIG)
+    result = CliRunner().invoke(
+        cli, ["--config", str(path), "--output", "json", "report", "history"]
+    )
+
+    document = json.loads(result.output)
+    Draft202012Validator(RUN_SCHEMA).validate(document)
+    entry = document["results"][0]
+    assert entry["history"]["note"].startswith("the store keeps the promotion time")
+    assert {e["kind"] for e in entry["history"]["events"]} >= {"generated"}
+    assert "first" not in result.output
+    assert "second" not in result.output

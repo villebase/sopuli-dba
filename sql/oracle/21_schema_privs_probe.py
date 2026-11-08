@@ -1,4 +1,4 @@
-"""sopuli-dba : what DBA_SCHEMA_PRIVS holds, and who can read it   (v1)
+"""sopuli-dba : what DBA_SCHEMA_PRIVS holds, and who can read it   (v2)
 
 #1389. 23ai grants a system privilege on one schema, such as ``GRANT SELECT
 ANY TABLE ON SCHEMA acme_sp_owner TO acme_sp_app``. UC-5's privilege survey
@@ -16,12 +16,12 @@ DBA_COL_PRIVS. This measures where a schema privilege shows instead:
   SP2  as SYSTEM: every DBA_SCHEMA_PRIVS row for the fixtures and PUBLIC; and
        whether any of those privileges also shows in DBA_SYS_PRIVS or
        DBA_TAB_PRIVS for the same grantee
-  SP3  ACME_SP_SVC installed by 00_install.sql in PDB mode with
-       grant_report_reads=Y: as ACME_SP_SVC, a COUNT(*) from DBA_SCHEMA_PRIVS
-       and from the three views the survey reads
-  SP4  as SYSDBA: SELECT on SYS.DBA_SCHEMA_PRIVS to ACME_SP_SVC; then as
-       ACME_SP_SVC, the survey's recursive WITH from ACME_SP_APP and PUBLIC,
-       joined to DBA_SCHEMA_PRIVS, with the role path
+  SP3  ACME_SP_SVC installed by 00_install.sql in PDB mode, first with
+       grant_report_reads=N and then again with Y: each time, as ACME_SP_SVC,
+       a COUNT(*) from DBA_SCHEMA_PRIVS, USER_SCHEMA_PRIVS,
+       SESSION_SCHEMA_PRIVS and the three views the survey reads
+  SP4  as ACME_SP_SVC, the survey's recursive WITH from ACME_SP_APP and
+       PUBLIC, joined to DBA_SCHEMA_PRIVS, with the role path
   SP5  drops the fixtures, and ACME_SP_SVC with 99_uninstall.sql
 
 It MEASURES and decides nothing. No statement reads a password or verifier
@@ -30,9 +30,11 @@ USER as SYSTEM, and never printed.
 
 STATUS: run on 26ai Free 23.26.3.0.0 (gvenzl/oracle-free:latest), with Instant
 Client 23.26.3.0.0 for Windows and python-oracledb in thick mode, 2026-11-08.
-Run three times. The first stopped at SP4, because SYSTEM cannot grant SELECT
-on a SYS view (ORA-01031), so SP4 now grants as SYSDBA. The other two printed
-the same results.
+v1 ran three times, before 00_install.sql granted DBA_SCHEMA_PRIVS; with
+grant_report_reads=Y it got ORA-00942 from the view. Its first run stopped,
+because SYSTEM cannot grant SELECT on a SYS view (ORA-01031). v2, with the
+grant in the install script and SP3 run with N and with Y, ran three times;
+the last two printed the same results, quoted here.
 
 RESULTS -- 26ai Free 23.26.3.0.0
 
@@ -46,15 +48,18 @@ RESULTS -- 26ai Free 23.26.3.0.0
        one, under the role, not under the account that holds the role; and
        PUBLIC's. COMMON and INHERITED are NO in each. None of the four shows
        in DBA_SYS_PRIVS or DBA_TAB_PRIVS
-  SP3  ACME_SP_SVC with grant_report_reads=Y gets ORA-00942 from
-       DBA_SCHEMA_PRIVS, and reads DBA_SYS_PRIVS, DBA_TAB_PRIVS and
-       DBA_COL_PRIVS
-  SP4  with SELECT on it granted, the survey's recursive WITH joined to
+  SP3  with grant_report_reads=N, ACME_SP_SVC gets ORA-00942 from
+       DBA_SCHEMA_PRIVS and the three other grant views. With Y it reads all
+       four. Either way it reads USER_SCHEMA_PRIVS and SESSION_SCHEMA_PRIVS,
+       which need no grant; each shows one row, PUBLIC's schema privilege, as
+       ('PUBLIC', 'SELECT ANY TABLE', 'ACME_SP_OTHER', ...) and ('SELECT ANY
+       TABLE', 'ACME_SP_OTHER')
+  SP4  with grant_report_reads=Y, the survey's recursive WITH joined to
        DBA_SCHEMA_PRIVS gives ACME_SP_APP's two direct rows, the role's row
        with the path ACME_SP_OUTER > ACME_SP_READ and DEFAULT_ROLE YES, and
        PUBLIC's row, read from PUBLIC
 
-  Not measured: a release before 23ai, where the view is expected to be
+  Not measured: a release before 23ai, where the views are expected to be
   missing (ORA-00942, which SP3 shows a missing grant also gives); a common
   grant (COMMON = YES) from CDB$ROOT.
 
@@ -232,26 +237,45 @@ def sp2(cursor: oracledb.Cursor) -> None:
         print(f"     the same privileges in {view}: {found or 'none'}")
 
 
-def sp3(cursor: oracledb.Cursor) -> str:
-    dba(f"@{IN_CONTAINER}/00_install.sql PDB {SVC} USERS N N N N Y")
-    password = "Sp" + secrets.token_hex(12) + "a1"
-    cursor.execute(f'alter user {SVC} identified by "{password}"')
-    print("SP3  as ACME_SP_SVC, installed with grant_report_reads=Y:")
+#: What SP3 counts, as the service account.
+SP3_VIEWS = (
+    "DBA_SCHEMA_PRIVS",
+    "USER_SCHEMA_PRIVS",
+    "SESSION_SCHEMA_PRIVS",
+    "DBA_SYS_PRIVS",
+    "DBA_TAB_PRIVS",
+    "DBA_COL_PRIVS",
+)
+
+
+def counted(password: str, label: str) -> None:
+    print(f"SP3  as ACME_SP_SVC, installed with grant_report_reads={label}:")
     with oracledb.connect(user=SVC, password=password, dsn=DSN) as connection:
         svc = connection.cursor()
-        for view in ("DBA_SCHEMA_PRIVS", "DBA_SYS_PRIVS", "DBA_TAB_PRIVS", "DBA_COL_PRIVS"):
+        for view in SP3_VIEWS:
             try:
                 (count,) = rows(svc, f"select count(*) from {view}")[0]
                 print(f"       {view}: {count} rows")
             except oracledb.Error as error:
                 print(f"       {view}: {code(error)}")
+                continue
+            if view in ("USER_SCHEMA_PRIVS", "SESSION_SCHEMA_PRIVS"):
+                for row in rows(svc, f"select * from {view}"):
+                    print(f"         {row}")
+
+
+def sp3(cursor: oracledb.Cursor) -> str:
+    dba(f"@{IN_CONTAINER}/00_install.sql PDB {SVC} USERS N N N N N")
+    password = "Sp" + secrets.token_hex(12) + "a1"
+    cursor.execute(f'alter user {SVC} identified by "{password}"')
+    counted(password, "N")
+    dba(f"@{IN_CONTAINER}/00_install.sql PDB {SVC} USERS N N N N Y")
+    counted(password, "Y")
     return password
 
 
-def sp4(cursor: oracledb.Cursor, password: str) -> None:
-    # As SYSDBA: SYSTEM holds no grant option on SYS's views (ORA-01031).
-    dba(f"grant select on sys.dba_schema_privs to {SVC};")
-    print("SP4  as ACME_SP_SVC after GRANT SELECT ON SYS.DBA_SCHEMA_PRIVS, the recursive read:")
+def sp4(password: str) -> None:
+    print("SP4  as ACME_SP_SVC, installed with grant_report_reads=Y, the recursive read:")
     print("       (grantee, path, first_default, privilege, schema, admin_option)")
     with oracledb.connect(user=SVC, password=password, dsn=DSN) as connection:
         binds = {"g0": "ACME_SP_APP", "g1": "PUBLIC"}
@@ -272,7 +296,7 @@ def main() -> None:
             sp1(cursor)
             sp2(cursor)
             password = sp3(cursor)
-            sp4(cursor, password)
+            sp4(password)
         finally:
             drop(cursor)
             print("SP5  fixtures dropped")

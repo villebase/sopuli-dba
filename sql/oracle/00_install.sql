@@ -77,6 +77,11 @@
 --         tests/driver/test_oracle_install_script.py. With N the account holds
 --         none of DBA_SYS_PRIVS, DBA_TAB_PRIVS and DBA_COL_PRIVS; with Y it holds
 --         SELECT on all three. Untried on every other release.
+--         SELECT ON DBA_SCHEMA_PRIVS added to it 2026-11-08 (#1389), granted
+--         only where SYS.DBA_SCHEMA_PRIVS is in DBA_VIEWS: run on 26ai Free
+--         23.26.3.0.0 in PDB mode through sql/oracle/21_schema_privs_probe.py,
+--         with N and Y, and through tests/driver/test_oracle_install_script.py.
+--         The branch for a release without the view is untried.
 --
 --         SELECT ON SYS.DBA_ROLES added 2026-09-25 (#531) and run on 26ai Free
 --         23.26.2.0.0 in all three modes, through
@@ -121,8 +126,9 @@ WHENEVER SQLERROR EXIT SQL.SQLCODE
 --   5 grant_set_container Y grants SET CONTAINER -- see below
 --   6 grant_pwfile        Y grants SELECT on SYS.V_$PWFILE_USERS -- see below
 --   7 grant_connect_info  Y grants SELECT on SYS.V_$SESSION_CONNECT_INFO -- see below
---   8 grant_report_reads  Y grants SELECT on DBA_SYS_PRIVS, DBA_TAB_PRIVS and
---                         DBA_COL_PRIVS -- see below
+--   8 grant_report_reads  Y grants SELECT on DBA_SYS_PRIVS, DBA_TAB_PRIVS,
+--                         DBA_COL_PRIVS and, where it exists,
+--                         DBA_SCHEMA_PRIVS -- see below
 --
 -- An argument wins; anything not passed falls back to the default beside it.
 --
@@ -161,8 +167,8 @@ SELECT NULL AS "1", NULL AS "2", NULL AS "3", NULL AS "4", NULL AS "5", NULL AS 
 -- PUBLIC's read of V$SESSION_CONNECT_INFO has been revoked: without that view the
 -- tool cannot tell whether a plain TCP connection uses NNE.
 -- `grant_report_reads=Y` lets UC-5's privilege report read every account's
--- system, object and column grants. Without it those parts are reported as not
--- checked.
+-- system, object, column and schema grants. Without it those parts are
+-- reported as not checked.
 COLUMN p_mode NEW_VALUE mode                NOPRINT
 COLUMN p_name NEW_VALUE svc_name            NOPRINT
 COLUMN p_tbs  NEW_VALUE svc_tablespace      NOPRINT
@@ -469,14 +475,18 @@ END;
 -- 8. Optional: the grant views, for UC-5's privilege report
 --
 -- The report reads every account's system privileges (DBA_SYS_PRIVS), object
--- privileges (DBA_TAB_PRIVS) and column privileges (DBA_COL_PRIVS). A column
--- grant is in DBA_COL_PRIVS only. Without these grants each view answers
--- ORA-00942, and the report says that part was not checked
--- (docs/design/02-oracle-privileges.md §2). All three are SELECT only, and no
--- other command reads them.
+-- privileges (DBA_TAB_PRIVS), column privileges (DBA_COL_PRIVS) and, from 23ai,
+-- schema privileges (DBA_SCHEMA_PRIVS). A column grant is in DBA_COL_PRIVS
+-- only, and a schema privilege in DBA_SCHEMA_PRIVS only. Without these grants
+-- each view answers ORA-00942, and the report says that part was not checked
+-- (docs/design/02-oracle-privileges.md §2). All four are SELECT only, and no
+-- other command reads them. DBA_SCHEMA_PRIVS is granted only where the view
+-- exists, which this asks the dictionary rather than the release number.
 --------------------------------------------------------------------------------
 PROMPT
-PROMPT [8] optional: DBA_SYS_PRIVS, DBA_TAB_PRIVS, DBA_COL_PRIVS (grant_report_reads=&grant_report_reads)
+PROMPT [8] optional: DBA_SYS_PRIVS, DBA_TAB_PRIVS, DBA_COL_PRIVS, DBA_SCHEMA_PRIVS (grant_report_reads=&grant_report_reads)
+DECLARE
+  n_schema_view NUMBER;
 BEGIN
   IF UPPER('&grant_report_reads') = 'Y' THEN
     EXECUTE IMMEDIATE 'GRANT SELECT ON SYS.DBA_SYS_PRIVS TO &eff_user&cont_all';
@@ -484,6 +494,15 @@ BEGIN
     EXECUTE IMMEDIATE 'GRANT SELECT ON SYS.DBA_COL_PRIVS TO &eff_user&cont_all';
     DBMS_OUTPUT.PUT_LINE('granted SELECT ON DBA_SYS_PRIVS, DBA_TAB_PRIVS and '
       || 'DBA_COL_PRIVS (for the privilege report)');
+    SELECT COUNT(*) INTO n_schema_view FROM dba_views
+     WHERE owner = 'SYS' AND view_name = 'DBA_SCHEMA_PRIVS';
+    IF n_schema_view > 0 THEN
+      EXECUTE IMMEDIATE 'GRANT SELECT ON SYS.DBA_SCHEMA_PRIVS TO &eff_user&cont_all';
+      DBMS_OUTPUT.PUT_LINE('granted SELECT ON DBA_SCHEMA_PRIVS (for the privilege report)');
+    ELSE
+      DBMS_OUTPUT.PUT_LINE('DBA_SCHEMA_PRIVS not granted: this release has no '
+        || 'schema privileges');
+    END IF;
   ELSE
     DBMS_OUTPUT.PUT_LINE('grant views not granted: the privilege report gives '
       || 'system, object and column privileges as not checked');

@@ -59,6 +59,7 @@ from sopuli.driver.oracle.privileges import (
     REQUIRED_PRIVILEGES,
     REQUIRED_READS,
     ROOT_ONLY_READS,
+    SCHEMA_REPORT_READ,
 )
 
 #: Which container holds the database. The default is `test/compose.yaml`'s
@@ -734,6 +735,7 @@ def test_the_optional_grants_are_off_unless_asked_for(
     assert "SET CONTAINER" not in default
     assert "SELECT ON V_$SESSION_CONNECT_INFO" not in default
     assert not set(REPORT_READS) & default
+    assert SCHEMA_REPORT_READ not in default
 
     result = sqlplus(
         container,
@@ -753,6 +755,14 @@ def test_the_optional_grants_are_off_unless_asked_for(
     assert "SELECT ON USER$" in asked
     assert "SELECT ON V_$SESSION_CONNECT_INFO" in asked
     assert set(REPORT_READS) <= asked
+    # Granted where the view exists, which is asked of the dictionary, as the
+    # script asks it, rather than read off the release number.
+    schema_view = query(
+        container,
+        ROOT,
+        "SELECT COUNT(*) FROM dba_views WHERE owner = 'SYS' AND view_name = 'DBA_SCHEMA_PRIVS';",
+    )
+    assert (SCHEMA_REPORT_READ in asked) == (schema_view == ["1"])
     if install_mode == "COMMON":
         assert "SET CONTAINER" in asked
     else:

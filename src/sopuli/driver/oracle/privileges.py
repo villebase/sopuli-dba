@@ -223,6 +223,12 @@ PREDICATE_READS = {"SELECT ON DBA_ROLES": "select count(*) from dba_roles where 
 #: ``doctor``: the privilege survey reads each view and reports a refusal itself.
 REPORT_READS = ("SELECT ON DBA_SYS_PRIVS", "SELECT ON DBA_TAB_PRIVS", "SELECT ON DBA_COL_PRIVS")
 
+#: The fourth grant view, ``DBA_SCHEMA_PRIVS``, for 23ai's schema privileges.
+#: The install script grants it with :data:`REPORT_READS`, and only where the
+#: view exists, so it is kept apart: a release without the view gets no grant
+#: and is not short of one.
+SCHEMA_REPORT_READ = "SELECT ON DBA_SCHEMA_PRIVS"
+
 #: §2 grants this one **in the root only**, so its absence in a PDB is the
 #: documented install and not a finding. Kept apart from :data:`REQUIRED_READS`
 #: rather than filtered out of it at the call site, because "not required here"

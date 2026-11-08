@@ -17,11 +17,18 @@ database, so `_` and `%` are plain characters, as they are in an Oracle name.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from fnmatch import fnmatchcase
 
-from sopuli.config.model import Config, DbProfileRule, Limit, ReportAccountRule, Settings
+from sopuli.config.model import (
+    Config,
+    DbProfileRule,
+    Limit,
+    Policy,
+    ReportAccountRule,
+    Settings,
+)
 from sopuli.config.reports import UNLIMITED, is_pattern
 from sopuli.config.selection import select
 from sopuli.driver.survey import SurveyedAccount
@@ -34,6 +41,14 @@ NOT_CHECKED = "NOT_CHECKED"
 NO_RULE = "NO_RULE"
 UNDECLARED = "UNDECLARED"
 ACCOUNT_MISSING = "ACCOUNT_MISSING"
+#: A target's state for a profile the file expects there and the target does
+#: not have (UC-5 §4). About the target, not an account.
+PROFILE_MISSING = "PROFILE_MISSING"
+
+#: What expects a profile, as :attr:`MissingProfile.expected_by` names it: the
+#: config's own path, ``reports.accounts`` or ``policies.<name>``.
+BY_RULE = "reports.accounts"
+BY_POLICY = "policies."
 
 #: The states this report gives an account, worst first. ``ERROR`` (a target
 #: that could not be reached) is not here: it belongs to a target, not an
@@ -83,6 +98,23 @@ class AccountRow:
     failed_logins: int | None = None
     #: Why ``failed_logins`` is ``None``, as the survey said it.
     failed_logins_reason: str | None = None
+
+
+@dataclass(frozen=True)
+class MissingProfile:
+    """A profile the file expects on a target that the target does not have.
+
+    One finding for the target, however many accounts are expected on it (UC-5
+    §4). Each such account still shows its own wrong-profile problem, because it
+    is on another profile.
+    """
+
+    target: str
+    #: As the file first spells it.
+    profile: str
+    #: What expects it: :data:`BY_RULE`, then ``policies.<name>`` for each
+    #: application policy, in that order.
+    expected_by: tuple[str, ...]
 
 
 #: The survey's fields that can be ``None``, in the order it writes their
@@ -180,22 +212,65 @@ def evaluate(
     return tuple(sorted(built, key=_sort_key))
 
 
+def missing_profiles(
+    target: str, config: Config, profiles: Collection[str]
+) -> tuple[MissingProfile, ...]:
+    """Each profile the file expects on ``target`` that ``profiles`` lacks, by name.
+
+    ``profiles`` is every profile the target has. A profile is expected where a
+    ``reports.accounts`` rule that covers the target names it, or where an
+    application's policy names it for an account bound there. A ``db_profiles``
+    entry alone expects nothing: it says what a profile's limits must be where
+    the profile is, not that every target has it (#1390). Nor does a personal
+    rule's ``profile:``, which selects accounts. A rule that covers the target
+    expects its profile there even where no account on the target matches it,
+    as the maintainer decided for #1390: the rule says what the target must
+    have. A rule cannot name an application account by name with a
+    ``profile:``; the config refuses that. Names are compared by ``upper()``.
+    """
+    present = {name.upper() for name in profiles}
+    expected: dict[str, tuple[str, list[str]]] = {}
+
+    def expect(profile: str, source: str) -> None:
+        _, sources = expected.setdefault(profile.upper(), (profile, []))
+        if source not in sources:
+            sources.append(source)
+
+    for rule in _rules_on(config, target):
+        if rule.profile is not None:
+            expect(rule.profile, BY_RULE)
+    for policy in _bound_policies(config, target).values():
+        if policy is not None and policy.account.profile is not None:
+            expect(policy.account.profile, f"{BY_POLICY}{policy.name}")
+    return tuple(
+        MissingProfile(target, spelled, tuple(sources))
+        for key, (spelled, sources) in sorted(expected.items())
+        if key not in present
+    )
+
+
 def exit_code(
-    rows: Sequence[AccountRow], *, unreachable: int, unsupported: int = 0, targets: int = 0
+    rows: Sequence[AccountRow],
+    *,
+    unreachable: int,
+    unsupported: int = 0,
+    targets: int = 0,
+    missing: Sequence[MissingProfile] = (),
 ) -> int:
     """UC-5 §3: 5 if no target can run the report, 1 if a target was not reached,
     then 3 for a problem, then 4 for anything not checked.
 
     ``unsupported`` counts the targets of a product the report is not written
     for. Where every target is one, nothing could run, which is exit 5. Where
-    only some are, those targets are not checked, which is exit 4 at most.
+    only some are, those targets are not checked, which is exit 4 at most. A
+    profile in ``missing`` is a problem (#1390).
     """
     states = {row.state for row in rows}
     return exit_code_for(
         unreachable=unreachable,
         unsupported=unsupported,
         targets=targets,
-        problem=bool(states & {REPORT_PROBLEM, ACCOUNT_MISSING}),
+        problem=bool(states & {REPORT_PROBLEM, ACCOUNT_MISSING}) or bool(missing),
         incomplete=NOT_CHECKED in states,
     )
 
@@ -211,16 +286,29 @@ def _rules_on(config: Config, target: str) -> tuple[ReportAccountRule, ...]:
     )
 
 
+def _bound_policies(config: Config, target: str) -> dict[str, Policy | None]:
+    """Each application account on ``target``, by ``upper()``, with its policy.
+
+    ``None`` where the binding names no policy, or one the config lacks. The
+    one walk of the bindings that :func:`evaluate` and :func:`missing_profiles`
+    both use, so the two cannot disagree on what a policy expects.
+    """
+    policies = {policy.name: policy for policy in config.policies}
+    return {
+        binding.account.upper(): (
+            policies.get(binding.policy) if binding.policy is not None else None
+        )
+        for binding in config.bindings
+        if binding.target == target
+    }
+
+
 def _application_profiles(config: Config, target: str) -> dict[str, str | None]:
     """Each application account on ``target``, with its policy's expected profile."""
-    policies = {policy.name: policy for policy in config.policies}
-    bound: dict[str, str | None] = {}
-    for binding in config.bindings:
-        if binding.target != target:
-            continue
-        policy = policies.get(binding.policy) if binding.policy is not None else None
-        bound[binding.account.upper()] = policy.account.profile if policy is not None else None
-    return bound
+    return {
+        account: policy.account.profile if policy is not None else None
+        for account, policy in _bound_policies(config, target).items()
+    }
 
 
 def _personal_on(config: Config, target: str) -> tuple[set[str], set[str]]:

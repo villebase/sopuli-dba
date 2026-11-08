@@ -8,6 +8,9 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
+from sopuli.config.errors import ConfigError
 from sopuli.config.loading import build_config
 from sopuli.config.model import Config
 from sopuli.driver.survey import SurveyedAccount
@@ -21,6 +24,7 @@ from sopuli.report_accounts import (
     AccountRow,
     evaluate,
     exit_code,
+    missing_profiles,
 )
 
 TARGET = "free-pdb"
@@ -390,3 +394,112 @@ def test_reasons_that_do_not_line_up_are_kept_not_dropped() -> None:
     surveyed = account("X", failed_login_limit=None, unreadable=("first reason", "an extra reason"))
     finding = next(f for f in rows(cfg, surveyed)["X"].findings if f.check == "failed_login_limit")
     assert finding.detail == "first reason; an extra reason"
+
+
+# ------------------------------------------- a profile missing on a target ---
+# #1390: one target-level problem for each profile the file expects there that
+# the target does not have.
+
+APPLICATION = {
+    "policies": {"app": {"account": {"profile": "ACME_APP_PROF"}}},
+    "applications": [
+        {
+            "name": "acme",
+            "accounts": ["acme_app_user"],
+            "policy": "app",
+            "secret": "acme/app#password",
+        }
+    ],
+    "vaults": {"vault-dev": {"type": "hashicorp", "addr": "http://127.0.0.1:8200"}},
+    "defaults": {"vault": "vault-dev"},
+}
+
+
+def test_a_rules_profile_missing_on_the_target_is_one_problem() -> None:
+    cfg = config(**rule(accounts=["DBSNMP", "ORDS_*"], profile="tech_noexp"))
+    missing = missing_profiles(TARGET, cfg, {"DEFAULT", "APP_USERS"})
+    assert [(m.target, m.profile, m.expected_by) for m in missing] == [
+        (TARGET, "tech_noexp", ("reports.accounts",))
+    ]
+
+
+def test_a_profile_the_target_has_is_not_missing_compared_by_upper_case() -> None:
+    cfg = config(**rule(accounts=["X"], profile="tech_noexp"))
+    assert missing_profiles(TARGET, cfg, {"TECH_NOEXP"}) == ()
+
+
+def test_an_application_policys_profile_missing_is_a_problem() -> None:
+    cfg = config(**APPLICATION)
+    missing = missing_profiles(TARGET, cfg, {"DEFAULT"})
+    assert [(m.profile, m.expected_by) for m in missing] == [("ACME_APP_PROF", ("policies.app",))]
+
+
+def test_one_finding_names_every_source_that_expects_the_profile() -> None:
+    cfg = config(
+        **APPLICATION,
+        reports={
+            "accounts": [
+                {"accounts": ["X"], "profile": "ACME_APP_PROF"},
+                {"accounts": ["Y"], "profile": "acme_app_prof"},
+            ]
+        },
+    )
+    missing = missing_profiles(TARGET, cfg, {"DEFAULT"})
+    assert len(missing) == 1
+    assert missing[0].expected_by == ("reports.accounts", "policies.app")
+
+
+def test_a_rules_profile_never_names_an_application_account() -> None:
+    """From the review of #1402. The config refuses a rule's `profile:` on an
+    application account named by name, so every rule profile that
+    `missing_profiles` counts is one some non-application account may need."""
+    with pytest.raises(ConfigError, match="its profile comes from its policy"):
+        config(**APPLICATION, **rule(accounts=["ACME_APP_USER"], profile="OTHER_PROF"))
+
+
+def test_a_rule_that_covers_the_target_expects_its_profile_with_no_account_matching() -> None:
+    """The maintainer's decision for #1390, kept after the second review of
+    #1402: the rule says what the target must have, whether or not an account
+    there matches it. `targets:` is how a rule expects a profile only on some."""
+    cfg = config(**APPLICATION, **rule(accounts=["ACME_*_USER"], profile="TECH"))
+    missing = missing_profiles(TARGET, cfg, {"DEFAULT", "ACME_APP_PROF"})
+    assert [(m.profile, m.expected_by) for m in missing] == [("TECH", ("reports.accounts",))]
+
+
+def test_a_binding_without_a_policy_expects_no_profile() -> None:
+    unbound = {
+        "name": "acme",
+        "accounts": ["acme_app_user"],
+        "secret": "acme/app#password",
+    }
+    cfg = config(**{**APPLICATION, "applications": [unbound]})
+    assert missing_profiles(TARGET, cfg, {"DEFAULT"}) == ()
+
+
+def test_a_db_profiles_entry_alone_never_requires_the_profile() -> None:
+    """The maintainer's narrowing of #1390: `db_profiles` sets the limits where
+    the profile is; it does not say the profile must be on every target."""
+    cfg = config(
+        reports={"db_profiles": [{"name": "TECH", "settings": {"password_lifetime": "unlimited"}}]}
+    )
+    assert missing_profiles(TARGET, cfg, {"DEFAULT"}) == ()
+
+
+def test_a_rule_for_other_targets_expects_nothing_here() -> None:
+    cfg = config(**rule(accounts=["X"], targets={"match": {"env": "prod"}}, profile="P"))
+    assert missing_profiles(TARGET, cfg, {"DEFAULT"}) == ()
+    assert [m.profile for m in missing_profiles("other-pdb", cfg, {"DEFAULT"})] == ["P"]
+
+
+def test_a_personal_predicate_over_a_profile_expects_nothing() -> None:
+    """A personal rule's `profile:` selects accounts; it says nothing must exist."""
+    cfg = config(personal_accounts=[{"profile": "DBA_PROF"}])
+    assert missing_profiles(TARGET, cfg, {"DEFAULT"}) == ()
+
+
+def test_a_missing_profile_makes_the_run_exit_3() -> None:
+    cfg = config(**rule(accounts=["X"], profile="P"))
+    missing = missing_profiles(TARGET, cfg, {"DEFAULT"})
+    assert exit_code([], unreachable=0, missing=missing) == 3
+    assert exit_code([], unreachable=1, missing=missing) == 1
+    assert exit_code([], unreachable=0, missing=()) == 0

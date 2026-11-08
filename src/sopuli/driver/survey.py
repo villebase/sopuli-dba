@@ -2,8 +2,10 @@
 
 Product-neutral types. A driver that can survey its accounts returns
 :class:`SurveyedAccount` values. Only Oracle can, through
-``OracleSession.survey_accounts``, which a caller finds with ``getattr``: the
-:class:`~sopuli.driver.protocol.Session` protocol does not list it.
+``OracleSession.survey_accounts``, and ``OracleSession.survey_with_profiles``,
+which adds the target's profile names for ``report accounts``. A caller finds
+them with ``getattr``: the :class:`~sopuli.driver.protocol.Session` protocol
+does not list them.
 
 A field the target cannot read truthfully is ``None``, never a guess, and
 :attr:`SurveyedAccount.unreadable` says why. On an Oracle PDB, for example, a

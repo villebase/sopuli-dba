@@ -57,6 +57,7 @@ from sopuli.driver.oracle.accounts import (
     resolve_role,
     stored_verifiers,
     survey,
+    survey_with_profiles,
 )
 from sopuli.driver.oracle.audit import coverage_of
 from sopuli.driver.oracle.capabilities import (
@@ -446,14 +447,27 @@ class OracleSession(ClosesConnection):
         common account's lock, limits and count are ``None``, each with a
         reason (:func:`~sopuli.driver.oracle.accounts.survey`).
         """
-        scope = self.scope()
         with traced_cursor(self.connection) as cursor:
-            return survey(
-                cursor,
-                own_container=scope.type in OWN_COUNT_SCOPES,
-                user_dollar=scope.supports(OFFLINE_VERIFY),
-                application=scope.type in APPLICATION_SCOPES,
-            )
+            return survey(cursor, **self._survey_scope())
+
+    def survey_with_profiles(self) -> tuple[tuple[SurveyedAccount, ...], frozenset[str]]:
+        """:meth:`survey_accounts`, and every profile on this target (#1390).
+
+        Oracle only, and not in the protocol, like :meth:`survey_accounts`. The
+        same statements: the names come from the rows the limits statement
+        already reads (:func:`~sopuli.driver.oracle.accounts.survey_with_profiles`).
+        """
+        with traced_cursor(self.connection) as cursor:
+            return survey_with_profiles(cursor, **self._survey_scope())
+
+    def _survey_scope(self) -> dict[str, bool]:
+        """What the survey needs to know of this container."""
+        scope = self.scope()
+        return {
+            "own_container": scope.type in OWN_COUNT_SCOPES,
+            "user_dollar": scope.supports(OFFLINE_VERIFY),
+            "application": scope.type in APPLICATION_SCOPES,
+        }
 
     def survey_privileges(self, accounts: Sequence[str], *, public: bool) -> GrantSurvey:
         """Every privilege ``accounts`` hold, with each path, for UC-5's reports.

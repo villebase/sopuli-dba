@@ -6,7 +6,7 @@ for text output that keep it consistent with both.
 `sopuli/output/` produces them, and CI validates the output against the
 published schemas.
 
-Schemas: [`../schemas/sopuli-run-1.85.schema.json`](../schemas/sopuli-run-1.85.schema.json),
+Schemas: [`../schemas/sopuli-run-1.86.schema.json`](../schemas/sopuli-run-1.86.schema.json),
 [`../schemas/sopuli-event-1.24.schema.json`](../schemas/sopuli-event-1.24.schema.json)
 Examples, each from a real run:
 [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json),
@@ -356,7 +356,7 @@ its `config` section emits.
 | `production` | the `prod` environment wherever it appears | `environment` |
 | `good` | a state a reader can stop reading at | `state` = `IN_SYNC` |
 | `attention` | something true that a person has to act on, the run being fine | `state` ∈ `DRIFT`, `PENDING_APPLY`, `ROLLOVER_ACTIVE`, `VAULT_ONLY`, `RESET` |
-| `bad` | the tool could not do the job, or the estate is not in a state it can | `state` ∈ `ERROR`, `ACCOUNT_MISSING`, `LOCKED`, `EXPIRED`, `REPORT_PROBLEM` |
+| `bad` | the tool could not do the job, or the estate is not in a state it can | `state` ∈ `ERROR`, `ACCOUNT_MISSING`, `LOCKED`, `EXPIRED`, `REPORT_PROBLEM`, `PROFILE_MISSING` |
 | `inconclusive` | no answer, and the absence is the finding | `state` ∈ `UNVERIFIABLE`, `SKIPPED`, `DECLARED`, `NOT_CHECKED`, `NO_RULE`, `UNDECLARED`, `REPORT_OK` |
 
 The same roles also colour a second vocabulary, the health of a store or an
@@ -458,8 +458,8 @@ This sketch shows the run document's shape:
                  account_status, changed, actions[], verification, rollover,
                  password_age_days, started_at, duration_ms, error, warnings[],
                  overridden[], redraws, kind, findings[], failed_logins,
-                 privileges, history, failed_logins_reason, declared_by,
-                 reset_at } ],
+                 privileges, history, failed_logins_reason, missing_profile,
+                 expected_by[], declared_by, reset_at } ],
   targets    [ { target, reachable, scope, asserted, duration_ms, privileges,
                  error, warnings[] } ],
   install    { backends[], drivers[] },
@@ -2257,17 +2257,27 @@ or renaming one is major.
 **`state`** — `IN_SYNC`, `DRIFT`, `PENDING_APPLY`, `ROLLOVER_ACTIVE`,
 `ACCOUNT_MISSING`, `LOCKED`, `EXPIRED`, `UNVERIFIABLE`, `SKIPPED`, `ERROR`,
 `VAULT_ONLY`, `DECLARED`, `RESET`, `REPORT_OK`, `REPORT_PROBLEM`, `NOT_CHECKED`,
-`NO_RULE`, `UNDECLARED`
+`NO_RULE`, `UNDECLARED`, `PROFILE_MISSING`
 
-**`report accounts` has five states of its own** (UC-5 §3): every check had a
+**`report accounts` has six states of its own** (UC-5 §3): every check had a
 rule, ran and passed (`REPORT_OK`); a check found a problem
 (`REPORT_PROBLEM`); a check could not run truthfully on this target
 (`NOT_CHECKED`); nothing in the file states a profile or a setting for the
-account (`NO_RULE`); the file does not declare the account (`UNDECLARED`). An
+account (`NO_RULE`); the file does not declare the account (`UNDECLARED`); a
+profile the file expects is not on the target (`PROFILE_MISSING`). An
 undeclared account is information and never changes the exit code. A missing
 account is `ACCOUNT_MISSING`, as in the other verbs. `REPORT_OK` is not
 `IN_SYNC`: it says the rules found nothing wrong, not that a credential is
 healthy.
+
+`PROFILE_MISSING`, from run schema 1.86, is about a target, not an account, so
+its `account` is `-`. A profile that a `reports.accounts` rule or an
+application's policy expects on the target does not exist there. It is one
+result for the target, however many accounts are expected on the profile, and
+it is a problem: the run exits 3. `missing_profile` names the profile, and
+`expected_by` says what expects it as config paths, `reports.accounts` or
+`policies.<name>`. A `db_profiles` entry alone never expects a profile to
+exist ([#1390](../use-cases/uc-05-fleet-reports.md#4-the-accounts-report)).
 
 **`VAULT_ONLY` is what `creds generate --promote` reports**: the vault holds this
 password, and no database has been asked. No other value would be true of that

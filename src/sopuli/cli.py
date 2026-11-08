@@ -5646,7 +5646,8 @@ def report_accounts_command(
     An account counts as OK only when every check had a rule and passed.
 
     Exit 0 when nothing is wrong, 1 when a target could not be reached, 3 when a
-    check found a problem, and 4 when something could not be checked. An account
+    check found a problem or a profile a rule or policy expects is missing on a
+    target, and 4 when something could not be checked. An account
     the config does not declare is listed as information and never changes the
     exit code. Only Oracle can run this report yet.
     """
@@ -5663,7 +5664,11 @@ def report_accounts_command(
     document.results = report_view.build_results(reports)
     document.finish(
         report_states.exit_code(
-            rows, unreachable=unreachable, unsupported=unsupported, targets=len(reports)
+            rows,
+            unreachable=unreachable,
+            unsupported=unsupported,
+            targets=len(reports),
+            missing=[missing for report in reports for missing in report.missing],
         ),
         report_view.summarise(reports),
     )
@@ -5692,17 +5697,19 @@ def _report_target(
             )
         except Exception as error:  # noqa: BLE001 -- a per-target finding
             return report_view.TargetReport(target=target.name, error=_finding(error))
-        survey = getattr(session, "survey_accounts", None)
+        survey = getattr(session, "survey_with_profiles", None)
         if survey is None:
             # No driver but Oracle's reaches this command (the registry), and
             # Oracle's session has the method. A driver that does is not
             # written for this report: not checked there, never unreachable.
-            missing = DriverError(f"{target.name}: this driver cannot survey its accounts")
+            missing = DriverError(
+                f"{target.name}: this driver cannot survey its accounts and profiles"
+            )
             return report_view.TargetReport(
                 target=target.name, error=_finding(missing), unsupported=True
             )
         try:
-            surveyed = survey()
+            surveyed, profiles = survey()
         except Exception as error:  # noqa: BLE001 -- a per-target finding
             # Connected, then could not read: said as such, not as "could not
             # connect", though the target still gave no answer (exit 1).
@@ -5714,6 +5721,7 @@ def _report_target(
             release=session.scope().release,
             read=len(surveyed),
             rows=report_states.evaluate(target.name, config, surveyed),
+            missing=report_states.missing_profiles(target.name, config, profiles),
         )
     finally:
         if session is not None:

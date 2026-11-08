@@ -293,16 +293,15 @@ the tier-1 stack, part way through the first account. The run prints a line
 for every query, and most are left out here:
 
 ```
-sopuli: debug:   1.620s oracle: connect to free-pdb as SYSTEM in 0.087s
-sopuli: debug:   1.623s oracle: call dbms_session.set_identifier in 0.003s
-sopuli: debug:   1.634s oracle: select version from v$instance in 0.002s
-sopuli: debug:   1.635s oracle: select version_full from v$instance in 0.002s
-sopuli: debug:   1.657s oracle: free-pdb is pdb, FREEPDB1, 23.26.3.0.0, READ WRITE; capabilities account_lock_state, expire_password, offline_verify, password_reuse_policy, password_rollover, profile_management, role_lookup
-sopuli: debug:   2.784s oracle: login as ACME_APP_USER: fail in 1.059s
-sopuli: debug:   2.788s vault: GET /v1/kv/data/locks/acme/dev/acme: 200 in 0.004s
-sopuli: debug:   2.791s oracle: select username from dba_users where username = :name (binds :name) in 0.003s
-sopuli: debug:   2.805s oracle: ALTER USER "ACME_APP_USER" IDENTIFIED BY *** in 0.011s
-sopuli: debug:   2.899s oracle: login as ACME_APP_USER: pass in 0.061s
+sopuli: debug:   1.555s oracle: connect to free-pdb as SYSTEM in 0.079s
+sopuli: debug:   1.557s oracle: call dbms_session.set_identifier in 0.002s
+sopuli: debug:   1.567s oracle: select version, version_full from v$instance in 0.002s
+sopuli: debug:   1.590s oracle: free-pdb is pdb, FREEPDB1, 23.26.3.0.0, READ WRITE; capabilities account_lock_state, expire_password, offline_verify, password_reuse_policy, password_rollover, profile_management, role_lookup
+sopuli: debug:   2.744s oracle: login as ACME_APP_USER: fail in 1.069s
+sopuli: debug:   2.748s vault: GET /v1/kv/data/locks/acme/dev/acme: 200 in 0.004s
+sopuli: debug:   2.753s oracle: select username from dba_users where username = :name (binds :name) in 0.004s
+sopuli: debug:   2.769s oracle: ALTER USER "ACME_APP_USER" IDENTIFIED BY *** in 0.014s
+sopuli: debug:   2.865s oracle: login as ACME_APP_USER: pass in 0.066s
 ```
 
 These lines are from a second `sopuli creds apply --confirm --debug`, after the
@@ -1517,7 +1516,8 @@ product's own words.
 **`scope.db_release` is the full release**, from run schema 1.84, such as
 `23.26.3.0.0`. On Oracle `db_version` is `V$INSTANCE.VERSION`, which from 18c
 holds only the base release, `23.0.0.0.0`. `db_release` is `VERSION_FULL`. On
-11.2 and 12c, and on every other product, the two are equal.
+an Oracle release without that column, and on every other product, the two
+are equal.
 `02-oracle-privileges.md` §2 says how the Oracle driver reads them.
 
 **A PostgreSQL target's `scope.type` is `cluster`**, from run schema 1.62.

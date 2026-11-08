@@ -114,7 +114,7 @@ refused the whole fleet for one old target would answer nothing.
 **Built, on Oracle:** `sopuli report accounts [--all]`, with the usual target
 selectors. `docs/local-testing.md` §9a has a run. One table per target, in the
 config's target order. The head of each table names the target, the release
-read from it (`V$INSTANCE.VERSION`), and how many accounts were read, how many
+read from it (`V$INSTANCE.VERSION_FULL`, `scope.db_release`), and how many accounts were read, how many
 have a problem, how many were not checked, how many have no rule, and how many
 are undeclared. Then:
 

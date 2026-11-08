@@ -120,10 +120,11 @@ def observe(cursor: Cursor, *, target: str, encryption: Encryption | None = None
     if encryption is None:
         encryption = read_encryption(cursor, block="mariadb")
 
+    release = version.split("-")[0]
     return Scope(
         type=SERVER,
-        db_version=version.split("-")[0],
-        db_release=version.split("-")[0],
+        db_version=release,
+        db_release=release,
         open_mode=READ_WRITE if can_write else READ_ONLY,
         read_write=can_write,
         encryption=encryption,

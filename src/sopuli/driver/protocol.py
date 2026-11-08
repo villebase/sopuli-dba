@@ -757,6 +757,15 @@ class Scope:
         """Whether this connection reported ``capability``."""
         return capability in self.capabilities
 
+    @property
+    def release(self) -> str | None:
+        """The release to show a person: ``db_release``, else ``db_version``.
+
+        Where ``VERSION_FULL`` reads empty and ``VERSION`` does not, the base
+        release still says more than "release unknown".
+        """
+        return self.db_release or self.db_version
+
 
 @dataclass(frozen=True)
 class UserState:

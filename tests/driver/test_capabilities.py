@@ -25,7 +25,7 @@ from sopuli.driver.oracle.capabilities import (
     PROBES,
     STRUCTURAL,
     VERSION,
-    VERSION_FULL,
+    VERSIONS,
     ProbeError,
     ReadOnlyTargetError,
     ScopeAssertionError,
@@ -36,9 +36,9 @@ from sopuli.driver.oracle.capabilities import (
     observe,
     probe,
     read,
-    release_of,
     require_read_write,
     scope_type,
+    versions_of,
 )
 from sopuli.driver.protocol import (
     CAPABILITIES,
@@ -427,8 +427,7 @@ def test_observe_reports_what_it_found() -> None:
         {
             CONTAINER_NAME: "CDB$ROOT",
             "select db_unique_name, open_mode from v$database": ("FREE", "READ WRITE"),
-            VERSION_FULL: "23.26.3.0.0",
-            VERSION: "23.0.0.0.0",
+            VERSIONS: ("23.0.0.0.0", "23.26.3.0.0"),
             PROBES[COMMON_USERS]: 1,
             NETWORK_PROTOCOL: "tcp",
             CONNECT_INFO: "AES256 Encryption service adapter for Linux: Version 23.26.2.0.0",
@@ -446,6 +445,7 @@ def test_observe_reports_what_it_found() -> None:
     assert found.supports(COMMON_USERS)
     assert found.encryption.method == ENCRYPTION_NATIVE
     assert found.encryption.algorithm == "AES256"
+    assert VERSION not in cursor.asked, "one query reads both columns"
 
 
 #: What the release tests need besides V$INSTANCE: an open database.
@@ -456,12 +456,12 @@ _OPEN = {
 
 
 def test_a_release_without_version_full_gives_version_as_its_release() -> None:
-    """11.2 and 12c answer ORA-00904 to VERSION_FULL, and their VERSION is
-    already the full release."""
+    """A release without VERSION_FULL answers ORA-00904, and before 18c its
+    VERSION is already the full release."""
     cursor = _Cursor(
         {
             **_OPEN,
-            VERSION_FULL: _ora("ORA-00904", '"VERSION_FULL": invalid identifier'),
+            VERSIONS: _ora("ORA-00904", '"VERSION_FULL": invalid identifier'),
             VERSION: "12.2.0.1.0",
         }
     )
@@ -472,45 +472,36 @@ def test_a_release_without_version_full_gives_version_as_its_release() -> None:
     assert found.db_release == "12.2.0.1.0"
 
 
-def test_a_refused_version_is_not_asked_again() -> None:
-    cursor = _Cursor({**_OPEN, VERSION: _ora("ORA-00942", "table or view does not exist")})
+@pytest.mark.parametrize("code", ["ORA-00942", "ORA-01031", "ORA-41900"])
+def test_a_refused_v_instance_is_asked_once(code: str) -> None:
+    """Only ORA-00904 falls back: a refusal is not a missing column."""
+    cursor = _Cursor({**_OPEN, VERSIONS: _ora(code)})
 
     found = observe(cursor)
 
     assert found.db_version is None
     assert found.db_release is None
-    assert VERSION_FULL not in cursor.asked, "one refusal of V$INSTANCE is enough"
+    assert VERSION not in cursor.asked, "one refusal of V$INSTANCE is enough"
 
 
-def test_a_refused_version_full_is_no_release() -> None:
-    """Only ORA-00904 falls back: a refusal is not a missing column."""
-    cursor = _Cursor(
-        {
-            **_OPEN,
-            VERSION: "23.0.0.0.0",
-            VERSION_FULL: _ora("ORA-01031", "insufficient privileges"),
-        }
-    )
+def test_an_empty_full_release_shows_the_base_one() -> None:
+    """The report head lines and the debug line show ``Scope.release``."""
+    cursor = _Cursor({**_OPEN, VERSIONS: ("23.0.0.0.0", None)})
 
     found = observe(cursor)
 
-    assert found.db_version == "23.0.0.0.0"
     assert found.db_release is None
+    assert found.release == "23.0.0.0.0", "better than 'release unknown'"
 
 
-def test_a_failure_reading_version_full_raises() -> None:
-    cursor = _Cursor(
-        {
-            VERSION: "23.0.0.0.0",
-            VERSION_FULL: _ora("ORA-03113", "end-of-file on communication channel"),
-        }
-    )
+def test_a_failure_reading_v_instance_raises() -> None:
+    cursor = _Cursor({VERSIONS: _ora("ORA-03113", "end-of-file on communication channel")})
 
     with pytest.raises(ProbeError) as raised:
-        release_of(cursor, "23.0.0.0.0")
+        versions_of(cursor)
 
     assert raised.value.code == "ORA-03113"
-    assert cursor.asked == [VERSION_FULL], "asked once, not retried"
+    assert cursor.asked == [VERSIONS], "asked once, not retried"
 
 
 def test_a_standby_is_reported_read_only() -> None:

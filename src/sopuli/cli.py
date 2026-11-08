@@ -5704,7 +5704,7 @@ def _report_target(
             )
         return report_view.TargetReport(
             target=target.name,
-            release=session.scope().db_release,
+            release=session.scope().release,
             read=len(surveyed),
             rows=report_states.evaluate(target.name, config, surveyed),
         )
@@ -5843,7 +5843,7 @@ def _privileges_target(
             )
         return privileges_view.TargetPrivileges(
             target=target.name,
-            release=session.scope().db_release,
+            release=session.scope().release,
             accounts=privilege_states.per_account(target.name, rows, grants, public=public),
             unreadable=grants.unreadable,
             absent=absent,

@@ -147,14 +147,17 @@ looks like a broken probe. Nothing in the statements says who must issue them.
 Each dictionary read has a consumer, and a missing grant is never read as an
 empty answer.
 
-- **`V$INSTANCE`** gives the release, twice. `scope.db_version` is `VERSION`.
-  Since 18c that column holds only the base release: 19.3 reports `19.0.0.0.0`,
-  and 26ai 23.26.3 reports `23.0.0.0.0`. `scope.db_release` is `VERSION_FULL`,
-  the full release, such as `23.26.3.0.0`. 11.2 and 12c answer `ORA-00904` to
-  that column, and there `VERSION` is already the full release, such as
-  `12.2.0.1.0`, so `db_release` takes it. Only `ORA-00904` does: another
-  refusal leaves `db_release` empty. When `VERSION` is refused, the view is
-  not asked a second time. `doctor` and the `report` head lines show `db_release`. Only the
+- **`V$INSTANCE`** gives the release twice, in one query.
+  `scope.db_version` is `VERSION`. Since 18c that column holds only the base
+  release: 19.3.0.0.0 reports `19.0.0.0.0`, and 23.26.3.0.0 reports
+  `23.0.0.0.0`. `scope.db_release` is `VERSION_FULL`, the full release, such
+  as `23.26.3.0.0`. Oracle's reference dates `VERSION_FULL` from 18c. A
+  release without it answers `ORA-00904`, and the driver then reads `VERSION`
+  alone, which before 18c is the full release, such as `12.2.0.1.0`, and gives
+  it as both. The tool has not read a release before 18c this way yet. Only
+  `ORA-00904` falls back. A refused `V$INSTANCE` leaves both empty and is not
+  asked again. `doctor --output json` shows `db_release`, and the `report`
+  head lines show it, or `db_version` where it is empty. Only the
   password-limit floor in `driver/oracle/limits.py` uses a release to decide
   anything. It reads `db_version` and compares the first two parts only.
 
@@ -289,7 +292,8 @@ ADB takes some things away for good:
   not merely unrun. Do not carry 26ai Free's result over to ADB because both are
   26ai.
 - **`db_release` has not been read on ADB yet.** `db_version` there is
-  `23.0.0.0.0`, the base release, as on every 18c and later (below).
+  `23.0.0.0.0`, the base release, as on every 18c and later (§2, the
+  dictionary reads).
 - **Not tried:** whether `ADMIN` can grant `SELECT ON SYS.V_$PWFILE_USERS` (§4
   check 3), and whether `01_audit_policy.sql` runs on ADB, where unified auditing
   is on by default.

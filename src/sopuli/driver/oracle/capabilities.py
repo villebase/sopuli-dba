@@ -197,14 +197,16 @@ CLOUD_SERVICE = "select sys_context('userenv','cloud_service') from dual"
 
 DATABASE_FACTS = "select db_unique_name, open_mode from v$database"
 
-#: ``db_version``. From 18c it holds only the base release (``23.0.0.0.0``,
-#: ``19.0.0.0.0``). On 11.2 and 12c it is the full release, such as
-#: ``12.2.0.1.0``.
-VERSION = "select version from v$instance"
+#: ``db_version`` and ``db_release`` in one round trip. ``VERSION`` holds only
+#: the base release from 18c on: ``23.0.0.0.0`` where ``VERSION_FULL`` reads
+#: ``23.26.3.0.0`` (26ai Free 23.26.3.0.0).
+VERSIONS = "select version, version_full from v$instance"
 
-#: ``db_release``, the full release, such as ``23.26.3.0.0``. 11.2 and 12c
-#: answer ``ORA-00904``: the column arrived in 18c.
-VERSION_FULL = "select version_full from v$instance"
+#: Asked only where :data:`VERSIONS` gets ``ORA-00904``. Oracle's reference
+#: dates ``VERSION_FULL`` from 18c, and before it ``VERSION`` is the full
+#: release, such as ``12.2.0.1.0``. The tool has not read it on a release
+#: before 18c yet.
+VERSION = "select version from v$instance"
 
 
 def read(cursor: Cursor, statement: str, **binds: Any) -> Any:
@@ -493,8 +495,7 @@ def observe(cursor: Cursor) -> Scope:
         else None
     )
     facts = read(cursor, DATABASE_FACTS)
-    row = read(cursor, VERSION)
-    version = str(row[0]) if row and row[0] else None
+    version, release = versions_of(cursor)
     open_mode = str(facts[1]) if facts and facts[1] else None
 
     return Scope(
@@ -502,7 +503,7 @@ def observe(cursor: Cursor) -> Scope:
         container=container,
         db_unique_name=str(facts[0]) if facts and facts[0] else None,
         db_version=version,
-        db_release=release_of(cursor, version),
+        db_release=release,
         open_mode=open_mode,
         read_write=None if open_mode is None else open_mode.upper().startswith("READ WRITE"),
         capabilities=probe(cursor),
@@ -510,29 +511,34 @@ def observe(cursor: Cursor) -> Scope:
     )
 
 
-def release_of(cursor: Cursor, version: str | None) -> str | None:
-    """The full release, such as ``23.26.3.0.0``, or ``None`` if it cannot be read.
+def versions_of(cursor: Cursor) -> tuple[str | None, str | None]:
+    """``(db_version, db_release)``: the base release and the full one.
 
-    ``version`` is what :data:`VERSION` answered. ``None`` means ``V$INSTANCE``
-    could not be read, so it is not asked again. Otherwise this reads
-    :data:`VERSION_FULL`. Only ``ORA-00904`` gives ``version`` in its place: a
-    release without the column, 11.2 or 12c, holds the full release in
-    ``VERSION``. The server's answer picks the column, never a version test.
-    Any other code in :data:`ABSENT_CODES` is ``None``, and any other failure
-    raises, as in :func:`read`.
+    One query, :data:`VERSIONS`. Only ``ORA-00904``, a release without
+    ``VERSION_FULL``, asks :data:`VERSION` instead, and its answer is both
+    values. The server's answer picks the column, never a version test. Any
+    other code in :data:`ABSENT_CODES` is a refused ``V$INSTANCE``: both are
+    ``None``, and the view is not asked again. Any other failure raises, as in
+    :func:`read`.
     """
-    if version is None:
-        return None
     try:
-        cursor.execute(VERSION_FULL)
+        cursor.execute(VERSIONS)
         row = cursor.fetchone()
     except Exception as error:  # noqa: BLE001 -- classified on the next line
         code = from_error(error).code
         if code == "ORA-00904":
-            return version
+            version = _text(read(cursor, VERSION))
+            return version, version
         if code in ABSENT_CODES:
-            return None
-        raise _probe_failed(error, VERSION_FULL) from error
+            return None, None
+        raise _probe_failed(error, VERSIONS) from error
+    if not row:
+        return None, None
+    return _text(row), _text(row[1:])
+
+
+def _text(row: Any) -> str | None:
+    """The first column as text, or ``None`` for no row or an empty value."""
     return str(row[0]) if row and row[0] else None
 
 
@@ -669,7 +675,7 @@ __all__ = [
     "STRUCTURAL",
     "UNKNOWN",
     "VERSION",
-    "VERSION_FULL",
+    "VERSIONS",
     "Cursor",
     "ProbeError",
     "ReadOnlyTargetError",
@@ -681,7 +687,7 @@ __all__ = [
     "observe",
     "probe",
     "read",
-    "release_of",
+    "versions_of",
     "require_read_write",
     "scope_type",
 ]

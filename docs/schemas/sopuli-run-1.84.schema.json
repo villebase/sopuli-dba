@@ -1425,7 +1425,7 @@
             "string",
             "null"
           ],
-          "description": "The full release, such as `23.26.3.0.0` (added in 1.84). On Oracle 18c and later `db_version` is `V$INSTANCE.VERSION`, which holds only the base release, `23.0.0.0.0`; this is `V$INSTANCE.VERSION_FULL`. On 11.2 and 12c, and on every other product, it equals `db_version`."
+          "description": "The full release, such as `23.26.3.0.0` (added in 1.84). On Oracle 18c and later `db_version` is `V$INSTANCE.VERSION`, which holds only the base release, `23.0.0.0.0`; this is `V$INSTANCE.VERSION_FULL`. On an Oracle release without `VERSION_FULL`, and on every other product, it equals `db_version`."
         },
         "open_mode": {
           "type": [

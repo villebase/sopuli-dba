@@ -145,10 +145,11 @@ def observe(cursor: Cursor, *, target: str) -> Scope:
     cursor.execute(SSL_ROW)
     encryption = encryption_of(cursor.fetchone())
 
+    release = str(version).split()[0]
     return Scope(
         type=CLUSTER,
-        db_version=str(version).split()[0],
-        db_release=str(version).split()[0],
+        db_version=release,
+        db_release=release,
         open_mode=open_mode,
         read_write=open_mode == READ_WRITE,
         capabilities=frozenset({ROLE_LOOKUP}),

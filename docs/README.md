@@ -395,10 +395,11 @@ These entries share a setup. The probe is
   limit did not move with it. The tool keys the limit to
   `LONG_PASSWORD_FLOOR = (23, 0)` in `src/sopuli/driver/oracle/limits.py`
   (#595). Below it, `creds generate` refuses at plan time, with exit 9, a policy
-  whose password can be longer than 30 bytes. `23` is the only floor the tool can express, because
-  `V$INSTANCE.VERSION` reads the base release: every 23ai and 26ai reads
-  `23.0.0.0.0`. Open: a 23ai release before 23.26 is unmeasured and reads the
-  same as 26ai. 12.1 is unmeasured, but the 30-byte limit applied to it is the
+  whose password can be longer than 30 bytes. The floor reads `db_version`,
+  `V$INSTANCE.VERSION`, which is the base release: every 23ai and 26ai reads
+  `23.0.0.0.0`, so `23` is the only floor it can express. The full release is
+  read too, as `db_release` (#1386), but the floor does not use it yet. Open:
+  a 23ai release before 23.26 is unmeasured, and the floor treats it as 26ai. 12.1 is unmeasured, but the 30-byte limit applied to it is the
   safe direction. Whether the old limit is 30 bytes or 30 characters has only
   been run with ASCII, and every password that `01-configuration.md` §8 draws is
   ASCII.

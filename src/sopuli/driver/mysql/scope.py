@@ -142,10 +142,11 @@ def observe(cursor: Cursor, *, target: str, encryption: Encryption | None = None
     if encryption is None:
         encryption = read_encryption(cursor)
 
+    release = version.split("-")[0]
     return Scope(
         type=SERVER,
-        db_version=version.split("-")[0],
-        db_release=version.split("-")[0],
+        db_version=release,
+        db_release=release,
         open_mode=open_mode,
         read_write=writable,
         encryption=encryption,

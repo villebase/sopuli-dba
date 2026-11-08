@@ -35,7 +35,7 @@ from oracle_harness import (
 from repo_files import FROM_SDIST, reason, repo_relative
 from sopuli.config.model import AdminAuth, AdminCredential, ExpandedTarget, Runtime, Target
 from sopuli.config.targets import ADMIN_PASSWORD_ENV
-from sopuli.driver.oracle.capabilities import VERSION, VERSION_FULL
+from sopuli.driver.oracle.capabilities import VERSION, VERSIONS
 from sopuli.driver.protocol import Credential, DriverContext
 from sopuli.secrets import Secret
 from sopuli.store.registry import BACKENDS
@@ -815,9 +815,9 @@ def _server_version(cursor: Any) -> str | None:
     *environment unavailable* -- which under `SOPULI_TEST_TIER1=required` is one
     error per test that says nothing about 11g and everything about one column.
 
-    The queries are the driver's own (`capabilities.VERSION_FULL` and
+    The queries are the driver's own (`capabilities.VERSIONS` and
     `capabilities.VERSION`), and so is the fallback on `ORA-00904` alone. The
-    difference is in a refusal: the driver leaves `db_release` empty, and this
+    difference is in a refusal: the driver leaves both versions empty, and this
     raises, for the reason below. `VERSION` exists on every release. It answers
     the base release rather than the patch level -- `18.0.0.0.0` where
     `VERSION_FULL` says `18.4.0.0.0` -- which is why it is second rather than
@@ -836,12 +836,13 @@ def _server_version(cursor: Any) -> str | None:
     one is a fallback.
     """
     try:
-        row = cursor.execute(VERSION_FULL).fetchone()
+        row = cursor.execute(VERSIONS).fetchone()
     except Exception as error:  # noqa: BLE001 -- classified on the next line
         if "ORA-00904" not in str(error):
             raise
         row = cursor.execute(VERSION).fetchone()
-    return str(row[0]) if row else None
+        return str(row[0]) if row else None
+    return str(row[1]) if row else None
 
 
 def _why(exc: BaseException) -> str:

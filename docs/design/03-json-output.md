@@ -6,7 +6,7 @@ for text output that keep it consistent with both.
 `sopuli/output/` produces them, and CI validates the output against the
 published schemas.
 
-Schemas: [`../schemas/sopuli-run-1.81.schema.json`](../schemas/sopuli-run-1.81.schema.json),
+Schemas: [`../schemas/sopuli-run-1.82.schema.json`](../schemas/sopuli-run-1.82.schema.json),
 [`../schemas/sopuli-event-1.24.schema.json`](../schemas/sopuli-event-1.24.schema.json)
 Examples, each from a real run:
 [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json),
@@ -354,8 +354,8 @@ its `config` section emits.
 | `production` | the `prod` environment wherever it appears | `environment` |
 | `good` | a state a reader can stop reading at | `state` = `IN_SYNC` |
 | `attention` | something true that a person has to act on, the run being fine | `state` ∈ `DRIFT`, `PENDING_APPLY`, `ROLLOVER_ACTIVE`, `VAULT_ONLY`, `RESET` |
-| `bad` | the tool could not do the job, or the estate is not in a state it can | `state` ∈ `ERROR`, `ACCOUNT_MISSING`, `LOCKED`, `EXPIRED` |
-| `inconclusive` | no answer, and the absence is the finding | `state` ∈ `UNVERIFIABLE`, `SKIPPED`, `DECLARED` |
+| `bad` | the tool could not do the job, or the estate is not in a state it can | `state` ∈ `ERROR`, `ACCOUNT_MISSING`, `LOCKED`, `EXPIRED`, `REPORT_PROBLEM` |
+| `inconclusive` | no answer, and the absence is the finding | `state` ∈ `UNVERIFIABLE`, `SKIPPED`, `DECLARED`, `NOT_CHECKED`, `NO_RULE`, `UNDECLARED`, `REPORT_OK` |
 
 The same roles also colour a second vocabulary, the health of a store or an
 install. There is no separate palette for it:
@@ -455,7 +455,8 @@ This sketch shows the run document's shape:
                  audited, audited_detail,
                  account_status, changed, actions[], verification, rollover,
                  password_age_days, started_at, duration_ms, error, warnings[],
-                 overridden[], redraws, declared_by, reset_at } ],
+                 overridden[], redraws, kind, findings[], failed_logins,
+                 failed_logins_reason, declared_by, reset_at } ],
   targets    [ { target, reachable, scope, asserted, duration_ms, privileges,
                  error, warnings[] } ],
   install    { backends[], drivers[] },
@@ -2244,7 +2245,18 @@ or renaming one is major.
 <!-- checked-list: enum state -->
 **`state`** — `IN_SYNC`, `DRIFT`, `PENDING_APPLY`, `ROLLOVER_ACTIVE`,
 `ACCOUNT_MISSING`, `LOCKED`, `EXPIRED`, `UNVERIFIABLE`, `SKIPPED`, `ERROR`,
-`VAULT_ONLY`, `DECLARED`, `RESET`
+`VAULT_ONLY`, `DECLARED`, `RESET`, `REPORT_OK`, `REPORT_PROBLEM`, `NOT_CHECKED`,
+`NO_RULE`, `UNDECLARED`
+
+**`report accounts` has five states of its own** (UC-5 §3): every check had a
+rule, ran and passed (`REPORT_OK`); a check found a problem
+(`REPORT_PROBLEM`); a check could not run truthfully on this target
+(`NOT_CHECKED`); nothing in the file states a profile or a setting for the
+account (`NO_RULE`); the file does not declare the account (`UNDECLARED`). An
+undeclared account is information and never changes the exit code. A missing
+account is `ACCOUNT_MISSING`, as in the other verbs. `REPORT_OK` is not
+`IN_SYNC`: it says the rules found nothing wrong, not that a credential is
+healthy.
 
 **`VAULT_ONLY` is what `creds generate --promote` reports**: the vault holds this
 password, and no database has been asked. No other value would be true of that

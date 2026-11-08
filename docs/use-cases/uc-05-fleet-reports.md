@@ -4,10 +4,11 @@ Depends on: `../design/00-principles.md`, `../design/01-configuration.md`,
 `../design/02-oracle-privileges.md`
 
 This document specifies `sopuli report accounts`, `sopuli report privileges`
-and `sopuli report history`. **Nothing in it is built yet.** Oracle comes
-first; PostgreSQL, MySQL and MariaDB come later. §9 lists the decisions. The
-command names, flags and config keys in this document are proposals until the
-PR that builds each one fixes them.
+and `sopuli report history`. **`report accounts` is built, on Oracle**, with
+its `reports:` rules (§4, §7). `report privileges` and `report history` are
+not built yet, and their names and flags are proposals until the PR that
+builds each one fixes them. PostgreSQL, MySQL and MariaDB come later: on them
+`report accounts` is refused before it connects. §9 lists the decisions.
 
 ---
 
@@ -110,21 +111,28 @@ refused the whole fleet for one old target would answer nothing.
 
 ## 4. The accounts report
 
-**Not built.** One table per target, in the config's target order. The head of
-each table names the target, the release read from it, and how many accounts
-were read, how many have a problem, how many were not checked, and how many have
-no rule. Then:
+**Built, on Oracle:** `sopuli report accounts [--all]`, with the usual target
+selectors. `docs/local-testing.md` §9a has a run. One table per target, in the
+config's target order. The head of each table names the target, the release
+read from it (`V$INSTANCE.VERSION`), and how many accounts were read, how many
+have a problem, how many were not checked, how many have no rule, and how many
+are undeclared. Then:
 
 - **problems first, worst first:** a password that will expire on an account
-  whose rule says it must not; a locked account; settings that differ from the
-  rule; a declared account missing from a target it is declared for; then
-  accounts not checked;
-- **then information, which never sets exit 3:** an account the config does
-  not declare, and failed logins on an account that is not locked;
-- **then a count of the accounts that passed everything.** A flag lists them.
+  whose rule says it must not; a locked account; the wrong profile; another
+  setting that differs from the rule; a declared account missing from a target
+  it is declared for;
+- **then the accounts not checked, with no rule, and undeclared.** An
+  undeclared account is information and never sets exit 3;
+- **then a count of the accounts that passed everything.** `--all` lists them.
 
 Every row has the account, its kind (application, technical, personal, or
-undeclared), its profile, its status, and what is wrong in plain words.
+undeclared), its profile, its status, its failed-login count (`unknown` where
+it cannot be read truthfully, never 0), its state, and what is wrong in plain
+words. The checks are the lock and whatever the rules state: a setting no rule
+names is not compared. A `personal_accounts:` rule over a **role** is not
+resolved here, because the survey reads no roles, so such an account shows as
+undeclared.
 Accounts that Oracle maintains (`ORACLE_MAINTAINED = 'Y'`) are left out unless a
 rule names them, as a rule for `DBSNMP` does. On 11.2, which has no such
 column, the report uses the same list of Oracle's own accounts that the
@@ -242,8 +250,10 @@ For an account the tool does not manage, only the database's date is shown.
 
 ## 7. Rules in the config
 
-**Built: the config section.** The rules are the `reports:` section
-(`01-configuration.md` §8a). The report that reads them is not built yet.
+**Built.** The rules are the `reports:` section (`01-configuration.md` §8a),
+and `report accounts` (§4) reads them. Where a rule and a `db_profiles` entry,
+or two rules, set one setting two ways, that check is *not checked* on the
+account, and its other checks still run.
 
 The settings are written in words that are not specific to one database
 product: `password_lifetime` and `failed_login_limit`, each `unlimited` or a

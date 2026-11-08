@@ -15,6 +15,7 @@ generated from the same definitions that `--help` reads.
 - [`sopuli doctor`](doctor.md): Check that every target can be reached, and report what it is.
 - [`sopuli lock`](lock.md): Show the advisory locks, and break one.
 - [`sopuli policy`](policy.md): Inspect password policies.
+- [`sopuli report`](report.md): Read-only reports across the declared targets (UC-5).
 - [`sopuli target`](target.md): Inspect the estate.
 - [`sopuli vault`](vault.md): Look at what the stores hold beyond what the config declares.
 

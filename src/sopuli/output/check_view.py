@@ -113,11 +113,13 @@ def _attempted(result: VerifyResult | None) -> bool:
 
     ``SKIPPED`` is the guard declining and ``UNAVAILABLE`` is the method not
     existing here; both carry a result object and neither spent an attempt. Only
-    ``PASS`` and ``FAIL`` are answers the database gave.
+    ``PASS`` and ``FAIL`` are answers the database gave, and a refusal that is
+    ``UNAVAILABLE`` because the session need not be TLS (#1410): the login was
+    made, and counts toward the account's failed logins.
     """
     if result is None:
         return False
-    return result.result in (PASS, FAIL)
+    return result.result in (PASS, FAIL) or result.refused
 
 
 def _secret(binding: Binding, *, version: int | None, stage: str | None) -> dict[str, Any] | None:

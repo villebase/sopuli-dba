@@ -1007,6 +1007,13 @@ class VerifyResult:
     #: unreachable account, keep ``True``, because no reaching login could help
     #: them. Not part of the run document: ``detail`` says it for a reader.
     attempted: bool = True
+    #: ``True`` where the server refused the password at login, whatever
+    #: ``result`` says. On MySQL a refusal over a session that need not be TLS
+    #: is ``unavailable`` (#1410), because an account that requires TLS refuses
+    #: its right password there too; `creds finish-rollover`, which goes ahead
+    #: on an unavailable login, still stops on a refusal. Not part of the run
+    #: document: ``detail`` says it for a reader.
+    refused: bool = False
 
 
 @dataclass(frozen=True)

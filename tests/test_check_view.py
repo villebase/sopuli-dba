@@ -24,6 +24,7 @@ from sopuli.driver.protocol import (
     FAIL,
     PASS,
     SKIPPED,
+    UNAVAILABLE,
     VERIFY_LOGIN,
     UserState,
     VerifyResult,
@@ -136,6 +137,18 @@ def test_a_rejected_password_did_happen() -> None:
     the attempt that `SKIPPED` deliberately did not spend."""
     rejected = VerifyResult(method=VERIFY_LOGIN, result=FAIL, detail="ORA-01017")
     entry = build_result(binding(), check.Outcome(check.DRIFT, "rejected", rejected))
+
+    assert entry["actions"][0]["applied"] is True
+
+
+def test_a_refusal_without_tls_did_happen_though_it_is_unavailable() -> None:
+    """#1410: on MySQL and MariaDB a refusal over a session that need not be
+    TLS is `UNAVAILABLE`, but the login was made and counts toward the
+    account's failed logins."""
+    refused = VerifyResult(
+        method=VERIFY_LOGIN, result=UNAVAILABLE, detail="refused (1045)", refused=True
+    )
+    entry = build_result(binding(), check.Outcome(check.UNVERIFIABLE, "refused", refused))
 
     assert entry["actions"][0]["applied"] is True
 

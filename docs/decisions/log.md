@@ -5033,3 +5033,47 @@ the register.
 - **Known cost:** under `DISABLED`, or `PREFERRED` against a server without
   TLS, anything on the path can send its own key and read the tool's
   password and, in `creds check --method login`, an application's.
+
+## #1410
+
+- **Decided:** 2026-11-09, #1410
+- **Question:** an account created `REQUIRE SSL` answers its right password
+  with `1045` over a plain connection, as it does a wrong one (measured on
+  8.4.13, with PyMySQL 1.2.3 and 1.2.4). `creds check --method login` on
+  MySQL reported every `1045` as `fail`. What does a `1045` over a plain
+  connection say?
+- **Decision:** the maintainer's, A: as on MariaDB, a `1045` is `fail` only
+  where the target's `ssl_mode` requires TLS (`REQUIRED`, `VERIFY_CA`,
+  `VERIFY_IDENTITY`). Under `DISABLED` or `PREFERRED` it is `unavailable`,
+  and the detail says why. The result still says the server refused the
+  password (`VerifyResult.refused`), and `creds finish-rollover`, which goes
+  ahead on an `unavailable` login on MySQL (#1224), stops on a refused one.
+  The MariaDB driver sets `refused` the same way, where no other account
+  could have answered, so its close stops too, as UC-1's "the same gates"
+  says. A refused login also counts as one made in `actions[].applied`.
+  The review of the first version found that, without this, a refusal of the
+  vault's `current` would let the run send `DISCARD OLD PASSWORD` and leave
+  the account with only a password the vault does not hold. The maintainer
+  chose this fix over B and C below.
+- **Why:** a wrong `fail` tells the DBA that a right password is wrong.
+  MariaDB's driver already answers the same case this way, so the two
+  products agree. The close is the one step a wrong guess makes worse, so it
+  keeps reading a refusal as a refusal.
+- **Rejected:**
+  1. B: read the account's `ssl_type` from `mysql.user` and report
+     `unavailable` only for an account that requires TLS. It keeps `fail`
+     for every other account, but the tool account would need a new column
+     grant, so every existing install would have to re-run its grants.
+  2. C: leave it, and document it.
+  3. Read `PREFERRED` by the encryption the tool's own session got. The
+     login's own session may differ, and MariaDB reads the mode.
+- **Known cost:** under `DISABLED` or `PREFERRED`:
+  1. `creds check` never reports a wrong MySQL password as `fail`; it is
+     `unavailable`. `PREFERRED` counts as not requiring TLS even where the
+     session is TLS, as on MariaDB.
+  2. `creds check --include-previous` reports `previous_password_accepted`
+     as null, not false, for a previous password the server refuses.
+  3. After a change, a refused login leaves the change not confirmed rather
+     than failed, so the rotation's promotion waits.
+  4. `finish-rollover` reports a refused `current` as `UNVERIFIABLE`, not
+     `DRIFT`. The window stays open either way.

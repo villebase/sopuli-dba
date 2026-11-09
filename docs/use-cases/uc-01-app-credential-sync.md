@@ -683,7 +683,11 @@ These rules decide what `apply` does with each account:
   verification result `stored`, the account is `IN_SYNC`, and its pending
   password can be promoted. `stored` is weaker than `pass`: the server records
   a password change at or after the tool's statement, and no client has
-  logged in with the password. An expired account is changed as on Oracle: a
+  logged in with the password. A refusal is a `fail` only where the target's
+  `mysql.ssl_mode` requires TLS, as on MariaDB: an account that requires TLS
+  refuses its right password over a session without it
+  ([#1410](../decisions/log.md#1410)). Elsewhere it is `unavailable`, and the
+  change is not confirmed. An expired account is changed as on Oracle: a
   new password ends the expiry, with `RETAIN CURRENT PASSWORD` or without, and
   a rollover's retained password logs in too (`04_lock_expiry_probe.py`, LE7
   and LE8, [#1225](../decisions/log.md#1225)).
@@ -1620,9 +1624,12 @@ CURRENT PASSWORD` keeps the old password working beside the new one, and
   selected account and reports `changed: true`, because the tool cannot read
   whether a password is retained and the server accepts the statement with none
   (DP1). That is an exception to invariant 9. Its gates still apply: a staged
-  `pending` refuses the close, and so does a login that the vault's `current`
-  fails. Where no login can reach the account, the close goes ahead and the row
-  says `current` was not verified. The rotation confirmed it before it promoted.
+  `pending` refuses the close, and so does a login that the server refuses
+  with the vault's `current`. Where `ssl_mode` does not require TLS, that
+  refusal is `UNVERIFIABLE`, not `DRIFT` ([#1410](../decisions/log.md#1410)),
+  and the window still stays open. Where no login can reach the account, the
+  close goes ahead and the row says `current` was not verified. The rotation
+  confirmed it before it promoted.
 
 **On MariaDB the tool opens the window too** ([#1271](../decisions/log.md#1271)).
 MariaDB has no `RETAIN CURRENT PASSWORD` and no `DISCARD OLD PASSWORD`. A

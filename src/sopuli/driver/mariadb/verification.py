@@ -70,10 +70,9 @@ from sopuli.driver.mariadb.errors import ACCOUNT_BLOCKED, ACCOUNT_LOCKED, from_e
 from sopuli.driver.mysql.errors import MUST_CHANGE_PASSWORD_LOGIN
 from sopuli.driver.mysql_family.accounts import current_user
 from sopuli.driver.mysql_family.connection import (
-    TLS_REQUIRED_MODES,
     connect_arguments,
     require_tls,
-    settings_of,
+    requires_tls,
 )
 from sopuli.driver.mysql_family.encryption import read_encryption
 from sopuli.driver.mysql_family.errors import ACCESS_DENIED, MUST_CHANGE_PASSWORD
@@ -214,7 +213,7 @@ def login(
         correlation_id=correlation_id,
         timeouts=timeouts,
     )
-    tls = settings_of(target).ssl_mode in TLS_REQUIRED_MODES
+    tls = requires_tls(target)
     started = time.monotonic()
     try:
         connection = pymysql.connect(**arguments)
@@ -273,7 +272,13 @@ def _ended(
     result = outcome(declared, failure.number, competing, tls=tls) if failure.number else None
     if result is not None:
         return VerifyResult(
-            method=VERIFY_LOGIN, result=result[0], latency_ms=latency, detail=result[1]
+            method=VERIFY_LOGIN,
+            result=result[0],
+            latency_ms=latency,
+            detail=result[1],
+            # The declared account's own refusal: where another account could
+            # have answered, the refusal may be that account's.
+            refused=failure.number == ACCESS_DENIED and competing is None,
         )
     if not connecting:
         # The password was accepted. Where only the declared account can

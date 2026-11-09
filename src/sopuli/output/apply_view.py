@@ -323,7 +323,7 @@ def _attempted(result: VerifyResult | None) -> bool:
     """Whether a login was actually made. `check_view`'s rule, unchanged."""
     if result is None:
         return False
-    return result.result in (PASS, FAIL)
+    return result.result in (PASS, FAIL) or result.refused
 
 
 def _secret(

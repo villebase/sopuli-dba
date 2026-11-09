@@ -141,7 +141,9 @@ def test_a_refusal_without_tls_says_nothing(stage: Stage) -> None:
 
     assert plain.result == UNAVAILABLE
     assert "does not require TLS" in str(plain.detail)
+    assert plain.refused is True, "finish-rollover stops on it (#1410)"
     assert over_tls.result == PASS
+    assert over_tls.refused is False
 
 
 def test_a_locked_account_s_right_password_passes(stage: Stage) -> None:

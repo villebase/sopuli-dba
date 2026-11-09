@@ -203,7 +203,11 @@ def decide(verification: VerifyResult, *, unknown_window: bool = False) -> Outco
     logs in only as a sole ``user@%`` account, so for any other account the
     gate would never let the close happen. A staged ``pending`` still refuses
     it, and the rotation confirmed ``current`` before it promoted.
-    :func:`closed` says ``current`` was not verified. A **fail** still refuses.
+    :func:`closed` says ``current`` was not verified. A **fail** still refuses,
+    and so does an unavailable login the server **refused**
+    (:attr:`~sopuli.driver.protocol.VerifyResult.refused`): on MySQL a refusal
+    without TLS is unavailable (#1410), and closing the window after one could
+    leave the account with only a password the vault does not hold.
 
     ``None`` on a **pass**, which is the weaker half of the answer and known to
     be: the window means both passwords authenticate, so this cannot prove the
@@ -221,7 +225,7 @@ def decide(verification: VerifyResult, *, unknown_window: bool = False) -> Outco
     """
     if verification.result == PASS:
         return None
-    if verification.result == UNAVAILABLE and unknown_window:
+    if verification.result == UNAVAILABLE and unknown_window and not verification.refused:
         return None
     if verification.result == FAIL:
         return Outcome(

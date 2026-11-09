@@ -1,4 +1,4 @@
-"""Resolving the admin credential: P2's four sources, at connect time.
+"""Resolving the admin credential: P2's sources, at connect time.
 
 ``admin:`` is parsed by :mod:`sopuli.config.targets` and validated against its
 target by :mod:`sopuli.config.references`. This module resolves it when a command
@@ -11,6 +11,7 @@ P2's bootstrap list, in its order of preference:
 ``external``    a wallet, Kerberos, OS auth -- there is no material to resolve
 ``vault``       a whole SecretRef (§7), resolved through the target's store
 ``prompt``      interactive
+``keyring``     ``entry:``, under the service ``sopuli`` in the OS keyring (#1417)
 ``env``         ``password_env:``, defaulting to ``SOPULI_DB_ADMIN_PASSWORD``
 =============== ================================================================
 
@@ -43,6 +44,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 
+from sopuli import os_keyring
 from sopuli.config.errors import ConfigError, KeyPath
 from sopuli.config.expansion import declared_at
 from sopuli.config.model import AdminAuth, Config, ExpandedTarget, MaterialRef
@@ -62,6 +64,7 @@ ADMIN_USER_ENV = "SOPULI_DB_ADMIN_USER"
 VAULT = "vault"
 PROMPT = "prompt"
 ENV = "env"
+KEYRING = "keyring"
 
 #: The method whose material is an environment variable, and so the one P2
 #: requires be "flagged in output as low-assurance". A set of one rather than
@@ -394,6 +397,8 @@ def resolve(
         secret, source = _from_prompt(target, username=username, prompt=prompt)
     elif auth.method == ENV:
         secret, source = _from_env(auth, target=target, env=env)
+    elif auth.method == KEYRING:
+        secret, source = _from_keyring(auth, target=target, env=env)
     else:  # pragma: no cover - `ADMIN_METHODS` is a closed set the builder checks
         raise AdminCredentialError(
             f"target {target.name!r} names an unknown admin auth method {auth.method!r}",
@@ -467,6 +472,32 @@ def _from_env(
         at = _at(target, "auth", "password_env") if auth.password_env else _at(target, "auth")
         raise AdminCredentialError(error.message, at=at, hint=error.hint) from error
     return secret, f"the environment variable {name}"
+
+
+def _from_keyring(
+    auth: AdminAuth, *, target: ExpandedTarget, env: Mapping[str, str]
+) -> tuple[Secret, str]:
+    """``method: keyring`` -- one entry under the service ``sopuli`` (#1417).
+
+    Read through :func:`sopuli.material.resolve`, so a keyring entry is read
+    one way wherever it is named, and re-raised at ``entry:`` as
+    :func:`_from_env` does. Not flagged low-assurance: see
+    :class:`~sopuli.config.model.AdminAuth`.
+    """
+    entry = auth.entry
+    if entry is None:  # pragma: no cover - `Method(required=("entry",))` guarantees one
+        raise AdminCredentialError(
+            f"target {target.name!r} authenticates from the OS keyring and names no entry",
+            at=_at(target, "auth", "entry"),
+        )
+    where = f"target {target.name!r} admin credential"
+    try:
+        secret = resolve_material(MaterialRef(kind=KEYRING, location=entry), env=env, where=where)
+    except MaterialError as error:
+        raise AdminCredentialError(
+            error.message, at=_at(target, "auth", "entry"), hint=error.hint
+        ) from error
+    return secret, os_keyring.describe(entry)
 
 
 def _read_ref(

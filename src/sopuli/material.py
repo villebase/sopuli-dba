@@ -1,9 +1,8 @@
 """Turning a :class:`~sopuli.config.model.MaterialRef` into a value.
 
-The config layer parses ``{ env: NAME }`` and ``{ file: PATH }`` and stops
-there. Nothing has ever read one, which is why every auth method in
-``01-configuration.md`` §3a is unreachable: they all need material, and material
-is named rather than written.
+The config layer parses ``{ env: NAME }``, ``{ file: PATH }`` and
+``{ keyring: NAME }`` and stops there. This module reads them when something
+connects. :mod:`sopuli.os_keyring` reads the third.
 
 **Resolution is a function over a ref, never a method on one.** The type's own
 docstring is the reason:
@@ -102,6 +101,12 @@ def resolve(ref: MaterialRef, *, env: Mapping[str, str], where: str) -> Secret:
         return _from_env(ref.location, env=env, where=where)
     if ref.kind == "file":
         return _from_file(Path(ref.location), where=where, wrote=ref.location)
+    if ref.kind == "keyring":
+        # Imported here: `sopuli.os_keyring` raises this module's error, and a
+        # run that names no keyring source never loads it.
+        from sopuli import os_keyring
+
+        return os_keyring.read(ref.location, where=where)
     # Unreachable through a config file: `MATERIAL_KINDS` is a closed set the
     # builder validates against. Kept because this is also reachable from code.
     raise MaterialError(f"{where}: unknown material source {ref.kind!r}", at=ROOT)

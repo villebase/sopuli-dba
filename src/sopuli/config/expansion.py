@@ -303,6 +303,7 @@ def _render_admin_auth(
         method=auth.method,
         secret=None if rendered is None else parse_secret_ref(rendered, at=at.key("secret")),
         password_env=_maybe(auth.password_env, variables, at=at.key("password_env")),
+        entry=_maybe(auth.entry, variables, at=at.key("entry")),
     )
 
 

@@ -531,6 +531,7 @@ pip install "sopuli-dba[oci]"          # + OCI Vault / Secrets
 pip install "sopuli-dba[notify]"       # + UC-2's webhook notify channel
 pip install "sopuli-dba[yopass]"       # + UC-2's one_time_link delivery: httpx and pysequoia
 pip install "sopuli-dba[onepassword]"  # + UC-2's onepassword_share delivery: 1Password's SDK
+pip install "sopuli-dba[keyring]"      # + the OS keyring, for the tool's own credentials
 pip install "sopuli-dba[all]"          # everything
 ```
 
@@ -541,6 +542,7 @@ pip install "sopuli-dba[all]"          # everything
 | driver extras | one database driver per product (P1) | `sopuli-dba[<product>]` |
 | channel extras | the client a delivery channel needs | `sopuli-dba[notify]` |
 | delivery extras | what a delivery method needs to reach its service | `sopuli-dba[yopass]`, `sopuli-dba[onepassword]` |
+| credential source extras | what the tool reads its own credentials from | `sopuli-dba[keyring]` |
 | `all` | every extra above | `sopuli-dba[all]` |
 
 This is packaging, not architecture: nothing above about `SecretStore`, the
@@ -617,7 +619,9 @@ Sources, in order of preference:
    Kerberos, OS authentication
 2. A vault path (vault authenticated by machine identity, not by a password)
 3. Interactive prompt
-4. Environment variable — supported, but flagged in output as low-assurance
+4. The OS keyring — an entry the same user wrote, read in an unlocked session
+   (#1417)
+5. Environment variable — supported, but flagged in output as low-assurance
 
 Storing the admin password in the config file is not supported at all.
 
@@ -632,7 +636,7 @@ reaching the database. Reaching the store needs a credential too. A SecretRef
 cannot provide it, because a ref is resolved by an authenticated store. That
 removes the second source from the list. What remains is an external or machine
 identity (AppRole, Kubernetes, instance principal), a file, an interactive
-prompt, and the environment. `--vault-token-file` is the command-line form of
+prompt, the OS keyring, and the environment. `--vault-token-file` is the command-line form of
 the file source. It takes a **path**, for the reason invariant 1 gives: a token
 as an option value is visible in `ps`.
 [ADR-007](../decisions/adr-007-vault-token-flag.md) records the decision, and
@@ -829,7 +833,7 @@ Config files are validated against a published JSON Schema. `sopuli config
 validate` is a first-class command and exits non-zero on unknown keys — a typo in
 a credential tool must never be silently ignored.
 
-The schema is `docs/schemas/sopuli-config-3.7.schema.json`. `sopuli/config/schema.py`
+The schema is `docs/schemas/sopuli-config-3.8.schema.json`. `sopuli/config/schema.py`
 generates it from the config layer, so it cannot drift from what the tool
 accepts. It is structural: an editor that uses it catches a typo, and the rules
 that span several keys stay in the validators, where an error can name the key.
@@ -869,6 +873,14 @@ startup, before it parses arguments, so that a usage error is also written
 correctly. stdin is included because its failure is silent: a password read
 under cp1252 becomes a different password with no error, and it appears much
 later as an authentication failure.
+
+**Keyring.** A `keyring:` source (#1417) reads the tool's own credentials
+through the `keyring` package, which reaches each platform's keyring in the
+table above. It is the one material source that does not work on every
+supported platform in every setting: a Linux server with no desktop session
+has no Secret Service to reach. There the source is refused with a message that
+names the entry, the backend, and `env:` or `file:` as the alternatives. It
+never falls back to another source.
 
 Instant Client is required at runtime on every platform, so installation is
 "install the client, then install sopuli". `sopuli doctor` checks the client's

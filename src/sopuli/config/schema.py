@@ -31,7 +31,7 @@ the intended division.
 
 Regenerate the committed artefact with::
 
-    python -m sopuli.config.schema > docs/schemas/sopuli-config-3.7.schema.json
+    python -m sopuli.config.schema > docs/schemas/sopuli-config-3.8.schema.json
 """
 
 from __future__ import annotations
@@ -65,7 +65,7 @@ from sopuli.config import (
 #: `01-configuration.md` §9b says when it changes. What each shape accepts and
 #: refuses, and why, is in the function that builds it: its docstring or its
 #: ``description``.
-SCHEMA_VERSION = "3.7"
+SCHEMA_VERSION = "3.8"
 
 SCHEMA_FILENAME = f"sopuli-config-{SCHEMA_VERSION}.schema.json"
 
@@ -539,7 +539,7 @@ def _vault_auth() -> Schema:
 
 
 def _material_ref() -> Schema:
-    """``{ env: NAME }`` or ``{ file: PATH }`` -- exactly one of them.
+    """``{ env: NAME }``, ``{ file: PATH }`` or ``{ keyring: NAME }`` -- exactly one.
 
     The one rule in this whole schema that is a security property rather than a
     convenience: there is no property for a value, so a config file has nowhere to
@@ -549,8 +549,9 @@ def _material_ref() -> Schema:
     return {
         "type": "object",
         "description": (
-            "Where a piece of auth material comes from: an environment variable or a "
-            "file. Not a SecretRef -- this is what you need before you have a vault."
+            "Where a piece of auth material comes from: an environment variable, a "
+            "file, or an entry under the service `sopuli` in the OS keyring. Not a "
+            "SecretRef -- this is what you need before you have a vault."
         ),
         "additionalProperties": False,
         "minProperties": 1,
@@ -640,12 +641,19 @@ def _admin_auth() -> Schema:
                     "and §7's tokens. Defaults to the target's own vault."
                 ),
             },
+            "entry": {
+                **STRING,
+                "description": (
+                    "For `method: keyring`: the name of an entry under the service "
+                    "`sopuli` in the OS keyring."
+                ),
+            },
         },
         required=("method",),
         description=(
             "P2's bootstrap sources, in its order of preference: external "
-            "authentication, a vault path, an interactive prompt, an environment "
-            "variable."
+            "authentication, a vault path, an interactive prompt, the OS keyring, an "
+            "environment variable."
         ),
     )
 

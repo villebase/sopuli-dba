@@ -39,7 +39,7 @@ on which Oracle release, and what it showed.
 | [design/04-testing.md](design/04-testing.md) | What can and cannot be containerised, capability-driven matrix, tiering, fault injection, release gates |
 | [use-cases/uc-01-app-credential-sync.md](use-cases/uc-01-app-credential-sync.md) | UC-1: application DB account credentials, vault as master — `generate` / `apply` / `check` / `rotate` |
 | [use-cases/uc-02-personal-account-passwords.md](use-cases/uc-02-personal-account-passwords.md) | UC-2: a person's own database account — the `account` verbs, password reset, the reset record, and delivery methods |
-| [use-cases/uc-05-fleet-reports.md](use-cases/uc-05-fleet-reports.md) | UC-5: read-only reports across a fleet — accounts, privileges and rotation history. Not built yet |
+| [use-cases/uc-05-fleet-reports.md](use-cases/uc-05-fleet-reports.md) | UC-5: read-only reports across a fleet — accounts, privileges and rotation history. Built on Oracle |
 | [workflow.md](workflow.md) | Binding: branching (`issue-<n>-<slug>`, no long-lived integration branch), Conventional Commits, release-please and the 0.x policy |
 | [measurements.md](measurements.md) | What ran on which Oracle release, when, and what it showed: the one place for release-by-release results |
 | [local-testing.md](local-testing.md) | The usual commands, run by hand against the tier-1 stack: setup, the `creds` lifecycle, the `account` verbs, and a few refusals |
@@ -946,7 +946,7 @@ No 1Password store exists. These answer #1193, whether one could. The probe is
 
 ## Next use cases
 
-UC-5 has a document and is not built. The others are not specified. Each has
+UC-5 has a document and is built on Oracle. The others are not specified. Each has
 a number so that work deferred from a
 specified use case can name where it goes. A number does not change once it is
 written down, because documents, issues and pull requests cite it. A new use case

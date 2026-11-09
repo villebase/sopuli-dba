@@ -12,7 +12,12 @@ import pytest
 
 from sopuli.driver.mysql.accounts import Account
 from sopuli.driver.mysql.errors import classify
-from sopuli.driver.mysql.verification import UNGUARDED, login_outcome, not_tried_reason
+from sopuli.driver.mysql.verification import (
+    NOT_OVER_TLS,
+    UNGUARDED,
+    login_outcome,
+    not_tried_reason,
+)
 from sopuli.driver.protocol import FAIL, PASS, UNAVAILABLE
 
 
@@ -85,8 +90,8 @@ def test_an_anonymous_account_at_any_host_does_not_compete() -> None:
         (3955, UNAVAILABLE),
     ],
 )
-def test_each_answer_at_login_says_what_it_shows(number: int, result: str) -> None:
-    outcome = login_outcome(classify(number, "refused"))
+def test_each_answer_at_login_over_tls_says_what_it_shows(number: int, result: str) -> None:
+    outcome = login_outcome(classify(number, "refused"), tls=True)
 
     assert outcome is not None
     assert outcome[0] == result
@@ -94,11 +99,29 @@ def test_each_answer_at_login_says_what_it_shows(number: int, result: str) -> No
 
 def test_a_pass_or_fail_says_the_lockout_guard_is_unavailable() -> None:
     for number in (1045, 1862, 3118):
-        outcome = login_outcome(classify(number, "refused"))
+        outcome = login_outcome(classify(number, "refused"), tls=True)
         assert outcome is not None
         assert outcome[1].endswith(UNGUARDED)
 
 
+def test_a_refusal_where_tls_is_not_required_says_nothing() -> None:
+    """Measured on 8.4.13: an account created REQUIRE SSL answers its right
+    password with 1045 over a plain connection (#1410)."""
+    outcome = login_outcome(classify(1045, "refused"), tls=False)
+
+    assert outcome is not None
+    assert outcome[0] == UNAVAILABLE
+    assert NOT_OVER_TLS in outcome[1]
+
+
+@pytest.mark.parametrize(("number", "result"), [(1862, PASS), (3118, PASS), (3955, UNAVAILABLE)])
+def test_the_other_answers_mean_the_same_without_tls(number: int, result: str) -> None:
+    outcome = login_outcome(classify(number, "refused"), tls=False)
+
+    assert outcome is not None
+    assert outcome[0] == result
+
+
 def test_a_failure_that_says_nothing_about_the_password_is_raised() -> None:
     """A server that cannot be reached is the caller's to raise."""
-    assert login_outcome(classify(2003, "Can't connect")) is None
+    assert login_outcome(classify(2003, "Can't connect"), tls=True) is None

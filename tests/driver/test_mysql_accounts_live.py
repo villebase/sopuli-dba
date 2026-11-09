@@ -37,8 +37,23 @@ class Stage:
 
     live: Any
     tool: str
+    tool_password: str
     session: Any
     created: list[tuple[str, str]] = field(default_factory=list)
+
+    def plain_session(self) -> Any:
+        """A second session as the tool account, under `ssl_mode: DISABLED`."""
+        target = ExpandedTarget(
+            target=Target(
+                name="tier1-mysql-plain",
+                type="mysql",
+                dsn=self.live.dsn,
+                mysql=TargetMysql(ssl_mode="DISABLED"),
+            )
+        )
+        return session_module.MysqlDriver(correlation_id="tier1").connect(
+            target, Credential(username=self.tool, secret=Secret(self.tool_password))
+        )
 
     def admin(self, statement: str, args: tuple[Any, ...] = ()) -> None:
         with self.live.connect() as admin, admin.cursor() as cursor:
@@ -69,7 +84,7 @@ def stage(live_mysql: Any) -> Iterator[Stage]:
     session = session_module.MysqlDriver(correlation_id="tier1").connect(
         target, Credential(username=tool, secret=Secret(password))
     )
-    staged = Stage(live=live_mysql, tool=tool, session=session)
+    staged = Stage(live=live_mysql, tool=tool, tool_password=password, session=session)
     try:
         yield staged
     finally:
@@ -133,6 +148,27 @@ def test_check_logs_in_as_a_user_s_only_account_at_any_host(stage: Stage) -> Non
     assert "lockout guard is unavailable" in str(right.detail)
     assert wrong.result == "fail"
     assert "(1045)" in str(wrong.detail)
+
+
+def test_a_refusal_over_a_plain_connection_says_nothing(stage: Stage) -> None:
+    """An account created REQUIRE SSL answers its right password with 1045
+    over a plain connection, as it does a wrong one, so under `ssl_mode:
+    DISABLED` neither is reported as `fail` (#1410). Over TLS, the wrong one is."""
+    user = stage.account("%", extra="by %s require ssl")
+    stage.admin("alter user %s@'%%' identified by %s", (user, PASSWORD))
+
+    plain = stage.plain_session()
+    try:
+        right = plain.verify_password(f"{user}@%", Secret(PASSWORD))
+        wrong = plain.verify_password(f"{user}@%", Secret("Not-the-pw9"))
+    finally:
+        plain.close()
+    over_tls = stage.session.verify_password(f"{user}@%", Secret("Not-the-pw9"))
+
+    assert right.result == "unavailable"
+    assert wrong.result == "unavailable"
+    assert "does not require TLS" in str(right.detail)
+    assert over_tls.result == "fail"
 
 
 def test_an_expired_password_that_logs_in_passes(stage: Stage) -> None:

@@ -5033,3 +5033,29 @@ the register.
 - **Known cost:** under `DISABLED`, or `PREFERRED` against a server without
   TLS, anything on the path can send its own key and read the tool's
   password and, in `creds check --method login`, an application's.
+
+## #1410
+
+- **Decided:** 2026-11-09, #1410
+- **Question:** an account created `REQUIRE SSL` answers its right password
+  with `1045` over a plain connection, as it does a wrong one (measured on
+  8.4.13, with PyMySQL 1.2.3 and 1.2.4). `creds check --method login` on
+  MySQL reported every `1045` as `fail`. What does a `1045` over a plain
+  connection say?
+- **Decision:** the maintainer's, A: as on MariaDB, a `1045` is `fail` only
+  where the target's `ssl_mode` requires TLS (`REQUIRED`, `VERIFY_CA`,
+  `VERIFY_IDENTITY`). Under `DISABLED` or `PREFERRED` it is `unavailable`,
+  and the detail says why.
+- **Why:** a wrong `fail` tells the DBA that a right password is wrong.
+  MariaDB's driver already answers the same case this way, so the two
+  products agree.
+- **Rejected:**
+  1. B: read the account's `ssl_type` from `mysql.user` and report
+     `unavailable` only for an account that requires TLS. It keeps `fail`
+     under `DISABLED`, at the cost of a read that MariaDB's driver does not
+     make.
+  2. C: leave it, and document it.
+- **Known cost:** under `DISABLED`, or `PREFERRED`, `creds check` never
+  reports a wrong MySQL password as `fail`: it is `unavailable`.
+  `PREFERRED` counts as not requiring TLS even where the session is TLS,
+  as on MariaDB.

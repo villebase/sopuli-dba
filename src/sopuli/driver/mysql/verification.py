@@ -94,12 +94,29 @@ def not_tried_reason(
     return None
 
 
-def login_outcome(diagnosis: Diagnosis) -> tuple[str, str] | None:
+#: Why a refusal over a session that need not be TLS says nothing (#1410).
+NOT_OVER_TLS = (
+    "the target's `mysql.ssl_mode` does not require TLS, and an account that requires "
+    "TLS answers its right password with the same refusal over a session without it"
+)
+
+
+def login_outcome(diagnosis: Diagnosis, *, tls: bool) -> tuple[str, str] | None:
     """The result and detail for a login that failed with ``diagnosis``, or
     ``None`` where the failure says nothing about the password, and the caller
-    raises it."""
+    raises it. ``tls`` is whether the target's ``ssl_mode`` requires TLS.
+
+    Measured on 8.4.13: an account created ``REQUIRE SSL`` answers its right
+    password with ``1045`` over a plain connection, as it does a wrong one. So
+    a ``1045`` is a wrong password only where the session must be TLS. As on
+    MariaDB, ``PREFERRED`` does not count: the server may offer no TLS."""
     if diagnosis.number == ACCESS_DENIED:
-        return FAIL, f"the server refused the password ({ACCESS_DENIED}); {UNGUARDED}"
+        if tls:
+            return FAIL, f"the server refused the password ({ACCESS_DENIED}); {UNGUARDED}"
+        return UNAVAILABLE, (
+            f"the server refused the password ({ACCESS_DENIED}), but {NOT_OVER_TLS}, so "
+            f"it says nothing certain about the password"
+        )
     if diagnosis.number in (MUST_CHANGE_PASSWORD_LOGIN, MUST_CHANGE_PASSWORD):
         return PASS, (
             f"the server accepted the password, and then refused the session because "

@@ -60,11 +60,17 @@ MAX_INT_BITS = 14_000
 #: it cannot hold is the tool's fault.
 TOOL_FAULT = "this is a fault in the tool; report it with the command that ran"
 
-#: What every refusal of a damaged file says to do.
+#: What every refusal of a file this build cannot read says to do. Restoring
+#: is the last step, not the first: a store that is fine but was not the file
+#: meant, or a process that reads it under other limits, would lose every
+#: password written since the backup.
 RESTORE = (
-    "the file was damaged, or edited by hand; restore it from a backup, and check "
-    "that what it holds still matches the databases. Version numbers written "
-    "since the backup will be used again, so check any `@version=N` pin too"
+    "first check that the store's `addr` names this store's file, and that this "
+    "process runs with Python's default limits (no lower PYTHONINTMAXSTRDIGITS). "
+    "If both hold, the file was damaged or edited by hand: restore it from a "
+    "backup, check that what it holds still matches the databases, and check any "
+    "`@version=N` pin, because version numbers written since the backup will be "
+    "used again"
 )
 
 
@@ -99,8 +105,12 @@ class Version:
             to_rfc3339(self.created_at)
         except OverflowError:
             raise ValueError("a version's created_at is outside the UTC range") from None
-        if not isinstance(json.loads(self.text), dict):
-            raise ValueError("a version's text must be a JSON object")
+        try:
+            parsed = json.loads(self.text, parse_constant=_reject_constant)
+        except ValueError:
+            raise ValueError("a version's text must be JSON with no NaN") from None
+        if not isinstance(parsed, dict) or _not_plain(parsed, depth=0) is not None:
+            raise ValueError("a version's text must be a JSON object of plain values")
 
     @property
     def data(self) -> dict[str, Any]:
@@ -122,23 +132,39 @@ class Document:
     paths: Mapping[str, tuple[Version, ...]]
 
     def __post_init__(self) -> None:
-        for path, versions in self.paths.items():
+        # Copied into an immutable mapping of tuples first, so a caller that
+        # keeps the dict or lists it passed cannot change them after the check.
+        frozen = MappingProxyType({path: tuple(versions) for path, versions in self.paths.items()})
+        for path, versions in frozen.items():
             if _path_problem(path) is not None or not versions:
                 raise ValueError("a document path must be valid text with versions")
+            if not all(isinstance(one, Version) for one in versions):
+                raise ValueError("a document path's versions must be Version objects")
             if not _consecutive(versions):
                 raise ValueError("a document path's version numbers must be consecutive")
+        object.__setattr__(self, "paths", frozen)
 
     def current(self, path: str) -> int:
         """The newest version number ``path`` has, or 0 where it has none."""
-        versions = self.paths.get(path, ())
-        return versions[-1].number if versions else 0
+        newest = self.latest(path)
+        return 0 if newest is None else newest.number
 
     def latest(self, path: str) -> Version | None:
         versions = self.paths.get(path, ())
         return versions[-1] if versions else None
 
     def version(self, path: str, number: int) -> Version | None:
-        return next((one for one in self.paths.get(path, ()) if one.number == number), None)
+        """Version ``number`` of ``path``, or ``None`` where it is not kept.
+
+        ``number`` must be an ``int``: ``True`` and ``1.0`` equal 1 in Python
+        and are refused rather than read as a pin.
+        """
+        if type(number) is not int:
+            raise TypeError("a version number must be an int")
+        versions = self.paths.get(path, ())
+        # The numbers are consecutive, so the position is the difference.
+        index = number - versions[0].number if versions else -1
+        return versions[index] if 0 <= index < len(versions) else None
 
     def written(
         self, path: str, data: Any, *, now: datetime, max_versions: int | None
@@ -252,23 +278,25 @@ def dumps(document: Document) -> bytes:
 
     The same document is always the same bytes. Two documents that compare
     equal need not be: ``1`` and ``1.0`` are equal in Python and written apart.
+
+    Each version's data is already held as :func:`_json`'s text, so it is
+    placed in the output as it is rather than parsed and written again. The
+    rest is written in :func:`_json`'s form by hand: keys in sorted order
+    (``created_at``, ``data``, ``version``; paths sorted), no spaces. A test
+    holds this equal to :func:`_json` of the whole body.
     """
-    body = {
-        "format": FORMAT,
-        "format_version": FORMAT_VERSION,
-        "paths": {
-            path: [
-                {
-                    "version": one.number,
-                    "created_at": to_rfc3339(one.created_at),
-                    "data": one.data,
-                }
-                for one in versions
-            ]
-            for path, versions in document.paths.items()
-        },
-    }
-    return _json(body).encode("utf-8")
+    paths = ",".join(
+        _json(path) + ":[" + ",".join(_version_json(one) for one in document.paths[path]) + "]"
+        for path in sorted(document.paths)
+    )
+    head = _json(FORMAT)
+    text = f'{{"format":{head},"format_version":{FORMAT_VERSION},"paths":{{{paths}}}}}'
+    return text.encode("utf-8")
+
+
+def _version_json(version: Version) -> str:
+    created_at = _json(to_rfc3339(version.created_at))
+    return f'{{"created_at":{created_at},"data":{version.text},"version":{version.number}}}'
 
 
 class _DuplicateKeyError(ValueError):
@@ -316,7 +344,7 @@ def loads(raw: bytes) -> Document:
         raise DocumentError("an object in it names one key twice") from None
     except RecursionError:
         raise DocumentError("it nests too deeply to read") from None
-    except (UnicodeDecodeError, ValueError):
+    except ValueError:  # UnicodeDecodeError is one too
         # ValueError also covers an integer longer than Python will read.
         raise DocumentError("it is not UTF-8 JSON this build can read") from None
     if not isinstance(body, dict) or body.get("format") != FORMAT:

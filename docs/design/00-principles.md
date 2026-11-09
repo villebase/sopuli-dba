@@ -541,8 +541,11 @@ path, with fictional passwords, as `dumps` wrote them:
   number as the plain type. A path name must be non-empty, valid UTF-8 text.
 - **`created_at`** is UTC, written as `to_rfc3339` writes it, with a `Z`.
 - **The reader is strict.** A missing or unknown field, a key named twice,
-  numbers that are not consecutive, or a timestamp in another form is damage,
-  and the store refuses to read past it, with a hint to restore a backup. A
+  numbers that are not consecutive, or a timestamp in another form is refused.
+  The hint says what to check first, that `addr` names the store's file and
+  that the process runs with Python's default limits, and only then to restore
+  a backup, because restoring a store that was fine loses the passwords written
+  since. A
   higher `format_version` is not damage: a newer build wrote it, and the hint
   says to upgrade, because restoring an older file would drop the passwords
   written since.

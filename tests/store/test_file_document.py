@@ -288,14 +288,90 @@ def test_a_document_the_reader_would_refuse_cannot_be_built(paths: Any) -> None:
         (1, datetime(2026, 11, 9, 10, 0), "{}", "carry its zone"),
         (1, datetime(1, 1, 1, tzinfo=timezone(timedelta(hours=2))), "{}", "UTC range"),
         (1, NOW, "[]", "JSON object"),
+        (1, NOW, '{"a":NaN}', "no NaN"),
+        (1, NOW, '{"a":' + "[" * 40 + "]" * 40 + "}", "plain values"),
     ],
-    ids=["number-zero", "naive-time", "time-out-of-range", "not-an-object"],
+    ids=["number-zero", "naive-time", "time-out-of-range", "not-an-object", "nan", "too-deep"],
 )
 def test_a_version_the_reader_would_refuse_cannot_be_built(
     number: int, created_at: datetime, text: str, problem: str
 ) -> None:
     with pytest.raises(ValueError, match=problem):
         Version(number, created_at, text)
+
+
+def test_a_document_keeps_no_container_its_caller_can_change() -> None:
+    versions = [Version(1, NOW, "{}")]
+    given = {PATH: versions}
+    document = Document(given)  # type: ignore[arg-type]
+
+    versions.append(Version(3, NOW, "{}"))
+    given["acme/other"] = []
+
+    assert document.paths[PATH] == (Version(1, NOW, "{}"),)
+    assert "acme/other" not in document.paths
+    assert loads(dumps(document)) == document
+
+
+def test_a_document_holds_only_versions() -> None:
+    with pytest.raises(ValueError, match="Version objects"):
+        Document(MappingProxyType({PATH: ("not a version",)}))  # type: ignore[dict-item]
+
+
+@pytest.mark.parametrize("number", [True, 1.0])
+def test_a_pin_that_is_not_an_int_is_refused(number: Any) -> None:
+    """Both equal 1 in Python; neither is a version number."""
+    with pytest.raises(TypeError):
+        written(EMPTY, {"v": 1}).version(PATH, number)
+
+
+def test_a_pin_outside_the_kept_versions_reads_as_nothing() -> None:
+    document = written(EMPTY, *({"v": n} for n in range(1, 5)), max_versions=2)
+
+    assert [document.version(PATH, n) is not None for n in range(0, 6)] == [
+        False,
+        False,
+        False,
+        True,
+        True,
+        False,
+    ]
+
+
+def test_dumps_writes_exactly_what_json_would_write_for_the_whole_body() -> None:
+    """dumps places each version's stored text as it is; this holds it to the
+    form a full serialisation gives, across several paths and odd text."""
+    document = written(EMPTY, {"b": [1, 2.5, None, True], "a": "ä "})
+    for path in ("z/last", "a/first", "m/ä"):
+        document, _ = document.written(path, {"k": {"n": 1}}, now=NOW, max_versions=None)
+    full = {
+        "format": FORMAT,
+        "format_version": FORMAT_VERSION,
+        "paths": {
+            path: [
+                {"version": one.number, "created_at": "2026-11-09T10:00:00Z", "data": one.data}
+                for one in versions
+            ]
+            for path, versions in document.paths.items()
+        },
+    }
+
+    expected = json.dumps(
+        full, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False
+    )
+    assert dumps(document) == expected.encode("utf-8")
+
+
+def test_the_damage_hint_says_what_to_check_before_restoring() -> None:
+    """A store that is fine, at another path or read under a lower limit,
+    would lose the passwords written since a backup if it were restored."""
+    with pytest.raises(DocumentError) as caught:
+        loads(b"{not json")
+
+    hint = caught.value.hint or ""
+    assert hint.startswith("first check that the store's `addr` names this store's file")
+    assert "PYTHONINTMAXSTRDIGITS" in hint
+    assert hint.index("first check") < hint.index("restore it from a backup")
 
 
 def test_an_unknown_path_reads_as_nothing() -> None:

@@ -177,8 +177,13 @@ def test_changing_a_version_reached_through_paths_changes_nothing() -> None:
 
 @pytest.mark.parametrize(
     ("path", "problem"),
-    [("", "empty"), ("acme/\ud800", "not valid UTF-8"), (3, "not text")],
-    ids=["empty", "lone-surrogate", "not-text"],
+    [
+        ("", "empty"),
+        ("acme/\ud800", "not valid UTF-8"),
+        (3, "not plain text"),
+        (QuietStr("acme/app"), "not plain text"),
+    ],
+    ids=["empty", "lone-surrogate", "not-text", "str-subclass"],
 )
 def test_a_path_the_file_cannot_hold_is_refused_at_the_write(path: Any, problem: str) -> None:
     with pytest.raises(StoreError) as caught:
@@ -294,8 +299,23 @@ def test_a_time_outside_the_utc_range_is_refused_at_the_write() -> None:
 
 @pytest.mark.parametrize("keep", [0, True, 2.5, "3"])
 def test_max_versions_must_be_a_whole_number_of_at_least_one(keep: Any) -> None:
-    with pytest.raises(ValueError, match="max_versions"):
+    with pytest.raises(StoreError) as caught:
         EMPTY.written(PATH, {"v": 1}, now=NOW, max_versions=keep)
+
+    assert "max_versions is not a whole number of at least 1" in str(caught.value)
+    assert caught.value.hint is not None
+
+
+def test_a_path_at_the_highest_version_number_is_not_called_a_tool_fault() -> None:
+    """Only a damaged file that loaded can get there; the number is not quoted."""
+    document = Document({PATH: (Version(2**63 - 1, NOW, "{}"),)})
+
+    with pytest.raises(StoreError) as caught:
+        document.written(PATH, {"v": 1}, now=NOW, max_versions=None)
+
+    assert "has reached the highest version number" in str(caught.value)
+    assert str(2**63) not in str(caught.value)
+    assert "fault in the tool" not in (caught.value.hint or "")
 
 
 def test_a_document_is_not_hashable_by_design() -> None:
@@ -644,6 +664,17 @@ def test_a_timestamp_at_the_edge_of_the_range_is_damage_not_a_crash(created_at: 
         loads(damaged_with(lambda b: first_version(b).update(created_at=created_at)))
 
     assert "no readable `created_at`" in str(caught.value)
+
+
+def test_a_number_that_reads_as_infinity_is_damage_not_a_process_limit() -> None:
+    """`1e400` parses to infinity, which the writer can never produce."""
+    raw = damaged_with(lambda b: None).replace(f'"{PASSWORD}"'.encode(), b"1e400", 1)
+
+    with pytest.raises(DocumentError) as caught:
+        loads(raw)
+
+    assert "not a plain object (a number that is not finite)" in str(caught.value)
+    assert "cannot write back" not in str(caught.value)
 
 
 def test_data_nested_too_deep_in_the_file_is_refused() -> None:

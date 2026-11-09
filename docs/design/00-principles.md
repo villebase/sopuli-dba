@@ -538,8 +538,10 @@ path, with fictional passwords, as `dumps` wrote them:
   is, such as a key that is not text, a number that is not finite, text that is
   not valid UTF-8, or a subclass of a list, a tuple or a dict, is refused at the
   write. Two conversions JSON forces are made instead: a tuple is stored as a
-  list, and a subclass of a string or a number as the plain type. A path name
-  must be non-empty, valid UTF-8 text. One check of a version serves both the
+  list, and a value that is a subclass of a string or a number is stored as the
+  plain type. A key, and a path name, must be exactly a string, because a
+  subclass may compare or sort as it likes; a path name must also be
+  non-empty, valid UTF-8 text. One check of a version serves both the
   writer and the reader, so the reader accepts exactly what the writer builds.
 - **`created_at`** is UTC, written as `to_rfc3339` writes it, with a `Z`.
 - **The reader is strict.** A missing or unknown field, a key named twice,

@@ -202,7 +202,8 @@ class Document:
         plain values: text keys, text that is valid UTF-8, finite numbers,
         integers JSON can write, booleans, ``None``, lists and objects. Two
         conversions JSON forces are made: a tuple is stored as a list, and a
-        subclass of ``str``, ``int`` or ``float`` as the plain type. Anything
+        value that is a subclass of ``str``, ``int`` or ``float`` as the plain
+        type. A key, and ``path``, must be exactly ``str``. Anything
         else is refused here rather than failed on when the file is written.
         ``now`` must carry its zone, so the time in memory is the time on disk.
         """
@@ -210,7 +211,10 @@ class Document:
         # `type() is int`, as for a pin: True would keep one version, and a
         # float would fail in the slice.
         if type(keep) is not int or keep < 1:
-            raise ValueError("max_versions must be a whole number of at least 1")
+            raise StoreError(
+                "the file store's max_versions is not a whole number of at least 1",
+                hint=TOOL_FAULT,
+            )
         problem = _path_problem(path)
         if problem is not None:
             raise StoreError(f"a path cannot be stored: it is {problem}", hint=TOOL_FAULT)
@@ -239,6 +243,13 @@ class Document:
                 hint="run with Python's default limits (unset PYTHONINTMAXSTRDIGITS)",
             ) from None
         number = self.current(path) + 1
+        if number > MAX_VERSION_NUMBER:
+            # Reachable only through a damaged file that loaded: no store
+            # writes 2**63 versions. Not quoted, and not called a tool fault.
+            raise StoreError(
+                f"{path!r} has reached the highest version number a path may have",
+                hint=RESTORE,
+            )
         try:
             created = Version(number=number, created_at=now, text=text)
         except ValueError as problem:
@@ -273,7 +284,9 @@ def _not_plain(value: Any, *, depth: int) -> str | None:
         # str's own encode, as int's own bit_length above: a subclass cannot
         # change the answer.
         try:
-            str.encode(value, "utf-8")
+            # ASCII text cannot hold a surrogate, so it needs no copy.
+            if not str.isascii(value):
+                str.encode(value, "utf-8")
         except UnicodeEncodeError:
             return "text that is not valid UTF-8"
         return None
@@ -344,8 +357,10 @@ def _json(value: Any) -> str:
 
 def _path_problem(path: Any) -> str | None:
     """What makes ``path`` unusable as a path in the file, or ``None``. Names no path."""
-    if not isinstance(path, str):
-        return "not text"
+    # Exactly str, as a data key is: a subclass may hash or compare as it
+    # likes, which could give one name two entries in the document.
+    if type(path) is not str:
+        return "not plain text"
     if not path:
         return "empty"
     try:
@@ -501,8 +516,14 @@ def _version(where: str, raw: Any) -> Version:
     if not same or moment is None:
         raise DocumentError(f"version {number} of {where} has no readable `created_at`")
     data = raw["data"]
-    if type(data) is not dict:
-        raise DocumentError(f"version {number} of {where} has `data` that is not a plain object")
+    # Walked before encoding, so data the writer could never have produced,
+    # such as `1e400` (read as infinity) or nesting past 32 levels, is reported
+    # as damage, not as a limit of this process.
+    problem = "not a plain object" if type(data) is not dict else _not_plain(data, depth=0)
+    if problem is not None:
+        raise DocumentError(
+            f"version {number} of {where} has `data` that is not a plain object ({problem})"
+        )
     try:
         text = _json(data)
     except (ValueError, RecursionError):

@@ -1749,8 +1749,10 @@ grants, and the tool refuses an account that can use `SYSTEM_USER`, with
 `doctor` connects to the server and reports it. A mode that requires TLS,
 `REQUIRED` or a verifying one, refuses a session that has none. Under
 `DISABLED`, or `PREFERRED` against a server without TLS, a login the server
-has not cached fails: PyMySQL 1.2.3 cannot finish `caching_sha2_password`'s
-full exchange over a plain connection (measured on 8.4.13).
+has not cached asks the server for its RSA public key and sends the password
+encrypted with it. Nothing checks that key, so anything on the path can send
+its own and read the password: the reason `SOPULI-W058` warns about these
+modes ([#1407](../decisions/log.md#1407)).
 `doctor --check-privileges` also reads the accounts the config declares on
 the target, and names one that does not exist, one on another plugin, and a
 declared user name that also exists at a host the config does not declare

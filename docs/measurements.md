@@ -301,6 +301,9 @@ Not measured: every other release and every managed service. MariaDB has
 | `08_password_rules_probe.py` | `8.0.46` | 2026-11-02 | #1223 | Neither of the server's password rules sees a password set by hash. With `PASSWORD HISTORY 2`, or `PASSWORD REUSE INTERVAL 1 DAY`, the same password set again by hash is accepted and adds a row to `mysql.password_history`; set again as text it is refused with `3638`. With the `validate_password` component at policy `MEDIUM`, `acme` by hash is accepted and logs in; as text it is refused with `1819` |
 | `08_password_rules_probe.py` | `8.4.13` | 2026-11-02 | #1223 | As on 8.0.46 |
 | `08_password_rules_probe.py` | `9.7.4` | 2026-11-02 | #1223 | As on 8.0.46 |
+| `09_plain_login_probe.py` | `8.0.46` | 2026-11-09 | #1407 | Over a plain connection, with the login cache emptied, PyMySQL 1.2.3 and 1.2.4 both ask the server for its RSA public key and send the password encrypted with it. 1.2.4 logs in. 1.2.3 then fails itself, `AttributeError`, but the server has accepted the login: the next plain login succeeds and sends nothing. A wrong password is refused, `1045`. Given the key as `server_public_key`, PyMySQL sends no key request. Without `cryptography`, it fails after the key request and before the password |
+| `09_plain_login_probe.py` | `8.4.13` | 2026-11-09 | #1407 | As on 8.0.46 |
+| `09_plain_login_probe.py` | `9.7.4` | 2026-11-09 | #1407 | As on 8.0.46 |
 
 ## MariaDB releases
 

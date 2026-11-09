@@ -458,10 +458,12 @@ The tool does not log in as an account that does not exist, or that
 `mysql.user` reports locked: each is `unavailable` with no login. So `3118`
 arises only where the lock is set between the read and the login. A login
 that reaches another account than the declared one, or whose
-`CURRENT_USER()` read fails, is `unavailable`. One over a plain connection
-that PyMySQL 1.2.3 cannot finish is `unavailable` too, and a session that a
-mode requiring TLS cannot confirm as TLS is refused, as the tool's own is
-([`01-configuration.md`](01-configuration.md), `mysql:` on a target).
+`CURRENT_USER()` read fails, is `unavailable`. A session that a mode
+requiring TLS cannot confirm as TLS is refused, as the tool's own is
+([`01-configuration.md`](01-configuration.md), `mysql:` on a target). Over a
+plain connection the check sends the application's password encrypted with
+the RSA key the server sends, which nothing verifies
+([#1407](../decisions/log.md#1407)).
 
 **There is no lockout guard.** `FAILED_LOGIN_ATTEMPTS` and its counter are in
 `User_attributes`, which the tool account does not read (#1202, decision 6).

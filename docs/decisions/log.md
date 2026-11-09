@@ -5078,14 +5078,113 @@ the register.
   4. `finish-rollover` reports a refused `current` as `UNVERIFIABLE`, not
      `DRIFT`. The window stays open either way.
 
+## #1415
+
+- **Decided:** 2026-11-09, #1415
+- **Question:** the `file` store backend (#1372, P2 priority 3) is declared
+  but not built. Before it is built: how does it encrypt, which keys does its
+  config entry read, how is it laid out on disk, what happens when two runs
+  write it, how does it show that it is not for production, are its files
+  permission-checked, and may UC-2 use it?
+- **Decision:** the maintainer's, all seven as recommended.
+  1. **Encryption:** age, through the Python library `pyrage`, installed by
+     the extra `sopuli-dba[file]`. This closes ADR-006's named gap.
+  2. **Config keys:** `addr` is the file's path (`01-configuration.md` §3a).
+     `identity:` is a MaterialRef, `file` or `env`, holding the age identity
+     that decrypts. `recipients:` is an optional list of age public keys.
+     Without it, the store encrypts to the identity's own public key. A
+     passphrase-protected identity is refused, because it would need a
+     prompt.
+  3. **Layout:** one encrypted file per store, holding every path and up to
+     `max_versions` versions of each, 10 by default and at least 1. With 1,
+     only the current version is kept. A write goes to a
+     temporary file in the same directory, which then replaces the old one.
+  4. **Concurrency:** as `01-configuration.md` §3a says. The store has no
+     `cas` and the tool does not `flock` it, so a changing command refuses
+     unless the store sets `locking: advisory-only`. In addition, before it
+     replaces the file, the store compares the file's hash with the hash of
+     what it read, and refuses if they differ. This is not a lock: the store
+     still reports no `cas`.
+  5. **Non-production:** every run that uses the store emits a warning code,
+     and `doctor` prints a line saying so.
+  6. **Permissions:** the store file gets P4's config permission check, and
+     the tool creates it readable by its owner only. The identity is a
+     MaterialRef, and a MaterialRef is not checked
+     (`01-configuration.md` §3a, *MaterialRef*).
+  7. **UC-2:** `file` comes off `PERSONAL_TYPES`, the store types UC-2
+     accepts.
+
+  Each takes effect when the backend is built (#1372). Until then the
+  build refuses a `file` store with `SOPULI-20005`, and decision 7 lands
+  with the config part of that build.
+- **Why:**
+  1. The store is for development and CI. An age key is one line made by one
+     command, and a library needs nothing installed beside Python. `pyrage`
+     is MIT, and its abi3 wheels cover CPython 3.10 and later on Linux
+     x86_64 and aarch64, macOS and Windows x64, so a new Python needs no
+     Rust.
+  2. The identity is a secret, so invariant 1 makes it a path or a variable,
+     never a value on the command line. A MaterialRef is the form the other
+     stores already use for that. Defaulting `recipients` to the identity's
+     own key means a store that works with one key and no list to get
+     wrong.
+  3. One file keeps every account name inside the encryption, and replacing
+     it whole means a failed write never leaves half a store. Kept versions
+     make `@version=N` and `report history` work on this store, as they do on
+     KV v2.
+  4. The rule for a store without `cas` is already written, and one rule is
+     worth more than a mutex on a store meant for one person. The hash check
+     costs one read and turns most lost writes into refusals.
+  5. A warning on every run puts the store in each run's audit record, as
+     `advisory-only` does. A `doctor` line alone is easy to miss.
+  6. The tool creates the store file and reads it on every run, which is
+     P4's reason for checking the config file. The identity may be mounted
+     by something else, as a MaterialRef may.
+  7. Personal accounts belong to real people, and this store is not for
+     real use. The `vault_wrapped` and `vault_path` deliveries need a
+     HashiCorp store anyway.
+- **Rejected:**
+  1. OpenPGP through `pysequoia`, already in the `yopass` extra. The secret
+     key must be exported to a file, so gpg-agent and smartcards are lost
+     anyway, and its wheels for Python 3.15 are missing outside Linux
+     x86_64. gpg as a subprocess: a runtime prerequisite, Gpg4win on
+     Windows, output that varies by version, and a passphrase prompt that
+     hangs CI. age as a subprocess: a prerequisite with no gain.
+  2. A required `recipients:`: a typo in it makes a store its own owner
+     cannot read. Only an identity, with no recipients: two DBAs could not
+     share a store.
+  3. One file per path: every account name would be a file name, readable
+     without the key, and `acme_app_user` and `ACME_APP_USER` are one file on
+     Windows and macOS.
+  4. No hash check: a lost write stays silent. Defaulting the store to
+     `advisory-only`: a missing lock would no longer have to be written in
+     the config. A lock file or `flock`: a lock the tool takes on its own
+     machine does nothing for a second machine that reads the same file over
+     a share. Two kinds of lock are also two rules to explain, where one
+     rule, `advisory-only` in `01-configuration.md` §3a, already covers every
+     store without `cas`.
+  5. Refusing a file store for a target whose environment is in
+     `confirm_environments`: it binds harder, and a site with one production
+     database could then not use the store even by choice.
+  6. Checking the identity too: a second exception to the rule that a
+     MaterialRef is not checked. Checking neither: the tool would create and
+     keep a credentials file nobody guards.
+  7. Keeping `file` for UC-2: the build would have to test reset records
+     and deliveries on a store the docs say is not for real use.
+- **Known cost:** a store with `locking: advisory-only` can still lose a
+  write when two runs replace the file in the moment between the hash check
+  and the rename. `pyrage` is a new dependency, and the version floor of
+  `sopuli-dba[file]` is set when the backend is built and measured.
+
 ## #1417
 
 - **Decided:** 2026-11-09, #1417
-- **Question:** the second use in #1373. The OS keyring can hold the secrets the tool authenticates
-  with, such as a vault token or a target's admin password, in place of a
-  plaintext token file or an environment variable. Where may it be named, in
-  what shape, how is an entry written, is it flagged, what happens where
-  there is no keyring, and which library reads it?
+- **Question:** the second use in #1373. The OS keyring can hold the secrets
+  the tool authenticates with, such as a vault token or a target's admin
+  password, in place of a plaintext token file or an environment variable.
+  Where may it be named, in what shape, how is an entry written, is it
+  flagged, what happens where there is no keyring, and which library reads
+  it?
 - **Decision:** the maintainer's, all six as recommended:
   1. `keyring` is a third MaterialRef kind, so every material slot takes it,
      and a target's `admin.auth` gains `method: keyring`.

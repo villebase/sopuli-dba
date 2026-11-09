@@ -225,9 +225,7 @@ than by defaulting to `all`: the root `README.md` leads with an install matrix,
 and rule 2 turns the failure into a message naming the exact command that fixes
 it.
 
-The named gap: the file backend (P2, priority 3) has no extra yet, because P2
-does not say whether age/gpg is reached by subprocess or by a Python library.
-Whichever it turns out to be decides the answer, and the rule above already
-covers both — a library makes it `sopuli-dba[file]`, a subprocess makes it a runtime
-prerequisite like Instant Client. It is not settled here because there is
-nothing yet to settle it from.
+The file backend (P2, priority 3) reaches age through the Python library
+`pyrage`, so its extra is `sopuli-dba[file]`
+([#1415](log.md#1415)). The backend is not built yet (#1372), and the extra is
+added with it.

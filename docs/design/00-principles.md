@@ -465,7 +465,7 @@ that left a lease behind would change the mount a rotation is using.
 | HashiCorp Vault KV v2 | 1 | versioning, CAS, soft delete — the reference implementation |
 | HashiCorp Vault KV v1 | 2 | no versioning → rollback and staging degrade to emulation |
 | OCI Vault / Secrets | 2 | secret bundles with version *stages* (CURRENT/PENDING/PREVIOUS) map cleanly onto rotation |
-| File backend (age/gpg-encrypted) | 3 | local dev and CI fixtures; must be obviously non-production |
+| File backend (age-encrypted, [#1415](../decisions/log.md#1415)) | 3 | local dev and CI fixtures; must be obviously non-production |
 | OS keyring | 4 | personal / workstation use |
 | AWS Secrets Manager, Azure Key Vault | later | AWSSM's AWSCURRENT/AWSPENDING is the same shape as OCI |
 
@@ -473,7 +473,7 @@ that left a lease behind would change the mount a rotation is using.
 
 | Capability | HCV KV v2 | HCV KV v1 | OCI | File |
 |---|---|---|---|---|
-| `versioning` | yes | no | yes | optional |
+| `versioning` | yes | no | yes | yes, the last `max_versions` |
 | `cas` (compare-and-set) | yes | no | via ETag | no |
 | `list` (paths below a prefix) | yes | yes | yes | yes |
 | `staging_labels` | emulated in payload | emulated | native | emulated |

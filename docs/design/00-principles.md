@@ -517,27 +517,23 @@ the record is written without compare-and-set, and every run says so
 
 A `file` store is one file, encrypted with age to the store's recipients
 ([#1415](../decisions/log.md#1415)). The store is not built yet (#1372). What
-the file decrypts to is UTF-8 JSON, written by `sopuli/store/file/_document.py`
-and read by nothing else:
+the file decrypts to is UTF-8 JSON, compact and with sorted keys, written by
+`sopuli/store/file/_document.py` and read by nothing else. Two writes to one
+path, with fictional passwords, as `dumps` wrote them:
 
 ```json
-{
-  "format": "sopuli-file-store",
-  "format_version": 1,
-  "paths": {
-    "acme/app": [
-      {"version": 2, "created_at": "2026-11-09T10:00:00Z", "data": {"current": "..."}},
-      {"version": 3, "created_at": "2026-11-09T11:00:00Z", "data": {"current": "..."}}
-    ]
-  }
-}
+{"format":"sopuli-file-store","format_version":1,"paths":{"acme/app":[{"created_at":"2026-11-09T10:00:00Z","data":{"current":"Pw-acme-1"},"version":1},{"created_at":"2026-11-09T11:00:00Z","data":{"current":"Pw-acme-2","previous":"Pw-acme-1"},"version":2}]}}
 ```
 
 - **Each path lists its kept versions, oldest first.** A write adds the next
-  number. Pruning to `max_versions` drops only the oldest, so the numbers are
-  consecutive and the last is the path's current version. A number is never
-  reused, so a version number names one write for good, and `@version=N`
-  never reads a later write. The store has no compare-and-set (see above).
+  number. Each write prunes every path to `max_versions`, dropping only the
+  oldest, so the numbers are consecutive and the last is the path's current
+  version, and lowering the setting takes old passwords out of the file at
+  the next write. A number is not reused, so a version number names one write
+  for good, and `@version=N` never reads a later write. The one exception is a
+  restore from a backup: numbers written since the backup are used again, so
+  the restore hint says to check `@version=N` pins. The store has no
+  compare-and-set (see above).
 - **`data` is a JSON object of plain values.** A value JSON cannot hold as it
   is, such as a key that is not text, a number that is not finite, or text that
   is not valid UTF-8, is refused at the write. Two conversions JSON forces are

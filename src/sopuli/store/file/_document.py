@@ -51,8 +51,9 @@ MAX_DEPTH = 32
 #: The widest integer the store writes, in bits: about 4,200 decimal digits,
 #: under Python's default limit of 4,300 on converting between an integer and
 #: text (``sys.get_int_max_str_digits``). Measured in bits so the check is the
-#: same in every process, whatever limit that process runs with, and a file
-#: one process writes is never too wide for another to read.
+#: same in every process, whatever limit that process runs with. A process
+#: running Python's default limit can read any file the store writes; one run
+#: with a lower limit may not.
 MAX_INT_BITS = 14_000
 
 #: What a write refusal says: the store writes what the tool built, so a value
@@ -62,7 +63,8 @@ TOOL_FAULT = "this is a fault in the tool; report it with the command that ran"
 #: What every refusal of a damaged file says to do.
 RESTORE = (
     "the file was damaged, or edited by hand; restore it from a backup, and check "
-    "that what it holds still matches the databases"
+    "that what it holds still matches the databases. Version numbers written "
+    "since the backup will be used again, so check any `@version=N` pin too"
 )
 
 
@@ -86,6 +88,20 @@ class Version:
     created_at: datetime
     text: str
 
+    def __post_init__(self) -> None:
+        # The shape `loads` accepts, so `dumps` never writes what it refuses.
+        # A programming error, not an operator's, so ValueError.
+        if type(self.number) is not int or self.number < 1:
+            raise ValueError("a version number must be a whole number above 0")
+        if self.created_at.tzinfo is None:
+            raise ValueError("a version's created_at must carry its zone")
+        try:
+            to_rfc3339(self.created_at)
+        except OverflowError:
+            raise ValueError("a version's created_at is outside the UTC range") from None
+        if not isinstance(json.loads(self.text), dict):
+            raise ValueError("a version's text must be a JSON object")
+
     @property
     def data(self) -> dict[str, Any]:
         """A fresh copy of the version's data, always a JSON object."""
@@ -99,7 +115,8 @@ class Document:
 
     Built only in the shape :func:`loads` accepts, so :func:`dumps` can never
     write a file this module would then call damaged: each path is valid text
-    and has at least one version, numbered consecutively.
+    and has at least one version, numbered consecutively, and each
+    :class:`Version` checks its own fields.
     """
 
     paths: Mapping[str, tuple[Version, ...]]
@@ -128,7 +145,9 @@ class Document:
     ) -> tuple[Document, int]:
         """This document with ``data`` as the next version of ``path``, and its number.
 
-        The oldest versions beyond ``max_versions`` are dropped. ``path`` must
+        The oldest versions beyond ``max_versions`` are dropped from **every**
+        path, not only this one, so lowering the setting takes the old
+        passwords out of the file at the next write. ``path`` must
         be non-empty text, valid as UTF-8. ``data`` must be a JSON object of
         plain values: text keys, text that is valid UTF-8, finite numbers,
         integers JSON can write, booleans, ``None``, lists and objects. Two
@@ -162,7 +181,7 @@ class Document:
             )
         number = self.current(path) + 1
         created = Version(number=number, created_at=now, text=_json(data))
-        paths = dict(self.paths)
+        paths = {name: versions[-keep:] for name, versions in self.paths.items()}
         paths[path] = (*self.paths.get(path, ()), created)[-keep:]
         return Document(MappingProxyType(paths)), number
 
@@ -184,8 +203,10 @@ def _not_plain(value: Any, *, depth: int) -> str | None:
     if isinstance(value, float):
         return None if math.isfinite(value) else "a number that is not finite"
     if isinstance(value, str):
+        # str's own encode, as int's own bit_length above: a subclass cannot
+        # change the answer.
         try:
-            value.encode("utf-8")
+            str.encode(value, "utf-8")
         except UnicodeEncodeError:
             return "text that is not valid UTF-8"
         return None
@@ -220,7 +241,7 @@ def _path_problem(path: Any) -> str | None:
     if not path:
         return "empty"
     try:
-        path.encode("utf-8")
+        str.encode(path, "utf-8")
     except UnicodeEncodeError:
         return "not valid UTF-8"
     return None

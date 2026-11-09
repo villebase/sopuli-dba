@@ -46,6 +46,13 @@ class WideInt(int):
         return "0"
 
 
+class QuietStr(str):
+    """A str whose `encode` hides that it is not valid UTF-8."""
+
+    def encode(self, encoding: str = "utf-8", errors: str = "strict") -> bytes:
+        return b""
+
+
 def numbers(document: Document) -> list[int]:
     return [one.number for one in document.paths[PATH]]
 
@@ -105,6 +112,15 @@ def test_pruning_never_reuses_a_number() -> None:
     assert numbers(document) == [2]
     _, number = document.written(PATH, {"v": 3}, now=NOW, max_versions=1)
     assert number == 3
+
+
+def test_a_lower_max_versions_prunes_every_path_at_the_next_write() -> None:
+    """Old passwords leave the file at the next write, not when each path is
+    next rotated."""
+    document = written(EMPTY, *({"v": n} for n in range(1, 5)))
+    document, _ = document.written("acme/other", {"v": 1}, now=NOW, max_versions=1)
+
+    assert numbers(document) == [4]
 
 
 def test_absent_max_versions_keeps_ten() -> None:
@@ -189,6 +205,7 @@ def test_a_tuple_is_stored_as_a_list() -> None:
         ({"k": {2: PASSWORD}}, "a key that is not text"),
         ({"current": 10**5000}, "wider than 14000 bits"),
         ({"current": WideInt(10**5000)}, "wider than 14000 bits"),
+        ({"current": QuietStr("\ud800")}, "not valid UTF-8"),
     ],
     ids=[
         "set",
@@ -199,6 +216,7 @@ def test_a_tuple_is_stored_as_a_list() -> None:
         "nested-int-key",
         "huge-int",
         "huge-int-subclass",
+        "str-subclass",
     ],
 )
 def test_data_the_file_cannot_hold_as_it_is_is_refused_without_repeating_it(
@@ -261,6 +279,23 @@ def test_a_document_the_reader_would_refuse_cannot_be_built(paths: Any) -> None:
     """So `dumps` cannot write a file this module would call damaged."""
     with pytest.raises(ValueError, match="a document path"):
         Document(MappingProxyType(paths))
+
+
+@pytest.mark.parametrize(
+    ("number", "created_at", "text", "problem"),
+    [
+        (0, NOW, "{}", "above 0"),
+        (1, datetime(2026, 11, 9, 10, 0), "{}", "carry its zone"),
+        (1, datetime(1, 1, 1, tzinfo=timezone(timedelta(hours=2))), "{}", "UTC range"),
+        (1, NOW, "[]", "JSON object"),
+    ],
+    ids=["number-zero", "naive-time", "time-out-of-range", "not-an-object"],
+)
+def test_a_version_the_reader_would_refuse_cannot_be_built(
+    number: int, created_at: datetime, text: str, problem: str
+) -> None:
+    with pytest.raises(ValueError, match=problem):
+        Version(number, created_at, text)
 
 
 def test_an_unknown_path_reads_as_nothing() -> None:

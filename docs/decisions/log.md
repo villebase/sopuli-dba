@@ -5048,6 +5048,9 @@ the register.
   and the detail says why. The result still says the server refused the
   password (`VerifyResult.refused`), and `creds finish-rollover`, which goes
   ahead on an `unavailable` login on MySQL (#1224), stops on a refused one.
+  The MariaDB driver sets `refused` the same way, where no other account
+  could have answered, so its close stops too, as UC-1's "the same gates"
+  says. A refused login also counts as one made in `actions[].applied`.
   The review of the first version found that, without this, a refusal of the
   vault's `current` would let the run send `DISCARD OLD PASSWORD` and leave
   the account with only a password the vault does not hold. The maintainer

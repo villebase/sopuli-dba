@@ -164,7 +164,9 @@ def test_a_refusal_over_a_plain_connection_says_nothing(stage: Stage) -> None:
     finally:
         plain.close()
     over_tls = stage.session.verify_password(f"{user}@%", Secret("Not-the-pw9"))
+    right_over_tls = stage.session.verify_password(f"{user}@%", Secret(PASSWORD))
 
+    assert right_over_tls.result == "pass", "the account's password is right"
     assert right.result == "unavailable"
     assert wrong.result == "unavailable"
     assert "does not require TLS" in str(right.detail)

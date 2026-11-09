@@ -119,7 +119,7 @@ def login_outcome(diagnosis: Diagnosis, *, tls: bool) -> tuple[str, str] | None:
             return FAIL, f"the server refused the password ({ACCESS_DENIED}); {UNGUARDED}"
         return UNAVAILABLE, (
             f"the server refused the password ({ACCESS_DENIED}), but {NOT_OVER_TLS}, so "
-            f"it says nothing certain about the password"
+            f"it says nothing certain about the password; {UNGUARDED}"
         )
     if diagnosis.number in (MUST_CHANGE_PASSWORD_LOGIN, MUST_CHANGE_PASSWORD):
         return PASS, (

@@ -272,7 +272,13 @@ def _ended(
     result = outcome(declared, failure.number, competing, tls=tls) if failure.number else None
     if result is not None:
         return VerifyResult(
-            method=VERIFY_LOGIN, result=result[0], latency_ms=latency, detail=result[1]
+            method=VERIFY_LOGIN,
+            result=result[0],
+            latency_ms=latency,
+            detail=result[1],
+            # The declared account's own refusal: where another account could
+            # have answered, the refusal may be that account's.
+            refused=failure.number == ACCESS_DENIED and competing is None,
         )
     if not connecting:
         # The password was accepted. Where only the declared account can

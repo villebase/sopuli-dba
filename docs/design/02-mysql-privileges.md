@@ -454,10 +454,11 @@ The last row was measured on 8.4.13 with PyMySQL 1.2.3 and 1.2.4. A login,
 `1045` is `fail` where the target's `ssl_mode` requires TLS (`REQUIRED`,
 `VERIFY_CA`, `VERIFY_IDENTITY`), and `unavailable` under `DISABLED` and
 `PREFERRED`, as on MariaDB ([#1410](../decisions/log.md#1410)).
-`finish-rollover` still keeps the window open after either. PyMySQL does not say it can
-handle an expired password, so the server refuses it at connect with `1862`;
-the mysql client's `1820` after login does not arise. A block after failed
-logins, `3955`, answers the right password too, so it is `unavailable`.
+`finish-rollover` still keeps the window open after either. PyMySQL does not
+say it can handle an expired password, so the server refuses it at connect
+with `1862`; the mysql client's `1820` after login does not arise. A block
+after failed logins, `3955`, answers the right password too, so it is
+`unavailable`.
 
 The tool does not log in as an account that does not exist, or that
 `mysql.user` reports locked: each is `unavailable` with no login. So `3118`

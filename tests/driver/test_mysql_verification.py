@@ -112,6 +112,7 @@ def test_a_refusal_where_tls_is_not_required_says_nothing() -> None:
     assert outcome is not None
     assert outcome[0] == UNAVAILABLE
     assert NOT_OVER_TLS in outcome[1]
+    assert outcome[1].endswith(UNGUARDED), "a login was made, with no lockout guard"
 
 
 @pytest.mark.parametrize(("number", "result"), [(1862, PASS), (3118, PASS), (3955, UNAVAILABLE)])

@@ -5089,14 +5089,15 @@ the register.
 - **Decision:** the maintainer's, all seven as recommended.
   1. **Encryption:** age, through the Python library `pyrage`, installed by
      the extra `sopuli-dba[file]`. This closes ADR-006's named gap.
-  2. **Config keys:** `addr` is the file's path (`01-configuration.md` §2).
+  2. **Config keys:** `addr` is the file's path (`01-configuration.md` §3a).
      `identity:` is a MaterialRef, `file` or `env`, holding the age identity
      that decrypts. `recipients:` is an optional list of age public keys.
      Without it, the store encrypts to the identity's own public key. A
      passphrase-protected identity is refused, because it would need a
      prompt.
   3. **Layout:** one encrypted file per store, holding every path and up to
-     `max_versions` versions of each, 10 by default. A write goes to a
+     `max_versions` versions of each, 10 by default and at least 1. With 1,
+     only the current version is kept. A write goes to a
      temporary file in the same directory, which then replaces the old one.
   4. **Concurrency:** as `01-configuration.md` §3a says. The store has no
      `cas` and the tool does not `flock` it, so a changing command refuses
@@ -5108,10 +5109,14 @@ the register.
      and `doctor` prints a line saying so.
   6. **Permissions:** the store file gets P4's config permission check, and
      the tool creates it readable by its owner only. The identity is a
-     MaterialRef, and a MaterialRef is not checked (`01-configuration.md`
-     §5).
+     MaterialRef, and a MaterialRef is not checked
+     (`01-configuration.md` §3a, *MaterialRef*).
   7. **UC-2:** `file` comes off `PERSONAL_TYPES`, the store types UC-2
      accepts.
+
+  Each takes effect when the backend is built (#1372). Until then the
+  build refuses a `file` store with `SOPULI-20005`, and decision 7 lands
+  with the config part of that build.
 - **Why:**
   1. The store is for development and CI. An age key is one line made by one
      command, and a library needs nothing installed beside Python. `pyrage`
@@ -5153,7 +5158,11 @@ the register.
      Windows and macOS.
   4. No hash check: a lost write stays silent. Defaulting the store to
      `advisory-only`: a missing lock would no longer have to be written in
-     the config. A lock file: `01-configuration.md` §3a rejected it.
+     the config. A lock file or `flock`: a lock the tool takes on its own
+     machine does nothing for a second machine that reads the same file over
+     a share. Two kinds of lock are also two rules to explain, where one
+     rule, `advisory-only` in `01-configuration.md` §3a, already covers every
+     store without `cas`.
   5. Refusing a file store for a target whose environment is in
      `confirm_environments`: it binds harder, and a site with one production
      database could then not use the store even by choice.

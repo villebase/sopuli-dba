@@ -112,11 +112,10 @@ class Backend:
 #: Neither is built. ``file`` will reach age through ``pyrage``, so its extra
 #: will be ``sopuli-dba[file]`` (#1415), added with the backend (#1372).
 #: ``keyring`` is priority 4 and appears in no extras table yet. Until each is
-#: built, ``extra=None`` means
-#: "there is nothing to tell you to install", and asking for one of them fails as
-#: *not implemented in this build* rather than as a pip problem -- which is true,
-#: and is the message that does not send somebody to `pip` for something `pip`
-#: cannot fix.
+#: built, ``extra=None`` means "there is nothing to tell you to install", and
+#: asking for one of them fails as *not implemented in this build* rather than
+#: as a pip problem -- which is true, and is the message that does not send
+#: somebody to `pip` for something `pip` cannot fix.
 BACKENDS: dict[str, Backend] = {
     "hashicorp": Backend(
         module="sopuli.store.hashicorp",

@@ -26,6 +26,13 @@ from sopuli.config.errors import ConfigError
 from sopuli.config.loading import build_config
 
 VAULTS: dict[str, Any] = {"vault-dev": {"type": "hashicorp", "addr": "https://v.example.com"}}
+LOCAL_FILE_STORE: dict[str, Any] = {
+    "type": "file",
+    "addr": "/srv/sopuli/store.age",
+    "identity": {"env": "SOPULI_FILE_IDENTITY"},
+    "non_production": True,
+}
+
 TARGET: dict[str, Any] = {
     "name": "cdb-root-dev",
     "type": "oracle",
@@ -397,7 +404,7 @@ def test_a_prod_target_may_not_be_mastered_by_a_non_production_store() -> None:
     with pytest.raises(ConfigError) as caught:
         build_config(
             document(
-                vaults={"local": {"type": "file", "non_production": True}},
+                vaults={"local": LOCAL_FILE_STORE},
                 targets=[{**TARGET, "environment": "prod", "vault": "local"}],
             )
         )
@@ -410,7 +417,7 @@ def test_a_prod_target_may_not_be_mastered_by_a_non_production_store() -> None:
 def test_a_dev_target_may_use_a_non_production_store() -> None:
     config = build_config(
         document(
-            vaults={"local": {"type": "file", "non_production": True}},
+            vaults={"local": LOCAL_FILE_STORE},
             targets=[{**TARGET, "environment": "dev", "vault": "local"}],
         )
     )

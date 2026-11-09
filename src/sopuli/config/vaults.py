@@ -20,7 +20,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from sopuli.config.auth import Method, read_material_key, read_method
+from sopuli.config.auth import Method, read_material, read_material_key, read_method
 from sopuli.config.errors import ROOT, ConfigError, KeyPath
 from sopuli.config.fields import (
     choice,
@@ -48,6 +48,9 @@ VAULT_KEYS = (
     "compartment_id",
     "key_id",
     "region",
+    "identity",
+    "recipients",
+    "max_versions",
     "tls",
     "auth",
     "non_production",
@@ -59,6 +62,25 @@ VAULT_KEYS = (
 #: compartment and a key. ``region`` defaults to the auth method's.
 OCI_KEYS = ("vault_id", "compartment_id", "key_id", "region")
 OCI_REQUIRED_KEYS = ("vault_id", "compartment_id", "key_id")
+
+#: The keys only a ``file`` store reads (#1415). It cannot do without
+#: ``identity``; ``addr``, its path, may come from another layer, so it is
+#: required on the merged values (:mod:`sopuli.config.vault_layers`).
+FILE_KEYS = ("identity", "recipients", "max_versions")
+
+#: Why a ``file`` key cannot be patched: each says how the store's one file is
+#: written, and a layer that changed one would write it differently from the
+#: next run's. ``identity`` is a MaterialRef, so where it comes from may already
+#: differ by machine through ``env:``.
+FILE_KEY_REASON = (
+    "it says how the store's file is encrypted or kept, so it is written once, on the "
+    "store's own entry; an identity that differs by machine can be `identity: {env: NAME}`"
+)
+
+#: What an age public key looks like: Bech32, with the ``age`` prefix. Checked
+#: only for shape, so that a private key pasted by mistake (``AGE-SECRET-KEY-1``)
+#: is refused before anything is written with it.
+AGE_RECIPIENT = re.compile(r"age1[02-9ac-hj-np-z]{58}")
 
 #: The keys only a HashiCorp store reads, apart from ``merge_patch``. An OCI
 #: store refuses each, on the merged values (:mod:`sopuli.config.vault_layers`),
@@ -104,6 +126,7 @@ UNPATCHABLE_KEYS = {
         "lock -- and invariant 10 keeps a guardrail out of the invocation context"
     ),
     **dict.fromkeys(OCI_KEYS, OCI_KEY_REASON),
+    **dict.fromkeys(FILE_KEYS, FILE_KEY_REASON),
 }
 
 #: What a partial entry may carry: the complement, never a second list.
@@ -234,6 +257,7 @@ def _build_vault(name: str, raw: Any, *, at: KeyPath) -> Vault:
         name=name,
         type=type_,
         **_oci_keys(entry, type_=type_, at=at),
+        **_file_keys(entry, type_=type_, at=at),
         # Absent means production. §10 refuses a prod target pointed at a
         # non-production store, and defaulting the other way would make that
         # rule fire on every vault nobody has labelled yet.
@@ -269,6 +293,75 @@ def _oci_keys(entry: dict[str, Any], *, type_: str, at: KeyPath) -> dict[str, An
         },
         "region": optional_string(entry, "region", at=at),
     }
+
+
+def _file_keys(entry: dict[str, Any], *, type_: str, at: KeyPath) -> dict[str, Any]:
+    """The three ``file`` keys, which only a ``file`` store may write (#1415).
+
+    Read from the declaration alone, because no layer may patch them
+    (:data:`UNPATCHABLE_KEYS`). ``identity`` is required: there is no default
+    place for a secret key, and guessing one would read a file nobody named.
+    """
+    if type_ != "file":
+        for key in FILE_KEYS:
+            if key in entry:
+                raise ConfigError(
+                    f"`{key}` has no effect on a store of type {type_!r}",
+                    at=at.key(key),
+                    hint="it belongs to an age-encrypted store; remove it, or set `type: file`",
+                )
+        return {}
+    if "identity" not in entry:
+        raise ConfigError(
+            "a `file` store needs `identity`, the age identity that decrypts it",
+            at=at,
+            hint="write `identity: { file: PATH }` or `identity: { env: NAME }`",
+        )
+    max_versions = optional_int(entry, "max_versions", at=at)
+    if max_versions is not None and max_versions < 1:
+        raise ConfigError(
+            f"must be at least 1, not {max_versions}",
+            at=at.key("max_versions"),
+            hint="1 keeps only the current version; leave it out for the default, 10",
+        )
+    return {
+        "identity": read_material(
+            entry["identity"],
+            at=at.key("identity"),
+            noun="an age identity",
+            example="SOPULI_FILE_IDENTITY",
+        ),
+        "recipients": _build_recipients(entry, at=at),
+        "max_versions": max_versions,
+    }
+
+
+def _build_recipients(entry: dict[str, Any], *, at: KeyPath) -> tuple[str, ...] | None:
+    """``recipients:``, a non-empty list of age public keys, or ``None``."""
+    if "recipients" not in entry:
+        return None
+    raw = entry["recipients"]
+    if not isinstance(raw, list) or not raw:
+        raise ConfigError(
+            f"must be a non-empty list of age public keys, not {describe(raw)}",
+            at=at.key("recipients"),
+            hint="leave it out to encrypt to the identity's own public key",
+        )
+    recipients = []
+    for index, value in enumerate(raw):
+        where = at.key("recipients").index(index)
+        if not isinstance(value, str) or AGE_RECIPIENT.fullmatch(value) is None:
+            # The value is not repeated: a secret key pasted here by mistake
+            # must not reach the message.
+            raise ConfigError(
+                "is not an age public key",
+                at=where,
+                hint="an age public key starts with `age1`, as `age-keygen -y` prints it",
+            )
+        if value in recipients:
+            raise ConfigError("is listed twice", at=where)
+        recipients.append(value)
+    return tuple(recipients)
 
 
 def build_vault_patches(container: dict[str, Any], *, at: KeyPath) -> tuple[VaultPatch, ...]:

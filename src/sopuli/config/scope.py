@@ -22,10 +22,11 @@ from sopuli.config.model import Config
 
 #: Store types that may hold UC-2's reset records and receive its deliveries.
 #: An allow-list, so that a store type added later is refused for UC-2 until
-#: somebody decides it can serve it. ``file`` and ``keyring`` are on it because
-#: neither has a backend yet; a command that reaches one is refused when it
-#: connects, as before.
-PERSONAL_TYPES = ("hashicorp", "file", "keyring")
+#: somebody decides it can serve it. ``file`` is not on it: personal accounts
+#: belong to real people, and a file store is not for real use (#1415).
+#: ``keyring`` is on it because it has no backend yet; a command that reaches
+#: one is refused when it connects, as before.
+PERSONAL_TYPES = ("hashicorp", "keyring")
 
 HINT = "keep personal accounts, reset records and deliveries in a HashiCorp store"
 

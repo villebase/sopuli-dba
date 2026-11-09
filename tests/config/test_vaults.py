@@ -43,6 +43,13 @@ OCI: dict[str, Any] = {
 }
 
 
+FILE: dict[str, Any] = {
+    "type": "file",
+    "addr": "/srv/sopuli/store.age",
+    "identity": {"env": "SOPULI_FILE_IDENTITY"},
+}
+
+
 def document(**vaults: Any) -> dict[str, Any]:
     return {"version": 1, "vaults": vaults}
 
@@ -112,15 +119,16 @@ def test_a_backend_that_is_only_planned_is_refused() -> None:
 
 @pytest.mark.parametrize("kind", ["hashicorp", "oci", "file", "keyring"])
 def test_every_backend_p2_puts_in_scope_is_accepted(kind: str) -> None:
-    entry = OCI if kind == "oci" else {"type": kind}
+    entries = {"oci": OCI, "file": FILE}
+    entry = entries.get(kind, {"type": kind})
     assert only(**{"store": entry}).type == kind
 
 
 def test_only_type_is_required() -> None:
-    """A file backend has no address and no mount. P2 puts per-backend
+    """A keyring backend has no address and no mount. P2 puts per-backend
     validation behind the store interface, so demanding a HashiCorp shape of
     every entry would be the top-level vendor bias P1 forbids."""
-    vault = only(**{"local": {"type": "file"}})
+    vault = only(**{"local": {"type": "keyring"}})
 
     assert vault.addr is None
     assert vault.auth is None
@@ -458,14 +466,14 @@ def test_non_production_defaults_to_false() -> None:
 
 
 def test_non_production_is_read_when_set() -> None:
-    assert only(**{"local": {"type": "file", "non_production": True}}).non_production is True
+    assert only(**{"local": {**FILE, "non_production": True}}).non_production is True
 
 
 def test_a_quoted_boolean_is_not_a_boolean() -> None:
     """`non_production: "false"` is a string, and a truthy one. Reading it as a
     flag would turn the guard off in the file that asked for it."""
     with pytest.raises(ConfigError) as caught:
-        build_vaults(document(**{"local": {"type": "file", "non_production": "false"}}))
+        build_vaults(document(**{"local": {**FILE, "non_production": "false"}}))
 
     assert "must be true or false, not a string" in str(caught.value)
 
@@ -514,9 +522,9 @@ def test_the_transport_keys_are_read() -> None:
 
 
 def test_the_transport_keys_are_all_optional() -> None:
-    """A file backend has no address and no TLS. Requiring any of these would be
+    """A keyring backend has no address and no TLS. Requiring any of these would be
     the top-level vendor bias P1 forbids, one level down."""
-    [vault] = build_vaults({"vaults": {"local": {"type": "file"}}})
+    [vault] = build_vaults({"vaults": {"local": {"type": "keyring"}}})
 
     assert (vault.namespace, vault.timeout_s, vault.tls) == (None, None, None)
 

@@ -191,7 +191,7 @@ def _vault_references(config: Config) -> list[_Reference]:
 
 
 def _check_personal_stores(config: Config) -> None:
-    """UC-2's journal and delivery store may not be an OCI store (#1138).
+    """UC-2's journal and delivery store may not be an OCI or file store (#1138, #1415).
 
     Both names are in the file, so the refusal comes while it is read and
     `config validate` reports it. A delivery whose store a target or

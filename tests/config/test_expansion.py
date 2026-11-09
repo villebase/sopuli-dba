@@ -590,7 +590,14 @@ def test_a_generated_prod_target_may_not_use_a_non_production_store() -> None:
 
     with pytest.raises(ConfigError) as caught:
         expand(
-            vaults={"local": {"type": "file", "non_production": True}},
+            vaults={
+                "local": {
+                    "type": "file",
+                    "addr": "/srv/sopuli/store.age",
+                    "identity": {"env": "SOPULI_FILE_IDENTITY"},
+                    "non_production": True,
+                }
+            },
             target_sets={"appdb": {**APPDB, "vault": "local", "for_each": for_each}},
         )
 

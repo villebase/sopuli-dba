@@ -96,6 +96,16 @@ EnvKeys = Mapping[str, Sequence[Contribution]]
 #: merged individually. See the module note.
 REACH_KEYS = ("addr", "mount", "kv_version", "namespace", "timeout_s", "merge_patch")
 
+#: The built or decided store types that read no HashiCorp setting, each as a
+#: message names it. ``keyring`` is absent: which keys it reads is decided when
+#: it is built.
+NOT_HASHICORP = {"oci": "an OCI store", "file": "a file store"}
+
+#: The keys a file store refuses: HashiCorp's, but ``addr``, which is its path,
+#: and ``timeout_s``, a request timeout, because the store makes no requests
+#: (#1415).
+FILE_REFUSED_KEYS = (*(key for key in HASHICORP_KEYS if key != "addr"), "timeout_s")
+
 #: The members of ``tls:``, merged one at a time.
 TLS_KEYS = ("ca_file", "ca_path", "client_cert", "client_key", "server_name", "verify")
 
@@ -166,8 +176,8 @@ def apply_vault_layers(
         }
         for key, contributions in from_cli.get(vault.name, {}).items():
             supplied.setdefault(key, contributions)
-        if vault.type == "oci":
-            supplied, unapplied = _without_thirdparty(vault.name, supplied)
+        if vault.type in NOT_HASHICORP:
+            supplied, unapplied = _without_thirdparty(vault, supplied)
             warnings.extend(unapplied)
         if "addr" in supplied:
             supplied["addr"], dropped = _drop_userinfo(vault.name, supplied["addr"])
@@ -179,17 +189,21 @@ def apply_vault_layers(
 
 
 def _without_thirdparty(
-    name: str, supplied: dict[str, list[Contribution]]
+    vault: Vault, supplied: dict[str, list[Contribution]]
 ) -> tuple[dict[str, list[Contribution]], list[ConfigWarning]]:
-    """``supplied`` without HashiCorp's own variables, for an OCI store, and why.
+    """``supplied`` without HashiCorp's own variables, for an OCI or file store, and why.
 
     ``VAULT_ADDR``, ``VAULT_NAMESPACE`` and ``VAULT_CACERT`` are exported in
     every shell that has run `vault`, and they mean nothing to an OCI store. §6
     does not fail a run over another tool's variable: it warns that the variable
     was not applied, with ``SOPULI-W038``, and so does this (#1130). This tool's
     own ``SOPULI_*`` variables and ``--vault-addr`` stay, and
-    :func:`_refuse_hashicorp_keys` refuses them.
+    :func:`_refuse_hashicorp_keys` refuses them on an OCI store.
+
+    A file store reads ``addr`` as its path, so a ``VAULT_ADDR`` left in the
+    shell would otherwise make a URL its path (#1415).
     """
+    name = vault.name
     kept: dict[str, list[Contribution]] = {}
     warnings = []
     for key, contributions in supplied.items():
@@ -201,7 +215,8 @@ def _without_thirdparty(
                 ConfigWarning(
                     message=(
                         f"{one.location} is set and was not applied: the default store "
-                        f"{name!r} is an OCI store, which reads no HashiCorp setting"
+                        f"{name!r} is {NOT_HASHICORP[vault.type]}, which reads no "
+                        "HashiCorp setting"
                     ),
                     # No `at`: the message names the variable.
                     at="",
@@ -221,11 +236,17 @@ def _refuse_hashicorp_keys(
     ``SOPULI_*`` variable or ``--vault-addr`` is refused as the file is, and the
     message names the layer that supplied the key. P3 refuses a key the tool
     would ignore. ``merge_patch`` has its own message, in
-    :func:`_refuse_inert_merge_patch`.
+    :func:`_refuse_inert_merge_patch`. A file store reads ``addr`` as its path
+    and refuses the others (#1415).
     """
-    if vault.type != "oci":
+    refused: tuple[str, ...]
+    if vault.type == "oci":
+        refused = HASHICORP_KEYS
+    elif vault.type == "file":
+        refused = FILE_REFUSED_KEYS
+    else:
         return
-    for key in HASHICORP_KEYS:
+    for key in refused:
         if values.get(key) is None:
             continue
         answer = settings.get(key) or next(
@@ -233,22 +254,27 @@ def _refuse_hashicorp_keys(
         )
         given = "" if answer is None else f", from {answer.location},"
         raise ConfigError(
-            f"vault {vault.name!r}: `{key}`{given} has no effect on a store of type 'oci'",
+            f"vault {vault.name!r}: `{key}`{given} has no effect on a store of type {vault.type!r}",
             at=ROOT,
-            hint="it is a HashiCorp Vault key; remove it from this store",
+            hint=(
+                "it is a request timeout, and a file store makes no requests; remove it"
+                if key == "timeout_s"
+                else "it is a HashiCorp Vault key; remove it from this store"
+            ),
         )
 
 
-def _refuse_tls_on_oci(
+def _refuse_tls_off_hashicorp(
     vault: Vault, patches: list[tuple[Layer, KeyPath, VaultPatch]], from_env: EnvKeys
 ) -> None:
-    """An OCI store has no ``tls:`` block, from any layer (#1130).
+    """An OCI or file store has no ``tls:`` block, from any layer (#1130, #1415).
 
-    Its SDK verifies TLS itself. Checked before :func:`_merge_tls`, so that the
-    message is this one and not one of that function's own refusals, and it
-    names the layer that wrote the block.
+    OCI's SDK verifies TLS itself, and a file store opens no connection.
+    Checked before :func:`_merge_tls`, so that the message is this one and not
+    one of that function's own refusals, and it names the layer that wrote the
+    block.
     """
-    if vault.type != "oci":
+    if vault.type not in NOT_HASHICORP:
         return
     found = next((str(at.key("tls")) for _, at, patch in patches if patch.tls is not None), None)
     if found is None and vault.tls is not None:
@@ -265,9 +291,14 @@ def _refuse_tls_on_oci(
         )
     if found is not None:
         raise ConfigError(
-            f"vault {vault.name!r}: `tls`, from {found}, has no effect on a store of type 'oci'",
+            f"vault {vault.name!r}: `tls`, from {found}, has no effect on a store of type "
+            f"{vault.type!r}",
             at=ROOT,
-            hint="it is a HashiCorp Vault key; the OCI SDK verifies TLS itself",
+            hint=(
+                "it is a HashiCorp Vault key; the OCI SDK verifies TLS itself"
+                if vault.type == "oci"
+                else "it is a HashiCorp Vault key; a file store opens no connection"
+            ),
         )
 
 
@@ -280,7 +311,16 @@ def _refuse_hashicorp_auth(vault: Vault, auth: VaultAuth | None, *, at: KeyPath)
     was edited to ``oci`` does not keep an ``approle`` block that fails only at
     the first connection. ``at`` is the block in force, which a profile or
     ``defaults.vaults`` may have written.
+
+    A file store authenticates to nothing: its ``identity`` decrypts it, so any
+    ``auth:`` block on it is refused (#1415).
     """
+    if vault.type == "file" and auth is not None:
+        raise ConfigError(
+            f"auth method {auth.method!r} has no effect on a store of type 'file'",
+            at=at,
+            hint="a file store is opened with its `identity`; remove `auth:` from this store",
+        )
     if vault.type != "oci" or auth is None or auth.method in OCI_AUTH_METHODS:
         return
     raise ConfigError(
@@ -491,6 +531,22 @@ def _merge(
     # wrong thing first.
     _refuse_hashicorp_keys(vault, values, settings)
     _refuse_inert_merge_patch(vault, values)
+    if vault.type == "file" and values.get("addr") is None:
+        # On the merged values, because `addr` may come from any layer. A file
+        # store has no default path: a guessed one would create a credentials
+        # file where nobody looks for it.
+        raise ConfigError(
+            f"vault {vault.name!r}: a `file` store needs `addr`, the path of its file",
+            at=ROOT.key("vaults").key(vault.name),
+            # The warnings collected so far are not shown when the load is
+            # refused, so the hint says what a `SOPULI-W038` would have said.
+            hint=(
+                "write `addr: PATH` on the store, or set it in a profile, in "
+                "defaults.vaults, with SOPULI_VAULT_ADDR or SOPULI_VAULT__<STORE>__ADDR, "
+                "or with --vault-addr. VAULT_ADDR is HashiCorp's and is not applied to "
+                "a file store"
+            ),
+        )
     _refuse_userinfo(vault, settings.get("addr"))
     _refuse_plain_http(vault, settings.get("addr"))
     for overridden in (
@@ -502,7 +558,7 @@ def _merge(
 
     # Before the merge, for the same reason: `_merge_tls` has refusals of its
     # own, and on an OCI store the block is the fault.
-    _refuse_tls_on_oci(vault, patches, from_env)
+    _refuse_tls_off_hashicorp(vault, patches, from_env)
     tls, tls_patched, tls_settings, tls_warnings = _merge_tls(vault, patches, from_env)
     if tls is not None:
         values["tls"] = tls

@@ -326,12 +326,12 @@ class VaultTls:
 
 @dataclass(frozen=True)
 class Vault:
-    """One entry in ``vaults:`` (§2).
+    """One entry in ``vaults:`` (§3a).
 
-    Only ``type`` is required. The rest is backend-specific -- a file backend has
-    no ``addr``, and P2 puts per-backend validation behind the store interface --
-    so demanding a HashiCorp shape of every vault would be exactly the top-level
-    vendor bias P1 forbids.
+    ``type`` is required everywhere. The rest is backend-specific -- a file
+    store's ``addr`` is a path, and an OCI store has none -- so demanding a
+    HashiCorp shape of every vault would be exactly the top-level vendor bias P1
+    forbids.
     """
 
     name: str
@@ -362,6 +362,18 @@ class Vault:
     #: OCI only. ``None`` means the region the auth method supplies: the
     #: config-file profile's, or the instance metadata's.
     region: str | None = None
+    #: ``file`` only: where the age identity that decrypts the store comes
+    #: from. The identity is a secret, so this names a file or a variable and
+    #: never holds it (invariant 1, #1415).
+    identity: MaterialRef | None = None
+    #: ``file`` only: age public keys the store is encrypted to, besides the
+    #: identity's own, which is always a recipient so that the next run can read
+    #: what this one wrote. ``None`` means the identity's key alone. A public
+    #: key proves nothing, so these are plain strings.
+    recipients: tuple[str, ...] | None = None
+    #: ``file`` only: how many versions of each path the store keeps, at least
+    #: 1. ``None`` means the store's default, 10.
+    max_versions: int | None = None
     tls: VaultTls | None = None
     auth: VaultAuth | None = None
     non_production: bool = False

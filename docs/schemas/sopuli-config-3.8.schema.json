@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/villebase/sopuli-dba/schemas/sopuli-config-3.7.schema.json",
+  "$id": "https://github.com/villebase/sopuli-dba/schemas/sopuli-config-3.8.schema.json",
   "title": "sopuli-dba configuration",
   "type": "object",
   "description": "A sopuli-dba configuration file (docs/design/01-configuration.md).\n\nStructural only, and deliberately so. It describes key names, types, closed sets, required keys, and rejects unknown keys -- which is what makes editor completion and P3's \"a typo in a credential tool must never be silently ignored\" work while somebody is typing.\n\nThe rules it does not express are enforced by `sopuli config validate`, whose errors name the offending key: the inline form and `applications:` are mutually exclusive; `secret` and `secret_template` are mutually exclusive; two accounts may not resolve to one secret ref; `require:` may not exceed `length:` or ask for specials a charset does not have; `allow:` belongs to `charset: custom`; an `auth:` block may carry only the keys its own `method:` takes; every vault, policy, group, profile and target name written anywhere must be declared in the section that declares it; a `for_each` must use one inner dimension throughout; a profile may not set a key that would change scope; a `reports.accounts` rule needs `profile:` or `settings:`, names each account once across the rules, and may not give an application account a `profile:`; and a `reports.db_profiles` name appears once. A file this schema accepts may still be refused there.",
@@ -187,7 +187,7 @@
     },
     "vault": {
       "type": "object",
-      "description": "One named secret store. `type` is the only key every store needs: the backends differ enough that demanding a HashiCorp shape of every entry would be the vendor bias P1 forbids. The rest depend on the backend; an oci store requires vault_id, compartment_id and key_id.",
+      "description": "One named secret store. `type` is the only key every store needs: the backends differ enough that demanding a HashiCorp shape of every entry would be the vendor bias P1 forbids. The rest depend on the backend; an oci store requires vault_id, compartment_id and key_id, and a file store requires identity and an addr, its path, from some layer.",
       "additionalProperties": false,
       "required": [
         "type"
@@ -250,6 +250,26 @@
           "type": "string",
           "minLength": 1,
           "description": "OCI only. Absent means the region the auth method supplies: the config-file profile's, or the instance metadata's."
+        },
+        "identity": {
+          "$ref": "#/$defs/material_ref",
+          "description": "file only, and required there: where the age identity that decrypts the store comes from. A secret, so it is named, never written here."
+        },
+        "recipients": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^age1[0-9a-z]+$"
+          },
+          "description": "file only: age recipients (age1...) the store is encrypted to, besides the identity's own key, which is always one. Absent means the identity's key alone.",
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "max_versions": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "file only: how many versions of each path the store keeps. 1 keeps only the current version. Absent means 10."
         },
         "tls": {
           "$ref": "#/$defs/vault_tls"

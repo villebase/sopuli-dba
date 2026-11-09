@@ -668,12 +668,14 @@ rules apply:
 - **The store name is resolved at load**, with every other store reference, so a
   misspelled `vault:` is refused while the file is read. If the verb resolved it,
   that failure would come *after* a password had already changed.
-- **The store must not be an `oci` store.** This build supports OCI for
-  application credentials (UC-1) only. A `reset_records:` store, or a delivery
-  method's own `vault:`, that names an OCI store is refused when the file is
-  read. An unseen delivery whose store a target or `defaults.vault` supplies is
-  refused before the reset builds its plan, `--dry-run` included. Both are
-  config errors, exit 9. Reasons: [#1138](../decisions/log.md#1138).
+- **The store must not be an `oci` or `file` store.** This build supports
+  OCI for application credentials (UC-1) only. A `file` store is for
+  development and CI, and personal accounts belong to real people. A
+  `reset_records:` store, or a delivery method's own `vault:`, that names
+  either is refused when the file is read. An unseen delivery whose store a
+  target or `defaults.vault` supplies is refused before the reset builds its
+  plan, `--dry-run` included. Both are config errors, exit 9. Reasons:
+  [#1138](../decisions/log.md#1138), [#1415](../decisions/log.md#1415).
 - **The account is case-folded into the path, and the target is not.** The path
   segment is the account's `upper()`, written in lower case. An account name is
   compared by `upper()` everywhere else. A path that did not

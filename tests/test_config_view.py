@@ -37,7 +37,13 @@ DOCUMENT: dict[str, Any] = {
     "version": 1,
     "vaults": {
         "vault-dev": {"type": "hashicorp", "addr": "https://vault-dev.example.com"},
-        "local": {"type": "file", "non_production": True, "locking": "advisory-only"},
+        "local": {
+            "type": "file",
+            "addr": "/srv/sopuli/store.age",
+            "identity": {"env": "SOPULI_FILE_IDENTITY"},
+            "non_production": True,
+            "locking": "advisory-only",
+        },
     },
     "targets": [
         {

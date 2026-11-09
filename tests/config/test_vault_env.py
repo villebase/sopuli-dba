@@ -51,6 +51,12 @@ NAMED_ADDR = "https://named.example.com"
 ACTIVE_ADDR = "https://active.example.com"
 THIRDPARTY_ADDR = "https://third-party.example.com"
 
+FILE_STORE: dict[str, Any] = {
+    "type": "file",
+    "addr": "/srv/secrets",
+    "identity": {"env": "SOPULI_FILE_IDENTITY"},
+}
+
 
 def document(vault: dict[str, Any] | None = None, **sections: Any) -> dict[str, Any]:
     """A file with one declared store, defaulted to, plus whatever a case adds."""
@@ -549,12 +555,14 @@ def test_vault_addr_is_cut_when_it_loses_too() -> None:
     ids=["no-scheme", "posix-path", "windows-path"],
 )
 def test_vault_addr_with_no_scheme_is_not_applied_to_a_file_store(address: str) -> None:
-    """A `file` store's `addr` is a path, so the plain-HTTP rule does not
-    refuse it. Cutting a path at its `@` would give another directory."""
-    config = loaded({"VAULT_ADDR": address}, {"type": "file", "addr": "/srv/secrets"})
+    """`VAULT_ADDR` is HashiCorp's variable, and a `file` store does not apply
+    it at all. The store keeps its declared path, and the run warns that the
+    variable was left unapplied (W038), not about a user name in it."""
+    config = loaded({"VAULT_ADDR": address}, FILE_STORE)
 
     assert config.vaults[0].addr == "/srv/secrets"
-    assert len(userinfo_warnings(config)) == 1
+    assert userinfo_warnings(config) == []
+    assert [one.code for one in config.warnings] == [THIRD_PARTY_VARIABLE_UNAPPLIED]
     assert all("s3" not in one.message for one in config.warnings)
 
 
@@ -624,8 +632,8 @@ def test_an_at_sign_in_a_file_stores_path_is_refused() -> None:
     """The check does not parse the address, so it cannot tell a path from a
     URL with no scheme. A path with no `@` is untouched."""
     with pytest.raises(ConfigError):
-        loaded({}, {"type": "file", "addr": "/srv/team@ops/secrets"})
-    assert merged({}, {"type": "file", "addr": "/srv/secrets"}).addr == "/srv/secrets"
+        loaded({}, {**FILE_STORE, "addr": "/srv/team@ops/secrets"})
+    assert merged({}, FILE_STORE).addr == "/srv/secrets"
 
 
 def test_an_address_with_no_scheme_is_refused_without_repeating_it() -> None:

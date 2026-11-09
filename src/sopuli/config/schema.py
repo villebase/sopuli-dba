@@ -31,7 +31,7 @@ the intended division.
 
 Regenerate the committed artefact with::
 
-    python -m sopuli.config.schema > docs/schemas/sopuli-config-3.7.schema.json
+    python -m sopuli.config.schema > docs/schemas/sopuli-config-3.8.schema.json
 """
 
 from __future__ import annotations
@@ -65,7 +65,7 @@ from sopuli.config import (
 #: `01-configuration.md` §9b says when it changes. What each shape accepts and
 #: refuses, and why, is in the function that builds it: its docstring or its
 #: ``description``.
-SCHEMA_VERSION = "3.7"
+SCHEMA_VERSION = "3.8"
 
 SCHEMA_FILENAME = f"sopuli-config-{SCHEMA_VERSION}.schema.json"
 
@@ -357,6 +357,30 @@ def _vault_types() -> dict[str, Schema]:
                 "config-file profile's, or the instance metadata's."
             ),
         },
+        "identity": {
+            **_ref("material_ref"),
+            "description": (
+                "file only, and required there: where the age identity that decrypts "
+                "the store comes from. A secret, so it is named, never written here."
+            ),
+        },
+        "recipients": _array(
+            {**STRING, "pattern": f"^{vaults.AGE_RECIPIENT.pattern}$"},
+            description=(
+                "file only: age recipients (age1...) the store is encrypted to, besides "
+                "the identity's own key, which is always one. Absent means the "
+                "identity's key alone."
+            ),
+            minItems=1,
+            uniqueItems=True,
+        ),
+        "max_versions": {
+            **POSITIVE_INT,
+            "description": (
+                "file only: how many versions of each path the store keeps. 1 keeps "
+                "only the current version. Absent means 10."
+            ),
+        },
         "tls": _ref("vault_tls"),
         "auth": _method_or_shorthand("vault_auth", vaults.AUTH_METHODS),
         "non_production": {
@@ -391,7 +415,8 @@ def _vault() -> Schema:
             "One named secret store. `type` is the only key every store needs: the "
             "backends differ enough that demanding a HashiCorp shape of every entry "
             "would be the vendor bias P1 forbids. The rest depend on the backend; an "
-            "oci store requires vault_id, compartment_id and key_id."
+            "oci store requires vault_id, compartment_id and key_id, and a file store "
+            "requires identity and an addr, its path, from some layer."
         ),
     )
 

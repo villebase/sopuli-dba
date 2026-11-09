@@ -52,6 +52,11 @@ SCHEMA = (
     / f"sopuli-run-{SCHEMA_VERSION}.schema.json"
 )
 
+#: A valid `file` entry, indented as a child of a store name in the YAML above.
+FILE_STORE = (
+    "    type: file\n    addr: /srv/sopuli/store.age\n    identity: { env: SOPULI_FILE_IDENTITY }\n"
+)
+
 CONFIG = """version: 1
 vaults:
   vault-prod:
@@ -227,7 +232,7 @@ def test_a_backend_with_no_module_warns_though_pip_cannot_help(
     answer does not depend on what is installed, only on what is written, so it
     is the same on a developer machine and in CI's base cell.
     """
-    document = _validate_json(write_config("version: 1\nvaults:\n  local:\n    type: file\n"))
+    document = _validate_json(write_config(f"version: 1\nvaults:\n  local:\n{FILE_STORE}"))
     (found,) = document["diagnostics"]
 
     assert document["exit_code"] == ExitCode.SUCCESS
@@ -258,7 +263,7 @@ def test_every_store_this_machine_cannot_serve_is_named(write_config: WriteConfi
             "    vault_id: ocid1.vault.oc1..exampleuniqueid\n"
             "    compartment_id: ocid1.compartment.oc1..exampleuniqueid\n"
             "    key_id: ocid1.key.oc1..exampleuniqueid\n"
-            "  vault-local:\n    type: file\n"
+            f"  vault-local:\n{FILE_STORE}"
             "  vault-desktop:\n    type: keyring\n"
         )
     )

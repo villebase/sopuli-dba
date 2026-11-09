@@ -5092,7 +5092,9 @@ the register.
   2. **Config keys:** `addr` is the file's path (`01-configuration.md` §3a).
      `identity:` is a MaterialRef, `file` or `env`, holding the age identity
      that decrypts. `recipients:` is an optional list of age public keys.
-     Without it, the store encrypts to the identity's own public key. A
+     Without it, the store encrypts to the identity's own public key. With
+     it, the identity's own key is still a recipient, so that the next run
+     can read what this one wrote (found in the review of #1418). A
      passphrase-protected identity is refused, because it would need a
      prompt.
   3. **Layout:** one encrypted file per store, holding every path and up to

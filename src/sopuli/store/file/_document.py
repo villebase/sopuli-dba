@@ -38,6 +38,11 @@ FORMAT = "sopuli-file-store"
 #: understand would write the store back without it.
 FORMAT_VERSION = 1
 
+#: The highest version number a path may reach: a signed 64-bit integer, as
+#: KV v2's counter is. Far beyond any real store, and small enough that a
+#: message may quote a number once it has been checked against it.
+MAX_VERSION_NUMBER = 2**63 - 1
+
 #: The highest ``format_version`` the reader takes to be a newer build's. Any
 #: higher is damage, not a release that could exist.
 NEWEST_PLAUSIBLE = 99
@@ -109,9 +114,13 @@ class Version:
     text: str = field(repr=False)
 
     def __post_init__(self) -> None:
-        if type(self.number) is not int or self.number < 1:
-            raise ValueError("a version number that is not a whole number above 0")
-        if self.created_at.tzinfo is None:
+        if type(self.number) is not int or not 1 <= self.number <= MAX_VERSION_NUMBER:
+            raise ValueError(
+                f"a version number that is not a whole number from 1 to {MAX_VERSION_NUMBER}"
+            )
+        # `utcoffset() is None` is Python's own test of naive: a tzinfo that
+        # answers None is naive too, and to_rfc3339 would read it as local time.
+        if not isinstance(self.created_at, datetime) or self.created_at.utcoffset() is None:
             raise ValueError("a time with no zone")
         try:
             to_rfc3339(self.created_at)
@@ -136,9 +145,15 @@ class Document:
     write a file this module would then call damaged: each path is valid text
     and has at least one version, numbered consecutively, and each
     :class:`Version` checks its own fields.
+
+    Not hashable: it holds a mapping, and nothing needs a document as a key.
     """
 
     paths: Mapping[str, tuple[Version, ...]]
+
+    # Stated, so the frozen dataclass does not generate a hash that fails on
+    # the mapping at run time.
+    __hash__ = None  # type: ignore[assignment]
 
     def __post_init__(self) -> None:
         # Copied into an immutable mapping of tuples first, so a caller that
@@ -192,8 +207,10 @@ class Document:
         ``now`` must carry its zone, so the time in memory is the time on disk.
         """
         keep = DEFAULT_MAX_VERSIONS if max_versions is None else max_versions
-        if keep < 1:
-            raise ValueError("max_versions must be at least 1")
+        # `type() is int`, as for a pin: True would keep one version, and a
+        # float would fail in the slice.
+        if type(keep) is not int or keep < 1:
+            raise ValueError("max_versions must be a whole number of at least 1")
         problem = _path_problem(path)
         if problem is not None:
             raise StoreError(f"a path cannot be stored: it is {problem}", hint=TOOL_FAULT)
@@ -222,15 +239,21 @@ class Document:
                 hint="run with Python's default limits (unset PYTHONINTMAXSTRDIGITS)",
             ) from None
         number = self.current(path) + 1
-        # A time with no zone or outside the UTC range is the caller's error,
-        # and Version's ValueError says which.
-        created = Version(number=number, created_at=now, text=text)
+        try:
+            created = Version(number=number, created_at=now, text=text)
+        except ValueError as problem:
+            # Version's message names the problem and no data: a time with no
+            # zone, or text the walk above passed and the version's own check
+            # did not. Either is the tool's fault, not the operator's.
+            raise StoreError(
+                f"version {number} of {path!r} cannot be stored: {problem}", hint=TOOL_FAULT
+            ) from None
         paths = {name: versions[-keep:] for name, versions in self.paths.items()}
         paths[path] = (*self.paths.get(path, ()), created)[-keep:]
-        return Document(MappingProxyType(paths)), number
+        return Document(paths), number
 
 
-EMPTY = Document(MappingProxyType({}))
+EMPTY = Document({})
 
 
 def _not_plain(value: Any, *, depth: int) -> str | None:
@@ -265,8 +288,10 @@ def _not_plain(value: Any, *, depth: int) -> str | None:
         return None
     if type(value) is dict:
         for key, item in value.items():
-            if not isinstance(key, str):
-                return "a key that is not text"
+            # Exactly str: a subclass may hash, compare or sort as it likes,
+            # which could make two keys one or change the written order.
+            if type(key) is not str:
+                return "a key that is not plain text"
             found = _not_plain(key, depth=depth + 1) or _not_plain(item, depth=depth + 1)
             if found is not None:
                 return found
@@ -299,6 +324,10 @@ def _text_problem(text: Any) -> str | None:
         return problem
     try:
         canonical = _json(parsed)
+    except RecursionError:
+        # The encoder recurses deeper than the parser, and on Python 3.11 both
+        # share one limit, so text just inside the parser's reach can fail here.
+        return "data nested too deeply to read"
     except ValueError:
         return "data that is not JSON this build can write"
     if canonical != text:
@@ -421,12 +450,10 @@ def loads(raw: bytes) -> Document:
     if not isinstance(paths, dict):
         raise DocumentError("`paths` is not a mapping")
     return Document(
-        MappingProxyType(
-            {
-                path: _versions(position, path, versions)
-                for position, (path, versions) in enumerate(paths.items(), start=1)
-            }
-        )
+        {
+            path: _versions(position, path, versions)
+            for position, (path, versions) in enumerate(paths.items(), start=1)
+        }
     )
 
 
@@ -457,8 +484,10 @@ def _version(where: str, raw: Any) -> Version:
         raise DocumentError(f"{where} has a version that is not a mapping")
     _exact_keys(raw, {"version", "created_at", "data"}, where=f"a version of {where}")
     number = raw["version"]
-    if type(number) is not int or number < 1:
-        raise DocumentError(f"{where} has a version number that is not a whole number above 0")
+    # Checked here before Version checks it again, because the messages below
+    # quote the number, and a damaged file's number may be thousands of digits.
+    if type(number) is not int or not 1 <= number <= MAX_VERSION_NUMBER:
+        raise DocumentError(f"{where} has a version number out of range")
     created_at = raw["created_at"]
     try:
         moment = from_rfc3339(created_at) if isinstance(created_at, str) else None
@@ -475,12 +504,19 @@ def _version(where: str, raw: Any) -> Version:
     if type(data) is not dict:
         raise DocumentError(f"version {number} of {where} has `data` that is not a plain object")
     try:
+        text = _json(data)
+    except (ValueError, RecursionError):
+        # A lower integer limit in this process, or nesting the encoder cannot
+        # reach on Python 3.11, where it recurses deeper than the parser.
+        raise DocumentError(
+            f"version {number} of {where} has `data` this process cannot write back"
+        ) from None
+    try:
         # Version is the one check of a version, so the reader accepts exactly
         # what the writer can build.
-        return Version(number=number, created_at=moment, text=_json(data))
+        return Version(number=number, created_at=moment, text=text)
     except ValueError as problem:
-        # Version's messages name the problem and no data. _json's own
-        # ValueError, from a lower integer limit, says nothing either.
+        # Version's messages name the problem and no data.
         raise DocumentError(
             f"version {number} of {where} has `data` that is not a plain object ({problem})"
         ) from None

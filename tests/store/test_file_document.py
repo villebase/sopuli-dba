@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 import sys
 from collections import OrderedDict, namedtuple
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone, tzinfo
 from types import MappingProxyType
 from typing import Any
 
@@ -203,8 +203,9 @@ def test_a_tuple_is_stored_as_a_list() -> None:
         ({"current": float("nan")}, "not finite"),
         ({"current": float("inf")}, "not finite"),
         ({"current": "\ud800"}, "not valid UTF-8"),
-        ({1: "a"}, "a key that is not text"),
-        ({"k": {2: PASSWORD}}, "a key that is not text"),
+        ({1: "a"}, "a key that is not plain text"),
+        ({"k": {2: PASSWORD}}, "a key that is not plain text"),
+        ({QuietStr("a"): 1}, "a key that is not plain text"),
         ({"current": 10**5000}, "wider than 14000 bits"),
         ({"current": WideInt(10**5000)}, "wider than 14000 bits"),
         ({"current": QuietStr("\ud800")}, "not valid UTF-8"),
@@ -216,6 +217,7 @@ def test_a_tuple_is_stored_as_a_list() -> None:
         "lone-surrogate",
         "int-key",
         "nested-int-key",
+        "str-subclass-key",
         "huge-int",
         "huge-int-subclass",
         "str-subclass",
@@ -254,18 +256,51 @@ def test_data_that_is_not_an_object_is_refused(value: Any) -> None:
     assert caught.value.hint is not None
 
 
-def test_a_time_with_no_zone_is_refused() -> None:
+class Floating(tzinfo):
+    """A zone that answers None: naive by Python's own definition."""
+
+    def utcoffset(self, dt: datetime | None) -> timedelta | None:
+        return None
+
+    def dst(self, dt: datetime | None) -> timedelta | None:
+        return None
+
+    def tzname(self, dt: datetime | None) -> str | None:
+        return None
+
+
+@pytest.mark.parametrize(
+    "now",
+    [datetime(2026, 11, 9, 10, 0), datetime(2026, 11, 9, 10, 0, tzinfo=Floating())],
+    ids=["no-tzinfo", "tzinfo-answers-none"],
+)
+def test_a_time_with_no_zone_is_refused(now: datetime) -> None:
     """A naive time would be written converted from local time, so the time in
     memory and the time on disk would differ."""
-    with pytest.raises(ValueError, match="zone"):
-        EMPTY.written(PATH, {"v": 1}, now=datetime(2026, 11, 9, 10, 0), max_versions=None)
+    with pytest.raises(StoreError) as caught:
+        EMPTY.written(PATH, {"v": 1}, now=now, max_versions=None)
+
+    assert "a time with no zone" in str(caught.value)
 
 
 def test_a_time_outside_the_utc_range_is_refused_at_the_write() -> None:
     edge = datetime(1, 1, 1, tzinfo=timezone(timedelta(hours=2)))
 
-    with pytest.raises(ValueError, match="outside the UTC range"):
+    with pytest.raises(StoreError) as caught:
         EMPTY.written(PATH, {"v": 1}, now=edge, max_versions=None)
+
+    assert "outside the UTC range" in str(caught.value)
+
+
+@pytest.mark.parametrize("keep", [0, True, 2.5, "3"])
+def test_max_versions_must_be_a_whole_number_of_at_least_one(keep: Any) -> None:
+    with pytest.raises(ValueError, match="max_versions"):
+        EMPTY.written(PATH, {"v": 1}, now=NOW, max_versions=keep)
+
+
+def test_a_document_is_not_hashable_by_design() -> None:
+    with pytest.raises(TypeError, match="unhashable"):
+        hash(EMPTY)
 
 
 @pytest.mark.parametrize(
@@ -286,7 +321,8 @@ def test_a_document_the_reader_would_refuse_cannot_be_built(paths: Any) -> None:
 @pytest.mark.parametrize(
     ("number", "created_at", "text", "problem"),
     [
-        (0, NOW, "{}", "above 0"),
+        (0, NOW, "{}", "from 1 to"),
+        (2**63, NOW, "{}", "from 1 to"),
         (1, datetime(2026, 11, 9, 10, 0), "{}", "no zone"),
         (1, datetime(1, 1, 1, tzinfo=timezone(timedelta(hours=2))), "{}", "UTC range"),
         (1, NOW, "[]", "not an object"),
@@ -299,6 +335,7 @@ def test_a_document_the_reader_would_refuse_cannot_be_built(paths: Any) -> None:
     ],
     ids=[
         "number-zero",
+        "number-too-big",
         "naive-time",
         "time-out-of-range",
         "not-an-object",
@@ -526,8 +563,9 @@ def test_a_newer_format_says_to_upgrade_not_to_restore() -> None:
         (lambda b: b.update(extra=True), "1 unknown"),
         (lambda b: b["paths"].update({PATH: []}), "non-empty list of versions"),
         (lambda b: b["paths"].update({PATH: {"versions": []}}), "non-empty list of versions"),
-        (lambda b: first_version(b).update(version=0), "above 0"),
-        (lambda b: first_version(b).update(version=True), "above 0"),
+        (lambda b: first_version(b).update(version=0), "out of range"),
+        (lambda b: first_version(b).update(version=True), "out of range"),
+        (lambda b: first_version(b).update(version=10**4000), "out of range"),
         (lambda b: first_version(b).update(created_at="soon"), "created_at"),
         (lambda b: first_version(b).update(created_at="2026-11-09"), "created_at"),
         (lambda b: first_version(b).update(created_at="2026-11-09T10:00:00"), "created_at"),

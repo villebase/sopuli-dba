@@ -23,7 +23,7 @@ from __future__ import annotations
 import json
 import math
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from types import MappingProxyType
 from typing import Any
@@ -37,6 +37,10 @@ FORMAT = "sopuli-file-store"
 #: know rather than guessing, because a guess that drops a field it did not
 #: understand would write the store back without it.
 FORMAT_VERSION = 1
+
+#: The highest ``format_version`` the reader takes to be a newer build's. Any
+#: higher is damage, not a release that could exist.
+NEWEST_PLAUSIBLE = 99
 
 #: How many versions of a path are kept when the store's ``max_versions`` is not
 #: set (#1415).
@@ -88,29 +92,34 @@ class Version:
     The data is held as its canonical JSON text, and :attr:`data` parses a new
     copy on every read. So no caller, through :meth:`Document.latest` or
     through :attr:`Document.paths`, can change a kept version in place.
+
+    **The text holds passwords in clear**, so it is left out of ``repr``: a
+    failed assertion, a traceback that shows locals, or a log line that
+    formats a document prints numbers and times, never data (invariant 2).
+
+    **This class is the one check of a version.** :meth:`Document.written`
+    and :func:`loads` both build versions through it, so the writer and the
+    reader cannot drift apart. Each refusal is a ``ValueError`` whose message
+    names the problem and no data; the two callers turn it into their own
+    error.
     """
 
     number: int
     created_at: datetime
-    text: str
+    text: str = field(repr=False)
 
     def __post_init__(self) -> None:
-        # The shape `loads` accepts, so `dumps` never writes what it refuses.
-        # A programming error, not an operator's, so ValueError.
         if type(self.number) is not int or self.number < 1:
-            raise ValueError("a version number must be a whole number above 0")
+            raise ValueError("a version number that is not a whole number above 0")
         if self.created_at.tzinfo is None:
-            raise ValueError("a version's created_at must carry its zone")
+            raise ValueError("a time with no zone")
         try:
             to_rfc3339(self.created_at)
         except OverflowError:
-            raise ValueError("a version's created_at is outside the UTC range") from None
-        try:
-            parsed = json.loads(self.text, parse_constant=_reject_constant)
-        except ValueError:
-            raise ValueError("a version's text must be JSON with no NaN") from None
-        if not isinstance(parsed, dict) or _not_plain(parsed, depth=0) is not None:
-            raise ValueError("a version's text must be a JSON object of plain values")
+            raise ValueError("a time outside the UTC range") from None
+        problem = _text_problem(self.text)
+        if problem is not None:
+            raise ValueError(problem)
 
     @property
     def data(self) -> dict[str, Any]:
@@ -185,12 +194,6 @@ class Document:
         keep = DEFAULT_MAX_VERSIONS if max_versions is None else max_versions
         if keep < 1:
             raise ValueError("max_versions must be at least 1")
-        if now.tzinfo is None:
-            raise ValueError("now must carry its zone")
-        try:
-            to_rfc3339(now)
-        except OverflowError:
-            raise ValueError("now is outside the range of a UTC timestamp") from None
         problem = _path_problem(path)
         if problem is not None:
             raise StoreError(f"a path cannot be stored: it is {problem}", hint=TOOL_FAULT)
@@ -199,14 +202,29 @@ class Document:
                 f"the data for {path!r} cannot be stored: it is not a JSON object",
                 hint=TOOL_FAULT,
             )
+        # Walked here as well as in Version, because this walk sees the
+        # caller's own objects: a key that is not text, a set or a subclass is
+        # visible only before JSON has converted it.
         problem = _not_plain(data, depth=0)
         if problem is not None:
             # The value is not repeated: it may be a password.
             raise StoreError(
                 f"the data for {path!r} cannot be stored: it holds {problem}", hint=TOOL_FAULT
             )
+        try:
+            text = _json(data)
+        except ValueError:
+            # The one way past the walk: a process run with a lower limit on
+            # turning integers into text than Python's default.
+            raise StoreError(
+                f"the data for {path!r} cannot be stored: this process cannot write one of "
+                "its numbers as text",
+                hint="run with Python's default limits (unset PYTHONINTMAXSTRDIGITS)",
+            ) from None
         number = self.current(path) + 1
-        created = Version(number=number, created_at=now, text=_json(data))
+        # A time with no zone or outside the UTC range is the caller's error,
+        # and Version's ValueError says which.
+        created = Version(number=number, created_at=now, text=text)
         paths = {name: versions[-keep:] for name, versions in self.paths.items()}
         paths[path] = (*self.paths.get(path, ()), created)[-keep:]
         return Document(MappingProxyType(paths)), number
@@ -236,13 +254,16 @@ def _not_plain(value: Any, *, depth: int) -> str | None:
         except UnicodeEncodeError:
             return "text that is not valid UTF-8"
         return None
-    if isinstance(value, list | tuple):
+    # Exact types for containers: the JSON encoder reads a list's or a dict's
+    # storage directly, so a subclass that iterates differently could hide a
+    # value from this walk, and a namedtuple would lose its field names.
+    if type(value) is list or type(value) is tuple:
         for item in value:
             found = _not_plain(item, depth=depth + 1)
             if found is not None:
                 return found
         return None
-    if isinstance(value, dict):
+    if type(value) is dict:
         for key, item in value.items():
             if not isinstance(key, str):
                 return "a key that is not text"
@@ -251,6 +272,38 @@ def _not_plain(value: Any, *, depth: int) -> str | None:
                 return found
         return None
     return f"a value of type {type(value).__name__}"
+
+
+def _text_problem(text: Any) -> str | None:
+    """What makes ``text`` unusable as a version's data, or ``None``. Names no data.
+
+    It must be the canonical JSON of a plain object, exactly as :func:`_json`
+    writes it: so no key named twice, no ``NaN``, nothing nested too deep, and
+    no other spacing or key order, any of which :func:`dumps` would copy into
+    the file as it is.
+    """
+    if type(text) is not str:
+        return "data that is not text"
+    try:
+        parsed = json.loads(text, object_pairs_hook=_unique, parse_constant=_reject_constant)
+    except _DuplicateKeyError:
+        return "an object that names one key twice"
+    except RecursionError:
+        return "data nested too deeply to read"
+    except ValueError:
+        return "data that is not JSON this build can read"
+    if type(parsed) is not dict:
+        return "data that is not an object"
+    problem = _not_plain(parsed, depth=0)
+    if problem is not None:
+        return problem
+    try:
+        canonical = _json(parsed)
+    except ValueError:
+        return "data that is not JSON this build can write"
+    if canonical != text:
+        return "data that is not in the store's canonical form"
+    return None
 
 
 def _json(value: Any) -> str:
@@ -351,7 +404,9 @@ def loads(raw: bytes) -> Document:
         raise DocumentError(f"it is not a {FORMAT} document")
     format_version = body.get("format_version")
     # `type() is int`, so `true` and `1.0`, which equal 1 in Python, are refused.
-    if type(format_version) is int and format_version > FORMAT_VERSION:
+    # Only a plausible next version reads as a newer build's: a huge number in
+    # a damaged header is damage, and quoting it would print the whole thing.
+    if type(format_version) is int and FORMAT_VERSION < format_version <= NEWEST_PLAUSIBLE:
         raise DocumentError(
             f"a newer build wrote it, in format_version {format_version}",
             hint=(
@@ -417,9 +472,18 @@ def _version(where: str, raw: Any) -> Version:
     if not same or moment is None:
         raise DocumentError(f"version {number} of {where} has no readable `created_at`")
     data = raw["data"]
-    if not isinstance(data, dict) or _not_plain(data, depth=0) is not None:
+    if type(data) is not dict:
         raise DocumentError(f"version {number} of {where} has `data` that is not a plain object")
-    return Version(number=number, created_at=moment, text=_json(data))
+    try:
+        # Version is the one check of a version, so the reader accepts exactly
+        # what the writer can build.
+        return Version(number=number, created_at=moment, text=_json(data))
+    except ValueError as problem:
+        # Version's messages name the problem and no data. _json's own
+        # ValueError, from a lower integer limit, says nothing either.
+        raise DocumentError(
+            f"version {number} of {where} has `data` that is not a plain object ({problem})"
+        ) from None
 
 
 def _exact_keys(raw: dict[str, Any], expected: set[str], *, where: str) -> None:

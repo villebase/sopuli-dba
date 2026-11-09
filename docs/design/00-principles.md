@@ -535,23 +535,25 @@ path, with fictional passwords, as `dumps` wrote them:
   the restore hint says to check `@version=N` pins. The store has no
   compare-and-set (see above).
 - **`data` is a JSON object of plain values.** A value JSON cannot hold as it
-  is, such as a key that is not text, a number that is not finite, or text that
-  is not valid UTF-8, is refused at the write. Two conversions JSON forces are
-  made instead: a tuple is stored as a list, and a subclass of a string or a
-  number as the plain type. A path name must be non-empty, valid UTF-8 text.
+  is, such as a key that is not text, a number that is not finite, text that is
+  not valid UTF-8, or a subclass of a list, a tuple or a dict, is refused at the
+  write. Two conversions JSON forces are made instead: a tuple is stored as a
+  list, and a subclass of a string or a number as the plain type. A path name
+  must be non-empty, valid UTF-8 text. One check of a version serves both the
+  writer and the reader, so the reader accepts exactly what the writer builds.
 - **`created_at`** is UTC, written as `to_rfc3339` writes it, with a `Z`.
 - **The reader is strict.** A missing or unknown field, a key named twice,
   numbers that are not consecutive, or a timestamp in another form is refused.
   The hint says what to check first, that `addr` names the store's file and
   that the process runs with Python's default limits, and only then to restore
   a backup, because restoring a store that was fine loses the passwords written
-  since. A
-  higher `format_version` is not damage: a newer build wrote it, and the hint
-  says to upgrade, because restoring an older file would drop the passwords
-  written since.
-- **No error quotes the data**, because the data holds passwords in clear. The
-  reader names a damaged path by its position, and counts unknown fields
-  rather than naming them, because in a damaged file a name may be anything.
+  since. A `format_version` above this build's, up to 99, is not damage: a
+  newer build wrote it, and the hint says to upgrade instead. A higher one is
+  damage.
+- **No error, and no `repr`, shows the data**, because the data holds
+  passwords in clear. The reader names a damaged path by its position, and
+  counts unknown fields rather than naming them, because in a damaged file a
+  name may be anything.
 - `format_version` changes when the shape does. A build reads only the
   versions it knows.
 

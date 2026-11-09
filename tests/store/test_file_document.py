@@ -6,6 +6,8 @@ Tier 0, pure: bytes in and out, no file and no encryption.
 from __future__ import annotations
 
 import json
+import sys
+from collections import OrderedDict, namedtuple
 from datetime import UTC, datetime, timedelta, timezone
 from types import MappingProxyType
 from typing import Any
@@ -262,7 +264,7 @@ def test_a_time_with_no_zone_is_refused() -> None:
 def test_a_time_outside_the_utc_range_is_refused_at_the_write() -> None:
     edge = datetime(1, 1, 1, tzinfo=timezone(timedelta(hours=2)))
 
-    with pytest.raises(ValueError, match="outside the range"):
+    with pytest.raises(ValueError, match="outside the UTC range"):
         EMPTY.written(PATH, {"v": 1}, now=edge, max_versions=None)
 
 
@@ -285,19 +287,82 @@ def test_a_document_the_reader_would_refuse_cannot_be_built(paths: Any) -> None:
     ("number", "created_at", "text", "problem"),
     [
         (0, NOW, "{}", "above 0"),
-        (1, datetime(2026, 11, 9, 10, 0), "{}", "carry its zone"),
+        (1, datetime(2026, 11, 9, 10, 0), "{}", "no zone"),
         (1, datetime(1, 1, 1, tzinfo=timezone(timedelta(hours=2))), "{}", "UTC range"),
-        (1, NOW, "[]", "JSON object"),
-        (1, NOW, '{"a":NaN}', "no NaN"),
-        (1, NOW, '{"a":' + "[" * 40 + "]" * 40 + "}", "plain values"),
+        (1, NOW, "[]", "not an object"),
+        (1, NOW, '{"a":NaN}', "not JSON this build can read"),
+        (1, NOW, '{"a":' + "[" * 40 + "]" * 40 + "}", "nested more than"),
+        (1, NOW, "[" * 100_000 + "]" * 100_000, "nested too deeply"),
+        (1, NOW, '{"a":1,"a":2}', "names one key twice"),
+        (1, NOW, '{"b":1, "a":2}', "canonical form"),
+        (1, NOW, '{"b":1,"a":2}', "canonical form"),
     ],
-    ids=["number-zero", "naive-time", "time-out-of-range", "not-an-object", "nan", "too-deep"],
+    ids=[
+        "number-zero",
+        "naive-time",
+        "time-out-of-range",
+        "not-an-object",
+        "nan",
+        "too-deep",
+        "past-the-parser",
+        "duplicate-key",
+        "spacing",
+        "key-order",
+    ],
 )
 def test_a_version_the_reader_would_refuse_cannot_be_built(
     number: int, created_at: datetime, text: str, problem: str
 ) -> None:
     with pytest.raises(ValueError, match=problem):
         Version(number, created_at, text)
+
+
+def test_repr_of_a_document_prints_no_data() -> None:
+    """Invariant 2: a failed assertion or a logged document shows no password."""
+    document = written(EMPTY, {"current": PASSWORD})
+
+    assert PASSWORD not in repr(document)
+    assert PASSWORD not in repr(document.latest(PATH))
+
+
+#: A namedtuple, which JSON would write as a bare list and lose its field names.
+Pair = namedtuple("Pair", "a b")  # noqa: PYI024 -- the untyped namedtuple is the case
+
+
+class SneakyList(list[Any]):
+    """A list that iterates as empty, hiding what the encoder will read."""
+
+    def __iter__(self) -> Any:
+        return iter(())
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        SneakyList([float("nan")]),
+        Pair(1, 2),
+        OrderedDict(a=1),
+    ],
+    ids=["list-subclass", "namedtuple", "dict-subclass"],
+)
+def test_a_container_subclass_is_refused(value: Any) -> None:
+    with pytest.raises(StoreError) as caught:
+        EMPTY.written(PATH, {"v": value}, now=NOW, max_versions=None)
+
+    assert "a value of type" in str(caught.value)
+
+
+def test_a_lower_integer_limit_is_a_store_error_not_a_bare_value_error() -> None:
+    limit = sys.get_int_max_str_digits()
+    sys.set_int_max_str_digits(1000)
+    try:
+        with pytest.raises(StoreError) as caught:
+            EMPTY.written(PATH, {"n": 10**2000}, now=NOW, max_versions=None)
+    finally:
+        sys.set_int_max_str_digits(limit)
+
+    assert "cannot write one of its numbers as text" in str(caught.value)
+    assert "PYTHONINTMAXSTRDIGITS" in (caught.value.hint or "")
 
 
 def test_a_document_keeps_no_container_its_caller_can_change() -> None:
@@ -427,6 +492,17 @@ def test_bytes_that_are_not_a_store_document_are_refused(raw: bytes, problem: st
         loads(raw)
 
     assert problem in str(caught.value)
+
+
+def test_an_implausible_format_version_is_damage_and_is_not_quoted() -> None:
+    huge = 10**4000
+
+    with pytest.raises(DocumentError) as caught:
+        loads(damaged_with(lambda b: b.update(format_version=huge)))
+
+    assert "format_version is not 1" in str(caught.value)
+    assert "newer build" not in str(caught.value)
+    assert len(str(caught.value)) < 2000
 
 
 def test_a_newer_format_says_to_upgrade_not_to_restore() -> None:

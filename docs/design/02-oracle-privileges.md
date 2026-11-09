@@ -812,9 +812,10 @@ reason names the grant. A limit that is not a whole number, such as a
 `PASSWORD_LIFE_TIME` of a fraction of a day, is unreadable too, and the reason
 gives the value.
 
-**The privilege survey sends four statements for each 250 grantees.** UC-5's
-privilege report reads the surveyed accounts' grants through
+**The privilege survey sends one statement per view for each 250 grantees.**
+UC-5's privilege report reads the surveyed accounts' grants through
 `OracleSession.survey_privileges()` (`src/sopuli/driver/oracle/grants.py`).
+A view once refused, or found missing, is not asked again.
 `PUBLIC` is a grantee only when the caller asks, and then once. Each statement
 is anchored on `grantee IN (:g0, :g1, …)`, binds the grantees' names and
 nothing else, and gives each row its grantee. None reads a password or verifier
@@ -833,8 +834,9 @@ same rows. [`measurements.md`](../measurements.md) has the times.
 | system privileges, direct and through every role, one row per path | `DBA_SYS_PRIVS` | `grant_report_reads` |
 | object privileges, the same way, with `TYPE` and `GRANTABLE` | `DBA_TAB_PRIVS` | `grant_report_reads` |
 | column privileges, the same way | `DBA_COL_PRIVS` | `grant_report_reads` |
+| schema privileges (23ai), the same way, with `SCHEMA` and `ADMIN_OPTION` | `DBA_SCHEMA_PRIVS` | `grant_report_reads` |
 
-The last three each start with the recursive `WITH` the probe measured. A
+The last four each start with the recursive `WITH` the probe measured. A
 `CYCLE` clause stops it if a role is reached again, though Oracle refuses a
 circular grant (`ORA-01934`). The role path is joined with `CHR(0)`, which no
 identifier can contain. On a release that answers `ORA-00904` to
@@ -855,10 +857,10 @@ the reason names the grant. `DBA_TAB_PRIVS` and `DBA_COL_PRIVS` hold one row
 per grantor, so the survey merges rows that differ only in grantor. The merged
 row is grantable when any of them is.
 
-The survey does not read `DBA_SCHEMA_PRIVS` yet. 23ai keeps schema-level
-privileges such as `SELECT ANY TABLE ON SCHEMA` there and in none of the other
-grant views. Probe 21 (`sql/oracle/21_schema_privs_probe.py`) measured on
-23.26.3.0.0 that:
+**Schema privileges are a part of their own** ([#1389](../decisions/log.md#1389)).
+23ai keeps schema-level privileges such as `SELECT ANY TABLE ON SCHEMA` in
+`DBA_SCHEMA_PRIVS` and in none of the other grant views. Probe 21
+(`sql/oracle/21_schema_privs_probe.py`) measured on 23.26.3.0.0 that:
 
 - the view has `GRANTEE`, `PRIVILEGE`, `SCHEMA`, `ADMIN_OPTION`, `COMMON` and
   `INHERITED`, one row per grantee, privilege and schema;
@@ -866,6 +868,21 @@ grant views. Probe 21 (`sql/oracle/21_schema_privs_probe.py`) measured on
   recursive `WITH` reaches it;
 - `PUBLIC` can hold one;
 - `USER_SCHEMA_PRIVS` and `SESSION_SCHEMA_PRIVS` need no grant.
+
+A release without schema privileges has no `DBA_SCHEMA_PRIVS`, and answers
+`ORA-00942`, as a missing grant does. So after that code the survey asks
+`USER_SCHEMA_PRIVS`, which needs no grant. Only `ORA-00942` from it too says
+the release has no schema privileges: the part is empty, and nothing is
+reported as not checked. If it answers, or refuses with a code that admits the
+view exists, the grant is missing, and the reason names it. That branch has
+not run on a release before 23ai. On 23ai, a site that revoked `PUBLIC`'s
+read of `USER_SCHEMA_PRIVS` and did not grant `DBA_SCHEMA_PRIVS` would read as
+having none.
+
+**An install made before the grant** lacks `SELECT ON DBA_SCHEMA_PRIVS`, so on
+23ai its privilege report shows `schemas: not checked` and exits 4. Running
+`00_install.sql` again with `grant_report_reads=Y` grants it, and leaves the
+account's password alone.
 
 ---
 

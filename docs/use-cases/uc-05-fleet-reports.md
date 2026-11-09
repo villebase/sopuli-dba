@@ -192,8 +192,8 @@ already reads, so no statement is added (#1390).
 `docs/local-testing.md` §9a has a run. It needs the optional grant on the
 privilege views (`00_install.sql`, `grant_report_reads=Y`); without it, the
 part it could not read is *not checked* and the run exits 4. It judges nothing,
-so it never exits 3. Schema privileges (23ai) are not read yet, and the output
-says so (#1389). Two views, for one account or for every account on a target.
+so it never exits 3. Two views, for one account or for every account on a
+target.
 
 **The summary** shows:
 
@@ -205,7 +205,9 @@ says so (#1389). Two views, for one account or for every account on a target.
   42 tables (30 direct, 12 through `ACME_READ_ROLE`)", and EXECUTE and DEBUG on
   procedures, functions, packages and types, each type counted on its own;
 - column privileges, such as UPDATE on one column of a table, counted
-  separately, because they are kept apart from table grants.
+  separately, because they are kept apart from table grants;
+- schema privileges (23ai), such as SELECT ANY TABLE on one schema, each with
+  its schema and where it comes from. A release without them shows none.
 
 **The detailed list** has one row for each privilege: the privilege, the
 object's owner, name and type, where it comes from, with the whole chain of

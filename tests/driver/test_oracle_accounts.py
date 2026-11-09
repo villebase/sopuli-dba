@@ -264,6 +264,31 @@ def test_the_privilege_survey_gives_one_row_per_path(grant_fixtures: Any) -> Non
     assert all(row.grantee == app for row in survey.objects)
 
 
+def test_the_privilege_survey_reads_schema_privileges(grant_fixtures: Any) -> None:
+    """23ai's schema privileges (#1389): one granted directly and one through
+    two levels of roles, read from DBA_SCHEMA_PRIVS with the schema and the
+    role path. Skipped where the release refuses to grant one, which is the
+    release saying it has none."""
+    try:
+        _run(
+            grant_fixtures,
+            f"grant select any table on schema {GRANTS_OWNER} to {GRANTS_APP} with admin option",
+            f"grant execute any procedure on schema {GRANTS_OWNER} to acme_gr_read",
+        )
+    except Exception as error:  # noqa: BLE001 -- any refusal means no schema privileges
+        pytest.skip(f"this release cannot grant a schema privilege: {error}")
+    app = GRANTS_APP.upper()
+    survey = grant_fixtures.survey_privileges([app], public=False)
+    assert survey.unreadable == ()
+    assert survey.schemas is not None
+    found = {(row.privilege, row.owner, row.path, row.grantable) for row in survey.schemas}
+    assert found == {
+        ("SELECT ANY TABLE", GRANTS_OWNER.upper(), (), True),
+        ("EXECUTE ANY PROCEDURE", GRANTS_OWNER.upper(), ("ACME_GR_OUTER", "ACME_GR_READ"), False),
+    }
+    assert all(row.grantee == app and row.name is None for row in survey.schemas)
+
+
 def test_the_privilege_survey_reads_public_only_when_asked(grant_fixtures: Any) -> None:
     app = GRANTS_APP.upper()
     without = grant_fixtures.survey_privileges([app], public=False)

@@ -1,9 +1,9 @@
 """`report privileges`' text and its ``results[]`` entries (UC-5 §5).
 
 The summary, per account: its roles, its system privileges with where each
-comes from, and its object and column privileges as counts by privilege and
-object type. ``--detail`` lists every privilege instead, one row each, with
-every role path.
+comes from, its object and column privileges as counts by privilege and
+object type, and its schema privileges with each schema. ``--detail`` lists
+every privilege instead, one row each, with every role path.
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from sopuli.driver.grants import RoleGrant
+from sopuli.driver.grants import SCHEMA, RoleGrant
 from sopuli.output import report_view
 from sopuli.output.document import Error, Summary
 from sopuli.output.palette import Role, paint
@@ -23,11 +23,8 @@ from sopuli.report_privileges import PUBLIC_KIND, AccountPrivileges, Privilege, 
 ABSENT = "-"
 ERROR = "ERROR"
 
-#: Said once under the report: 23ai schema privileges are not read yet (#1389),
-#: so a list without them must not read as complete.
-SCHEMA_PRIVILEGES_NOTE = (
-    "schema privileges (GRANT ... ON SCHEMA, 23ai) are not read yet, so they are not listed"
-)
+#: ``--detail``'s TYPE for a schema privilege, whose OBJECT is the schema.
+SCHEMA_TYPE = "SCHEMA"
 
 
 @dataclass(frozen=True)
@@ -53,8 +50,7 @@ target_counts = report_view.target_counts
 def render(reports: Sequence[TargetPrivileges], *, detail: bool) -> str:
     if not reports:
         return "no targets selected"
-    sections = ["\n".join(_section(report, detail=detail)) for report in reports]
-    return "\n\n".join([*sections, SCHEMA_PRIVILEGES_NOTE])
+    return "\n\n".join("\n".join(_section(report, detail=detail)) for report in reports)
 
 
 def _section(report: TargetPrivileges, *, detail: bool) -> list[str]:
@@ -87,6 +83,7 @@ def _summary(one: AccountPrivileges) -> list[str]:
     lines.append(f"    system: {_system(one.system)}")
     lines.append(f"    objects: {_counts(one.objects)}")
     lines.append(f"    columns: {_counts(one.columns, noun='column')}")
+    lines.append(f"    schemas: {_schemas(one.schemas)}")
     return lines
 
 
@@ -108,6 +105,15 @@ def _system(privileges: Sequence[Privilege] | None) -> str:
     if not privileges:
         return "none"
     return "; ".join(f"{p.privilege} ({_sources(p)})" for p in privileges)
+
+
+def _schemas(privileges: Sequence[Privilege] | None) -> str:
+    """``SELECT ANY TABLE on ACME_OWNER (direct)``, one per privilege and schema."""
+    if privileges is None:
+        return "not checked"
+    if not privileges:
+        return "none"
+    return "; ".join(f"{p.privilege} on {p.owner} ({_sources(p)})" for p in privileges)
 
 
 def _counts(privileges: Sequence[Privilege] | None, *, noun: str | None = None) -> str:
@@ -156,7 +162,13 @@ def _detail(one: AccountPrivileges) -> list[str]:
     if one.roles:
         lines.append(f"    roles: {_roles(one.roles)}")
     rows: list[list[str]] = []
-    for label, part in (("system", one.system), ("object", one.objects), ("column", one.columns)):
+    parts = (
+        ("system", one.system),
+        ("object", one.objects),
+        ("column", one.columns),
+        ("schema", one.schemas),
+    )
+    for label, part in parts:
         if part is None:
             rows.append([label, "not checked", "", "", "", ""])
             continue
@@ -165,7 +177,7 @@ def _detail(one: AccountPrivileges) -> list[str]:
                 label,
                 p.privilege,
                 ".".join(x for x in (p.owner, p.name, p.column) if x) or ABSENT,
-                p.object_type or ABSENT,
+                SCHEMA_TYPE if p.kind == SCHEMA else p.object_type or ABSENT,
                 _sources(p),
                 "yes" if p.grantable else "no",
             ]
@@ -228,7 +240,7 @@ def _result(one: AccountPrivileges, unreadable: Sequence[str]) -> dict[str, Any]
         "privileges": {
             # Why a part is null, as the target's survey said it.
             "unreadable": list(unreadable),
-            "schema_privileges_read": False,
+            "schema_privileges_read": one.schemas is not None,
             "roles": [
                 {
                     "role": role.role,
@@ -241,6 +253,7 @@ def _result(one: AccountPrivileges, unreadable: Sequence[str]) -> dict[str, Any]
             "system": _privileges_json(one.system),
             "objects": _privileges_json(one.objects),
             "columns": _privileges_json(one.columns),
+            "schemas": _privileges_json(one.schemas),
         },
     }
 

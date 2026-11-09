@@ -12,14 +12,16 @@ from typing import Any
 import pytest
 
 from sopuli.config.model import ExpandedTarget, Target
-from sopuli.driver.grants import COLUMN, OBJECT, SYSTEM, GrantRow, GrantSurvey, RoleGrant
+from sopuli.driver.grants import COLUMN, OBJECT, SCHEMA, SYSTEM, GrantRow, GrantSurvey, RoleGrant
 from sopuli.driver.oracle import grants
 from sopuli.driver.oracle.accounts import DictionaryUnreadableError
 from sopuli.driver.oracle.grants import (
     COL_PRIVS_QUERY,
+    HAS_SCHEMA_PRIVS,
     ROLE_GRANTS_QUERY,
     ROLE_GRANTS_QUERY_LEGACY,
     ROLE_GRANTS_QUERY_NO_ROLES,
+    SCHEMA_PRIVS_QUERY,
     SYS_PRIVS_QUERY,
     TAB_PRIVS_QUERY,
     TAB_PRIVS_QUERY_LEGACY,
@@ -41,7 +43,12 @@ _QUERIES = (
     TAB_PRIVS_QUERY,
     TAB_PRIVS_QUERY_LEGACY,
     COL_PRIVS_QUERY,
+    SCHEMA_PRIVS_QUERY,
 )
+
+#: The key :data:`HAS_SCHEMA_PRIVS`' answer is kept under: a row, or an
+#: exception. Unset, it answers as a release with schema privileges.
+HAS = (HAS_SCHEMA_PRIVS, "")
 
 
 class _Cursor:
@@ -49,7 +56,8 @@ class _Cursor:
 
     A statement for several grantees gets each one's rows, its grantee first.
     ``asked`` holds each statement as its query and the grantees it bound. An
-    exception is raised on fetch.
+    exception is raised on fetch. :data:`HAS_SCHEMA_PRIVS` is the one question
+    read with ``fetchone``, answered from :data:`HAS`.
     """
 
     def __init__(self, answers: dict[tuple[str, str], Any]) -> None:
@@ -59,6 +67,10 @@ class _Cursor:
         self.current: tuple[str, tuple[str, ...]] = ("", ())
 
     def execute(self, sql: str, parameters: Any = None, /) -> _Cursor:
+        if sql == HAS_SCHEMA_PRIVS:
+            self.current = HAS_SCHEMA_PRIVS, ()
+            self.asked.append(self.current)
+            return self
         values = dict(parameters or {})
         grantees = tuple(values[f"g{index}"] for index in range(len(values)))
         (query,) = [query for query in _QUERIES if statement(query, len(grantees)) == sql]
@@ -78,7 +90,11 @@ class _Cursor:
         return rows
 
     def fetchone(self) -> Any:
-        raise AssertionError("the survey reads every row")
+        assert self.current[0] == HAS_SCHEMA_PRIVS, "the survey reads every row"
+        answer = self.answers.get(HAS, (1,))
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
 
     def __enter__(self) -> _Cursor:
         return self
@@ -291,7 +307,7 @@ def test_public_true_reads_public_once() -> None:
     answers[(SYS_PRIVS_QUERY, "PUBLIC")] = [(_path("ACME_RR_PUB"), "YES", "CREATE SYNONYM", "NO")]
     cursor = _Cursor(answers)
     survey = survey_grants(cursor, [APP, "PUBLIC"], public=True)
-    assert [grantees.count("PUBLIC") for _, grantees in cursor.asked] == [1, 1, 1, 1]
+    assert [grantees.count("PUBLIC") for _, grantees in cursor.asked] == [1, 1, 1, 1, 1]
     assert survey.system is not None
     public = [row for row in survey.system if row.grantee == "PUBLIC"]
     assert public == [
@@ -375,12 +391,12 @@ def test_a_narrower_shape_is_kept_for_the_next_chunk(monkeypatch: pytest.MonkeyP
 
 
 def test_grantees_are_surveyed_a_chunk_at_a_time(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Four statements per chunk, not per grantee (#1396)."""
+    """Five statements per chunk, not per grantee (#1396)."""
     monkeypatch.setattr(grants, "CHUNK", 2)
     accounts = [f"ACME_{index}_USER" for index in range(5)]
     cursor = _Cursor({})
     survey_grants(cursor, accounts, public=False)
-    assert len(cursor.asked) == 12
+    assert len(cursor.asked) == 15
     chunks = [grantees for query, grantees in cursor.asked if query == SYS_PRIVS_QUERY]
     assert chunks == [tuple(accounts[0:2]), tuple(accounts[2:4]), tuple(accounts[4:])]
 
@@ -426,8 +442,111 @@ def test_every_statement_binds_only_the_grantees_and_reads_no_verifier() -> None
 
 
 def test_the_recursion_cannot_loop() -> None:
-    for query in (SYS_PRIVS_QUERY, TAB_PRIVS_QUERY, COL_PRIVS_QUERY):
+    for query in (SYS_PRIVS_QUERY, TAB_PRIVS_QUERY, COL_PRIVS_QUERY, SCHEMA_PRIVS_QUERY):
         assert "cycle granted_role set" in query.lower()
+
+
+#: Probe 21's SP4 rows for ACME_SP_APP, as DBA_SCHEMA_PRIVS answers them:
+#: (path, first_default, privilege, schema, admin_option).
+SP4_SCHEMAS = [
+    (None, None, "SELECT ANY TABLE", "ACME_SP_OWNER", "NO"),
+    (None, None, "UPDATE ANY TABLE", "ACME_SP_OWNER", "YES"),
+    (_path("ACME_SP_OUTER", "ACME_SP_READ"), "YES", "EXECUTE ANY PROCEDURE", "ACME_SP_OTHER", "NO"),
+]
+
+
+def test_schema_privileges_carry_their_schema_path_and_admin_option() -> None:
+    answers = _answers()
+    answers[(SCHEMA_PRIVS_QUERY, APP)] = SP4_SCHEMAS
+    survey = survey_grants(_Cursor(answers), [APP], public=False)
+    assert survey.schemas is not None
+    by_privilege = {row.privilege: row for row in survey.schemas}
+    assert by_privilege["UPDATE ANY TABLE"] == GrantRow(
+        grantee=APP,
+        kind=SCHEMA,
+        privilege="UPDATE ANY TABLE",
+        owner="ACME_SP_OWNER",
+        name=None,
+        object_type=None,
+        column=None,
+        path=(),
+        first_role_default=None,
+        grantable=True,
+    )
+    via = by_privilege["EXECUTE ANY PROCEDURE"]
+    assert (via.owner, via.path, via.first_role_default) == (
+        "ACME_SP_OTHER",
+        ("ACME_SP_OUTER", "ACME_SP_READ"),
+        True,
+    )
+    assert survey.unreadable == ()
+
+
+def test_a_refused_schema_view_on_a_release_that_has_it_names_the_grant() -> None:
+    """USER_SCHEMA_PRIVS answers, so the release has schema privileges, and the
+    ORA-00942 from DBA_SCHEMA_PRIVS is the missing grant (#1389)."""
+    answers = _answers()
+    answers[(SCHEMA_PRIVS_QUERY, APP)] = _ora("ORA-00942", "table or view does not exist")
+    cursor = _Cursor(answers)
+    survey = survey_grants(cursor, [APP], public=False)
+    assert survey.schemas is None
+    (reason,) = survey.unreadable
+    assert "SELECT ON SYS.DBA_SCHEMA_PRIVS" in reason
+    assert "grant_report_reads=Y" in reason
+    assert [query for query, _ in cursor.asked].count(HAS_SCHEMA_PRIVS) == 1
+
+
+def test_a_release_without_schema_privileges_has_none_and_nothing_unread(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Neither view exists: the part is empty, not unread, and neither view is
+    asked again for the next chunk."""
+    monkeypatch.setattr(grants, "CHUNK", 1)
+    missing = _ora("ORA-00942", "table or view does not exist")
+    answers = _answers()
+    answers[(SCHEMA_PRIVS_QUERY, APP)] = missing
+    answers[HAS] = missing
+    cursor = _Cursor(answers)
+    survey = survey_grants(cursor, [APP, "ACME_WEB_USER"], public=False)
+    assert survey.schemas == ()
+    assert survey.unreadable == ()
+    asked = [query for query, _ in cursor.asked]
+    assert asked.count(SCHEMA_PRIVS_QUERY) == 1
+    assert asked.count(HAS_SCHEMA_PRIVS) == 1
+
+
+@pytest.mark.parametrize("code", ["ORA-01031", "ORA-41900"])
+def test_another_refusal_of_the_schema_view_does_not_ask_the_release(code: str) -> None:
+    """Only ORA-00942 can mean the release has none; these admit the view exists."""
+    answers = _answers()
+    answers[(SCHEMA_PRIVS_QUERY, APP)] = _ora(code, "insufficient privileges")
+    cursor = _Cursor(answers)
+    survey = survey_grants(cursor, [APP], public=False)
+    assert survey.schemas is None
+    assert HAS_SCHEMA_PRIVS not in [query for query, _ in cursor.asked]
+
+
+@pytest.mark.parametrize("code", ["ORA-01031", "ORA-41900"])
+def test_a_refused_release_question_is_a_missing_grant_never_none(code: str) -> None:
+    """USER_SCHEMA_PRIVS refused with a code that admits it exists: the report
+    cannot tell, so it must not call the accounts clean."""
+    answers = _answers()
+    answers[(SCHEMA_PRIVS_QUERY, APP)] = _ora("ORA-00942", "table or view does not exist")
+    answers[HAS] = _ora(code, "insufficient privileges")
+    survey = survey_grants(_Cursor(answers), [APP], public=False)
+    assert survey.schemas is None
+    (reason,) = survey.unreadable
+    assert "SELECT ON SYS.DBA_SCHEMA_PRIVS" in reason
+
+
+def test_a_failure_asking_the_release_raises() -> None:
+    answers = _answers()
+    answers[(SCHEMA_PRIVS_QUERY, APP)] = _ora("ORA-00942", "table or view does not exist")
+    answers[HAS] = _ora("ORA-03113", "end-of-file on communication channel")
+    with pytest.raises(DriverError) as raised:
+        survey_grants(_Cursor(answers), [APP], public=False)
+    assert raised.value.code == "ORA-03113"
+    assert "capability probe" not in str(raised.value)
 
 
 class _Connection:

@@ -6,7 +6,7 @@ for text output that keep it consistent with both.
 `sopuli/output/` produces them, and CI validates the output against the
 published schemas.
 
-Schemas: [`../schemas/sopuli-run-1.86.schema.json`](../schemas/sopuli-run-1.86.schema.json),
+Schemas: [`../schemas/sopuli-run-1.87.schema.json`](../schemas/sopuli-run-1.87.schema.json),
 [`../schemas/sopuli-event-1.24.schema.json`](../schemas/sopuli-event-1.24.schema.json)
 Examples, each from a real run:
 [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json),

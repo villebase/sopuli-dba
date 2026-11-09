@@ -2264,11 +2264,12 @@ as `scope.db_release`.
 
 `report privileges` shows each account's effective privileges, through every
 role, for the same accounts. The service account needs `SELECT` on
-`DBA_SYS_PRIVS`, `DBA_TAB_PRIVS` and `DBA_COL_PRIVS`: run
-`sql/oracle/00_install.sql` with `grant_report_reads=Y`. Without them, those
-parts say `not checked` and the run exits 4. Make an account with a direct
-grant, a column grant, a default role holding a nested role, and a role that is
-not a default role. As SYS in the PDB:
+`DBA_SYS_PRIVS`, `DBA_TAB_PRIVS`, `DBA_COL_PRIVS` and, on 23ai,
+`DBA_SCHEMA_PRIVS`: run `sql/oracle/00_install.sql` with
+`grant_report_reads=Y`. Without them, those parts say `not checked` and the run
+exits 4. Make an account with a direct grant, a column grant, a default role
+holding a nested role, a role that is not a default role, and a schema
+privilege. As SYS in the PDB:
 
 ```sql
 CREATE USER acme_rp_owner IDENTIFIED BY "Acme_Rp_Own_1" QUOTA 10M ON users;
@@ -2290,6 +2291,7 @@ GRANT SELECT ON acme_rp_owner.orders TO acme_rp_user;
 GRANT UPDATE (n) ON acme_rp_owner.items TO acme_rp_user;
 GRANT acme_rp_app, acme_rp_batch TO acme_rp_user;
 ALTER USER acme_rp_user DEFAULT ROLE acme_rp_app;
+GRANT SELECT ANY TABLE ON SCHEMA acme_rp_owner TO acme_rp_user;
 ```
 
 With a rule naming `acme_rp_user` in the config:
@@ -2299,15 +2301,14 @@ $ sopuli --config priv.yaml report privileges --account acme_rp_user --detail
 free-pdb  (23.26.3.0.0, 1 account)
   ACME_RP_USER  (technical)
     roles: ACME_RP_APP (default), ACME_RP_BATCH (not default)
-    KIND    PRIVILEGE       OBJECT                    TYPE       FROM                                    GRANTABLE
-    system  CREATE SESSION  -                         -          direct                                  no
-    object  EXECUTE         ACME_RP_OWNER.POST_ORDER  PROCEDURE  via ACME_RP_APP                         no
-    object  INSERT          ACME_RP_OWNER.ORDERS      TABLE      via ACME_RP_BATCH, not a default role   no
-    object  SELECT          ACME_RP_OWNER.ITEMS       TABLE      via ACME_RP_APP > ACME_RP_READ          no
-    object  SELECT          ACME_RP_OWNER.ORDERS      TABLE      direct, via ACME_RP_APP > ACME_RP_READ  no
-    column  UPDATE          ACME_RP_OWNER.ITEMS.N     -          direct                                  no
-
-schema privileges (GRANT ... ON SCHEMA, 23ai) are not read yet, so they are not listed
+    KIND    PRIVILEGE         OBJECT                    TYPE       FROM                                    GRANTABLE
+    system  CREATE SESSION    -                         -          direct                                  no
+    object  EXECUTE           ACME_RP_OWNER.POST_ORDER  PROCEDURE  via ACME_RP_APP                         no
+    object  INSERT            ACME_RP_OWNER.ORDERS      TABLE      via ACME_RP_BATCH, not a default role   no
+    object  SELECT            ACME_RP_OWNER.ITEMS       TABLE      via ACME_RP_APP > ACME_RP_READ          no
+    object  SELECT            ACME_RP_OWNER.ORDERS      TABLE      direct, via ACME_RP_APP > ACME_RP_READ  no
+    column  UPDATE            ACME_RP_OWNER.ITEMS.N     -          direct                                  no
+    schema  SELECT ANY TABLE  ACME_RP_OWNER             SCHEMA     direct                                  no
 ```
 
 Without `--detail` the same account reads as a summary:
@@ -2318,6 +2319,7 @@ Without `--detail` the same account reads as a summary:
     system: CREATE SESSION (direct)
     objects: EXECUTE on 1 procedure (0 direct, 1 via roles); INSERT on 1 table (0 direct, 1 via roles, 1 through a role that is not a default role); SELECT on 2 tables (1 direct, 1 via roles)
     columns: UPDATE on 1 column (1 direct, 0 via roles)
+    schemas: SELECT ANY TABLE on ACME_RP_OWNER (direct)
 ```
 
 `SELECT` on `ORDERS` is granted directly and through a role, and is counted

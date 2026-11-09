@@ -366,9 +366,10 @@ class Vault:
     #: from. The identity is a secret, so this names a file or a variable and
     #: never holds it (invariant 1, #1415).
     identity: MaterialRef | None = None
-    #: ``file`` only: the age public keys the store is encrypted to. ``None``
-    #: means the identity's own public key. A public key proves nothing, so
-    #: these are plain strings.
+    #: ``file`` only: age public keys the store is encrypted to, besides the
+    #: identity's own, which is always a recipient so that the next run can read
+    #: what this one wrote. ``None`` means the identity's key alone. A public
+    #: key proves nothing, so these are plain strings.
     recipients: tuple[str, ...] | None = None
     #: ``file`` only: how many versions of each path the store keeps, at least
     #: 1. ``None`` means the store's default, 10.

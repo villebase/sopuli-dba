@@ -851,12 +851,12 @@ config file can be read without knowing what environment it will be read in.
 | `mount` | KV mount point (HashiCorp). Refused on an `oci` or `file` store |
 | `kv_version` | `1` or `2` — different backends with different capabilities, not a version to branch on casually (P2). Refused on an `oci` or `file` store |
 | `namespace` | HashiCorp Enterprise namespace, sent as the `X-Vault-Namespace` header. Absent means no namespace. Refused on an `oci` or `file` store |
-| `identity` | `file` only, and **required** there: a MaterialRef, `{ file: PATH }` or `{ env: NAME }`, naming the age identity that decrypts the store. A passphrase-protected identity is refused, because it would need a prompt |
-| `recipients` | `file` only: a list of age public keys (`age1…`) the store is encrypted to. Absent means the identity's own public key. A value that is not a public key is refused without being repeated, in case it is a secret key pasted by mistake |
+| `identity` | `file` only, and **required** there: a MaterialRef, `{ file: PATH }` or `{ env: NAME }`, naming the age identity that decrypts the store. The store, when it is built (#1372), refuses a passphrase-protected identity, because it would need a prompt |
+| `recipients` | `file` only: a list of age recipients (lower case, `age1…`) the store is encrypted to, besides the identity's own key, which is always a recipient so that the next run can read what this one wrote. Absent means the identity's key alone. A value that is not an `age1…` recipient, an SSH key among them, is refused without being repeated, in case it is a secret key pasted by mistake |
 | `max_versions` | `file` only: how many versions of each path the store keeps, at least 1. `1` keeps only the current version. Absent means 10 |
 | `vault_id`, `compartment_id`, `key_id` | `oci` only, and **required** there: the vault's OCID, the compartment new secrets are created in, and the KMS key that encrypts them. The tool creates secrets, and OCI's `CreateSecret` needs all three. They are not credentials, so they are plain strings. Refused on any other store, and no `defaults:` block or profile may change them: a different value is a second store |
 | `region` | `oci` only. Absent means the region the auth method supplies: the config-file profile's, or the instance metadata's. No layer may change it, for the same reason |
-| `timeout_s` | request timeout against this store, in seconds. Absent means the backend's own default; for `hashicorp` that is `DEFAULT_TIMEOUT_S` in `sopuli/store/hashicorp/_transport.py`. On `oci` it also bounds each wait for a secret to be ready again, after a write and before one (§7), and absent means 120 seconds for each wait. OCI keeps a secret busy for about 20 seconds after a write, so a value under about 30 makes writes fail. There is no unlimited value, because the advisory lock is held while a request is outstanding |
+| `timeout_s` | request timeout against this store, in seconds. Absent means the backend's own default; for `hashicorp` that is `DEFAULT_TIMEOUT_S` in `sopuli/store/hashicorp/_transport.py`. On `oci` it also bounds each wait for a secret to be ready again, after a write and before one (§7), and absent means 120 seconds for each wait. OCI keeps a secret busy for about 20 seconds after a write, so a value under about 30 makes writes fail. There is no unlimited value, because the advisory lock is held while a request is outstanding. Refused on a `file` store, which makes no requests |
 | `merge_patch` | HashiCorp KV v2 only, and refused on any other store. `false` turns the server-side merge patch off, so a write goes straight to read-modify-write under compare-and-set (§7). Absent means `true`. Set it when a proxy or WAF in front of Vault blocks the PATCH method — see §7 |
 | `tls` | `{ ca_file, ca_path, client_cert, client_key, server_name, verify }` (ADR-005) — see below. Refused on an `oci` store, whose SDK verifies TLS itself, and on a `file` store, which opens no connection |
 | `auth` | how to authenticate, and where the material comes from — see below. Refused on a `file` store, which its `identity` opens |
@@ -932,7 +932,7 @@ only HashiCorp reads (`addr`, `mount`, `kv_version`, `namespace`, `merge_patch`,
 
 A `file` store reads `addr`, its path, `identity`, `recipients` and
 `max_versions` ([#1415](../decisions/log.md#1415)). It refuses the other
-HashiCorp keys, `tls:` and any `auth:` block, from any layer, and the OCI
+HashiCorp keys, `timeout_s`, `tls:` and any `auth:` block, from any layer, and the OCI
 keys. The three `file` keys are refused on every other store, and no
 `defaults:` block or profile may change them, because each says how the one
 file is written. An identity that differs by machine is written as
@@ -3769,10 +3769,10 @@ match instead:
 | a profile may not set a key that changes scope | §5 |
 | `locking.break_expired` beside an `advisory-only` store | yes |
 | an `oci` store requires `vault_id`, `compartment_id` and `key_id`, and refuses HashiCorp's keys and auth methods | §3a |
-| a `file` store requires `identity` and an `addr`, refuses HashiCorp's other keys, `tls:` and `auth:`, and takes no `recipients` that is not an age public key | §3a |
+| a `file` store requires `identity` and an `addr`, refuses HashiCorp's other keys, `timeout_s`, `tls:` and `auth:`, and takes no `recipients` that is not an `age1…` recipient | §3a |
 | an application's ref must have somewhere to stage into, on a `hashicorp`, `file` or `oci` store | §7 |
 | a ref on an `oci` store is one OCI secret name | §7 |
-| `reset_records:` and a delivery method's `vault:` may not name an `oci` store | UC-2 §3.1 |
+| `reset_records:` and a delivery method's `vault:` may not name an `oci` or `file` store | UC-2 §3.1 |
 | the selected `delivery.method` must have a sub-block of the same name | §6 of UC-2 |
 
 So a file the schema accepts may still be refused by `sopuli config validate`,

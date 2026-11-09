@@ -361,15 +361,15 @@ def _vault_types() -> dict[str, Schema]:
             **_ref("material_ref"),
             "description": (
                 "file only, and required there: where the age identity that decrypts "
-                "the store comes from. A secret, so it is named, never written here. "
-                "A passphrase-protected identity is refused."
+                "the store comes from. A secret, so it is named, never written here."
             ),
         },
         "recipients": _array(
             {**STRING, "pattern": f"^{vaults.AGE_RECIPIENT.pattern}$"},
             description=(
-                "file only: the age public keys the store is encrypted to. Absent means "
-                "the identity's own public key."
+                "file only: age recipients (age1...) the store is encrypted to, besides "
+                "the identity's own key, which is always one. Absent means the "
+                "identity's key alone."
             ),
             minItems=1,
             uniqueItems=True,

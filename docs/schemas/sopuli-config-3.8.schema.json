@@ -253,16 +253,16 @@
         },
         "identity": {
           "$ref": "#/$defs/material_ref",
-          "description": "file only, and required there: where the age identity that decrypts the store comes from. A secret, so it is named, never written here. A passphrase-protected identity is refused."
+          "description": "file only, and required there: where the age identity that decrypts the store comes from. A secret, so it is named, never written here."
         },
         "recipients": {
           "type": "array",
           "items": {
             "type": "string",
             "minLength": 1,
-            "pattern": "^age1[02-9ac-hj-np-z]{58}$"
+            "pattern": "^age1[0-9a-z]+$"
           },
-          "description": "file only: the age public keys the store is encrypted to. Absent means the identity's own public key.",
+          "description": "file only: age recipients (age1...) the store is encrypted to, besides the identity's own key, which is always one. Absent means the identity's key alone.",
           "minItems": 1,
           "uniqueItems": true
         },

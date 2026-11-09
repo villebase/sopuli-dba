@@ -4,11 +4,12 @@ An ``oci`` store serves application credentials (UC-1) and not personal
 accounts (UC-2). UC-2 needs reset records, which are written per account and
 read back by ``account list``, and its unseen delivery ``vault_wrapped`` uses
 HashiCorp's response wrapping, which OCI has no equivalent of. #1138 decided
-the refusal.
+the refusal. A ``file`` store is for development and CI, and personal accounts
+belong to real people, so it does not serve UC-2 either (#1415).
 
 Two places apply the rule. :func:`sopuli.config.references.check_references`
 refuses a ``reset_records:`` store or a delivery method's own ``vault:`` that is
-an OCI store, when the file is read. ``account reset-password`` refuses a
+an OCI or file store, when the file is read. ``account reset-password`` refuses a
 delivery whose store a target or ``defaults.vault`` supplies, before it builds a
 plan, with :func:`refuse_personal_on`.
 
@@ -43,7 +44,7 @@ def refuse_personal_on(config: Config, name: str, *, at: KeyPath, what: str) -> 
         return
     raise ConfigError(
         f'{what} is vault "{vault.name}", of type {vault.type!r}, and this build '
-        f"supports that type for application credentials (UC-1) only",
+        f"does not keep personal accounts (UC-2) in a store of that type",
         at=at,
         hint=HINT,
     )

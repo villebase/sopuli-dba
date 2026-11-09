@@ -101,9 +101,10 @@ REACH_KEYS = ("addr", "mount", "kv_version", "namespace", "timeout_s", "merge_pa
 #: it is built.
 NOT_HASHICORP = {"oci": "an OCI store", "file": "a file store"}
 
-#: The HashiCorp keys a file store refuses: all of them but ``addr``, which is
-#: its path (#1415).
-FILE_REFUSED_KEYS = tuple(key for key in HASHICORP_KEYS if key != "addr")
+#: The keys a file store refuses: HashiCorp's, but ``addr``, which is its path,
+#: and ``timeout_s``, a request timeout, because the store makes no requests
+#: (#1415).
+FILE_REFUSED_KEYS = (*(key for key in HASHICORP_KEYS if key != "addr"), "timeout_s")
 
 #: The members of ``tls:``, merged one at a time.
 TLS_KEYS = ("ca_file", "ca_path", "client_cert", "client_key", "server_name", "verify")
@@ -255,7 +256,11 @@ def _refuse_hashicorp_keys(
         raise ConfigError(
             f"vault {vault.name!r}: `{key}`{given} has no effect on a store of type {vault.type!r}",
             at=ROOT,
-            hint="it is a HashiCorp Vault key; remove it from this store",
+            hint=(
+                "it is a request timeout, and a file store makes no requests; remove it"
+                if key == "timeout_s"
+                else "it is a HashiCorp Vault key; remove it from this store"
+            ),
         )
 
 
@@ -533,7 +538,14 @@ def _merge(
         raise ConfigError(
             f"vault {vault.name!r}: a `file` store needs `addr`, the path of its file",
             at=ROOT.key("vaults").key(vault.name),
-            hint="write `addr: PATH` on the store, or set it in a profile or defaults.vaults",
+            # The warnings collected so far are not shown when the load is
+            # refused, so the hint says what a `SOPULI-W038` would have said.
+            hint=(
+                "write `addr: PATH` on the store, or set it in a profile, in "
+                "defaults.vaults, with SOPULI_VAULT_ADDR or SOPULI_VAULT__<STORE>__ADDR, "
+                "or with --vault-addr. VAULT_ADDR is HashiCorp's and is not applied to "
+                "a file store"
+            ),
         )
     _refuse_userinfo(vault, settings.get("addr"))
     _refuse_plain_http(vault, settings.get("addr"))

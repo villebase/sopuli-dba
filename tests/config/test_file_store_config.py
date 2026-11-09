@@ -92,6 +92,21 @@ def test_the_path_is_required() -> None:
     assert "needs `addr`, the path of its file" in rendered
 
 
+def test_a_missing_path_names_every_source_that_works_and_the_one_that_does_not() -> None:
+    """VAULT_ADDR's W038 is not shown when the load is refused, so the hint says it."""
+    with pytest.raises(ConfigError) as caught:
+        loaded(
+            {key: value for key, value in FILE.items() if key != "addr"},
+            env={"VAULT_ADDR": "/srv/sopuli/store.age"},
+            defaults={"vault": STORE},
+        )
+
+    rendered = str(caught.value)
+    assert "SOPULI_VAULT_ADDR" in rendered
+    assert "--vault-addr" in rendered
+    assert "VAULT_ADDR is HashiCorp's and is not applied to a file store" in rendered
+
+
 def test_the_path_may_come_from_defaults() -> None:
     """`addr` is a reach key, so a layer may supply it."""
     path = "/srv/sopuli/other.age"
@@ -121,6 +136,29 @@ def test_a_secret_key_in_recipients_is_refused_without_repeating_it() -> None:
     assert "is not an age public key" in rendered
     assert "recipients[1]" in rendered
     assert secret not in rendered
+
+
+@pytest.mark.parametrize(
+    "recipient",
+    ["age1yubikey1" + "q" * 50, "age1pq1" + "q" * 60],
+    ids=["plugin", "post-quantum"],
+)
+def test_other_age1_recipients_are_accepted(recipient: str) -> None:
+    """The shape is checked, not the kind. Which kinds the store can encrypt
+    to is the backend's question."""
+    assert store({**FILE, "recipients": [recipient]}).recipients == (recipient,)
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIexample", RECIPIENT.upper()],
+    ids=["ssh", "upper-case"],
+)
+def test_a_value_that_is_not_an_age1_recipient_is_refused(value: str) -> None:
+    rendered = refused({**FILE, "recipients": [value]})
+
+    assert "is not an age public key" in rendered
+    assert "SSH keys are not accepted" in rendered
 
 
 def test_a_recipient_listed_twice_is_refused() -> None:
@@ -157,7 +195,8 @@ def test_no_layer_may_change_a_file_key(key: str, where: str) -> None:
 
 
 @pytest.mark.parametrize(
-    ("key", "value"), [("mount", "kv"), ("kv_version", 2), ("namespace", "team")]
+    ("key", "value"),
+    [("mount", "kv"), ("kv_version", 2), ("namespace", "team"), ("timeout_s", 30)],
 )
 @pytest.mark.parametrize("where", ["declaration", "defaults"])
 def test_a_file_store_refuses_hashicorp_keys(key: str, value: Any, where: str) -> None:

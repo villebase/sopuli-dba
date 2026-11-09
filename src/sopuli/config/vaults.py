@@ -77,10 +77,13 @@ FILE_KEY_REASON = (
     "store's own entry; an identity that differs by machine can be `identity: {env: NAME}`"
 )
 
-#: What an age public key looks like: Bech32, with the ``age`` prefix. Checked
-#: only for shape, so that a private key pasted by mistake (``AGE-SECRET-KEY-1``)
-#: is refused before anything is written with it.
-AGE_RECIPIENT = re.compile(r"age1[02-9ac-hj-np-z]{58}")
+#: What an age recipient looks like: lower-case Bech32 starting ``age1``. That
+#: covers X25519 keys, plugin recipients such as ``age1yubikey1…`` and the
+#: post-quantum ``age1pq1…``. Checked only for shape, so that a secret key
+#: pasted by mistake (``AGE-SECRET-KEY-1…``, ``AGE-PLUGIN-…``) is refused before
+#: anything is written with it. Which kinds the store can encrypt to is the
+#: backend's question (#1372). SSH recipients are not age keys and are refused.
+AGE_RECIPIENT = re.compile(r"age1[0-9a-z]+")
 
 #: The keys only a HashiCorp store reads, apart from ``merge_patch``. An OCI
 #: store refuses each, on the merged values (:mod:`sopuli.config.vault_layers`),
@@ -345,7 +348,7 @@ def _build_recipients(entry: dict[str, Any], *, at: KeyPath) -> tuple[str, ...] 
         raise ConfigError(
             f"must be a non-empty list of age public keys, not {describe(raw)}",
             at=at.key("recipients"),
-            hint="leave it out to encrypt to the identity's own public key",
+            hint="leave it out to encrypt to the identity's own key alone",
         )
     recipients = []
     for index, value in enumerate(raw):
@@ -356,7 +359,10 @@ def _build_recipients(entry: dict[str, Any], *, at: KeyPath) -> tuple[str, ...] 
             raise ConfigError(
                 "is not an age public key",
                 at=where,
-                hint="an age public key starts with `age1`, as `age-keygen -y` prints it",
+                hint=(
+                    "an age recipient is lower case and starts with `age1`, as "
+                    "`age-keygen -y` prints it; SSH keys are not accepted"
+                ),
             )
         if value in recipients:
             raise ConfigError("is listed twice", at=where)

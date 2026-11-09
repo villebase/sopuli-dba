@@ -32,7 +32,11 @@ import os
 from collections.abc import Callable, Mapping
 from pathlib import Path
 
+from sopuli import os_keyring
 from sopuli.config.errors import ROOT, ConfigError
+
+# Re-exported: callers import it from here.
+from sopuli.config.errors import MaterialError as MaterialError
 from sopuli.config.model import MaterialRef
 from sopuli.config.permissions import check_permissions
 from sopuli.secrets import Secret
@@ -65,24 +69,6 @@ TOKEN_SOURCES = (
 TOKEN_VARIABLES = ("SOPULI_VAULT_TOKEN", "VAULT_TOKEN")
 
 
-class MaterialError(ConfigError):
-    """A named source held nothing to read.
-
-    ``config`` and exit 9, by the same reasoning ADR-006 used for a missing
-    backend (E5): the file is not wrong and the service has not refused
-    anything -- what is incomplete is *this machine*, and the person reading the
-    message is the one who fixes it, here, now.
-
-    Distinct from the exit 6 an auth method raises when the store rejects a
-    credential. That one means "we found it and it was not accepted"; this one
-    means "there was nothing to send".
-
-    No ``error.code``. An error gets one only where its category and exit code do
-    not tell it apart (J3). Like most ``config`` errors, this is fixed in what the
-    configuration points at: the variable or the path, which the message names.
-    """
-
-
 def resolve(ref: MaterialRef, *, env: Mapping[str, str], where: str) -> Secret:
     """The value ``ref`` points at.
 
@@ -102,10 +88,6 @@ def resolve(ref: MaterialRef, *, env: Mapping[str, str], where: str) -> Secret:
     if ref.kind == "file":
         return _from_file(Path(ref.location), where=where, wrote=ref.location)
     if ref.kind == "keyring":
-        # Imported here because `sopuli.os_keyring` imports `MaterialError`
-        # from this module: a module-level import would be a cycle.
-        from sopuli import os_keyring
-
         return os_keyring.read(ref.location, where=where)
     # Unreachable through a config file: `MATERIAL_KINDS` is a closed set the
     # builder validates against. Kept because this is also reachable from code.

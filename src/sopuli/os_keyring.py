@@ -34,9 +34,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from sopuli.config.errors import ROOT
+from sopuli.config.errors import ROOT, MaterialError
 from sopuli.extras import install_hint
-from sopuli.material import MaterialError
 from sopuli.secrets import Secret
 
 #: The service every entry is stored under. The config names only the user name.

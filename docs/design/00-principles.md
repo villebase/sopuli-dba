@@ -513,6 +513,44 @@ would refuse the unbuilt `file` backend, unless the store is configured as `lock
 the record is written without compare-and-set, and every run says so
 (`01-configuration.md` §3a).
 
+### The file store's file
+
+A `file` store is one file, encrypted with age to the store's recipients
+([#1415](../decisions/log.md#1415)). The store is not built yet (#1372). What
+the file decrypts to is UTF-8 JSON, written by `sopuli/store/file/_document.py`
+and read by nothing else:
+
+```json
+{
+  "format": "sopuli-file-store",
+  "format_version": 1,
+  "paths": {
+    "acme/app": [
+      {"version": 2, "created_at": "2026-11-09T10:00:00Z", "data": {"current": "..."}},
+      {"version": 3, "created_at": "2026-11-09T11:00:00Z", "data": {"current": "..."}}
+    ]
+  }
+}
+```
+
+- **Each path lists its kept versions, oldest first.** A write adds the next
+  number. Pruning to `max_versions` drops only the oldest, so the numbers are
+  consecutive and the last is the path's current version. A number is never
+  reused, so a compare-and-set token that named a pruned version still fails.
+- **`data` is a JSON object of plain values.** A value JSON would change or
+  cannot hold, such as a key that is not text or a number that is not finite,
+  is refused at the write, not changed.
+- **`created_at`** is UTC, written as `to_rfc3339` writes it, with a `Z`.
+- **The reader is strict.** A missing or unknown field, a key named twice,
+  numbers that are not consecutive, or a timestamp in another form is damage,
+  and the store refuses to read past it, with a hint to restore a backup. A
+  higher `format_version` is not damage: a newer build wrote it, and the hint
+  says to upgrade, because restoring an older file would drop the passwords
+  written since.
+- **No error quotes the data**, because the data holds passwords in clear.
+- `format_version` changes when the shape does. A build reads only the
+  versions it knows.
+
 ### Backends are install extras (D9, ADR-006)
 
 A backend's client is installed only by the sites that use that backend. The

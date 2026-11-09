@@ -1,28 +1,15 @@
 """What a ``file`` store holds, as the bytes that get encrypted (#1415).
 
 Pure: no I/O and no encryption. The store encrypts what :func:`dumps` returns
-with age, and decrypts what :func:`loads` reads.
+with age, and decrypts what :func:`loads` reads. `00-principles.md` P2, *The
+file store's file*, specifies the format; this module is its one reader and
+writer.
 
 One document per store, holding every path and up to ``max_versions`` versions
-of each. A version's number is never reused: pruning drops the oldest versions
-and leaves ``current`` where it was, so a compare-and-set token that named a
-pruned version still fails, as on KV v2.
-
-The document is JSON::
-
-    {
-      "format": "sopuli-file-store",
-      "format_version": 1,
-      "paths": {
-        "acme/app": {
-          "current": 3,
-          "versions": [
-            {"version": 2, "created_at": "2026-11-09T10:00:00Z", "data": {...}},
-            {"version": 3, "created_at": "2026-11-09T11:00:00Z", "data": {...}}
-          ]
-        }
-      }
-    }
+of each, oldest first. Pruning drops only the oldest, so the kept numbers are
+consecutive and the newest kept is the path's current version. A number is
+never reused: the next write is the newest plus one, so a compare-and-set token
+that named a pruned version still fails, as on KV v2.
 
 **Every error here names no data.** The data holds passwords in clear, so a
 message that quoted a malformed value could print one. The errors say what
@@ -31,8 +18,8 @@ was wrong and where, never what was there.
 
 from __future__ import annotations
 
-import copy
 import json
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from datetime import datetime
@@ -53,18 +40,23 @@ FORMAT_VERSION = 1
 #: set (#1415).
 DEFAULT_MAX_VERSIONS = 10
 
+#: How deep a version's data may nest. A credential payload is two or three
+#: levels deep; the limit keeps a damaged or hostile value from exhausting the
+#: interpreter's stack in the copy or the parser.
+MAX_DEPTH = 32
+
+#: What every refusal of a damaged file says to do.
+RESTORE = (
+    "the file was damaged, or edited by hand; restore it from a backup, and check "
+    "that what it holds still matches the databases"
+)
+
 
 class DocumentError(StoreError):
     """The store's file decrypted, and what it holds is not a store document."""
 
-    def __init__(self, problem: str) -> None:
-        super().__init__(
-            f"the file store's document is not readable: {problem}",
-            hint=(
-                "the file was written by another program or another format version, "
-                "or was edited by hand; restore it from a backup"
-            ),
-        )
+    def __init__(self, problem: str, *, hint: str = RESTORE) -> None:
+        super().__init__(f"the file store's document is not readable: {problem}", hint=hint)
 
 
 @dataclass(frozen=True)
@@ -77,45 +69,26 @@ class Version:
 
 
 @dataclass(frozen=True)
-class Entry:
-    """A path: the newest version number it has had, and the versions kept.
-
-    ``current`` is kept apart from the list because the list is pruned and the
-    counter is not. The store always keeps its newest version, so the last
-    kept version is ``current``. A file where it is not has lost its newest
-    version, and :meth:`Document.latest` reads that path as having none.
-    """
-
-    current: int
-    versions: tuple[Version, ...]
-
-
-@dataclass(frozen=True)
 class Document:
-    """Every path in the store.
+    """Every path in the store, each with its kept versions, oldest first.
 
     A read returns a copy of the version's data, so a caller that changes what
     it read changes neither this document nor any document it was made from.
     """
 
-    paths: Mapping[str, Entry]
+    paths: Mapping[str, tuple[Version, ...]]
+
+    def current(self, path: str) -> int:
+        """The newest version number ``path`` has, or 0 where it has none."""
+        versions = self.paths.get(path, ())
+        return versions[-1].number if versions else 0
 
     def latest(self, path: str) -> Version | None:
-        """The newest version of ``path``, or ``None`` where it is gone or never was.
-
-        Gone includes a newest version missing from the file: answering with
-        the one before it would read a superseded password as current.
-        """
-        entry = self.paths.get(path)
-        if entry is None or not entry.versions or entry.versions[-1].number != entry.current:
-            return None
-        return _copied(entry.versions[-1])
+        versions = self.paths.get(path, ())
+        return _copied(versions[-1]) if versions else None
 
     def version(self, path: str, number: int) -> Version | None:
-        entry = self.paths.get(path)
-        if entry is None:
-            return None
-        found = next((one for one in entry.versions if one.number == number), None)
+        found = next((one for one in self.paths.get(path, ()) if one.number == number), None)
         return None if found is None else _copied(found)
 
     def written(
@@ -124,10 +97,10 @@ class Document:
         """This document with ``data`` as the next version of ``path``, and its number.
 
         The oldest versions beyond ``max_versions`` are dropped. ``data`` must
-        be a JSON object. It is copied through the same JSON :func:`dumps`
-        writes, so a caller that changes its own object later does not change
-        the document, and a value the file cannot hold, such as ``NaN`` or a
-        lone surrogate, fails here rather than when the file is written.
+        be a JSON object of plain values: string keys, strings that are valid
+        UTF-8, finite numbers, booleans, ``None``, lists and objects. A tuple is
+        stored as a list, as JSON has no other sequence. Anything else is
+        refused here rather than changed or failed on when the file is written.
         ``now`` must carry its zone, so the time in memory is the time on disk.
         """
         keep = DEFAULT_MAX_VERSIONS if max_versions is None else max_versions
@@ -136,28 +109,56 @@ class Document:
         if now.tzinfo is None:
             raise ValueError("now must carry its zone")
         if not isinstance(data, dict):
-            raise StoreError(f"the data for {path!r} cannot be stored: it is not a JSON object")
-        try:
-            copied = json.loads(_json(data).encode("utf-8"))
-        except (TypeError, ValueError):
-            # The value is not repeated: it may be a password. A lone
-            # surrogate fails the encode, a UnicodeEncodeError, a ValueError.
             raise StoreError(
-                f"the data for {path!r} cannot be stored: it is not plain JSON"
-            ) from None
-        entry = self.paths.get(path, Entry(current=0, versions=()))
-        number = entry.current + 1
-        versions = (*entry.versions, Version(number=number, created_at=now, data=copied))
+                f"the data for {path!r} cannot be stored: it is not a JSON object",
+                hint="this is a fault in the tool; report it with the command that ran",
+            )
+        problem = _not_plain(data, depth=0)
+        if problem is not None:
+            # The value is not repeated: it may be a password.
+            raise StoreError(
+                f"the data for {path!r} cannot be stored: it holds {problem}",
+                hint="this is a fault in the tool; report it with the command that ran",
+            )
+        number = self.current(path) + 1
+        created = Version(number=number, created_at=now, data=_copy(data))
         paths = dict(self.paths)
-        paths[path] = Entry(current=number, versions=versions[-keep:])
+        paths[path] = (*self.paths.get(path, ()), created)[-keep:]
         return Document(MappingProxyType(paths)), number
 
 
 EMPTY = Document(MappingProxyType({}))
 
 
-def _copied(version: Version) -> Version:
-    return replace(version, data=copy.deepcopy(version.data))
+def _not_plain(value: Any, *, depth: int) -> str | None:
+    """What in ``value`` JSON would not hold as it is, or ``None``. Names no value."""
+    if depth > MAX_DEPTH:
+        return f"values nested more than {MAX_DEPTH} levels deep"
+    if value is None or isinstance(value, bool | int):
+        return None
+    if isinstance(value, float):
+        return None if math.isfinite(value) else "a number that is not finite"
+    if isinstance(value, str):
+        try:
+            value.encode("utf-8")
+        except UnicodeEncodeError:
+            return "text that is not valid UTF-8"
+        return None
+    if isinstance(value, list | tuple):
+        for item in value:
+            found = _not_plain(item, depth=depth + 1)
+            if found is not None:
+                return found
+        return None
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if not isinstance(key, str):
+                return "a key that is not text"
+            found = _not_plain(key, depth=depth + 1) or _not_plain(item, depth=depth + 1)
+            if found is not None:
+                return found
+        return None
+    return f"a value of type {type(value).__name__}"
 
 
 def _json(value: Any) -> str:
@@ -167,24 +168,31 @@ def _json(value: Any) -> str:
     )
 
 
+def _copy(data: dict[str, Any]) -> dict[str, Any]:
+    """``data`` through the file's own JSON, the one copy for reads and writes."""
+    copied: dict[str, Any] = json.loads(_json(data))
+    return copied
+
+
+def _copied(version: Version) -> Version:
+    return replace(version, data=_copy(version.data))
+
+
 def dumps(document: Document) -> bytes:
-    """The document as UTF-8 JSON, keys sorted, so equal documents are equal bytes."""
+    """The document as UTF-8 JSON, keys sorted.
+
+    The same document is always the same bytes. Two documents that compare
+    equal need not be: ``1`` and ``1.0`` are equal in Python and written apart.
+    """
     body = {
         "format": FORMAT,
         "format_version": FORMAT_VERSION,
         "paths": {
-            path: {
-                "current": entry.current,
-                "versions": [
-                    {
-                        "version": one.number,
-                        "created_at": to_rfc3339(one.created_at),
-                        "data": one.data,
-                    }
-                    for one in entry.versions
-                ],
-            }
-            for path, entry in document.paths.items()
+            path: [
+                {"version": one.number, "created_at": to_rfc3339(one.created_at), "data": one.data}
+                for one in versions
+            ]
+            for path, versions in document.paths.items()
         },
     }
     return _json(body).encode("utf-8")
@@ -216,12 +224,16 @@ def _reject_constant(name: str) -> Any:
 def loads(raw: bytes) -> Document:
     """The document in ``raw``, or :class:`DocumentError` saying what is wrong.
 
-    Strict: an unknown format, an unknown version, a missing or extra field, a
-    key named twice, data that is not an object, a timestamp in another form
-    than :func:`dumps` writes, or a version list out of order is refused. A
-    store document is written only by this module, so anything else in it is
-    damage, and reading past damage is how a rotation writes a password where
-    nothing reads it.
+    Strict: an unknown format, a missing or extra field, a key named twice,
+    data that is not an object or nests too deep, a timestamp in another form
+    than :func:`dumps` writes, or version numbers that are not consecutive is
+    refused. A store document is written only by this module, so anything else
+    in it is damage, and reading past damage is how a rotation writes a
+    password where nothing reads it.
+
+    A newer ``format_version`` is not damage: a newer build wrote it. Its hint
+    says to upgrade, because restoring an older file would drop every password
+    written since, while the databases hold them.
     """
     try:
         body = json.loads(
@@ -229,38 +241,44 @@ def loads(raw: bytes) -> Document:
         )
     except _DuplicateKeyError:
         raise DocumentError("an object in it names one key twice") from None
+    except RecursionError:
+        raise DocumentError(f"it nests more than {MAX_DEPTH} levels deep") from None
     except (UnicodeDecodeError, ValueError):
         raise DocumentError("it is not UTF-8 JSON") from None
     if not isinstance(body, dict) or body.get("format") != FORMAT:
         raise DocumentError(f"it is not a {FORMAT} document")
     format_version = body.get("format_version")
     # `type() is int`, so `true` and `1.0`, which equal 1 in Python, are refused.
-    if type(format_version) is not int or format_version != FORMAT_VERSION:
+    if type(format_version) is int and format_version > FORMAT_VERSION:
         raise DocumentError(
-            f"its format_version is not {FORMAT_VERSION}, the only one this build reads"
+            f"a newer build wrote it, in format_version {format_version}",
+            hint=(
+                "upgrade sopuli-dba on this machine to the release that wrote it; do not "
+                "restore an older file, which would lose the passwords written since"
+            ),
         )
+    if type(format_version) is not int or format_version != FORMAT_VERSION:
+        raise DocumentError(f"its format_version is not {FORMAT_VERSION}")
     _exact_keys(body, {"format", "format_version", "paths"}, where="the document")
     paths = body["paths"]
     if not isinstance(paths, dict):
         raise DocumentError("`paths` is not a mapping")
-    return Document(MappingProxyType({path: _entry(path, entry) for path, entry in paths.items()}))
+    return Document(
+        MappingProxyType({path: _versions(path, versions) for path, versions in paths.items()})
+    )
 
 
-def _entry(path: str, raw: Any) -> Entry:
+def _versions(path: str, raw: Any) -> tuple[Version, ...]:
     where = f"path {path!r}"
-    if not isinstance(raw, dict):
-        raise DocumentError(f"{where} is not a mapping")
-    _exact_keys(raw, {"current", "versions"}, where=where)
-    current = raw["current"]
-    if not _count(current):
-        raise DocumentError(f"{where} has a `current` that is not a whole number")
-    if not isinstance(raw["versions"], list):
-        raise DocumentError(f"{where} has `versions` that is not a list")
-    versions = tuple(_version(where, one) for one in raw["versions"])
-    numbers = [one.number for one in versions]
-    if numbers != sorted(set(numbers)) or (numbers and numbers[-1] > current):
-        raise DocumentError(f"{where} has versions out of order, or past `current`")
-    return Entry(current=current, versions=versions)
+    if not isinstance(raw, list) or not raw:
+        raise DocumentError(f"{where} is not a non-empty list of versions")
+    versions = tuple(_version(where, one) for one in raw)
+    first = versions[0].number
+    if [one.number for one in versions] != list(range(first, first + len(versions))):
+        # Pruning drops only the oldest, so a gap means a version was lost,
+        # and the newest kept might not be the newest written.
+        raise DocumentError(f"{where} has version numbers that are not consecutive")
+    return versions
 
 
 def _version(where: str, raw: Any) -> Version:
@@ -268,7 +286,7 @@ def _version(where: str, raw: Any) -> Version:
         raise DocumentError(f"{where} has a version that is not a mapping")
     _exact_keys(raw, {"version", "created_at", "data"}, where=f"a version of {where}")
     number = raw["version"]
-    if not _count(number) or number < 1:
+    if type(number) is not int or number < 1:
         raise DocumentError(f"{where} has a version number that is not a whole number above 0")
     created_at = raw["created_at"]
     try:
@@ -279,25 +297,21 @@ def _version(where: str, raw: Any) -> Version:
     # time with no offset, and neither came from this module.
     if moment is None or to_rfc3339(moment) != created_at:
         raise DocumentError(f"version {number} of {where} has no readable `created_at`")
-    if not isinstance(raw["data"], dict):
-        raise DocumentError(f"version {number} of {where} has `data` that is not an object")
-    return Version(number=number, created_at=moment, data=raw["data"])
+    data = raw["data"]
+    if not isinstance(data, dict) or _not_plain(data, depth=0) is not None:
+        raise DocumentError(f"version {number} of {where} has `data` that is not a plain object")
+    return Version(number=number, created_at=moment, data=data)
 
 
 def _exact_keys(raw: dict[str, Any], expected: set[str], *, where: str) -> None:
-    if set(raw) != expected:
-        missing = sorted(expected - set(raw))
-        extra = sorted(set(raw) - expected)
-        detail = ", ".join(
-            part
-            for part in (
-                f"missing {', '.join(missing)}" if missing else "",
-                f"unknown {', '.join(extra)}" if extra else "",
-            )
-            if part
-        )
-        raise DocumentError(f"{where} has the wrong fields ({detail})")
-
-
-def _count(value: Any) -> bool:
-    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+    missing = sorted(expected - set(raw))
+    unknown = sorted(set(raw) - expected)
+    if not missing and not unknown:
+        return
+    parts = []
+    if missing:
+        parts.append(f"missing {', '.join(missing)}")
+    if unknown:
+        # Counted, not named: in a damaged file a name may be anything.
+        parts.append(f"{len(unknown)} unknown")
+    raise DocumentError(f"{where} has the wrong fields ({'; '.join(parts)})")

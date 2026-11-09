@@ -447,13 +447,14 @@ What the server answers at a login, measured on 8.4.13 with PyMySQL 1.2.3:
 | open | logs in | `1045` |
 | expired | `1862` at connect | `1045` |
 | locked | `3118` | `1045` |
+| created `REQUIRE SSL`, over a plain connection | `1045` | `1045` |
 
-The tool reports `1045` as `fail`, and a login, `1862` or `3118` as `pass`:
-each of those three needs the right password. An account created `REQUIRE
-SSL` answers its right password with `1045` over a plain connection (measured
-on 8.4.13), so where `ssl_mode` does not require TLS, a `1045` is
-`unavailable`, as on MariaDB ([#1410](../decisions/log.md#1410)).
-`PREFERRED` does not require it. PyMySQL does not say it can
+The last row was measured on 8.4.13 with PyMySQL 1.2.3 and 1.2.4. A login,
+`1862` or `3118` is `pass`: each of those three needs the right password. A
+`1045` is `fail` where the target's `ssl_mode` requires TLS (`REQUIRED`,
+`VERIFY_CA`, `VERIFY_IDENTITY`), and `unavailable` under `DISABLED` and
+`PREFERRED`, as on MariaDB ([#1410](../decisions/log.md#1410)).
+`finish-rollover` still keeps the window open after either. PyMySQL does not say it can
 handle an expired password, so the server refuses it at connect with `1862`;
 the mysql client's `1820` after login does not arise. A block after failed
 logins, `3955`, answers the right password too, so it is `unavailable`.

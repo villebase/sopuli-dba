@@ -46,13 +46,16 @@ from sopuli.driver.mysql.scope import observe, require_read_write
 from sopuli.driver.mysql_family.accounts import Principal, current_user, split
 from sopuli.driver.mysql_family.client import client_lines
 from sopuli.driver.mysql_family.connection import (
-    TLS_REQUIRED_MODES,
     connect_arguments,
     require_tls,
-    settings_of,
+    requires_tls,
 )
 from sopuli.driver.mysql_family.encryption import read_encryption
-from sopuli.driver.mysql_family.errors import COLUMN_ACCESS_DENIED, TABLE_ACCESS_DENIED
+from sopuli.driver.mysql_family.errors import (
+    ACCESS_DENIED,
+    COLUMN_ACCESS_DENIED,
+    TABLE_ACCESS_DENIED,
+)
 from sopuli.driver.protocol import (
     ACCOUNT_LOCK,
     ACCOUNT_UNLOCK,
@@ -851,14 +854,16 @@ class MysqlSession(ClosesConnection):
             LOG.debug(
                 "login as %s failed with %s in %.3fs", declared.name, failure.code, latency / 1000
             )
-            outcome = verification.login_outcome(
-                failure, tls=settings_of(self.target).ssl_mode in TLS_REQUIRED_MODES
-            )
+            outcome = verification.login_outcome(failure, tls=requires_tls(self.target))
             if outcome is None:
                 raise failure.as_error() from error
             result, detail = outcome
             return VerifyResult(
-                method=VERIFY_LOGIN, result=result, latency_ms=latency, detail=detail
+                method=VERIFY_LOGIN,
+                result=result,
+                latency_ms=latency,
+                detail=detail,
+                refused=failure.number == ACCESS_DENIED,
             )
         latency = _ms(started)
         try:

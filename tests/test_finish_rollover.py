@@ -351,6 +351,19 @@ def test_an_unavailable_login_does_not_stop_an_unread_close() -> None:
     assert refused.state == check.DRIFT
 
 
+def test_a_refused_login_without_tls_stops_an_unread_close() -> None:
+    """#1410: on MySQL a refusal over a session that need not be TLS is
+    unavailable, because an account that requires TLS refuses its right
+    password there too. It is still a refusal, so the window stays open."""
+    outcome = windows.decide(
+        attempt(UNAVAILABLE, refused=True, detail="the server refused the password (1045)"),
+        unknown_window=True,
+    )
+
+    assert outcome is not None
+    assert outcome.state == check.UNVERIFIABLE
+
+
 def test_an_unread_close_says_what_it_did_and_what_it_did_not_verify() -> None:
     sent = "any retained password discarded"
     by_login = windows.closed(unread(), attempt(PASS), unknown_window=True, sent=sent)

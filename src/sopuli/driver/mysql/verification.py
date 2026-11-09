@@ -21,8 +21,12 @@ What the server answers at a login, measured on 8.4.13 with PyMySQL 1.2.3:
 | open | logs in | `1045` |
 | expired | `1862` at connect | `1045` |
 | locked | `3118` | `1045` |
+| created ``REQUIRE SSL``, over a plain connection | `1045` | `1045` |
 
-`1862` and `3118` therefore say the password is right. The tool does not log
+The last row was measured with PyMySQL 1.2.3 and 1.2.4 (#1410). So `1045` is
+a wrong password only where the target's ``ssl_mode`` requires TLS, and
+:data:`NOT_OVER_TLS` elsewhere; the result carries ``refused`` either way.
+`1862` and `3118` say the password is right. The tool does not log
 in as an account `mysql.user` reports locked, so it meets `3118` only where
 the lock is set between the read and the login. PyMySQL does not say
 it can handle an expired password, so the server refuses at connect with

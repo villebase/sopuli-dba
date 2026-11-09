@@ -56,6 +56,13 @@ def settings_of(target: ExpandedTarget) -> TargetMysql:
     return target.target.mysql_settings
 
 
+def requires_tls(target: ExpandedTarget) -> bool:
+    """Whether the target's ``ssl_mode`` requires TLS. ``PREFERRED`` does not:
+    the server may offer none. A login's ``1045`` says the password is wrong
+    only where this holds (#1270, #1410)."""
+    return settings_of(target).ssl_mode in TLS_REQUIRED_MODES
+
+
 def tls_arguments(target: ExpandedTarget) -> dict[str, Any]:
     """PyMySQL's TLS arguments for the target's ``ssl_mode``, all five modes
     in one place:

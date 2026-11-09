@@ -168,6 +168,7 @@ def test_a_refusal_over_a_plain_connection_says_nothing(stage: Stage) -> None:
     assert right.result == "unavailable"
     assert wrong.result == "unavailable"
     assert "does not require TLS" in str(right.detail)
+    assert right.refused is True, "finish-rollover stops on it"
     assert over_tls.result == "fail"
 
 

@@ -109,11 +109,10 @@ class Backend:
 #: is precisely the traceback rule 2 exists to prevent.
 #:
 #: ``file`` and ``keyring`` have **no extra**, and that is not an oversight.
-#: ADR-006's named gap: P2 does not say whether the file backend reaches age/gpg
-#: as a Python library or as a subprocess, and the answer decides whether there
-#: is an extra at all -- a library makes it ``sopuli-dba[file]``, a subprocess makes
-#: it a runtime prerequisite like Instant Client. ``keyring`` is priority 4 and
-#: appears in no extras table yet. Until either is settled, ``extra=None`` means
+#: Neither is built. ``file`` will reach age through ``pyrage``, so its extra
+#: will be ``sopuli-dba[file]`` (#1415), added with the backend (#1372).
+#: ``keyring`` is priority 4 and appears in no extras table yet. Until each is
+#: built, ``extra=None`` means
 #: "there is nothing to tell you to install", and asking for one of them fails as
 #: *not implemented in this build* rather than as a pip problem -- which is true,
 #: and is the message that does not send somebody to `pip` for something `pip`

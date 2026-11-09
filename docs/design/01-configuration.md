@@ -920,13 +920,16 @@ or another host, and cutting there could send the token somewhere else, so the
 variable is not applied. Reasons: [#891](../decisions/log.md#891).
 
 `type` is the only key every store needs. The rest depend on the backend: a
-file backend has no address, and an `oci` store requires `vault_id`,
+`file` store's `addr` is a path, and an `oci` store requires `vault_id`,
 `compartment_id` and `key_id`. Demanding a HashiCorp shape of every entry would
 be exactly the top-level vendor bias P1 forbids. An `oci` store refuses the keys
 only HashiCorp reads (`addr`, `mount`, `kv_version`, `namespace`, `merge_patch`,
 `tls`) and HashiCorp's auth methods (`token`, `approle`, `kubernetes`, `oidc`,
-`userpass`) when the file is read. A HashiCorp store refuses the OCI keys. Which
-keys a `file` or `keyring` store reads is decided when that backend is built.
+`userpass`) when the file is read. A HashiCorp store refuses the OCI keys. A
+`file` store, which is not built yet (#1372), will read `addr`, `identity` (a
+MaterialRef), `recipients` and `max_versions`
+([#1415](../decisions/log.md#1415)). Which keys a `keyring` store reads is
+decided when that backend is built.
 
 #### A declared backend that is not installed (ADR-006)
 
@@ -1042,7 +1045,10 @@ run's audit trail rather than only the config file, and the run document reports
 `lock.mode: none`. The documented remedy is `vault kv enable-versioning`, which
 is in place on an existing mount. The `file` backend's design does not attempt
 `flock`: it is meant for non-production use, and one rule is worth more here
-than a marginally stronger local mutex.
+than a marginally stronger local mutex. Before it replaces its file, it will
+compare the file's hash with the hash of what it read, and refuse if they
+differ. That turns most lost writes into refusals, and is not a lock
+([#1415](../decisions/log.md#1415)).
 
 **As a block**, under `defaults:` or in a profile:
 

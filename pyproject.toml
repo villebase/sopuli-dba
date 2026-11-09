@@ -105,9 +105,12 @@ oci = [
 ]
 file = [
   # #1415: the `file` store encrypts with age, through pyrage, a binding to the
-  # Rust `rage`. 1.4.0 is the release measured. Its abi3 wheels cover CPython
-  # 3.10 and later on Linux x86_64 and aarch64, macOS and Windows x64, so a new
-  # Python needs no Rust. The store itself is not built yet (#1372).
+  # Rust `rage`. 1.4.0 is the release the encryption tests run against; the
+  # floor is confirmed when the store is built and measured (#1372). Its abi3
+  # wheels cover CPython 3.10 and later on glibc Linux x86_64 and aarch64,
+  # macOS and Windows x64, so a new Python needs no Rust. There is no wheel for
+  # musl Linux (Alpine) or Windows on ARM: there it builds from source and
+  # needs Rust, and so does `all`.
   "pyrage>=1.4.0",
 ]
 notify = [

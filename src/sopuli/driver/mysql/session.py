@@ -47,11 +47,7 @@ from sopuli.driver.mysql_family.accounts import Principal, current_user, split
 from sopuli.driver.mysql_family.client import client_lines
 from sopuli.driver.mysql_family.connection import connect_arguments, require_tls
 from sopuli.driver.mysql_family.encryption import read_encryption
-from sopuli.driver.mysql_family.errors import (
-    COLUMN_ACCESS_DENIED,
-    TABLE_ACCESS_DENIED,
-    UNKNOWN_CLIENT_ERROR,
-)
+from sopuli.driver.mysql_family.errors import COLUMN_ACCESS_DENIED, TABLE_ACCESS_DENIED
 from sopuli.driver.protocol import (
     ACCOUNT_LOCK,
     ACCOUNT_UNLOCK,
@@ -119,29 +115,6 @@ NO_PROFILES = (
 )
 
 T = TypeVar("T")
-
-
-class PlainLoginError(DriverError):
-    """PyMySQL 1.2.3 could not finish a ``caching_sha2_password`` login over a
-    plain connection.
-
-    Measured on 8.4.13: a login the server has not cached needs the full
-    exchange, and PyMySQL 1.2.3 fails it over a plain connection with
-    ``AttributeError: 'NoneType' object has no attribute
-    'is_auth_switch_request'``, not a MySQL error: its
-    ``caching_sha2_password_auth`` returns nothing after the RSA round trip.
-    The same login over TLS succeeds. ``connectivity``, with ``2000``
-    (``CR_UNKNOWN_ERROR``), the number :mod:`~sopuli.driver.mysql_family.errors` gives
-    every client failure that carries none, in the same category. When PyMySQL
-    is fixed, the tier-1 test that pins this fails, and this goes.
-    """
-
-    category = "connectivity"
-
-
-#: The text of PyMySQL 1.2.3's failure that :class:`PlainLoginError` reports.
-#: Matched exactly, so no other ``AttributeError`` is taken for it.
-PLAIN_LOGIN_FAILURE = "'NoneType' object has no attribute 'is_auth_switch_request'"
 
 
 @dataclass
@@ -880,21 +853,6 @@ class MysqlSession(ClosesConnection):
             return VerifyResult(
                 method=VERIFY_LOGIN, result=result, latency_ms=latency, detail=detail
             )
-        except AttributeError as error:
-            # PyMySQL 1.2.3's failure over a plain connection, as
-            # `MysqlDriver.connect` meets it. The password was not tried.
-            if str(error) != PLAIN_LOGIN_FAILURE:
-                raise
-            return VerifyResult(
-                method=VERIFY_LOGIN,
-                result=UNAVAILABLE,
-                latency_ms=_ms(started),
-                detail=(
-                    "PyMySQL could not finish the caching_sha2_password login over a plain "
-                    "connection, so the password was not tried: set `mysql.ssl_mode` to "
-                    "VERIFY_IDENTITY"
-                ),
-            )
         latency = _ms(started)
         try:
             with connection.cursor() as cursor:
@@ -1084,22 +1042,6 @@ class MysqlDriver:
                 time.monotonic() - started,
             )
             raise failure.as_error() from error
-        except AttributeError as error:
-            # PyMySQL 1.2.3's own failure, measured (PlainLoginError), matched
-            # by its exact text. Anything else is a fault, and surfaces.
-            if str(error) != PLAIN_LOGIN_FAILURE:
-                raise
-            raise PlainLoginError(
-                f'target "{target.name}": PyMySQL could not finish the '
-                f"caching_sha2_password login over a plain connection",
-                hint=(
-                    "a login the server has not cached needs the full exchange, which "
-                    "PyMySQL 1.2.3 fails without TLS. Set `mysql.ssl_mode` to "
-                    "VERIFY_IDENTITY, with `mysql.ssl_ca` naming the CA that issued the "
-                    "server's certificate"
-                ),
-                code=str(UNKNOWN_CLIENT_ERROR),
-            ) from error
         LOG.debug(
             "connect to %s as %s in %.3fs",
             target.name,

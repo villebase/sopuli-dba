@@ -864,43 +864,6 @@ def _credential() -> Credential:
     return Credential(username="sopuli_svc", secret=Secret("Tr0ub4dor-and-3"))
 
 
-def test_pymysqls_failure_of_a_plain_login_is_reported_as_what_it_is(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Measured on 8.4.13: a login the server has not cached fails inside
-    PyMySQL 1.2.3 with an AttributeError over a plain connection."""
-
-    def fail(**arguments: Any) -> Any:
-        raise AttributeError("'NoneType' object has no attribute 'is_auth_switch_request'")
-
-    monkeypatch.setattr(session_module.pymysql, "connect", fail)
-    driver = session_module.MysqlDriver(correlation_id="run")
-
-    with pytest.raises(session_module.PlainLoginError) as caught:
-        driver.connect(_target("DISABLED"), _credential())
-
-    assert caught.value.category == "connectivity"
-    assert caught.value.code == "2000"
-    assert "VERIFY_IDENTITY" in str(caught.value.hint)
-
-
-@pytest.mark.parametrize("mode", ["DISABLED", "PREFERRED"])
-def test_any_other_attribute_error_is_not_hidden(
-    monkeypatch: pytest.MonkeyPatch, mode: str
-) -> None:
-    """Only PyMySQL's measured failure, by its exact text, is reported as a
-    plain-login failure. Anything else is a fault, and surfaces as one."""
-
-    def fail(**arguments: Any) -> Any:
-        raise AttributeError("something else")
-
-    monkeypatch.setattr(session_module.pymysql, "connect", fail)
-    driver = session_module.MysqlDriver(correlation_id="run")
-
-    with pytest.raises(AttributeError, match="something else"):
-        driver.connect(_target(mode), _credential())
-
-
 def test_a_failed_connect_is_classified_as_a_connect(monkeypatch: pytest.MonkeyPatch) -> None:
     import pymysql
 

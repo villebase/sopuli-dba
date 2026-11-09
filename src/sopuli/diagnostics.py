@@ -1054,7 +1054,9 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "PostgreSQL `sslmode` of `disable`, `allow`, `prefer` or `require`, or a MySQL "
             "`ssl_mode` of `DISABLED`, `PREFERRED` or `REQUIRED`. The connection may still be "
             "encrypted, but anything on the path can present its own certificate and read "
-            "the password a run sets. One entry per target. `safety.require_encryption` "
+            "the password a run sets. Over a plain MySQL connection, it can send its own RSA "
+            "key in place of the server's, and read the password the login sends with it. "
+            "One entry per target. `safety.require_encryption` "
             "refuses `disable`, `DISABLED` and a connection that is not encrypted; it does "
             "not ask for a verified server."
         ),

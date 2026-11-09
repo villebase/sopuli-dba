@@ -5004,3 +5004,32 @@ the register.
   having no schema privileges, because both answer `ORA-00942`. An install
   made before the grant reports schema privileges as not checked, and exits
   4, until `00_install.sql` is run again with `grant_report_reads=Y`.
+
+## #1407
+
+- **Decided:** 2026-11-09, #1407
+- **Question:** PyMySQL 1.2.4, a security release, finishes a
+  `caching_sha2_password` login over a plain connection that the server has
+  not cached, which 1.2.3 failed. What may a plain login do?
+- **Decision:** the maintainer's, A: adopt 1.2.4 as it is. A plain login
+  finishes, and the tool no longer reports it as a failure.
+- **Why:** 1.2.3 already sent the password. Measured on 8.0.46, 8.4.13 and
+  9.7.4 (`sql/mysql/09_plain_login_probe.py`), both releases ask the server for its
+  RSA public key over the plain connection and send the password encrypted
+  with it, and the server accepts and caches the login. 1.2.3 then failed on
+  the client side, before the session opened. So the exposure is not new: a
+  connection that does not verify the server can be read by anything on the
+  path, and `ssl_mode: REQUIRED` exposes the password the same way, over TLS
+  to a server nobody verified. `SOPULI-W058` already warns about all three
+  modes.
+- **Rejected:**
+  1. B: an optional `mysql.server_public_key`, the server's key pinned in a
+     file, so that a plain login does not trust the key the server sends. It
+     can come later, if a site cannot use TLS.
+  2. C: refuse a plain connection without a pinned key. It breaks configs
+     that work today, for an exposure `REQUIRED` keeps.
+  3. Leave out PyMySQL's `rsa` extra, so the RSA path fails before the
+     password is sent. `oracledb` and `oci` install `cryptography` anyway.
+- **Known cost:** under `DISABLED`, or `PREFERRED` against a server without
+  TLS, anything on the path can send its own key and read the tool's
+  password and, in `creds check --method login`, an application's.

@@ -257,16 +257,32 @@ def test_an_expired_password_is_refused_at_login_with_1862(live_mysql: Any) -> N
             cursor.execute("drop user %s@'%%'", (user,))
 
 
-def test_a_plain_login_the_server_has_not_cached_fails_as_measured(
+def test_a_plain_login_the_server_has_not_cached_logs_in(
     live_mysql: Any, tool_account: tuple[str, str]
 ) -> None:
     """After FLUSH PRIVILEGES the server's caching_sha2_password cache is
-    empty, and PyMySQL 1.2.3 cannot finish the full exchange without TLS."""
+    empty. PyMySQL 1.2.4 finishes the full exchange without TLS, with the
+    password encrypted under the key the server sends (#1407)."""
     with live_mysql.connect() as admin, admin.cursor() as cursor:
         cursor.execute("flush privileges")
 
-    with pytest.raises(session_module.PlainLoginError):
-        _connect(live_mysql, *tool_account, mode="DISABLED")
+    session = _connect(live_mysql, *tool_account, mode="DISABLED")
+    try:
+        assert session.scope().encryption.method == "none"
+    finally:
+        session.close()
+
+
+def test_a_wrong_password_over_a_plain_connection_is_1045(
+    live_mysql: Any, tool_account: tuple[str, str]
+) -> None:
+    with live_mysql.connect() as admin, admin.cursor() as cursor:
+        cursor.execute("flush privileges")
+
+    with pytest.raises(AuthenticationError) as caught:
+        _connect(live_mysql, tool_account[0], "not-the-password", mode="DISABLED")
+
+    assert caught.value.code == "1045"
 
 
 def test_a_plain_login_the_server_has_cached_reports_no_encryption(

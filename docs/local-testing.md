@@ -726,7 +726,7 @@ client
   psycopg           3.3.6
   libpq             18.4
   require_auth      accepted
-  pymysql           1.2.3
+  pymysql           1.2.4
 
 TARGET     REACHABLE  SCOPE   CONTAINER  OPEN MODE   CAPABILITIES  ENCRYPTION
 mysql-dev  yes        server  -          READ WRITE  3             tls
@@ -739,8 +739,8 @@ mysql-dev  yes        server  -          READ WRITE  3             tls
     hint: anything between this run and the server can present its own certificate and read the password a run sets. Use `ssl_mode: VERIFY_IDENTITY` (the default), with `ssl_ca` naming the CA that issued the server's certificate
 ```
 
-Keep TLS on: with `ssl_mode: DISABLED` a login can fail
-(`01-configuration.md` §3a, `mysql:`).
+Keep TLS on: with `ssl_mode: DISABLED` a login sends the password encrypted
+with a key that nothing checks (`01-configuration.md` §3a, `mysql:`).
 
 To manage passwords, give the tool account the grants in
 [`design/02-mysql-privileges.md`](design/02-mysql-privileges.md) §2.1, with

@@ -197,7 +197,15 @@ def test_the_refusal_names_every_offending_store() -> None:
     with pytest.raises(ConfigError) as caught:
         build_config(
             document(
-                vaults={"legacy-kv": KV1, "old-file": {"type": "file", "locking": "advisory-only"}},
+                vaults={
+                    "legacy-kv": KV1,
+                    "old-file": {
+                        "type": "file",
+                        "addr": "/srv/sopuli/store.age",
+                        "identity": {"env": "SOPULI_FILE_IDENTITY"},
+                        "locking": "advisory-only",
+                    },
+                },
                 defaults={"locking": {"break_expired": True}},
             )
         )

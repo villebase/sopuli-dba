@@ -34,7 +34,7 @@ def test_reset_records_in_an_oci_store_are_refused() -> None:
 
     rendered = str(caught.value)
     assert "reset_records.vault" in rendered
-    assert "application credentials (UC-1) only" in rendered
+    assert "does not keep personal accounts (UC-2) in a store of that type" in rendered
 
 
 def test_reset_records_in_a_hashicorp_store_load() -> None:

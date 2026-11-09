@@ -30,6 +30,8 @@ from sopuli.config.loading import (
 )
 from sopuli.config.schema import build_schema
 
+FILE_STORE = "{ type: file, addr: /srv/sopuli/store.age, identity: { env: SOPULI_FILE_IDENTITY } }"
+
 BASE = """
 version: 1
 vaults:
@@ -437,7 +439,7 @@ def test_ratcheting_does_not_mutate_the_documents_it_was_given() -> None:
 
 def test_layered_files_load_as_one_config(tmp_path: Path, write_at: WriteAt) -> None:
     base = write_at(tmp_path / "base.yaml", BASE)
-    overlay = write_at(tmp_path / "overlay.yaml", "version: 1\nvaults:\n  extra: { type: file }\n")
+    overlay = write_at(tmp_path / "overlay.yaml", f"version: 1\nvaults:\n  extra: {FILE_STORE}\n")
 
     config = load_config_from([base, overlay])
 
@@ -496,7 +498,7 @@ def test_every_layer_declares_its_own_version(tmp_path: Path, write_at: WriteAt)
     """§9a requires it because a file with no version cannot be migrated later,
     and that does not weaken when the file is one of several."""
     base = write_at(tmp_path / "base.yaml", BASE)
-    fragment = write_at(tmp_path / "fragment.yaml", "vaults:\n  extra: { type: file }\n")
+    fragment = write_at(tmp_path / "fragment.yaml", f"vaults:\n  extra: {FILE_STORE}\n")
 
     with pytest.raises(ConfigError) as caught:
         load_config_from([base, fragment])

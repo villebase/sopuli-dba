@@ -3553,7 +3553,9 @@ def _reset_one(
 def _refuse_personal_delivery_store(
     config: Config, delivery: Delivery, reached: Sequence[ExpandedTarget]
 ) -> None:
-    """An unseen delivery may not reach an OCI store, whichever link names it (#1138).
+    """An unseen delivery may not reach an OCI or file store, whichever link names it.
+
+    #1138 decided the OCI refusal and #1415 the file one.
 
     A method's own ``vault:`` is checked when the file is read
     (:mod:`sopuli.config.references`). The rest of :func:`_delivery_store`'s

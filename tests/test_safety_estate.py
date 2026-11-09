@@ -80,7 +80,13 @@ def sections(**rest: Any) -> Config:
     return build_config(
         {
             "version": 1,
-            "vaults": {"vault-dev": {"type": "file", "addr": "./store.json"}},
+            "vaults": {
+                "vault-dev": {
+                    "type": "file",
+                    "addr": "./store.json",
+                    "identity": {"env": "SOPULI_FILE_IDENTITY"},
+                }
+            },
             "accounts": ["acme_app_user"],
             "secret_template": "vault-dev:acme/{env}/db#{account}",
             **rest,

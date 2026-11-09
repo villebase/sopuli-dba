@@ -52,7 +52,13 @@ def loaded(addr: str | None = None, *, kind: str = "hashicorp", **options: Any) 
     document: dict[str, Any] = {
         "version": 1,
         "defaults": {"vault": "vault-dev"},
-        "vaults": {"vault-dev": {"type": kind, **({"addr": addr} if addr else {})}},
+        "vaults": {
+            "vault-dev": {
+                "type": kind,
+                **({"addr": addr} if addr else {}),
+                **({"identity": {"env": "SOPULI_FILE_IDENTITY"}} if kind == "file" else {}),
+            }
+        },
     }
     if standby_addr is not None:
         document["profiles"] = {"standby": {"vaults": {"vault-dev": {"addr": standby_addr}}}}

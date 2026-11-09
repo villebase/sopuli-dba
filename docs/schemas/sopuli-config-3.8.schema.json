@@ -187,7 +187,7 @@
     },
     "vault": {
       "type": "object",
-      "description": "One named secret store. `type` is the only key every store needs: the backends differ enough that demanding a HashiCorp shape of every entry would be the vendor bias P1 forbids. The rest depend on the backend; an oci store requires vault_id, compartment_id and key_id.",
+      "description": "One named secret store. `type` is the only key every store needs: the backends differ enough that demanding a HashiCorp shape of every entry would be the vendor bias P1 forbids. The rest depend on the backend; an oci store requires vault_id, compartment_id and key_id, and a file store requires identity and an addr, its path, from some layer.",
       "additionalProperties": false,
       "required": [
         "type"
@@ -250,6 +250,26 @@
           "type": "string",
           "minLength": 1,
           "description": "OCI only. Absent means the region the auth method supplies: the config-file profile's, or the instance metadata's."
+        },
+        "identity": {
+          "$ref": "#/$defs/material_ref",
+          "description": "file only, and required there: where the age identity that decrypts the store comes from. A secret, so it is named, never written here."
+        },
+        "recipients": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^age1[0-9a-z]+$"
+          },
+          "description": "file only: age recipients (age1...) the store is encrypted to, besides the identity's own key, which is always one. Absent means the identity's key alone.",
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "max_versions": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "file only: how many versions of each path the store keeps. 1 keeps only the current version. Absent means 10."
         },
         "tls": {
           "$ref": "#/$defs/vault_tls"

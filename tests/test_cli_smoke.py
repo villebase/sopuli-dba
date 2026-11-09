@@ -417,7 +417,8 @@ def test_repeated_config_options_are_layered_in_order(runner: CliRunner, tmp_pat
     say so -- an estate assembled from two files is otherwise indistinguishable
     from one file that says something surprising."""
     base = _write(tmp_path / "base.yaml", ESTATE)
-    overlay = _write(tmp_path / "overlay.yaml", "version: 1\nvaults:\n  extra: { type: file }\n")
+    store = "{ type: file, addr: /srv/sopuli/store.age, identity: { env: SOPULI_FILE_IDENTITY } }"
+    overlay = _write(tmp_path / "overlay.yaml", f"version: 1\nvaults:\n  extra: {store}\n")
 
     result = runner.invoke(cli, ["config", "show", "--config", str(base), "--config", str(overlay)])
 

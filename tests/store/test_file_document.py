@@ -6,6 +6,7 @@ Tier 0, pure: bytes in and out, no file and no encryption.
 from __future__ import annotations
 
 import json
+import re
 import sys
 from collections import OrderedDict, namedtuple
 from datetime import UTC, datetime, timedelta, timezone, tzinfo
@@ -348,7 +349,9 @@ def test_a_document_the_reader_would_refuse_cannot_be_built(paths: Any) -> None:
         (1, NOW, "[]", "not an object"),
         (1, NOW, '{"a":NaN}', "not JSON this build can read"),
         (1, NOW, '{"a":' + "[" * 40 + "]" * 40 + "}", "nested more than"),
-        (1, NOW, "[" * 100_000 + "]" * 100_000, "nested too deeply"),
+        # Inside an object, so whichever happens first on this Python, the
+        # parser's limit (3.13) or the 32-level walk (3.14), it is "nested".
+        (1, NOW, '{"a":' + "[" * 100_000 + "]" * 100_000 + "}", "nested"),
         (1, NOW, '{"a":1,"a":2}', "names one key twice"),
         (1, NOW, '{"b":1, "a":2}', "canonical form"),
         (1, NOW, '{"b":1,"a":2}', "canonical form"),
@@ -540,15 +543,24 @@ def test_an_empty_store_round_trips() -> None:
         (b"{not json", "not UTF-8 JSON"),
         (b"[]", f"not a {FORMAT} document"),
         (json.dumps({"format": "other"}).encode(), f"not a {FORMAT} document"),
-        (b"[" * 100_000 + b"]" * 100_000, "nests too deeply to read"),
     ],
-    ids=["not-utf8", "not-json", "a-list", "other-format", "deep"],
+    ids=["not-utf8", "not-json", "a-list", "other-format"],
 )
 def test_bytes_that_are_not_a_store_document_are_refused(raw: bytes, problem: str) -> None:
     with pytest.raises(DocumentError) as caught:
         loads(raw)
 
     assert problem in str(caught.value)
+
+
+def test_nesting_past_the_parser_is_refused_not_a_crash() -> None:
+    """Whether the parser reaches its limit depends on the Python release:
+    3.13 raises RecursionError, and 3.14 parses it. Either way the result is
+    a DocumentError with a reason, never an uncaught error."""
+    with pytest.raises(DocumentError) as caught:
+        loads(b"[" * 100_000 + b"]" * 100_000)
+
+    assert re.search(r"nests too deeply to read|not a sopuli-file-store document", str(caught))
 
 
 def test_an_implausible_format_version_is_damage_and_is_not_quoted() -> None:

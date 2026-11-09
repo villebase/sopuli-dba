@@ -6,7 +6,7 @@ for text output that keep it consistent with both.
 `sopuli/output/` produces them, and CI validates the output against the
 published schemas.
 
-Schemas: [`../schemas/sopuli-run-1.87.schema.json`](../schemas/sopuli-run-1.87.schema.json),
+Schemas: [`../schemas/sopuli-run-1.88.schema.json`](../schemas/sopuli-run-1.88.schema.json),
 [`../schemas/sopuli-event-1.24.schema.json`](../schemas/sopuli-event-1.24.schema.json)
 Examples, each from a real run:
 [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json),
@@ -465,6 +465,8 @@ This sketch shows the run document's shape:
   install    { backends[], drivers[] },
   wallet     { required_by[], tns_admin, directory, from_sqlnet, readable,
                files[], unreadable[], auto_login, insecure[] },
+  keyring    { service, backend, problem,
+               entries[ { entry, required_by[], present, problem } ] },
   vaults     [ { vault, type, status, detail, version, authenticated, skew_ms,
                  error, … } ],
   constraints { source, max_password_bytes, character_set, strictest_target,
@@ -1788,6 +1790,42 @@ about the wallet it uses, which can be in another directory. Its connection
 error reports a wallet problem instead. A wallet that is missing, misplaced or
 unreadable fails with `ORA-28759`, and a damaged one with `ORA-28768`. Both have
 `category: connectivity` and a hint that names where to look (UC-1 §6.4).
+
+### `keyring`, emitted by `doctor`
+
+The OS keyring the tool reads its own credentials from (#1417): the backend in
+use, and each entry the configuration names, with the keys that name it.
+
+```json
+"keyring": {
+  "service": "sopuli",
+  "backend": "keyring.backends.Windows.WinVaultKeyring",
+  "problem": null,
+  "entries": [
+    {
+      "entry": "vault-dev",
+      "required_by": ["vaults.vault-dev.auth.token"],
+      "present": true,
+      "problem": null
+    }
+  ]
+}
+```
+
+**It is absent when the configuration names no keyring entry**, for
+`wallet`'s reason: a keyring source is an option most files never use.
+
+**Presence is read, not inferred.** The keyring library cannot ask whether an
+entry exists without reading it, so `doctor` reads each one and keeps only
+whether it held a value. The value is never in the document.
+
+**`present` is null when the entry could not be read**: no OS keyring could be
+used, and `problem` at the top says why, or the read failed, and the entry's own
+`problem` says why.
+
+**Nothing here changes the exit code**, for `wallet`'s reason. A missing entry
+also fails the vault or the target that needs it, with that failure's message.
+This section shows every entry in one place, before the connections.
 
 ### `vaults`, emitted by `doctor`
 

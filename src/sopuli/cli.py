@@ -253,6 +253,7 @@ from sopuli.invocation import (
     group_options,
     show_warnings,
 )
+from sopuli.keyring_survey import survey as keyring_survey
 from sopuli.lock.errors import LockDeniedError, LockError, LockStolenError
 from sopuli.lock.inspect import declared_locks, mode_of, reset_region, resolvable_locks, survey
 from sopuli.lock.inspect import discover as discover_locks
@@ -328,6 +329,8 @@ from sopuli.output.generate_view import build_result as build_generate_result
 from sopuli.output.generate_view import summarise as summarise_generate
 from sopuli.output.install_view import build as build_install
 from sopuli.output.install_view import render as render_install
+from sopuli.output.keyring_view import build as build_keyring
+from sopuli.output.keyring_view import render as render_keyring
 from sopuli.output.lock_view import (
     build_break_section,
     build_denied_section,
@@ -940,6 +943,11 @@ def doctor(
     wallet problem before it connects. The wallet check only warns; each
     target's connection decides the result.
 
+    For a config that reads a credential from the OS keyring, the command
+    shows which keyring it uses and whether each entry the config names is
+    there. Like the wallet check, this changes no exit code: a missing entry
+    also fails the vault or target that needs it.
+
     `--check-privileges` warns and never fails. An over-granted account is
     someone else's problem to fix, and a failing `doctor` would block the
     person who ran it, perhaps during an incident, over something they did not
@@ -978,6 +986,12 @@ def doctor(
     if wallet is not None:
         document.wallet = build_wallet(wallet)
         document.diagnostics.extend(wallet_diagnostics(wallet))
+
+    # Before the vaults and the targets, for the wallet's reason: a vault token
+    # or an admin password may be one of these entries.
+    keyring = keyring_survey(config)
+    if keyring is not None:
+        document.keyring = build_keyring(keyring)
 
     # Over `config.vaults` and not the filtered estate: `--select` narrows which
     # *targets* are surveyed, and a store serving a target this run excluded is
@@ -1018,6 +1032,8 @@ def doctor(
     sections = [*render_install(shape)]
     if wallet is not None:
         sections.extend(render_wallet(wallet))
+    if keyring is not None:
+        sections.extend(render_keyring(keyring))
     sections.extend(render_vaults(list(vaults)))
     return "\n".join(
         [*sections, render_doctor(entries, client=client), *render_notices(_admin_notices(run))]

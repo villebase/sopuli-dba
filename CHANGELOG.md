@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.87.0](https://github.com/villebase/sopuli-dba/compare/v0.86.0...v0.87.0) (2026-11-09)
+
+
+### Features
+
+* **config:** add the reports section for UC-5 ([#1380](https://github.com/villebase/sopuli-dba/issues/1380)) ([#1381](https://github.com/villebase/sopuli-dba/issues/1381)) ([19b8d82](https://github.com/villebase/sopuli-dba/commit/19b8d828326177fc91a8cf5c5d53aee82dea59c9))
+* **oracle:** grant DBA_SCHEMA_PRIVS with grant_report_reads ([#1389](https://github.com/villebase/sopuli-dba/issues/1389)) ([#1405](https://github.com/villebase/sopuli-dba/issues/1405)) ([8812054](https://github.com/villebase/sopuli-dba/commit/8812054677ba7cf9c52d11cbc6eb57e11aaf1a97))
+* **oracle:** survey effective privileges for UC-5 ([#1387](https://github.com/villebase/sopuli-dba/issues/1387)) ([#1388](https://github.com/villebase/sopuli-dba/issues/1388)) ([69ebdc0](https://github.com/villebase/sopuli-dba/commit/69ebdc08717dcfa1a8b3587381a969d6955a3553))
+* **oracle:** survey every account on a target ([#1382](https://github.com/villebase/sopuli-dba/issues/1382)) ([#1383](https://github.com/villebase/sopuli-dba/issues/1383)) ([b935b3d](https://github.com/villebase/sopuli-dba/commit/b935b3db84c59d2ecd74c536617743575ee1afda))
+* **report:** add sopuli report accounts ([#1384](https://github.com/villebase/sopuli-dba/issues/1384)) ([#1385](https://github.com/villebase/sopuli-dba/issues/1385)) ([60f0a9e](https://github.com/villebase/sopuli-dba/commit/60f0a9ecefa0d6760bc48f655db58779b8642be6))
+* **report:** add sopuli report history ([#1399](https://github.com/villebase/sopuli-dba/issues/1399)) ([#1401](https://github.com/villebase/sopuli-dba/issues/1401)) ([a66cff8](https://github.com/villebase/sopuli-dba/commit/a66cff8cf32ed47f66035d2f19aa88d7223c0b4d))
+* **report:** add sopuli report privileges ([#1392](https://github.com/villebase/sopuli-dba/issues/1392)) ([#1393](https://github.com/villebase/sopuli-dba/issues/1393)) ([da0c1b6](https://github.com/villebase/sopuli-dba/commit/da0c1b67b3d747a93acc7b09cf3a752f05119209))
+* **report:** add the pure history module for UC-5 ([#1398](https://github.com/villebase/sopuli-dba/issues/1398)) ([#1400](https://github.com/villebase/sopuli-dba/issues/1400)) ([db041fc](https://github.com/villebase/sopuli-dba/commit/db041fc775148d98fa74a763ad7b524c43b15e42))
+* **report:** list 23ai schema privileges in report privileges ([#1389](https://github.com/villebase/sopuli-dba/issues/1389)) ([#1406](https://github.com/villebase/sopuli-dba/issues/1406)) ([fc28ffb](https://github.com/villebase/sopuli-dba/commit/fc28ffb4dd54fe069ce4d523a7e846a0b7a2dc85))
+* **report:** report a profile missing on a target, once ([#1390](https://github.com/villebase/sopuli-dba/issues/1390)) ([#1402](https://github.com/villebase/sopuli-dba/issues/1402)) ([4d64a9d](https://github.com/villebase/sopuli-dba/commit/4d64a9dd7f56b4e17cd8fe18020a4ccb78534312))
+* **store:** list a secret's versions for UC-5 ([#1394](https://github.com/villebase/sopuli-dba/issues/1394)) ([#1395](https://github.com/villebase/sopuli-dba/issues/1395)) ([68c15a1](https://github.com/villebase/sopuli-dba/commit/68c15a19db8769068dd497137f34c84ed0c1021f))
+
+
+### Bug Fixes
+
+* **deps:** keep PyMySQL below 1.2.4 until it is measured ([#1407](https://github.com/villebase/sopuli-dba/issues/1407)) ([#1408](https://github.com/villebase/sopuli-dba/issues/1408)) ([0896783](https://github.com/villebase/sopuli-dba/commit/08967832cd29ac48069e9b38ea802bd7369a5ec0))
+* **mysql:** adopt PyMySQL 1.2.4 and its plain login ([#1407](https://github.com/villebase/sopuli-dba/issues/1407)) ([#1409](https://github.com/villebase/sopuli-dba/issues/1409)) ([7e8cf37](https://github.com/villebase/sopuli-dba/commit/7e8cf372f82ef23e641b51fbf9b2ed33f2402977))
+* **oracle:** add scope.db_release beside db_version ([#1386](https://github.com/villebase/sopuli-dba/issues/1386)) ([#1391](https://github.com/villebase/sopuli-dba/issues/1391)) ([4d536b1](https://github.com/villebase/sopuli-dba/commit/4d536b132b065ae2f879b76e11a455aaa92e237f))
+* **oracle:** survey privileges for 250 grantees per statement ([#1396](https://github.com/villebase/sopuli-dba/issues/1396)) ([#1403](https://github.com/villebase/sopuli-dba/issues/1403)) ([8d2d8df](https://github.com/villebase/sopuli-dba/commit/8d2d8df5a6da3682007380c0ec864a6e93ffebb6))
+
 ## [0.86.0](https://github.com/villebase/sopuli-dba/compare/v0.85.0...v0.86.0) (2026-11-07)
 
 

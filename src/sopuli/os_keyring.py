@@ -8,8 +8,10 @@ passwords. That is the ``keyring`` store type, which this build does not have
 (#1373).
 
 **The service is fixed.** The config names only the entry, so the tool decides
-how entries are named, and ``sopuli keyring set NAME`` writes the entry this
-module reads (decision 2 of #1417).
+how entries are named (decision 2 of #1417). An entry is written through the
+same library, which on Windows stores a second entry of one service at the
+address ``NAME@sopuli``; an entry written by hand in Credential Manager under
+the address ``sopuli`` would replace the first.
 
 **Only an OS keyring counts.** The ``keyring`` library picks a backend by
 priority, and it can pick one that is not an OS keyring: ``fail`` and ``null``,
@@ -75,53 +77,78 @@ def read(entry: str, *, where: str) -> Secret:
     chosen = backend(where=where)
     try:
         value = chosen.get_password(SERVICE, entry)
-    except _keyring_errors() as error:
+    except Exception as error:  # noqa: BLE001 - see below
+        # Any exception, not only `KeyringError` and `OSError`: a backend lets
+        # its platform's own errors through. On Windows that is win32ctypes'
+        # `pywintypes.error`, which is neither -- a scheduled task with no
+        # logon session gets it from CredRead -- and on Linux it is a D-Bus
+        # error. Each is "could not read", and a traceback would hide the entry.
         raise MaterialError(
-            f"{where}: could not read {describe(entry)} from {name_of(chosen)}: {error}",
+            f"{where}: could not read {describe(entry)} from {name_of(chosen)}: "
+            f"{type(error).__name__}: {error}",
             at=ROOT,
-            hint=_unlock_hint(),
+            hint=(
+                "the keyring may be locked, or this session cannot reach it. Unlock it, "
+                "or run as the user who wrote the entry. A Windows scheduled task set to "
+                "run whether the user is logged on or not reads the entries only when "
+                "it stores the user's password"
+            ),
         ) from error
     if not value:
         raise MaterialError(
             f"{where}: {describe(entry)} is not in {name_of(chosen)}",
             at=ROOT,
             hint=(
-                f"write a generic entry with the service `{SERVICE}` and the user name "
-                f"`{entry}`, as the user this command runs as. A Windows scheduled task "
-                "reads only the entries of the user it runs as"
+                f"write it with `python -m keyring set {SERVICE} {entry}`, using the Python "
+                "that runs sopuli and as the user this command runs as. A Windows "
+                "scheduled task reads only the entries of the user it runs as"
             ),
         )
     return Secret(value)
 
 
 def backend(*, where: str) -> Any:
-    """The OS keyring backend, or a :class:`~sopuli.material.MaterialError`."""
+    """The OS keyring backend, or a :class:`~sopuli.material.MaterialError`.
+
+    **Chosen once per process.** Choosing reads each backend's priority, and on
+    Linux the Secret Service and KWallet priorities each open a D-Bus
+    connection. An estate whose targets each name an entry would otherwise
+    choose again for every target. The cache is keyed on :data:`loader`, so a
+    test that replaces it chooses again.
+    """
+    global _chosen
+    if _chosen is not None and _chosen[0] is loader:
+        return _chosen[1]
     library = _load(where=where)
-    found = library.get_keyring()
-    candidates = list(found.backends) if _module(found) == _CHAINER else [found]
+    try:
+        found = library.get_keyring()
+        candidates = list(found.backends) if _module(found) == _CHAINER else [found]
+    except Exception as error:  # noqa: BLE001 - the library sets itself up here
+        # `get_keyring()` reads PYTHON_KEYRING_BACKEND and keyringrc and imports
+        # what they name, and the chainer asks every backend whether it is
+        # viable. Any of that can fail with an error of its own.
+        raise MaterialError(
+            f"{where}: the keyring library could not choose a backend: "
+            f"{type(error).__name__}: {error}",
+            at=ROOT,
+            hint=_SETTING_HINT,
+        ) from error
     chosen = choose(candidates)
     if chosen is None:
-        seen = ", ".join(name_of(one) for one in candidates) or "none"
-        raise MaterialError(
-            f"{where}: no OS keyring is available here (the keyring library found: {seen})",
-            at=ROOT,
-            hint=(
-                "a keyring needs a desktop session on Linux (Secret Service), and a "
-                "scheduled run on a server usually has none. Use `env:` or `file:` "
-                "there instead"
-            ),
-        )
+        raise _no_os_keyring(candidates, where=where)
+    _chosen = (loader, chosen)
     return chosen
 
 
 def choose(candidates: list[Any]) -> Any | None:
-    """The highest-priority candidate that is an OS keyring, or ``None``.
+    """The first candidate that is an OS keyring, or ``None``.
 
     Pure, so the refusal of a plaintext or empty backend is testable without
-    one. The library's chainer lists its backends highest priority first; a
-    single backend is a list of one.
+    one. The library's chainer lists its backends highest priority first, so
+    the first OS keyring in its order is the one it would have used; a single
+    backend is a list of one.
     """
-    for candidate in sorted(candidates, key=_priority, reverse=True):
+    for candidate in candidates:
         if _module(candidate) in OS_BACKENDS:
             return candidate
     return None
@@ -136,12 +163,43 @@ def _module(candidate: Any) -> str:
     return type(candidate).__module__
 
 
-def _priority(candidate: Any) -> float:
-    try:
-        return float(candidate.priority)
-    except Exception:  # noqa: BLE001 - a backend whose priority cannot be read ranks last
-        return float("-inf")
+#: The library's backends that hold nothing: no keyring was found.
+_EMPTY = frozenset({"keyring.backends.fail", "keyring.backends.null"})
 
+_SETTING_HINT = (
+    "the environment variable PYTHON_KEYRING_BACKEND, or the keyring library's "
+    "keyringrc.cfg, may name a backend; remove that setting to use the OS keyring"
+)
+
+
+def _no_os_keyring(candidates: list[Any], *, where: str) -> MaterialError:
+    """The refusal, worded by what the library found.
+
+    Only empty backends means there is no keyring here, which on Linux usually
+    means no desktop session. Anything else is a backend somebody chose, through
+    PYTHON_KEYRING_BACKEND or keyringrc, that is not an OS keyring -- and the fix
+    is that setting, on any platform.
+    """
+    seen = ", ".join(name_of(one) for one in candidates) or "none"
+    if all(_module(one) in _EMPTY for one in candidates):
+        return MaterialError(
+            f"{where}: no OS keyring is available here (the keyring library found: {seen})",
+            at=ROOT,
+            hint=(
+                "on Linux a keyring needs a desktop session (Secret Service), and a "
+                "scheduled run on a server usually has none. Use `env:` or `file:` "
+                "there instead"
+            ),
+        )
+    return MaterialError(
+        f"{where}: the keyring library is set to use {seen}, which is not an OS keyring",
+        at=ROOT,
+        hint=_SETTING_HINT,
+    )
+
+
+#: The loader and the backend :func:`backend` chose with it.
+_chosen: tuple[Loader, Any] | None = None
 
 #: Imports the library. A seam for tests, which replace it with a fake.
 Loader = Callable[[], Any]
@@ -167,19 +225,3 @@ def _load(*, where: str) -> Any:
             at=ROOT,
             hint=f"install it with:  {install_hint(EXTRA)}",
         ) from error
-
-
-def _keyring_errors() -> tuple[type[BaseException], ...]:
-    """The library's own error, and the OS errors a backend lets through."""
-    try:
-        from keyring.errors import KeyringError
-    except ModuleNotFoundError:  # a test's fake library has no errors module
-        return (OSError,)
-    return (KeyringError, OSError)
-
-
-def _unlock_hint() -> str:
-    return (
-        "the keyring may be locked, or this session cannot reach it. Unlock it, or "
-        "run as the user who wrote the entry"
-    )

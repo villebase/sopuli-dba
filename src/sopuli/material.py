@@ -102,8 +102,8 @@ def resolve(ref: MaterialRef, *, env: Mapping[str, str], where: str) -> Secret:
     if ref.kind == "file":
         return _from_file(Path(ref.location), where=where, wrote=ref.location)
     if ref.kind == "keyring":
-        # Imported here: `sopuli.os_keyring` raises this module's error, and a
-        # run that names no keyring source never loads it.
+        # Imported here because `sopuli.os_keyring` imports `MaterialError`
+        # from this module: a module-level import would be a cycle.
         from sopuli import os_keyring
 
         return os_keyring.read(ref.location, where=where)

@@ -87,8 +87,9 @@ Prompter = Callable[[ExpandedTarget, "str | None"], Secret]
 #: The admin credential sources that need nobody at a terminal, for a hint.
 UNATTENDED_SOURCES = (
     "name a source that needs no one: "
-    "`auth: { method: vault, secret: … }`, `auth: { method: env }` "
-    f"reading ${ADMIN_PASSWORD_ENV}, or `auth: external` with a wallet"
+    "`auth: { method: vault, secret: … }`, `auth: { method: keyring, entry: … }`, "
+    f"`auth: {{ method: env }}` reading ${ADMIN_PASSWORD_ENV}, or `auth: external` "
+    "with a wallet"
 )
 
 #: Shows a line and reads a password without echoing it. Returns a ``str``, and

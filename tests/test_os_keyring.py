@@ -78,7 +78,7 @@ def test_a_missing_entry_names_it_the_backend_and_the_verb(windows: Any) -> None
     message = str(refused.value)
     assert "sopuli/vault-dev" in message
     assert WINDOWS in message
-    assert "the user name `vault-dev`" in (refused.value.hint or "")
+    assert "python -m keyring set sopuli vault-dev" in (refused.value.hint or "")
     assert refused.value.exit_code == ExitCode.CONFIG_INVALID
 
 
@@ -99,8 +99,43 @@ def test_a_locked_keyring_is_an_error_that_names_the_entry(windows: Any) -> None
     assert "locked" in str(refused.value)
 
 
+class PlatformError(Exception):
+    """Shaped like win32ctypes' `pywintypes.error`: neither `OSError` nor
+    `KeyringError`, which WinVaultKeyring lets through from CredRead."""
+
+
+def test_a_platform_error_from_the_backend_is_still_a_material_error(windows: Any) -> None:
+    windows.error = PlatformError(1312, "CredRead", "A specified logon session does not exist.")
+
+    with pytest.raises(MaterialError) as refused:
+        os_keyring.read("vault-dev", where=WHERE)
+
+    assert "sopuli/vault-dev" in str(refused.value)
+    assert "PlatformError" in str(refused.value)
+    assert refused.value.exit_code == ExitCode.CONFIG_INVALID
+
+
+def test_a_library_that_cannot_choose_names_its_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    """PYTHON_KEYRING_BACKEND naming a module that is not installed: the library
+    raises from `get_keyring()`."""
+
+    class Broken:
+        def get_keyring(self) -> Any:
+            raise ModuleNotFoundError("No module named 'keyrings'", name="keyrings")
+
+    monkeypatch.setattr(os_keyring, "loader", lambda: Broken())
+
+    with pytest.raises(MaterialError) as refused:
+        os_keyring.read("vault-dev", where=WHERE)
+
+    assert "could not choose a backend" in str(refused.value)
+    assert "PYTHON_KEYRING_BACKEND" in (refused.value.hint or "")
+
+
 def test_a_plaintext_backend_is_refused_rather_than_read(monkeypatch: pytest.MonkeyPatch) -> None:
-    """`keyrings.alt` writes a file: that is the `file:` source under another name."""
+    """`keyrings.alt` writes a file: that is the `file:` source under another name.
+    A single backend that is not empty was chosen by a setting, so the message
+    names the setting rather than saying there is no keyring."""
     plaintext = backend_class(PLAINTEXT, priority=10)()
     plaintext.entries[("sopuli", "vault-dev")] = "hvs.example"
     monkeypatch.setattr(os_keyring, "loader", lambda: Library(plaintext))
@@ -108,8 +143,31 @@ def test_a_plaintext_backend_is_refused_rather_than_read(monkeypatch: pytest.Mon
     with pytest.raises(MaterialError) as refused:
         os_keyring.read("vault-dev", where=WHERE)
 
-    assert "no OS keyring" in str(refused.value)
+    assert "is not an OS keyring" in str(refused.value)
     assert PLAINTEXT in str(refused.value)
+    assert "PYTHON_KEYRING_BACKEND" in (refused.value.hint or "")
+
+
+def test_the_backend_is_chosen_once_per_loader(monkeypatch: pytest.MonkeyPatch) -> None:
+    """On Linux choosing opens D-Bus connections, so a run whose targets each
+    name an entry must not choose again for each one."""
+    found = backend_class(WINDOWS)()
+    found.entries[("sopuli", "a")] = "1"
+    found.entries[("sopuli", "b")] = "2"
+    asked: list[int] = []
+
+    class Counting(Library):
+        def get_keyring(self) -> Any:
+            asked.append(1)
+            return super().get_keyring()
+
+    library = Counting(found)
+    monkeypatch.setattr(os_keyring, "loader", lambda: library)
+
+    os_keyring.read("a", where=WHERE)
+    os_keyring.read("b", where=WHERE)
+
+    assert len(asked) == 1
 
 
 def test_the_os_backend_is_chosen_from_a_chain(monkeypatch: pytest.MonkeyPatch) -> None:

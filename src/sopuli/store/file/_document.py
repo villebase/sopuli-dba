@@ -1,7 +1,7 @@
 """What a ``file`` store holds, as the bytes that get encrypted (#1415).
 
-Pure: no I/O and no encryption. The store encrypts what :func:`dumps` returns
-with age, and decrypts what :func:`loads` reads.
+Pure: no I/O and no encryption. :mod:`sopuli.store.file._crypto` encrypts what
+:func:`dumps` returns, and decrypts what :func:`loads` reads.
 
 One document per store, holding every path and up to ``max_versions`` versions
 of each. A version's number is never reused: pruning drops the oldest versions

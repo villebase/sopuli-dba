@@ -6,7 +6,8 @@ Tier 0, pure: bytes in and out, no file and no encryption.
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
+from types import MappingProxyType
 from typing import Any
 
 import pytest
@@ -19,6 +20,7 @@ from sopuli.store.file._document import (
     MAX_DEPTH,
     Document,
     DocumentError,
+    Version,
     dumps,
     loads,
 )
@@ -35,6 +37,13 @@ def written(document: Document, *values: Any, max_versions: int | None = None) -
             PATH, value, now=NOW + timedelta(minutes=index), max_versions=max_versions
         )
     return document
+
+
+class WideInt(int):
+    """An int whose `str` would pass a check that `json` does not use."""
+
+    def __str__(self) -> str:
+        return "0"
 
 
 def numbers(document: Document) -> list[int]:
@@ -89,8 +98,8 @@ def test_the_oldest_versions_beyond_max_versions_are_dropped() -> None:
 
 
 def test_pruning_never_reuses_a_number() -> None:
-    """The newest is always kept, so the next number follows it, and a
-    compare-and-set token that named a pruned version still fails."""
+    """The newest is always kept, so the next number follows it, and a version
+    number names one write for good."""
     document = written(EMPTY, {"v": 1}, {"v": 2}, max_versions=1)
 
     assert numbers(document) == [2]
@@ -178,9 +187,19 @@ def test_a_tuple_is_stored_as_a_list() -> None:
         ({"current": "\ud800"}, "not valid UTF-8"),
         ({1: "a"}, "a key that is not text"),
         ({"k": {2: PASSWORD}}, "a key that is not text"),
-        ({"current": 10**5000}, "more than 4300 digits"),
+        ({"current": 10**5000}, "wider than 14000 bits"),
+        ({"current": WideInt(10**5000)}, "wider than 14000 bits"),
     ],
-    ids=["set", "nan", "infinity", "lone-surrogate", "int-key", "nested-int-key", "huge-int"],
+    ids=[
+        "set",
+        "nan",
+        "infinity",
+        "lone-surrogate",
+        "int-key",
+        "nested-int-key",
+        "huge-int",
+        "huge-int-subclass",
+    ],
 )
 def test_data_the_file_cannot_hold_as_it_is_is_refused_without_repeating_it(
     value: Any, problem: str
@@ -220,6 +239,28 @@ def test_a_time_with_no_zone_is_refused() -> None:
     memory and the time on disk would differ."""
     with pytest.raises(ValueError, match="zone"):
         EMPTY.written(PATH, {"v": 1}, now=datetime(2026, 11, 9, 10, 0), max_versions=None)
+
+
+def test_a_time_outside_the_utc_range_is_refused_at_the_write() -> None:
+    edge = datetime(1, 1, 1, tzinfo=timezone(timedelta(hours=2)))
+
+    with pytest.raises(ValueError, match="outside the range"):
+        EMPTY.written(PATH, {"v": 1}, now=edge, max_versions=None)
+
+
+@pytest.mark.parametrize(
+    "paths",
+    [
+        {PATH: ()},
+        {"": (Version(1, NOW, "{}"),)},
+        {PATH: (Version(1, NOW, "{}"), Version(3, NOW, "{}"))},
+    ],
+    ids=["no-versions", "empty-name", "gap"],
+)
+def test_a_document_the_reader_would_refuse_cannot_be_built(paths: Any) -> None:
+    """So `dumps` cannot write a file this module would call damaged."""
+    with pytest.raises(ValueError, match="a document path"):
+        Document(MappingProxyType(paths))
 
 
 def test_an_unknown_path_reads_as_nothing() -> None:
@@ -370,6 +411,14 @@ def test_a_damaged_path_is_named_by_position_not_by_name() -> None:
 
     assert "path 2 is not a non-empty list of versions" in str(caught.value)
     assert PASSWORD not in str(caught.value)
+
+
+@pytest.mark.parametrize("created_at", ["0001-01-01T00:00:00+05:00", "9999-12-31T23:59:59-05:00"])
+def test_a_timestamp_at_the_edge_of_the_range_is_damage_not_a_crash(created_at: str) -> None:
+    with pytest.raises(DocumentError) as caught:
+        loads(damaged_with(lambda b: first_version(b).update(created_at=created_at)))
+
+    assert "no readable `created_at`" in str(caught.value)
 
 
 def test_data_nested_too_deep_in_the_file_is_refused() -> None:

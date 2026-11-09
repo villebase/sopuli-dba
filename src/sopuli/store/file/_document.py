@@ -8,12 +8,14 @@ writer.
 One document per store, holding every path and up to ``max_versions`` versions
 of each, oldest first. Pruning drops only the oldest, so the kept numbers are
 consecutive and the newest kept is the path's current version. A number is
-never reused: the next write is the newest plus one, so a compare-and-set token
-that named a pruned version still fails, as on KV v2.
+never reused: the next write is the newest plus one, so a version number names
+one write for good. The store has no compare-and-set (#1415).
 
 **Every error here names no data.** The data holds passwords in clear, so a
 message that quoted a malformed value could print one. The errors say what
-was wrong and where, never what was there.
+was wrong and where, never what was there. A path the tool asked to write is
+named, as every store names the paths it writes; a name read from a damaged
+file is not, because it may be anything.
 """
 
 from __future__ import annotations
@@ -46,9 +48,12 @@ DEFAULT_MAX_VERSIONS = 10
 #: :func:`loads` reports as damage too.
 MAX_DEPTH = 32
 
-#: Python refuses to turn an integer of more digits than this into text,
-#: which JSON needs (``sys.get_int_max_str_digits``'s default).
-MAX_INT_DIGITS = 4300
+#: The widest integer the store writes, in bits: about 4,200 decimal digits,
+#: under Python's default limit of 4,300 on converting between an integer and
+#: text (``sys.get_int_max_str_digits``). Measured in bits so the check is the
+#: same in every process, whatever limit that process runs with, and a file
+#: one process writes is never too wide for another to read.
+MAX_INT_BITS = 14_000
 
 #: What a write refusal says: the store writes what the tool built, so a value
 #: it cannot hold is the tool's fault.
@@ -90,9 +95,21 @@ class Version:
 
 @dataclass(frozen=True)
 class Document:
-    """Every path in the store, each with its kept versions, oldest first."""
+    """Every path in the store, each with its kept versions, oldest first.
+
+    Built only in the shape :func:`loads` accepts, so :func:`dumps` can never
+    write a file this module would then call damaged: each path is valid text
+    and has at least one version, numbered consecutively.
+    """
 
     paths: Mapping[str, tuple[Version, ...]]
+
+    def __post_init__(self) -> None:
+        for path, versions in self.paths.items():
+            if _path_problem(path) is not None or not versions:
+                raise ValueError("a document path must be valid text with versions")
+            if not _consecutive(versions):
+                raise ValueError("a document path's version numbers must be consecutive")
 
     def current(self, path: str) -> int:
         """The newest version number ``path`` has, or 0 where it has none."""
@@ -125,6 +142,10 @@ class Document:
             raise ValueError("max_versions must be at least 1")
         if now.tzinfo is None:
             raise ValueError("now must carry its zone")
+        try:
+            to_rfc3339(now)
+        except OverflowError:
+            raise ValueError("now is outside the range of a UTC timestamp") from None
         problem = _path_problem(path)
         if problem is not None:
             raise StoreError(f"a path cannot be stored: it is {problem}", hint=TOOL_FAULT)
@@ -156,10 +177,9 @@ def _not_plain(value: Any, *, depth: int) -> str | None:
     if value is None or isinstance(value, bool):
         return None
     if isinstance(value, int):
-        try:
-            str(value)
-        except ValueError:
-            return f"a number of more than {MAX_INT_DIGITS} digits"
+        # `bit_length` is int's own, so a subclass cannot change the answer.
+        if int.bit_length(value) > MAX_INT_BITS:
+            return f"a whole number wider than {MAX_INT_BITS} bits"
         return None
     if isinstance(value, float):
         return None if math.isfinite(value) else "a number that is not finite"
@@ -316,12 +336,16 @@ def _versions(position: int, path: str, raw: Any) -> tuple[Version, ...]:
     if not isinstance(raw, list) or not raw:
         raise DocumentError(f"{where} is not a non-empty list of versions")
     versions = tuple(_version(where, one) for one in raw)
-    first = versions[0].number
-    if [one.number for one in versions] != list(range(first, first + len(versions))):
+    if not _consecutive(versions):
         # Pruning drops only the oldest, so a gap means a version was lost,
         # and the newest kept might not be the newest written.
         raise DocumentError(f"{where} has version numbers that are not consecutive")
     return versions
+
+
+def _consecutive(versions: tuple[Version, ...]) -> bool:
+    first = versions[0].number
+    return [one.number for one in versions] == list(range(first, first + len(versions)))
 
 
 def _version(where: str, raw: Any) -> Version:
@@ -334,11 +358,14 @@ def _version(where: str, raw: Any) -> Version:
     created_at = raw["created_at"]
     try:
         moment = from_rfc3339(created_at) if isinstance(created_at, str) else None
-    except ValueError:
-        moment = None
-    # Only the form `dumps` writes: from_rfc3339 also reads a bare date or a
-    # time with no offset, and neither came from this module.
-    if moment is None or to_rfc3339(moment) != created_at:
+        # Only the form `dumps` writes: from_rfc3339 also reads a bare date or
+        # a time with no offset, and neither came from this module. Inside the
+        # try, because converting a time at the edge of the range to UTC
+        # overflows.
+        same = moment is not None and to_rfc3339(moment) == created_at
+    except (ValueError, OverflowError):
+        same = False
+    if not same or moment is None:
         raise DocumentError(f"version {number} of {where} has no readable `created_at`")
     data = raw["data"]
     if not isinstance(data, dict) or _not_plain(data, depth=0) is not None:

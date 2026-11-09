@@ -536,7 +536,8 @@ and read by nothing else:
 - **Each path lists its kept versions, oldest first.** A write adds the next
   number. Pruning to `max_versions` drops only the oldest, so the numbers are
   consecutive and the last is the path's current version. A number is never
-  reused, so a compare-and-set token that named a pruned version still fails.
+  reused, so a version number names one write for good, and `@version=N`
+  never reads a later write. The store has no compare-and-set (see above).
 - **`data` is a JSON object of plain values.** A value JSON cannot hold as it
   is, such as a key that is not text, a number that is not finite, or text that
   is not valid UTF-8, is refused at the write. Two conversions JSON forces are

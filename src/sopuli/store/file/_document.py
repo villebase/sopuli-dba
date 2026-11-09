@@ -31,9 +31,10 @@ was wrong and where, never what was there.
 
 from __future__ import annotations
 
+import copy
 import json
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from types import MappingProxyType
 from typing import Any
@@ -68,20 +69,21 @@ class DocumentError(StoreError):
 
 @dataclass(frozen=True)
 class Version:
-    """One kept version of a path."""
+    """One kept version of a path. ``data`` is always a JSON object."""
 
     number: int
     created_at: datetime
-    data: Any
+    data: dict[str, Any]
 
 
 @dataclass(frozen=True)
 class Entry:
     """A path: the newest version number it has had, and the versions kept.
 
-    ``current`` may be higher than the last kept version's number only if the
-    store ever drops a newest version, which it does not today. It is kept
-    apart from the list because the list is pruned and the counter is not.
+    ``current`` is kept apart from the list because the list is pruned and the
+    counter is not. The store always keeps its newest version, so the last
+    kept version is ``current``. A file where it is not has lost its newest
+    version, and :meth:`Document.latest` reads that path as having none.
     """
 
     current: int
@@ -90,39 +92,56 @@ class Entry:
 
 @dataclass(frozen=True)
 class Document:
-    """Every path in the store."""
+    """Every path in the store.
+
+    A read returns a copy of the version's data, so a caller that changes what
+    it read changes neither this document nor any document it was made from.
+    """
 
     paths: Mapping[str, Entry]
 
     def latest(self, path: str) -> Version | None:
+        """The newest version of ``path``, or ``None`` where it is gone or never was.
+
+        Gone includes a newest version missing from the file: answering with
+        the one before it would read a superseded password as current.
+        """
         entry = self.paths.get(path)
-        if entry is None or not entry.versions:
+        if entry is None or not entry.versions or entry.versions[-1].number != entry.current:
             return None
-        return entry.versions[-1]
+        return _copied(entry.versions[-1])
 
     def version(self, path: str, number: int) -> Version | None:
         entry = self.paths.get(path)
         if entry is None:
             return None
-        return next((one for one in entry.versions if one.number == number), None)
+        found = next((one for one in entry.versions if one.number == number), None)
+        return None if found is None else _copied(found)
 
     def written(
         self, path: str, data: Any, *, now: datetime, max_versions: int | None
     ) -> tuple[Document, int]:
         """This document with ``data`` as the next version of ``path``, and its number.
 
-        The oldest versions beyond ``max_versions`` are dropped. The data is
-        copied through JSON, so a caller that changes its own object later
-        does not change the document, and a value JSON cannot hold fails here
-        rather than when the file is written.
+        The oldest versions beyond ``max_versions`` are dropped. ``data`` must
+        be a JSON object. It is copied through the same JSON :func:`dumps`
+        writes, so a caller that changes its own object later does not change
+        the document, and a value the file cannot hold, such as ``NaN`` or a
+        lone surrogate, fails here rather than when the file is written.
+        ``now`` must carry its zone, so the time in memory is the time on disk.
         """
         keep = DEFAULT_MAX_VERSIONS if max_versions is None else max_versions
         if keep < 1:
             raise ValueError("max_versions must be at least 1")
+        if now.tzinfo is None:
+            raise ValueError("now must carry its zone")
+        if not isinstance(data, dict):
+            raise StoreError(f"the data for {path!r} cannot be stored: it is not a JSON object")
         try:
-            copied = json.loads(json.dumps(data))
+            copied = json.loads(_json(data).encode("utf-8"))
         except (TypeError, ValueError):
-            # The value is not repeated: it may be a password.
+            # The value is not repeated: it may be a password. A lone
+            # surrogate fails the encode, a UnicodeEncodeError, a ValueError.
             raise StoreError(
                 f"the data for {path!r} cannot be stored: it is not plain JSON"
             ) from None
@@ -135,6 +154,17 @@ class Document:
 
 
 EMPTY = Document(MappingProxyType({}))
+
+
+def _copied(version: Version) -> Version:
+    return replace(version, data=copy.deepcopy(version.data))
+
+
+def _json(value: Any) -> str:
+    """The one JSON form the store writes: sorted, compact, UTF-8, no ``NaN``."""
+    return json.dumps(
+        value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False
+    )
 
 
 def dumps(document: Document) -> bytes:
@@ -157,26 +187,55 @@ def dumps(document: Document) -> bytes:
             for path, entry in document.paths.items()
         },
     }
-    return json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode(
-        "utf-8"
-    )
+    return _json(body).encode("utf-8")
+
+
+class _DuplicateKeyError(ValueError):
+    """A JSON object names one key twice. Raised inside the parser."""
+
+
+def _unique(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """``json``'s ``object_pairs_hook``: refuse a key named twice.
+
+    The parser would keep the last and drop the rest silently, and a path
+    named twice in a damaged file would lose its other entry on the next write.
+    """
+    found: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in found:
+            raise _DuplicateKeyError
+        found[key] = value
+    return found
+
+
+def _reject_constant(name: str) -> Any:
+    """``json``'s ``parse_constant``: ``NaN`` and ``Infinity`` are not JSON."""
+    raise ValueError(name)
 
 
 def loads(raw: bytes) -> Document:
     """The document in ``raw``, or :class:`DocumentError` saying what is wrong.
 
-    Strict: an unknown format, an unknown version, a missing or extra field, or
-    a version list out of order is refused. A store document is written only by
-    this module, so anything else in it is damage, and reading past damage is
-    how a rotation writes a password where nothing reads it.
+    Strict: an unknown format, an unknown version, a missing or extra field, a
+    key named twice, data that is not an object, a timestamp in another form
+    than :func:`dumps` writes, or a version list out of order is refused. A
+    store document is written only by this module, so anything else in it is
+    damage, and reading past damage is how a rotation writes a password where
+    nothing reads it.
     """
     try:
-        body = json.loads(raw.decode("utf-8"))
+        body = json.loads(
+            raw.decode("utf-8"), object_pairs_hook=_unique, parse_constant=_reject_constant
+        )
+    except _DuplicateKeyError:
+        raise DocumentError("an object in it names one key twice") from None
     except (UnicodeDecodeError, ValueError):
         raise DocumentError("it is not UTF-8 JSON") from None
     if not isinstance(body, dict) or body.get("format") != FORMAT:
         raise DocumentError(f"it is not a {FORMAT} document")
-    if body.get("format_version") != FORMAT_VERSION:
+    format_version = body.get("format_version")
+    # `type() is int`, so `true` and `1.0`, which equal 1 in Python, are refused.
+    if type(format_version) is not int or format_version != FORMAT_VERSION:
         raise DocumentError(
             f"its format_version is not {FORMAT_VERSION}, the only one this build reads"
         )
@@ -184,7 +243,7 @@ def loads(raw: bytes) -> Document:
     paths = body["paths"]
     if not isinstance(paths, dict):
         raise DocumentError("`paths` is not a mapping")
-    return Document(MappingProxyType({path: _entry(path, raw) for path, raw in paths.items()}))
+    return Document(MappingProxyType({path: _entry(path, entry) for path, entry in paths.items()}))
 
 
 def _entry(path: str, raw: Any) -> Entry:
@@ -216,8 +275,12 @@ def _version(where: str, raw: Any) -> Version:
         moment = from_rfc3339(created_at) if isinstance(created_at, str) else None
     except ValueError:
         moment = None
-    if moment is None:
+    # Only the form `dumps` writes: from_rfc3339 also reads a bare date or a
+    # time with no offset, and neither came from this module.
+    if moment is None or to_rfc3339(moment) != created_at:
         raise DocumentError(f"version {number} of {where} has no readable `created_at`")
+    if not isinstance(raw["data"], dict):
+        raise DocumentError(f"version {number} of {where} has `data` that is not an object")
     return Version(number=number, created_at=moment, data=raw["data"])
 
 

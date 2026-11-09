@@ -41,6 +41,13 @@ def body(document: Document) -> dict[str, Any]:
     return parsed
 
 
+def damaged_with(change: Any) -> bytes:
+    """A one-version document's JSON after ``change`` edits its parsed body."""
+    parsed = body(written(EMPTY, {"current": PASSWORD}))
+    change(parsed)
+    return json.dumps(parsed).encode("utf-8")
+
+
 # ----------------------------------------------------------------- versions ---
 
 
@@ -113,6 +120,57 @@ def test_data_that_is_not_json_is_refused_without_repeating_it() -> None:
     assert PASSWORD not in str(caught.value)
 
 
+@pytest.mark.parametrize(
+    "value", [float("nan"), float("inf"), "\ud800"], ids=["nan", "infinity", "lone-surrogate"]
+)
+def test_a_value_the_file_cannot_hold_is_refused_at_the_write(value: Any) -> None:
+    """Not later, when the whole store is written out."""
+    with pytest.raises(StoreError) as caught:
+        EMPTY.written(PATH, {"current": value}, now=NOW, max_versions=None)
+
+    assert "not plain JSON" in str(caught.value)
+
+
+@pytest.mark.parametrize("value", ["x", ["x"], None])
+def test_data_that_is_not_an_object_is_refused(value: Any) -> None:
+    with pytest.raises(StoreError) as caught:
+        EMPTY.written(PATH, value, now=NOW, max_versions=None)
+
+    assert "not a JSON object" in str(caught.value)
+
+
+def test_a_time_with_no_zone_is_refused() -> None:
+    """A naive time would be written converted from local time, so the time in
+    memory and the time on disk would differ."""
+    with pytest.raises(ValueError, match="zone"):
+        EMPTY.written(PATH, {"v": 1}, now=datetime(2026, 11, 9, 10, 0), max_versions=None)
+
+
+def test_changing_what_was_read_changes_no_document() -> None:
+    first = written(EMPTY, {"list": [1]})
+    second = written(first, {"list": [2]})
+
+    read = second.version(PATH, 1)
+    assert read is not None
+    read.data["list"].append(99)
+
+    for document in (first, second):
+        again = document.version(PATH, 1)
+        assert again is not None
+        assert again.data == {"list": [1]}
+
+
+def test_a_newest_version_missing_from_the_file_reads_as_gone() -> None:
+    """Answering with the version before it would read a superseded password
+    as current."""
+    raw = damaged_with(lambda b: b["paths"][PATH].update(current=2))
+
+    document = loads(raw)
+
+    assert document.latest(PATH) is None
+    assert document.version(PATH, 1) is not None
+
+
 def test_an_unknown_path_reads_as_nothing() -> None:
     assert EMPTY.latest(PATH) is None
     assert EMPTY.version(PATH, 1) is None
@@ -149,13 +207,6 @@ def test_an_empty_store_round_trips() -> None:
 # ----------------------------------------------------------- strict reader ---
 
 
-def damaged(change: Any) -> bytes:
-    """A written document's JSON after ``change`` edits its parsed body."""
-    parsed = body(written(EMPTY, {"current": PASSWORD}))
-    change(parsed)
-    return json.dumps(parsed).encode("utf-8")
-
-
 @pytest.mark.parametrize(
     ("raw", "problem"),
     [
@@ -176,6 +227,17 @@ def test_bytes_that_are_not_a_store_document_are_refused(raw: bytes, problem: st
     ("change", "problem"),
     [
         (lambda b: b.update(format_version=2), "format_version is not 1"),
+        (lambda b: b.update(format_version=True), "format_version is not 1"),
+        (lambda b: b.update(format_version=1.0), "format_version is not 1"),
+        (
+            lambda b: b["paths"][PATH]["versions"][0].update(created_at="2026-11-09"),
+            "created_at",
+        ),
+        (
+            lambda b: b["paths"][PATH]["versions"][0].update(created_at="2026-11-09T10:00:00"),
+            "created_at",
+        ),
+        (lambda b: b["paths"][PATH]["versions"][0].update(data="x"), "not an object"),
         (lambda b: b.update(extra=True), "unknown extra"),
         (lambda b: b["paths"][PATH].pop("current"), "missing current"),
         (lambda b: b["paths"][PATH].update(current=-1), "not a whole number"),
@@ -192,7 +254,33 @@ def test_bytes_that_are_not_a_store_document_are_refused(raw: bytes, problem: st
 )
 def test_a_damaged_document_is_refused_without_quoting_its_data(change: Any, problem: str) -> None:
     with pytest.raises(DocumentError) as caught:
-        loads(damaged(change))
+        loads(damaged_with(change))
 
     assert problem in str(caught.value)
     assert PASSWORD not in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        b'{"format":"sopuli-file-store","format":"sopuli-file-store"}',
+        b'{"format":"sopuli-file-store","format_version":1,"paths":'
+        b'{"a":{"current":0,"versions":[]},"a":{"current":0,"versions":[]}}}',
+    ],
+    ids=["top-level", "path"],
+)
+def test_a_key_named_twice_is_refused(raw: bytes) -> None:
+    """The parser would keep the last and drop the rest without a word."""
+    with pytest.raises(DocumentError) as caught:
+        loads(raw)
+
+    assert "names one key twice" in str(caught.value)
+
+
+def test_nan_in_the_file_is_refused() -> None:
+    raw = damaged_with(lambda b: None).replace(PASSWORD.encode(), b"x").replace(b'"x"', b"NaN")
+
+    with pytest.raises(DocumentError) as caught:
+        loads(raw)
+
+    assert "not UTF-8 JSON" in str(caught.value)

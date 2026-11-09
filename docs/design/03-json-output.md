@@ -465,7 +465,7 @@ This sketch shows the run document's shape:
   install    { backends[], drivers[] },
   wallet     { required_by[], tns_admin, directory, from_sqlnet, readable,
                files[], unreadable[], auto_login, insecure[] },
-  keyring    { service, backend, problem,
+  keyring    { service, backend, problem, hint,
                entries[ { entry, required_by[], present, problem } ] },
   vaults     [ { vault, type, status, detail, version, authenticated, skew_ms,
                  error, … } ],
@@ -1794,13 +1794,14 @@ unreadable fails with `ORA-28759`, and a damaged one with `ORA-28768`. Both have
 ### `keyring`, emitted by `doctor`
 
 The OS keyring the tool reads its own credentials from (#1417): the backend in
-use, and each entry the configuration names, with the keys that name it.
+use, and each entry `doctor` reads, with the config keys that name it.
 
 ```json
 "keyring": {
   "service": "sopuli",
   "backend": "keyring.backends.Windows.WinVaultKeyring",
   "problem": null,
+  "hint": null,
   "entries": [
     {
       "entry": "vault-dev",
@@ -1812,20 +1813,33 @@ use, and each entry the configuration names, with the keys that name it.
 }
 ```
 
-**It is absent when the configuration names no keyring entry**, for
-`wallet`'s reason: a keyring source is an option most files never use.
+**It is absent when `doctor` uses no keyring entry**, for `wallet`'s reason: a
+keyring source is an option most files never use.
+
+**Only the entries `doctor` itself reads**: a vault's auth material, from the
+merged `vaults:` that `defaults:` and the active profile produce, and the
+`method: keyring` admin credential of each selected target. An unused profile's
+entry is not read. A `keyring:` source in a delivery block is not listed:
+`doctor` does not resolve delivery material. The vaults' entries come first, in
+`vaults:` order, then the admin entries, in target order. A target set's entry
+is listed once, at the set's line.
 
 **Presence is read, not inferred.** The keyring library cannot ask whether an
 entry exists without reading it, so `doctor` reads each one and keeps only
 whether it held a value. The value is never in the document.
 
 **`present` is null when the entry could not be read**: no OS keyring could be
-used, and `problem` at the top says why, or the read failed, and the entry's own
-`problem` says why.
+used, and `problem` and `hint` at the top say why and what to do, or the read
+failed, and the entry's own `problem` says why.
 
-**Nothing here changes the exit code**, for `wallet`'s reason. A missing entry
-also fails the vault or the target that needs it, with that failure's message.
-This section shows every entry in one place, before the connections.
+**Nothing here changes the exit code**, for `wallet`'s reason. Every entry
+listed is one that a vault or a target in this run needs, so a missing one also
+fails that vault or target, with that failure's message. This section shows
+them in one place, before the connections.
+
+**Each entry is read twice**: once here, and again by the vault or target that
+needs it. On macOS that can mean a second Keychain prompt for an entry with
+access control. The value is not kept between the two reads.
 
 ### `vaults`, emitted by `doctor`
 

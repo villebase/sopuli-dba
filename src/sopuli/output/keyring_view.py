@@ -1,7 +1,7 @@
 """The run document's ``keyring`` section, and what ``doctor`` prints (#1417).
 
-Absent when the configuration names no keyring entry, for ``wallet``'s reason:
-a keyring source is a configuration option most files never use, and a section
+Absent when ``doctor`` uses no keyring entry, for ``wallet``'s reason: a
+keyring source is a configuration option most files never use, and a section
 about it in every document would be noise.
 
 **Not coloured**, for ``wallet``'s reason (decision #395): a key-value block,
@@ -19,14 +19,15 @@ from sopuli.os_keyring import SERVICE
 def build(report: KeyringReport) -> dict[str, Any]:
     """The ``keyring`` section, as the run schema describes it.
 
-    ``backend`` and ``problem`` are nulled rather than omitted, as ``wallet``'s
-    ``directory`` is: both are always part of the answer, and "no backend" must
-    read differently from "not reported".
+    ``backend``, ``problem`` and ``hint`` are nulled rather than omitted, as
+    ``wallet``'s ``directory`` is: each is always part of the answer, and "no
+    backend" must read differently from "not reported".
     """
     return {
         "service": SERVICE,
         "backend": report.backend,
         "problem": report.problem,
+        "hint": report.hint,
         "entries": [_entry(one) for one in report.entries],
     }
 
@@ -41,12 +42,14 @@ def _entry(entry: EntryReport) -> dict[str, Any]:
 
 
 def render(report: KeyringReport) -> list[str]:
-    """The text form: the backend, then one line per entry."""
-    lines = ["keyring", f"  {'backend':<18}{report.backend or '(none)'}"]
+    """The text form: the backend, then one line per entry, in one column."""
+    names = [f"{SERVICE}/{entry.entry}" for entry in report.entries]
+    width = max(len("backend") + 2, *(len(name) + 2 for name in names))
+    lines = ["keyring", f"  {'backend':<{width}}{report.backend or '(none)'}"]
     if report.problem is not None:
         lines.append(f"  {report.problem}")
-    names = [f"{SERVICE}/{entry.entry}" for entry in report.entries]
-    width = max(18, *(len(name) + 2 for name in names))
+    if report.hint is not None:
+        lines.append(f"    hint: {report.hint}")
     for name, entry in zip(names, report.entries, strict=True):
         named = ", ".join(entry.required_by)
         lines.append(f"  {name:<{width}}{_state(entry):<9}{named}")

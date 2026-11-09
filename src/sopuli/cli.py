@@ -943,10 +943,10 @@ def doctor(
     wallet problem before it connects. The wallet check only warns; each
     target's connection decides the result.
 
-    For a config that reads a credential from the OS keyring, the command
-    shows which keyring it uses and whether each entry the config names is
-    there. Like the wallet check, this changes no exit code: a missing entry
-    also fails the vault or target that needs it.
+    For a config whose vaults or targets read a credential from the OS
+    keyring, the command shows which keyring it uses and whether each of those
+    entries is there. Like the wallet check, this changes no exit code: a
+    missing entry also fails the vault or target that needs it.
 
     `--check-privileges` warns and never fails. An over-granted account is
     someone else's problem to fix, and a failing `doctor` would block the

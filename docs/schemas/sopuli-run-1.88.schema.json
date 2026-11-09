@@ -111,7 +111,7 @@
     },
     "keyring": {
       "$ref": "#/$defs/keyring_report",
-      "description": "The OS keyring backend and each entry the configuration names, emitted by `doctor` for configs with a `keyring:` source (#1417). Additive in 1.88: no existing consumer sees it."
+      "description": "The OS keyring backend and each entry `doctor` reads from it, emitted by `doctor` for configs whose vaults or targets read a credential from the keyring (#1417). Additive in 1.88: no existing consumer sees it."
     },
     "vaults": {
       "type": "array",
@@ -2308,8 +2308,8 @@
     "keyring_report": {
       "type": "object",
       "additionalProperties": false,
-      "description": "The OS keyring the tool reads its own credentials from, emitted by `doctor` and **absent when the configuration names no keyring entry** (#1417), for `wallet`'s reason. Nothing in this section moves the exit code: a missing entry also fails the vault or target that needs it.",
-      "required": ["service", "backend", "problem", "entries"],
+      "description": "The OS keyring the tool reads its own credentials from, emitted by `doctor` and **absent when `doctor` uses no keyring entry** (#1417), for `wallet`'s reason. Nothing in this section moves the exit code: a missing entry also fails the vault or target that needs it.",
+      "required": ["service", "backend", "problem", "hint", "entries"],
       "properties": {
         "service": {
           "type": "string",
@@ -2323,9 +2323,13 @@
           "type": ["string", "null"],
           "description": "Why no OS keyring could be used: the package is not installed, none is reachable, or only a backend that is not an OS keyring was offered. Null when `backend` is set."
         },
+        "hint": {
+          "type": ["string", "null"],
+          "description": "What to do about `problem`: install the extra, remove a setting, or use `env:` or `file:` instead. Null when `problem` is."
+        },
         "entries": {
           "type": "array",
-          "description": "Each entry the configuration names, once, in file order.",
+          "description": "Each entry `doctor` reads when it opens a vault or connects to a target, once: the vaults' entries in `vaults:` order, then the admin entries in target order. A delivery block's `keyring:` source is not listed, because `doctor` does not resolve delivery material.",
           "items": {
             "type": "object",
             "additionalProperties": false,

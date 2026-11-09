@@ -11,8 +11,12 @@ from typing import Any
 
 import jsonschema
 import pytest
+from click.testing import CliRunner
 
+from conftest import WriteConfig
 from sopuli import os_keyring
+from sopuli.cli import cli
+from sopuli.config.errors import MaterialError
 from sopuli.config.loading import build_config
 from sopuli.keyring_survey import sources, survey
 from sopuli.output.document import SCHEMA_VERSION
@@ -79,6 +83,26 @@ def test_every_named_entry_is_found_with_its_key() -> None:
     }
 
 
+def test_only_the_active_profile_s_entry_is_read() -> None:
+    """`config.vaults` is the merged result, so an unused profile's entry is
+    neither read nor listed, and the used one is listed once."""
+    plain = {**VAULTS["vault-dev"], "auth": {"method": "token", "token": {"env": "VAULT_TOKEN"}}}
+    patch = {"auth": {"method": "token", "token": {"keyring": "vault-laptop"}}}
+    other = {"auth": {"method": "token", "token": {"keyring": "vault-ci"}}}
+    document = {
+        "version": 1,
+        "vaults": {"vault-dev": plain},
+        "profiles": {
+            "laptop": {"vaults": {"vault-dev": patch}},
+            "ci": {"vaults": {"vault-dev": other}},
+        },
+    }
+
+    found = sources(build_config(document, profile="laptop"))
+
+    assert found == {"vault-laptop": ["vaults.vault-dev.auth.token"]}
+
+
 def test_a_config_with_no_keyring_source_has_no_section() -> None:
     plain = {**TARGET, "admin": {"username": "C##SOPULI_SVC", "auth": {"method": "env"}}}
 
@@ -126,7 +150,29 @@ def test_no_backend_leaves_every_entry_unread(monkeypatch: pytest.MonkeyPatch) -
     assert report.backend is None
     assert report.problem is not None
     assert report.problem.startswith("no OS keyring")
+    assert "`env:` or `file:`" in (report.hint or "")
+    assert "hint: " in "\n".join(render(report))
     assert [entry.present for entry in report.entries] == [None]
+
+
+def test_a_failed_choice_is_remembered(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A server with no keyring must not probe D-Bus again for every vault and
+    target; each later caller gets the refusal with its own position."""
+    asked: list[int] = []
+
+    class Counting(Library):
+        def get_keyring(self) -> Any:
+            asked.append(1)
+            return super().get_keyring()
+
+    library = Counting(backend("keyring.backends.fail"))
+    monkeypatch.setattr(os_keyring, "loader", lambda: library)
+
+    for where in ("first", "second"):
+        with pytest.raises(MaterialError, match=f"^{where}: no OS keyring"):
+            os_keyring.backend(where=where)
+
+    assert len(asked) == 1
 
 
 def test_a_failed_read_is_unread_with_its_reason(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -149,3 +195,31 @@ def test_the_section_matches_the_run_schema(monkeypatch: pytest.MonkeyPatch) -> 
     schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
 
     jsonschema.validate(build(report), {"$defs": schema["$defs"], "$ref": "#/$defs/keyring_report"})
+
+
+#: A vault nothing listens on, so `doctor` fails it quickly and still reports.
+DOCTOR_CONFIG = """version: 1
+vaults:
+  vault-dev:
+    type: hashicorp
+    addr: http://127.0.0.1:9
+    auth: { method: token, token: { keyring: vault-dev } }
+"""
+
+
+def test_doctor_emits_the_section_before_the_vaults(
+    write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The wiring: the section is in the document, the document validates,
+    and the text puts the section before the vaults it explains."""
+    monkeypatch.setattr(os_keyring, "loader", lambda: Library(backend()))
+    path = write_config(DOCTOR_CONFIG)
+    runner = CliRunner()
+
+    result = runner.invoke(cli, ["--config", str(path), "--output", "json", "doctor"])
+    text = runner.invoke(cli, ["--config", str(path), "doctor"]).output
+
+    document = json.loads(result.output)
+    jsonschema.validate(document, json.loads(SCHEMA.read_text(encoding="utf-8")))
+    assert [one["present"] for one in document["keyring"]["entries"]] == [False]
+    assert text.index("keyring\n") < text.index("vaults\n")

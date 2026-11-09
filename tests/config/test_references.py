@@ -611,6 +611,27 @@ def test_a_templated_admin_ref_on_an_explicit_target_is_refused() -> None:
     assert "targets[0].admin.auth.secret" in rendered
 
 
+@pytest.mark.parametrize(
+    "auth",
+    [
+        {"method": "keyring", "entry": "cdb-{env}"},
+        {"method": "env", "password_env": "ACME_{env}_ADMIN_PW"},
+    ],
+)
+def test_a_templated_admin_name_on_an_explicit_target_is_refused(auth: dict[str, str]) -> None:
+    """`entry:` and `password_env:` render from a target set's dimensions, like
+    `secret:`. Left unrendered, either names something that is not there, and
+    the run would find out only at the connection (#1417)."""
+    key = "entry" if "entry" in auth else "password_env"
+
+    with pytest.raises(ConfigError) as caught:
+        build_config(document(targets=[{**TARGET, "admin": {"auth": auth}}]))
+
+    rendered = str(caught.value)
+    assert "still contains a placeholder" in rendered
+    assert f"targets[0].admin.auth.{key}" in rendered
+
+
 # ----------------------------------------------------------- the warning ---
 
 

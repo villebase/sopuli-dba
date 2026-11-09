@@ -45,6 +45,7 @@ from sopuli.config.model import Config, ConfigWarning, ExpandedTarget, Locking, 
 from sopuli.config.products import tls_setting
 from sopuli.config.scope import refuse_personal_on
 from sopuli.config.targets import EXTERNAL
+from sopuli.config.templates import PLACEHOLDER
 
 #: The environment §10 singles out. Safety rules key on `environment` as a
 #: first-class field (§4), and this is the value the reference names.
@@ -565,9 +566,21 @@ def _check_admin_refs(config: Config) -> None:
     """
     for expanded in config.expanded_targets:
         admin = expanded.target.admin
-        if admin is None or admin.auth is None or admin.auth.secret is None:
+        if admin is None or admin.auth is None:
             continue
-        if not admin.auth.secret.is_templated:
+        # `entry:` and `password_env:` render from the same dimensions, and a
+        # brace left in either names a keyring entry or a variable that is not
+        # there -- found only at the connection, as a "missing" one (#1417).
+        for key in ("entry", "password_env"):
+            value = getattr(admin.auth, key)
+            if value is not None and PLACEHOLDER.search(value):
+                raise ConfigError(
+                    f"admin {key} {value!r} still contains a placeholder",
+                    at=_admin_at(expanded, "auth", key),
+                    hint="a target set's `for_each:` variables render one (§4); elsewhere "
+                    "there is nothing to substitute from",
+                )
+        if admin.auth.secret is None or not admin.auth.secret.is_templated:
             continue
         raise ConfigError(
             f"admin ref {str(admin.auth.secret)!r} still contains a placeholder",

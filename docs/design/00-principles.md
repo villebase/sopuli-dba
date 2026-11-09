@@ -858,7 +858,7 @@ equivalent.
 | Path handling | never string-concatenate paths | same |
 | Line endings | write LF, read LF/CRLF | same |
 | Stream encoding | UTF-8 on stdin/stdout/stderr, forced at startup | same — a *redirected* stream otherwise uses the locale codepage |
-| Keyring | Secret Service / libsecret; macOS Keychain | Credential Manager / DPAPI |
+| Keyring | Secret Service / libsecret, or KWallet; macOS Keychain | Credential Manager / DPAPI |
 | Oracle client | Instant Client + `LD_LIBRARY_PATH` | Instant Client on `PATH` + VC++ redistributable |
 | Terminal | ANSI colour, off when not a TTY or `NO_COLOR` | same, with VT mode enabled; plain fallback |
 | Exit codes | identical numeric set on all platforms | same |

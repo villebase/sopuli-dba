@@ -78,7 +78,7 @@ def test_a_missing_entry_names_it_the_backend_and_the_verb(windows: Any) -> None
     message = str(refused.value)
     assert "sopuli/vault-dev" in message
     assert WINDOWS in message
-    assert "python -m keyring set sopuli vault-dev" in (refused.value.hint or "")
+    assert "the user this command runs as" in (refused.value.hint or "")
     assert refused.value.exit_code == ExitCode.CONFIG_INVALID
 
 
@@ -134,8 +134,8 @@ def test_a_library_that_cannot_choose_names_its_settings(monkeypatch: pytest.Mon
 
 def test_a_plaintext_backend_is_refused_rather_than_read(monkeypatch: pytest.MonkeyPatch) -> None:
     """`keyrings.alt` writes a file: that is the `file:` source under another name.
-    A single backend that is not empty was chosen by a setting, so the message
-    names the setting rather than saying there is no keyring."""
+    It is offered by a setting or simply by being installed, so the hint names
+    both."""
     plaintext = backend_class(PLAINTEXT, priority=10)()
     plaintext.entries[("sopuli", "vault-dev")] = "hvs.example"
     monkeypatch.setattr(os_keyring, "loader", lambda: Library(plaintext))
@@ -143,9 +143,26 @@ def test_a_plaintext_backend_is_refused_rather_than_read(monkeypatch: pytest.Mon
     with pytest.raises(MaterialError) as refused:
         os_keyring.read("vault-dev", where=WHERE)
 
-    assert "is not an OS keyring" in str(refused.value)
+    assert "offered only" in str(refused.value)
     assert PLAINTEXT in str(refused.value)
-    assert "PYTHON_KEYRING_BACKEND" in (refused.value.hint or "")
+    hint = refused.value.hint or ""
+    assert "PYTHON_KEYRING_BACKEND" in hint
+    assert "keyrings.alt, is installed" in hint
+
+
+def test_a_broken_keyring_install_is_a_material_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A dependency of the package missing, not the package itself."""
+
+    def broken() -> Any:
+        raise ModuleNotFoundError("No module named 'jaraco.context'", name="jaraco.context")
+
+    monkeypatch.setattr(os_keyring, "loader", broken)
+
+    with pytest.raises(MaterialError) as refused:
+        os_keyring.read("vault-dev", where=WHERE)
+
+    assert "could not be imported" in str(refused.value)
+    assert 'pip install "sopuli-dba[keyring]"' in (refused.value.hint or "")
 
 
 def test_the_backend_is_chosen_once_per_loader(monkeypatch: pytest.MonkeyPatch) -> None:

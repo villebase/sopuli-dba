@@ -45,6 +45,10 @@ SERVICE = "sopuli"
 #: The install extra that carries the `keyring` package (ADR-006).
 EXTRA = "keyring"
 
+#: The top-level modules installing :data:`EXTRA` makes importable, for
+#: :func:`sopuli.extras.installed`, which asks without importing them.
+PROVIDES = frozenset({"keyring"})
+
 #: The modules of the backends that are an OS keyring: Windows Credential
 #: Manager, the macOS Keychain, and the Secret Service API (through D-Bus or
 #: libsecret) or KWallet on Linux. Keyed on the module because the library
@@ -99,8 +103,7 @@ def read(entry: str, *, where: str) -> Secret:
             f"{where}: {describe(entry)} is not in {name_of(chosen)}",
             at=ROOT,
             hint=(
-                f"write it with `python -m keyring set {SERVICE} {entry}`, using the Python "
-                "that runs sopuli and as the user this command runs as. A Windows "
+                "the entry is read as the user this command runs as. A Windows "
                 "scheduled task reads only the entries of the user it runs as"
             ),
         )
@@ -171,38 +174,47 @@ _SETTING_HINT = (
     "keyringrc.cfg, may name a backend; remove that setting to use the OS keyring"
 )
 
+#: Where no OS keyring is reachable: a Linux server, usually.
+_SERVER_HINT = (
+    "on Linux a keyring needs a desktop session (Secret Service), and a scheduled "
+    "run on a server usually has none. Use `env:` or `file:` there instead"
+)
+
 
 def _no_os_keyring(candidates: list[Any], *, where: str) -> MaterialError:
     """The refusal, worded by what the library found.
 
     Only empty backends means there is no keyring here, which on Linux usually
-    means no desktop session. Anything else is a backend somebody chose, through
-    PYTHON_KEYRING_BACKEND or keyringrc, that is not an OS keyring -- and the fix
-    is that setting, on any platform.
+    means no desktop session. Anything else is a backend that is not an OS
+    keyring, offered either because a setting names it or because a package
+    such as ``keyrings.alt`` is installed and nothing better was reachable. The
+    message cannot tell those apart, so the hint names both.
     """
     seen = ", ".join(name_of(one) for one in candidates) or "none"
     if all(_module(one) in _EMPTY for one in candidates):
         return MaterialError(
             f"{where}: no OS keyring is available here (the keyring library found: {seen})",
             at=ROOT,
-            hint=(
-                "on Linux a keyring needs a desktop session (Secret Service), and a "
-                "scheduled run on a server usually has none. Use `env:` or `file:` "
-                "there instead"
-            ),
+            hint=_SERVER_HINT,
         )
     return MaterialError(
-        f"{where}: the keyring library is set to use {seen}, which is not an OS keyring",
+        f"{where}: no OS keyring is available here; the keyring library offered only "
+        f"{seen}, which is not one",
         at=ROOT,
-        hint=_SETTING_HINT,
+        hint=(
+            "a setting may name that backend (PYTHON_KEYRING_BACKEND, or the keyring "
+            "library's keyringrc.cfg), or the package that provides it, such as "
+            "keyrings.alt, is installed: remove the setting or the package. " + _SERVER_HINT
+        ),
     )
 
 
-#: The loader and the backend :func:`backend` chose with it.
-_chosen: tuple[Loader, Any] | None = None
-
 #: Imports the library. A seam for tests, which replace it with a fake.
 Loader = Callable[[], Any]
+
+#: The loader and the backend :func:`backend` chose with it. Keyed on the
+#: loader so that a test which replaces it chooses again.
+_chosen: tuple[Loader, Any] | None = None
 
 
 def _import() -> Any:
@@ -217,11 +229,17 @@ loader: Loader = _import
 def _load(*, where: str) -> Any:
     try:
         return loader()
-    except ModuleNotFoundError as error:
-        if error.name != "keyring":
-            raise
+    except ImportError as error:
+        # Only `import keyring` runs here, so any import failure is the
+        # install's: the package itself missing, or a dependency of it, such as
+        # one of its `jaraco` packages, left out by a partial install.
+        missing = (
+            "is not installed"
+            if getattr(error, "name", None) == "keyring"
+            else (f"could not be imported: {error}")
+        )
         raise MaterialError(
-            f"{where}: reading the OS keyring needs the keyring package, which is not installed",
+            f"{where}: reading the OS keyring needs the keyring package, which {missing}",
             at=ROOT,
             hint=f"install it with:  {install_hint(EXTRA)}",
         ) from error

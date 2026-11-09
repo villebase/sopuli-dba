@@ -362,6 +362,16 @@ def needs_prompt(target: ExpandedTarget) -> bool:
     return auth is not None and auth.method == PROMPT
 
 
+def uses_keyring(target: ExpandedTarget) -> bool:
+    """Whether this target's admin credential is read from the OS keyring.
+
+    Pure, for :func:`needs_prompt`'s reason: a plan asks it over the whole
+    selected estate before anything connects.
+    """
+    auth = _auth(target)
+    return auth is not None and auth.method == KEYRING
+
+
 def resolve(
     target: ExpandedTarget,
     *,

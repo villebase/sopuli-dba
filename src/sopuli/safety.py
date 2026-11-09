@@ -30,13 +30,22 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
-from sopuli.admin import UNATTENDED_SOURCES, NobodyToAskError, Prompter, auth_at, needs_prompt
+from sopuli import os_keyring
+from sopuli.admin import (
+    UNATTENDED_SOURCES,
+    NobodyToAskError,
+    Prompter,
+    auth_at,
+    needs_prompt,
+    uses_keyring,
+)
 from sopuli.config.errors import ROOT, ConfigError
 from sopuli.config.expansion import declared_at
 from sopuli.config.model import Config, ExpandedTarget
 from sopuli.config.selection import matches
 from sopuli.driver.protocol import ENCRYPTION_NATIVE, ENCRYPTION_TLS
 from sopuli.exit_codes import ExitCode
+from sopuli.extras import install_hint, installed
 from sopuli.plan import BlastRadius
 from sopuli.settings.registry import Layer
 from sopuli.settings.resolver import Contribution, Resolved, resolve
@@ -430,7 +439,16 @@ def refuse_if_nobody_to_ask(
     The refusal points at each target's ``admin.auth`` key, because that is the
     line to edit for a run that has to go unattended. One target's key is the
     error's location; several are each named with theirs.
+
+    **It also refuses a** ``method: keyring`` **target on an install without
+    the** ``keyring`` **extra** (#1417), for the same reason and at the same
+    point: that target cannot be reached either, and a run that found out at its
+    connection would already have changed the others. Asked without importing
+    the library (ADR-006), as :func:`~sopuli.store.registry.require_installed`
+    asks for a store. A locked keyring or a missing entry is still found only
+    when the entry is read.
     """
+    _refuse_if_keyring_missing(targets, action=action)
     if prompt is not None:
         return
     asking = [target for target in targets if needs_prompt(target)]
@@ -455,6 +473,20 @@ def refuse_if_nobody_to_ask(
         message,
         at=at,
         hint=f"nothing was changed; run it from a terminal, {narrow}or {UNATTENDED_SOURCES}",
+    )
+
+
+def _refuse_if_keyring_missing(targets: Sequence[ExpandedTarget], *, action: str) -> None:
+    """``method: keyring`` targets on an install without the ``keyring`` extra."""
+    reading = [target for target in targets if uses_keyring(target)]
+    if not reading or installed(os_keyring.PROVIDES):
+        return
+    named = _named([target.name for target in reading])
+    raise ConfigError(
+        f"{action} reaches {named}, whose admin password is in the OS keyring, and the "
+        "keyring package is not installed",
+        at=auth_at(reading[0]),
+        hint=f"nothing was changed; install it with:  {install_hint(os_keyring.EXTRA)}",
     )
 
 

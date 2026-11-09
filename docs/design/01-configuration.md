@@ -1229,7 +1229,7 @@ reason for it:
   return inside a value and the symptom would be a credential that authenticates
   nowhere while the file on disk looks right.
 - **`keyring:` names an entry in the OS keyring** (#1417): Windows Credential
-  Manager, the macOS Keychain, or the Secret Service on Linux. The service is
+  Manager, the macOS Keychain, or the Secret Service or KWallet on Linux. The service is
   always `sopuli` and the value is the entry's user name, so
   `token: { keyring: vault-dev }` reads the entry `sopuli/vault-dev`. The tool
   decides how entries are named, and the config names only the entry. It needs
@@ -1375,7 +1375,15 @@ environment variable leaks to child processes, to `/proc/PID/environ`, to crash
 dumps and to CI logs. A keyring entry is readable by the same user in an
 unlocked session, the same exposure as a `0600` file, and a `file:` source is
 not flagged either. Like `password_env:`, `entry:` takes a target set's
-dimensions, so `entry: "cdb-{env}"` gives each generated target its own.
+dimensions, so `entry: "cdb-{env}"` gives each generated target its own. On an
+explicit target nothing renders a placeholder, so one left in `entry:` or
+`password_env:` is refused when the file is loaded, as in `secret:`.
+
+**A mutating command checks the `keyring` extra before it connects.** A
+`method: keyring` target on an install without `sopuli-dba[keyring]` is
+refused with the other plan-time refusals, exit 9, before any target is
+changed. A locked keyring or a missing entry is found only when the entry is
+read.
 
 **And "flagged" means `SOPULI-W022`.** Every command that connects emits
 one per target whose credential came from a low-assurance source; `doctor`

@@ -537,9 +537,11 @@ and read by nothing else:
   number. Pruning to `max_versions` drops only the oldest, so the numbers are
   consecutive and the last is the path's current version. A number is never
   reused, so a compare-and-set token that named a pruned version still fails.
-- **`data` is a JSON object of plain values.** A value JSON would change or
-  cannot hold, such as a key that is not text or a number that is not finite,
-  is refused at the write, not changed.
+- **`data` is a JSON object of plain values.** A value JSON cannot hold as it
+  is, such as a key that is not text, a number that is not finite, or text that
+  is not valid UTF-8, is refused at the write. Two conversions JSON forces are
+  made instead: a tuple is stored as a list, and a subclass of a string or a
+  number as the plain type. A path name must be non-empty, valid UTF-8 text.
 - **`created_at`** is UTC, written as `to_rfc3339` writes it, with a `Z`.
 - **The reader is strict.** A missing or unknown field, a key named twice,
   numbers that are not consecutive, or a timestamp in another form is damage,
@@ -547,7 +549,9 @@ and read by nothing else:
   higher `format_version` is not damage: a newer build wrote it, and the hint
   says to upgrade, because restoring an older file would drop the passwords
   written since.
-- **No error quotes the data**, because the data holds passwords in clear.
+- **No error quotes the data**, because the data holds passwords in clear. The
+  reader names a damaged path by its position, and counts unknown fields
+  rather than naming them, because in a damaged file a name may be anything.
 - `format_version` changes when the shape does. A build reads only the
   versions it knows.
 

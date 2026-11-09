@@ -136,6 +136,31 @@ def test_changing_what_was_read_changes_no_document() -> None:
         assert again.data == {"list": [1]}
 
 
+def test_changing_a_version_reached_through_paths_changes_nothing() -> None:
+    """Data is kept as JSON text, and each read of `data` is a new copy."""
+    document = written(EMPTY, {"current": "a"})
+
+    document.paths[PATH][0].data["current"] = "changed"
+
+    latest = document.latest(PATH)
+    assert latest is not None
+    assert latest.data == {"current": "a"}
+    assert json.loads(dumps(document))["paths"][PATH][0]["data"] == {"current": "a"}
+
+
+@pytest.mark.parametrize(
+    ("path", "problem"),
+    [("", "empty"), ("acme/\ud800", "not valid UTF-8"), (3, "not text")],
+    ids=["empty", "lone-surrogate", "not-text"],
+)
+def test_a_path_the_file_cannot_hold_is_refused_at_the_write(path: Any, problem: str) -> None:
+    with pytest.raises(StoreError) as caught:
+        EMPTY.written(path, {"v": 1}, now=NOW, max_versions=None)
+
+    assert problem in str(caught.value)
+    assert caught.value.hint is not None
+
+
 def test_a_tuple_is_stored_as_a_list() -> None:
     document, _ = EMPTY.written(PATH, {"targets": ("a", "b")}, now=NOW, max_versions=None)
 
@@ -153,8 +178,9 @@ def test_a_tuple_is_stored_as_a_list() -> None:
         ({"current": "\ud800"}, "not valid UTF-8"),
         ({1: "a"}, "a key that is not text"),
         ({"k": {2: PASSWORD}}, "a key that is not text"),
+        ({"current": 10**5000}, "more than 4300 digits"),
     ],
-    ids=["set", "nan", "infinity", "lone-surrogate", "int-key", "nested-int-key"],
+    ids=["set", "nan", "infinity", "lone-surrogate", "int-key", "nested-int-key", "huge-int"],
 )
 def test_data_the_file_cannot_hold_as_it_is_is_refused_without_repeating_it(
     value: Any, problem: str
@@ -240,7 +266,7 @@ def test_an_empty_store_round_trips() -> None:
         (b"{not json", "not UTF-8 JSON"),
         (b"[]", f"not a {FORMAT} document"),
         (json.dumps({"format": "other"}).encode(), f"not a {FORMAT} document"),
-        (b"[" * 100_000 + b"]" * 100_000, "levels deep"),
+        (b"[" * 100_000 + b"]" * 100_000, "nests too deeply to read"),
     ],
     ids=["not-utf8", "not-json", "a-list", "other-format", "deep"],
 )
@@ -318,6 +344,43 @@ def test_a_key_named_twice_is_refused(raw: bytes) -> None:
         loads(raw)
 
     assert "names one key twice" in str(caught.value)
+
+
+def test_a_path_name_in_the_file_that_is_not_valid_is_refused_by_position() -> None:
+    """It would otherwise load, and the next save would fail outside the
+    store's own errors, carrying the whole document."""
+    raw = (
+        b'{"format":"sopuli-file-store","format_version":1,"paths":{"\\ud800":'
+        + json.dumps(body(written(EMPTY, {"v": 1}))["paths"][PATH]).encode()
+        + b"}}"
+    )
+
+    with pytest.raises(DocumentError) as caught:
+        loads(raw)
+
+    assert "the name of path 1 is not valid UTF-8" in str(caught.value)
+
+
+def test_a_damaged_path_is_named_by_position_not_by_name() -> None:
+    """In a damaged file a path name may be anything, a password among them."""
+    raw = damaged_with(lambda b: b["paths"].update({PASSWORD: []}))
+
+    with pytest.raises(DocumentError) as caught:
+        loads(raw)
+
+    assert "path 2 is not a non-empty list of versions" in str(caught.value)
+    assert PASSWORD not in str(caught.value)
+
+
+def test_data_nested_too_deep_in_the_file_is_refused() -> None:
+    nested: Any = "x"
+    for _ in range(MAX_DEPTH + 8):
+        nested = {"k": nested}
+
+    with pytest.raises(DocumentError) as caught:
+        loads(damaged_with(lambda b: first_version(b).update(data=nested)))
+
+    assert "not a plain object" in str(caught.value)
 
 
 def test_nan_in_the_file_is_refused() -> None:

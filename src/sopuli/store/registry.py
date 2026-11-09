@@ -109,8 +109,10 @@ class Backend:
 #: is precisely the traceback rule 2 exists to prevent.
 #:
 #: ``file`` and ``keyring`` have **no extra**, and that is not an oversight.
-#: Neither is built. ``file`` will reach age through ``pyrage``, so its extra
-#: will be ``sopuli-dba[file]`` (#1415), added with the backend (#1372).
+#: Neither is built. ``file`` reaches age through ``pyrage``, and the extra
+#: ``sopuli-dba[file]`` installs it (#1415), but the entry names it only when
+#: the store is built (#1372): an install line here would send somebody to pip
+#: for a store that still cannot open.
 #: ``keyring`` is priority 4 and appears in no extras table yet. Until each is
 #: built, ``extra=None`` means "there is nothing to tell you to install", and
 #: asking for one of them fails as *not implemented in this build* rather than
@@ -130,7 +132,10 @@ BACKENDS: dict[str, Backend] = {
         extra="oci",
         provides=frozenset({"oci"}),
     ),
-    "file": Backend(module="sopuli.store.file"),
+    # The store module itself, not the package: the package holds the format
+    # and the encryption already, and the store module's absence is what says
+    # this build cannot serve `file` yet (#1372).
+    "file": Backend(module="sopuli.store.file.store"),
     "keyring": Backend(module="sopuli.store.keyring"),
 }
 

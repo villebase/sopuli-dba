@@ -97,6 +97,12 @@ PERMITTED = {
     "store/credentials.py": "the vault write -- invariant 2's first exception",
     "store/hashicorp/_auth.py": "the vault login, which is the write's other half",
     "store/hashicorp/_transport.py": "the token on the wire, for the same reason",
+    "store/file/_crypto.py": (
+        "the file store's age identity, given to pyrage in the process to decrypt the "
+        "store -- `_auth.py`'s reason: material the tool opens its own store with. It "
+        "is never written or sent. The passwords it encrypts arrive revealed by "
+        "`store/credentials.py`, the vault write, and only ciphertext leaves (#1415)"
+    ),
     "notify/webhook.py": (
         "a webhook URL on the wire -- `_transport.py`'s reason, not a sixth "
         "numbered exception: invariant 2 enumerates the paths a *password* may take, "

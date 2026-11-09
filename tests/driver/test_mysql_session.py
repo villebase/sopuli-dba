@@ -2,8 +2,8 @@
 
 What this build does past connecting is refuse, so the refusals are the
 behaviour: ``SOPULI-20006`` for an operation not written yet, an absent
-capability named, a session without TLS refused where the mode requires it,
-and PyMySQL's own failure of a plain login reported as what it is.
+capability named, and a session without TLS refused where the mode requires
+it.
 """
 
 from __future__ import annotations

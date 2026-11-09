@@ -113,10 +113,11 @@ RELEASE = ".".join(str(part) for part in pymysql.VERSION[:3])
 
 def classify(data: bytes) -> str:
     """What the probe records of a packet the exchange sends. The PL5 child
-    has its own copy, in _WITHOUT_CRYPTOGRAPHY."""
+    has its own copy, in _WITHOUT_CRYPTOGRAPHY. A cleartext password is
+    recognised by its value: RSA ciphertext can end in a NUL byte too."""
     if data == b"\x02":
         return "key request"
-    if data.endswith(b"\0"):
+    if data in (PASSWORD.encode() + b"\0", ch.WRONG.encode() + b"\0"):
         return "cleartext"
     return f"rsa password ({len(data)} bytes)"
 
@@ -173,7 +174,7 @@ import pymysql, pymysql._auth
 def classify(data):
     if data == b"\\x02":
         return "key request"
-    if data.endswith(b"\\0"):
+    if data == os.environ["SOPULI_PROBE_PASSWORD"].encode() + b"\\0":
         return "cleartext"
     return f"rsa password ({len(data)} bytes)"
 sent = []

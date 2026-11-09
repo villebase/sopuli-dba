@@ -74,11 +74,11 @@ mysql = [
   # it speaks `caching_sha2_password` (#1202, decision 8). Over a plain
   # connection, a login the server has not cached needs RSA key exchange,
   # which is PyMySQL's own `rsa` extra (`cryptography`). The config accepts
-  # `ssl_mode: DISABLED` and `PREFERRED`, so the extra comes with it. 1.2.3
-  # is the release whose TLS handling src/sopuli/driver/mysql_family/connection.py
-  # was written from: given a context, it refuses a server that offers no TLS.
-  # 1.2.4 is the first that finishes that RSA exchange (#1407), and a
-  # security release.
+  # `ssl_mode: DISABLED` and `PREFERRED`, so the extra comes with it. 1.2.4
+  # is the first release that finishes that RSA exchange (#1407). Given a
+  # context, it refuses a server that offers no TLS, as
+  # src/sopuli/driver/mysql_family/connection.py expects; its one TLS change is
+  # to the `ssl_verify_*` arguments, which the tool does not pass.
   "PyMySQL[rsa]>=1.2.4",
 ]
 mariadb = [

@@ -7,12 +7,21 @@ are generated per test, so no key is written into the repository.
 from __future__ import annotations
 
 import pytest
-from pyrage import x25519
 
-from sopuli.exit_codes import ExitCode
-from sopuli.secrets import Secret
-from sopuli.store.file._crypto import IdentityError, keys, load_identity, seal, unseal
-from sopuli.store.protocol import StoreError
+pyrage = pytest.importorskip("pyrage", reason="the file extra is not installed")
+
+from pyrage import x25519  # noqa: E402
+
+from sopuli.exit_codes import ExitCode  # noqa: E402
+from sopuli.secrets import Secret  # noqa: E402
+from sopuli.store.file._crypto import (  # noqa: E402
+    IdentityError,
+    keys,
+    load_identity,
+    seal,
+    unseal,
+)
+from sopuli.store.protocol import StoreError  # noqa: E402
 
 PLAINTEXT = b'{"current":"Pw-acme-not-a-real-1"}'
 
@@ -59,7 +68,34 @@ def test_an_identity_file_with_comments_is_read() -> None:
     secret, public = new_identity()
     text = f"# created: 2026-11-09T10:00:00Z\n# public key: {public}\n\n{secret}\n"
 
-    assert str(load_identity(Secret(text)).to_public()) == public
+    assert str(load_identity(Secret(text)).public()) == public
+
+
+def test_a_byte_order_mark_before_the_identity_is_skipped() -> None:
+    """Windows editors and PowerShell 5 write one."""
+    secret, public = new_identity()
+
+    assert str(load_identity(Secret("﻿" + secret + "\n")).public()) == public
+
+
+def test_the_identity_never_renders_its_key() -> None:
+    """str of a pyrage identity is the secret key; the wrapper shows ***."""
+    secret, _ = new_identity()
+    store = keys(Secret(secret), None)
+
+    assert secret not in str(store.identity)
+    assert secret not in repr(store.identity)
+    assert secret not in repr(store)
+    assert secret not in f"{store}"
+
+
+def test_the_identity_s_own_key_listed_again_is_kept_once() -> None:
+    secret, public = new_identity()
+    _, colleague = new_identity()
+
+    store = keys(Secret(secret), (public, colleague, colleague))
+
+    assert [str(one) for one in store.recipients] == [public, colleague]
 
 
 @pytest.mark.parametrize(
@@ -150,6 +186,20 @@ def test_another_identity_cannot_open_the_store() -> None:
         unseal(sealed, keys(Secret(other), None))
 
     assert "cannot decrypt its file" in str(caught.value)
+    # A wrong `addr` gives the same error, so the hint names both.
+    assert "`addr` names this store's file" in (caught.value.hint or "")
+    assert "`identity` names the key" in (caught.value.hint or "")
+
+
+def test_pyrage_still_words_a_wrong_identity_as_this_module_expects() -> None:
+    """The tripwire for the one place this module reads pyrage's wording: if
+    it changes, a wrong identity is reported as damage, and this fails."""
+    secret, _ = new_identity()
+    other, _ = new_identity()
+    sealed = pyrage.encrypt(PLAINTEXT, [x25519.Identity.from_str(secret).to_public()])
+
+    with pytest.raises(pyrage.DecryptError, match="(?i)no matching keys"):
+        pyrage.decrypt(sealed, [x25519.Identity.from_str(other)])
 
 
 def test_a_file_that_is_not_age_is_a_store_error_not_an_identity_error() -> None:
@@ -160,3 +210,17 @@ def test_a_file_that_is_not_age_is_a_store_error_not_an_identity_error() -> None
 
     assert not isinstance(caught.value, IdentityError)
     assert "not an age-encrypted file" in str(caught.value)
+    hint = caught.value.hint or ""
+    assert hint.index("`addr` names this store's file") < hint.index("restore")
+
+
+def test_a_damaged_age_file_says_to_check_before_restoring() -> None:
+    secret, _ = new_identity()
+    sealed = seal(PLAINTEXT, keys(Secret(secret), None))
+
+    with pytest.raises(StoreError) as caught:
+        unseal(sealed[:-20], keys(Secret(secret), None))
+
+    assert "cannot be decrypted" in str(caught.value)
+    hint = caught.value.hint or ""
+    assert hint.index("`addr` names this store's file") < hint.index("restore")

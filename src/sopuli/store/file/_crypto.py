@@ -59,14 +59,36 @@ class IdentityError(StoreError):
     exit_code = ExitCode.CONFIG_INVALID
 
 
-@dataclass(frozen=True)
-class Keys:
-    """What the store encrypts to, and the identity that decrypts it.
+class Identity:
+    """The store's age identity, which renders as ``***`` (invariant 2).
 
-    ``repr`` of a ``pyrage`` identity names no key, and this class adds none.
+    ``str`` of a ``pyrage`` identity is the ``AGE-SECRET-KEY-1…`` text itself,
+    so the object is kept only inside this wrapper, as a password is kept
+    inside :class:`~sopuli.secrets.Secret`. Only :func:`unseal` takes it out,
+    to hand it to ``pyrage``.
     """
 
-    identity: x25519.Identity
+    __slots__ = ("_key",)
+
+    def __init__(self, key: x25519.Identity) -> None:
+        self._key = key
+
+    def __str__(self) -> str:
+        return "***"
+
+    def __repr__(self) -> str:
+        return "***"
+
+    def public(self) -> x25519.Recipient:
+        """The identity's own public key, which is not a secret."""
+        return self._key.to_public()
+
+
+@dataclass(frozen=True)
+class Keys:
+    """What the store encrypts to, and the identity that decrypts it."""
+
+    identity: Identity
     recipients: tuple[x25519.Recipient, ...]
 
 
@@ -74,23 +96,34 @@ def keys(identity: Secret, recipients: tuple[str, ...] | None) -> Keys:
     """The store's keys: its identity, and every recipient it encrypts to.
 
     The identity's own public key is always the first recipient, so the next
-    run can read what this one wrote. ``recipients`` adds to it (#1415).
+    run can read what this one wrote. ``recipients`` adds to it (#1415). A
+    recipient listed twice, or the identity's own key listed again, is kept
+    once.
     """
     own = load_identity(identity)
-    return Keys(identity=own, recipients=(own.to_public(), *_recipients(recipients or ())))
+    found: dict[str, x25519.Recipient] = {}
+    for one in (own.public(), *_recipients(recipients or ())):
+        found.setdefault(str(one), one)
+    return Keys(identity=own, recipients=tuple(found.values()))
 
 
-def load_identity(text: Secret) -> x25519.Identity:
+def load_identity(text: Secret) -> Identity:
     """The one X25519 identity in an age identity file's text.
 
-    Comment lines (``#``) and blank lines are skipped, as ``age`` does. One key
-    and only one: a store has one identity, and the first of several would be
-    a guess about which one the others were for.
+    Comment lines (``#``) and blank lines are skipped, as ``age`` does, and so
+    is a UTF-8 byte-order mark, which Windows editors write. One key and only
+    one: a store has one identity, and the first of several would be a guess
+    about which one the others were for.
+
+    A passphrase-protected identity is refused here when its text reaches
+    this function, as the armoured form does. The binary form is not UTF-8
+    text, so the store must look at the file's first bytes before decoding
+    it, and refuse it there with the same words (#1372).
     """
     import pyrage
     from pyrage import x25519
 
-    raw = text.reveal()
+    raw = text.reveal().removeprefix("﻿")
     if raw.encode("utf-8").lstrip().startswith(ENCRYPTED_PREFIXES):
         raise IdentityError(
             "the file store's identity is passphrase-protected",
@@ -111,7 +144,7 @@ def load_identity(text: Secret) -> x25519.Identity:
             "the file store's identity is not one age secret key", hint=ONE_SECRET_KEY
         )
     try:
-        return x25519.Identity.from_str(found[0])
+        return Identity(x25519.Identity.from_str(found[0]))
     except pyrage.IdentityError:
         # pyrage's message names no key, but it is not repeated either: the
         # line is a secret.
@@ -150,27 +183,44 @@ def seal(plaintext: bytes, keys: Keys) -> bytes:
         raise StoreError("the file store could not encrypt its document") from None
 
 
+#: What to check before anything else when the store's file cannot be read. A
+#: wrong ``addr`` gives the same errors as a wrong identity or a damaged file,
+#: and restoring a store that was fine loses the passwords written since.
+CHECK_FIRST = (
+    "first check that the store's `addr` names this store's file, and that "
+    "`identity` names the key it was written for"
+)
+
+
 def unseal(ciphertext: bytes, keys: Keys) -> bytes:
     """What ``ciphertext`` holds, decrypted with the store's identity.
 
-    A file this identity cannot open, and a file that is not age at all, are
-    told apart where ``pyrage`` tells them apart: "no matching keys" is the
-    identity's fault, and anything else is the file's.
+    Whether the file is age at all is read from its first bytes, not from
+    ``pyrage``'s wording. An age file that does not decrypt is the identity's
+    fault when ``pyrage`` says no key matched; any other failure is damage.
+    If a later ``pyrage`` words that message differently, a wrong identity is
+    reported as damage, and the hint still says to check ``addr`` and
+    ``identity`` before restoring anything.
     """
     import pyrage
 
+    if not ciphertext.lstrip().startswith(ENCRYPTED_PREFIXES):
+        raise StoreError(
+            "the file store's file is not an age-encrypted file",
+            hint=f"{CHECK_FIRST}; if both are right, restore the file from a backup",
+        )
     try:
-        return bytes(pyrage.decrypt(ciphertext, [keys.identity]))
+        return bytes(pyrage.decrypt(ciphertext, [keys.identity._key]))
     except pyrage.DecryptError as error:
         if "no matching keys" in str(error).lower():
             raise IdentityError(
                 "the file store's identity cannot decrypt its file",
-                hint=(
-                    "the file was encrypted to other keys; name the identity it was "
-                    "written for in `identity:`"
-                ),
+                hint=f"{CHECK_FIRST}; the file was encrypted to other keys",
             ) from None
         raise StoreError(
-            "the file store's file is not an age-encrypted file it can read",
-            hint="the file is damaged or was replaced; restore it from a backup",
+            "the file store's file is an age file that cannot be decrypted",
+            hint=(
+                f"{CHECK_FIRST}; if both are right, the file is damaged: restore it "
+                "from a backup, and check that what it holds still matches the databases"
+            ),
         ) from None

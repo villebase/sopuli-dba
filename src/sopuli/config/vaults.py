@@ -1,8 +1,8 @@
-"""Building the ``vaults:`` section (§2).
+"""Building the ``vaults:`` section (§3a).
 
 A vault entry says which secret store a target's passwords are mastered in. It
 deliberately says very little else: P2 puts vaults behind a store interface, and
-the backends differ enough -- a file backend has no address, KV v1 has no
+the backends differ enough -- a file store's address is a path, KV v1 has no
 versioning -- that demanding a HashiCorp shape of every entry would be the
 top-level vendor bias P1 forbids. So ``type`` is required and the rest is
 optional, with per-backend requirements left to the store that reads them.

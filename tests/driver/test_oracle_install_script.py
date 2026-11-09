@@ -59,6 +59,7 @@ from sopuli.driver.oracle.privileges import (
     REQUIRED_PRIVILEGES,
     REQUIRED_READS,
     ROOT_ONLY_READS,
+    SCHEMA_REPORT_READ,
 )
 
 #: Which container holds the database. The default is `test/compose.yaml`'s
@@ -435,6 +436,18 @@ def sqlplus(
     return _exec(container, connect, f"@{script}", *args)
 
 
+def _answers(container: str, connect: str, view: str) -> bool:
+    """Whether ``view`` exists, by selecting from it rather than asking the
+    dictionary. Only ``ORA-00942`` reads as no; any other failure raises."""
+    try:
+        query(container, connect, f"SELECT COUNT(*) FROM {view} WHERE ROWNUM = 1;")
+    except AssertionError as failed:
+        if "ORA-00942" in str(failed):
+            return False
+        raise
+    return True
+
+
 def query(container: str, connect: str, sql: str) -> list[str]:
     """One query, stripped to its rows -- and loud when it does not run.
 
@@ -734,6 +747,7 @@ def test_the_optional_grants_are_off_unless_asked_for(
     assert "SET CONTAINER" not in default
     assert "SELECT ON V_$SESSION_CONNECT_INFO" not in default
     assert not set(REPORT_READS) & default
+    assert SCHEMA_REPORT_READ not in default
 
     result = sqlplus(
         container,
@@ -753,6 +767,16 @@ def test_the_optional_grants_are_off_unless_asked_for(
     assert "SELECT ON USER$" in asked
     assert "SELECT ON V_$SESSION_CONNECT_INFO" in asked
     assert set(REPORT_READS) <= asked
+    # Granted where the view exists. The script asks DBA_VIEWS; this asks the
+    # view itself, so a wrong dictionary check cannot pass both sides.
+    if _answers(container, ROOT, "DBA_SCHEMA_PRIVS"):
+        assert SCHEMA_REPORT_READ in asked
+        assert "granted SELECT ON DBA_SCHEMA_PRIVS" in result.stdout
+        # Section 9 reads the view too, and the install grants no schema privilege.
+        assert "--- schema privileges (expect none)\nnone" in result.stdout
+    else:
+        assert SCHEMA_REPORT_READ not in asked
+        assert "DBA_SCHEMA_PRIVS not granted" in result.stdout
     if install_mode == "COMMON":
         assert "SET CONTAINER" in asked
     else:

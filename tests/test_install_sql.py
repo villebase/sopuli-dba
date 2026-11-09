@@ -43,6 +43,7 @@ from sopuli.driver.oracle.privileges import (
     REQUIRED_PRIVILEGES,
     REQUIRED_READS,
     ROOT_ONLY_READS,
+    SCHEMA_REPORT_READ,
 )
 
 SCRIPT = Path(__file__).resolve().parents[1] / "sql" / "oracle" / "00_install.sql"
@@ -144,6 +145,7 @@ def test_the_script_issues_nothing_the_tool_did_not_ask_for() -> None:
         | frozenset(ROOT_ONLY_READS)
         | frozenset(PREDICATE_READS)
         | frozenset(REPORT_READS)
+        | {SCHEMA_REPORT_READ}
         | OPTIONAL
     )
 
@@ -168,11 +170,12 @@ def test_the_predicate_grant_is_in_the_script_and_not_in_the_default_set() -> No
 
 
 def test_the_report_grants_are_offered_and_not_required() -> None:
-    """The three grant views are behind `grant_report_reads`. Only UC-5's
+    """The four grant views are behind `grant_report_reads`. Only UC-5's
     privilege report reads them, and without them it reports each part as not
     checked, so no install may need them."""
-    assert frozenset(REPORT_READS) <= granted()
-    assert not frozenset(REPORT_READS) & required()
+    reads = frozenset(REPORT_READS) | {SCHEMA_REPORT_READ}
+    assert reads <= granted()
+    assert not reads & required()
 
 
 def test_the_optional_grants_are_optional_on_both_sides() -> None:

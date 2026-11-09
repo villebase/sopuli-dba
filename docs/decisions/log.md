@@ -4966,3 +4966,37 @@ the register.
      after a rotation would still be flagged falsely.
 - **Known cost:** a database change that nothing in the tool made is not
   pointed out. The reader sees it only by comparing the two dates.
+
+## #1389
+
+- **Decided:** 2026-11-08, #1389
+- **Question:** 23ai keeps schema privileges, such as `SELECT ANY TABLE ON
+  SCHEMA`, in `DBA_SCHEMA_PRIVS` and in no other grant view (probe 21). How
+  does the privilege survey return them, and what does it say on a release
+  without the view, where `ORA-00942` also means a missing grant?
+- **Decision:** the maintainer's, both as recommended.
+  1. A new part of the survey, `schemas`, beside `system`, `objects` and
+     `columns`. It is `None` with a reason where the view is refused, as the
+     other parts are.
+  2. The survey asks `USER_SCHEMA_PRIVS`, which needs no grant, whether the
+     release has schema privileges. Where that view is missing, the part is
+     empty and nothing is reported as unread. Where it exists and
+     `DBA_SCHEMA_PRIVS` is refused, the reason names the grant.
+     `00_install.sql`'s `grant_report_reads` grants `DBA_SCHEMA_PRIVS` where
+     `DBA_VIEWS` lists it.
+- **Why:** a system row's `owner` is always empty today, so putting a
+  schema privilege there would change what a system row means, which
+  `03-json-output.md` §8 calls a major change. A new part is a minor one, and
+  keeps the rule that each part is unread on its own. Asking the dictionary
+  keeps invariant 3: nothing branches on the release number.
+- **Rejected:**
+  1. B: a kind inside `system`, with `owner` set to the schema. A consumer
+     reading a system row as database-wide would take one schema's `SELECT
+     ANY TABLE` for the whole database's, and a refused view could not make
+     only part of `system` unread.
+  2. Read any `ORA-00942` as unread, with a reason naming both causes. On a
+     release before 23ai it would tell the DBA to grant a view that does not
+     exist.
+- **Known cost:** the release-without-the-view branch has not run: no release
+  before 23ai was at hand. `USER_SCHEMA_PRIVS` is expected to be missing
+  there, as `DBA_SCHEMA_PRIVS` is.

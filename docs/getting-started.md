@@ -591,7 +591,6 @@ install
   KIND     NAME        STATUS           CONFIGURED
   backend  file        not_implemented  -
   backend  hashicorp   installed        vault-dev
-  backend  keyring     not_implemented  -
   backend  oci         not_installed    -
   driver   oracle      installed        1 target
   driver   postgresql  not_installed    -

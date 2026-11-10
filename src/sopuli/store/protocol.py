@@ -77,7 +77,7 @@ MERGE_PATCH = "merge_patch"
 #:
 #: Its own capability rather than an assumption, for the reason every entry in
 #: P2's table is one: a store may genuinely not have it. Both HashiCorp mounts
-#: do, and an OS keyring or a future backend over an object store with no prefix
+#: do, and a future backend over an object store with no prefix
 #: query may not -- and the answer for a caller is then to say it could not look
 #: further, never to report an empty listing as though it had looked.
 LIST = "list"

@@ -31,8 +31,8 @@ userpass.
 - **Shared transport amortisation.** The argument was that `httpx` serves every
   future HTTP backend while `hvac` serves one. It does not survive the roadmap:
   OCI, AWS Secrets Manager and Azure Key Vault all require their vendor SDK
-  because their protocols involve request signing, and the file and keyring
-  backends do not speak HTTP at all. HashiCorp is the only member of the "plain
+  because their protocols involve request signing, and the file backend does
+  not speak HTTP at all. HashiCorp is the only member of the "plain
   HTTP plus a bearer token" class — `httpx` is shared with nothing.
 - **`CasConflictError` mapping.** Retired by measurement. The probe
   (`../../test/vault_cas_probe.py`) established that the conflict signal is one

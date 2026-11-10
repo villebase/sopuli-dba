@@ -1667,31 +1667,6 @@ def test_the_promotion_gate_completes_without_the_ref_rules() -> None:
     assert completed.bindings[0].vault == "vault-oci"
 
 
-def test_a_store_with_no_capability_row_is_left_alone() -> None:
-    """`keyring` is absent from P2's table, and deciding what it does about
-    staging is P2's call rather than this layer's. Absent means the check does
-    not fire, which is the reversible direction."""
-    config = build_config(
-        {
-            "version": 1,
-            "vaults": {"vault-keyring": {"type": "keyring"}, **VAULTS},
-            "target_sets": {"appdb": APPDB},
-            "groups": GROUPS,
-            "applications": [
-                {
-                    "name": "acme",
-                    "targets": {"group": "app-pdbs"},
-                    "accounts": ["acme_web_user"],
-                    "vault": "vault-keyring",
-                    "secret_template": "apps/{account}",
-                }
-            ],
-        }
-    )
-
-    assert str(config.bindings[0].secret) == "apps/acme_web_user"
-
-
 def test_the_key_reported_is_the_override_that_wrote_the_bad_ref() -> None:
     """Checked per binding, on the rendered ref, so the location is the line
     that actually produced it -- not the entry it patched."""

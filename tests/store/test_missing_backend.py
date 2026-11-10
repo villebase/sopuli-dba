@@ -177,8 +177,8 @@ def test_an_unwritten_backend_is_not_sent_to_pip(
     the validator quieter rather than the machine better.
 
     The warning's level and code are the same either way; what is fixed here is
-    what it says. `file` and `keyring` -- which have no client to look for at all
-    -- reach the same sentence through
+    what it says. `file` -- which has no client to look for at all -- reaches
+    the same sentence through
     :func:`test_a_backend_with_no_module_warns_though_pip_cannot_help`.
     """
     document = _validate_json(write_config(CONFIG))
@@ -217,9 +217,9 @@ def test_a_backend_with_no_module_warns_though_pip_cannot_help(
 ) -> None:
     """The case that no amount of installing fixes.
 
-    `file` and `keyring` have no extra -- ADR-006's named gap -- so a narrow
-    reading would find nothing to look for and say nothing, on every machine,
-    unconditionally. A file declaring only those would validate as ``0 warnings``
+    `file` has no extra -- ADR-006's named gap -- so a narrow reading would
+    find nothing to look for and say nothing, on every machine,
+    unconditionally. A file declaring only that would validate as ``0 warnings``
     and could not work anywhere.
 
     Warning about it is not actionable by `pip`, and that is not the same as not
@@ -242,13 +242,17 @@ def test_a_backend_with_no_module_warns_though_pip_cannot_help(
     assert "this build has no file backend yet" in found["message"]
 
 
-def test_every_store_this_machine_cannot_serve_is_named(write_config: WriteConfig) -> None:
+def test_every_store_this_machine_cannot_serve_is_named(
+    unwritten: None, write_config: WriteConfig
+) -> None:
     """The report `config validate` owes its reader.
 
-    Two of the four types in ``01-configuration.md`` §3a have no module, so a
-    config declaring all four is a config whose stores are half unusable. A
-    narrow reading would report **one** warning. The OCI store has a module, and
-    the tests run with its SDK installed, so it is not named.
+    ``file`` has no module in this build, and the ``unwritten`` fixture takes
+    HashiCorp's away, so two of the three types in a config that declares one
+    of each have none: a config whose stores are mostly unusable. A narrow
+    reading would report **one** warning, stopping at the first type it finds.
+    The OCI store has a module, and the tests run with its SDK installed, so it
+    is not named.
 
     Asserted as a set rather than a list: the order is the survey's, sorted by
     backend name, and pinning it here would be pinning `doctor`'s table through a
@@ -264,16 +268,15 @@ def test_every_store_this_machine_cannot_serve_is_named(write_config: WriteConfi
             "    compartment_id: ocid1.compartment.oc1..exampleuniqueid\n"
             "    key_id: ocid1.key.oc1..exampleuniqueid\n"
             f"  vault-local:\n{FILE_STORE}"
-            "  vault-desktop:\n    type: keyring\n"
         )
     )
     named = {
         name
-        for name in ("vault-dr", "vault-local", "vault-desktop")
+        for name in ("vault-hc", "vault-dr", "vault-local")
         if any(f'"{name}"' in entry["message"] for entry in document["diagnostics"])
     }
 
-    assert named == {"vault-local", "vault-desktop"}
+    assert named == {"vault-hc", "vault-local"}
     assert document["exit_code"] == ExitCode.SUCCESS
 
 

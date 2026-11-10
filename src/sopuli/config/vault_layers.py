@@ -96,9 +96,7 @@ EnvKeys = Mapping[str, Sequence[Contribution]]
 #: merged individually. See the module note.
 REACH_KEYS = ("addr", "mount", "kv_version", "namespace", "timeout_s", "merge_patch")
 
-#: The built or decided store types that read no HashiCorp setting, each as a
-#: message names it. ``keyring`` is absent: which keys it reads is decided when
-#: it is built.
+#: The store types that read no HashiCorp setting, each as a message names it.
 NOT_HASHICORP = {"oci": "an OCI store", "file": "a file store"}
 
 #: The keys a file store refuses: HashiCorp's, but ``addr``, which is its path,

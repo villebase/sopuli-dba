@@ -600,6 +600,10 @@ PRODUCT_LIMIT_USED = "SOPULI-W067"
 #: is not `Synced`.
 IDENTITY_UNCHECKED = "SOPULI-W068"
 
+#: A dry run of `keyring set` found a different value in the entry, so the
+#: real run is refused without `--replace` (#1417).
+KEYRING_REPLACE_NEEDS_FLAG = "SOPULI-W069"
+
 #: ``SOPULI-W004`` and ``SOPULI-W034`` to ``SOPULI-W039`` -- imported above
 #: rather than defined here. They are raised in the config layer, which cannot
 #: import this module, so they are defined in :mod:`sopuli.config.codes` and
@@ -863,6 +867,11 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "PostgreSQL, `system_identifier` could not be read; on MariaDB, a Galera node "
             "was not `Synced`, so its cluster was not claimed. The message says which. One "
             "entry per target, from every command that connects."
+        ),
+        KEYRING_REPLACE_NEEDS_FLAG: (
+            "A dry run of `keyring set` found a different value in the entry, so the "
+            "same run without `--dry-run` is refused with exit 8 unless `--replace` is "
+            "given. Only on a dry run: the real run refuses instead of warning."
         ),
         CONSTRAINTS_UNREAD: (
             "`creds generate` could not read a target's password constraints, so the "

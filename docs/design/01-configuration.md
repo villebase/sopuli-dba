@@ -1253,7 +1253,12 @@ reason for it:
   another source. A scheduled run on a Linux server usually has no keyring,
   because the Secret Service needs a desktop session, and a Windows scheduled
   task reads only the entries of the user it runs as. Use `env:` or `file:`
-  there.
+  there. `sopuli keyring set NAME` writes an entry, from stdin or a prompt
+  asked twice, and `sopuli keyring delete NAME` removes one. Both need no
+  config, so a new machine can store its credential before the config can
+  authenticate; when a config is loaded and names no such entry, the output
+  says so. Writing the value an entry already holds reports `unchanged`, and
+  replacing a different value needs `--replace` (exit 8 without it).
 - **Identity is inline, proof is not.** `role`, `username`, `profile` and `mount`
   name *who* rather than prove it, so they are written as they are. `role_id` is
   arguably an identifier too, and is a MaterialRef anyway: carving out one field

@@ -24,13 +24,14 @@ can mean a second Keychain prompt for an entry with access control.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, fields, is_dataclass
 from typing import Any
 
 from sopuli import os_keyring
 from sopuli.admin import auth_at, uses_keyring
 from sopuli.config.errors import MaterialError
-from sopuli.config.model import Config, MaterialRef
+from sopuli.config.model import AdminAuth, Config, MaterialRef
 
 #: The position a refusal from :func:`sopuli.os_keyring.backend` names. Removed
 #: again from its message, because the section says where it comes from.
@@ -51,6 +52,16 @@ class EntryReport:
     present: bool | None
     #: Why it could not be read, when the backend was there and the read failed.
     problem: str | None = None
+    #: What ``keyring set`` or ``keyring delete`` did, or would do: one of
+    #: :data:`ACTIONS`. ``None`` in ``doctor``, which changes nothing.
+    action: str | None = None
+    #: Whether the action was carried out: ``False`` on a dry run.
+    applied: bool | None = None
+
+
+#: The actions of the `keyring` verbs. ``unchanged`` and ``absent`` change
+#: nothing, so a second run of either verb reports one of them (invariant 9).
+ACTIONS = ("add", "replace", "unchanged", "delete", "absent")
 
 
 @dataclass(frozen=True)
@@ -86,6 +97,36 @@ def sources(config: Config) -> dict[str, list[str]]:
             # Where the line is written: a generated target's is its set's.
             _add(found, admin_auth.entry, str(auth_at(target).key("entry")))
     return found
+
+
+def named_anywhere(config: Config, entry: str) -> bool:
+    """Whether any part of the loaded config names ``entry``.
+
+    Pure. Wider than :func:`sources`: every ``keyring:`` MaterialRef, in a
+    delivery block or a profile the run does not use as well, and every
+    ``method: keyring`` admin credential. ``keyring set`` notes an entry nothing
+    names, which is usually a typo in the entry or in the config.
+    """
+    seen: set[int] = set()
+    pending: list[object] = [config]
+    while pending:
+        node = pending.pop()
+        if id(node) in seen:
+            continue
+        seen.add(id(node))
+        if isinstance(node, MaterialRef):
+            if node.kind == "keyring" and node.location == entry:
+                return True
+        elif isinstance(node, AdminAuth):
+            if node.method == "keyring" and node.entry == entry:
+                return True
+        elif is_dataclass(node) and not isinstance(node, type):
+            pending.extend(getattr(node, one.name) for one in fields(node))
+        elif isinstance(node, tuple | list):
+            pending.extend(node)
+        elif isinstance(node, Mapping):
+            pending.extend(node.values())
+    return False
 
 
 def survey(config: Config) -> KeyringReport | None:

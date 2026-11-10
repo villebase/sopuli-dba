@@ -57,13 +57,15 @@ def discover(
     platform: str | None = None,
     cwd: Path | None = None,
     home: Path | None = None,
+    optional: bool = False,
 ) -> tuple[Path, ...]:
     """The config files to read, in the order they should be layered.
 
     Returns one path in every case except a repeated ``--config``, which returns
     them all. Raises rather than returning nothing: a command with no config has
     no whitelist, and invariant 5 makes that the one thing it cannot proceed
-    without.
+    without. ``optional`` returns nothing instead when the search finds no
+    file, for the `keyring` verbs, which change nothing invariant 5 governs.
     """
     environment = os.environ if env is None else env
     on = sys.platform if platform is None else platform
@@ -82,6 +84,8 @@ def discover(
         if candidate.is_file():
             return (candidate,)
 
+    if optional:
+        return ()
     raise ConfigError(
         "no config file found",
         hint=(

@@ -84,7 +84,7 @@ from typing import TYPE_CHECKING, Any, TextIO, TypeVar
 import click
 
 from sopuli.admin import PasswordPrompt, Prompter
-from sopuli.config.discovery import discover
+from sopuli.config.discovery import CONFIG_ENV, discover
 from sopuli.config.errors import ArgumentError, ConfigError
 from sopuli.config.loading import load_layers
 from sopuli.config.model import Config
@@ -393,6 +393,15 @@ class Invocation:
         return self._loaded().config
 
     @property
+    def loaded_config(self) -> Config | None:
+        """The configuration, or ``None`` for a verb that ran without one.
+
+        Only a verb decorated with :func:`global_options_config_optional` can
+        see ``None``; :attr:`config` is the accessor for every other verb.
+        """
+        return None if self.loaded is None else self.loaded.config
+
+    @property
     def sources(self) -> tuple[Path, ...]:
         """The config files that were read, in layering order. See :attr:`config`."""
         return self._loaded().paths
@@ -562,6 +571,20 @@ def global_options(func: F) -> F:
     return _options(_pass_invocation(func), hidden=False)
 
 
+def global_options_config_optional(func: F) -> F:
+    """:func:`global_options`, for a verb that runs with no config file.
+
+    The `keyring` verbs write the credential a config needs before it can
+    authenticate, so a new machine runs them before it has a config (decision
+    #1417). When the search finds no file, the verb gets an
+    :class:`Invocation` whose ``loaded`` is ``None``. A file named by
+    ``--config`` or ``SOPULI_CONFIG``, or a profile named by ``--profile`` or
+    ``SOPULI_PROFILE``, still has to exist: asking for one is not running
+    without one.
+    """
+    return _options(_pass_invocation(func, config_optional=True), hidden=False)
+
+
 def group_options(func: F) -> F:
     """Attach the same options to the **group**: the inert ones real, the safety
     ones as traps.
@@ -714,6 +737,22 @@ def resolve_invocation(
     if document is None:
         return replace(invocation, document=open_document(command, invocation))
     return replace(invocation, document=refresh_document(document, invocation))
+
+
+def load_optional_config(invocation: Invocation, *, env: Mapping[str, str]) -> LoadedConfig | None:
+    """:func:`load_config_layers`, or ``None`` when the search finds no file.
+
+    Only the search may come back empty. A ``--config`` path, ``SOPULI_CONFIG``
+    or a profile name asks for a file, and its absence is refused as usual.
+    """
+    asked = (
+        bool(invocation.config_paths)
+        or bool(env.get(CONFIG_ENV, "").strip())
+        or invocation.value("profile") is not None
+    )
+    if not asked and not discover(optional=True, env=env):
+        return None
+    return load_config_layers(invocation, env=env)
 
 
 def load_config_layers(invocation: Invocation, *, env: Mapping[str, str]) -> LoadedConfig:
@@ -972,7 +1011,7 @@ def _options(func: F, *, hidden: bool) -> F:
     )
 
 
-def _pass_invocation(func: F) -> F:
+def _pass_invocation(func: F, *, config_optional: bool = False) -> F:
     """Resolve the run's settings, and give the verb them as ``run``.
 
     The verb declares ``run: Invocation`` and never sees ``output_mode``,
@@ -1011,21 +1050,27 @@ def _pass_invocation(func: F) -> F:
         # `invocation` is what the handler then reports against -- the resolved
         # one if the file was read, the command line's own if it was not.
         try:
-            loaded = load_config_layers(invocation, env=os.environ)
+            loaded = (
+                load_optional_config(invocation, env=os.environ)
+                if config_optional
+                else load_config_layers(invocation, env=os.environ)
+            )
             try:
-                invocation = resolve_invocation(
-                    group,
-                    verb,
-                    env=os.environ,
-                    command=command,
-                    loaded=loaded,
-                    document=invocation.document,
-                )
+                if loaded is not None:
+                    invocation = resolve_invocation(
+                        group,
+                        verb,
+                        env=os.environ,
+                        command=command,
+                        loaded=loaded,
+                        document=invocation.document,
+                    )
             except Exception:
                 # A setting the file loaded with did not resolve, so
                 # `refresh_document` never saw the file. Its warnings may still
                 # be why the run stopped (#918).
-                add_config_warnings(invocation.document, loaded.config)
+                if loaded is not None:
+                    add_config_warnings(invocation.document, loaded.config)
                 raise
             # Again, because a profile may have supplied `output` -- and an
             # output format the tool does not have is still not a request it can

@@ -8,10 +8,11 @@ passwords. That is the ``keyring`` store type, which this build does not have
 (#1373).
 
 **The service is fixed.** The config names only the entry, so the tool decides
-how entries are named (decision 2 of #1417). An entry is written through the
-same library, which on Windows stores a second entry of one service at the
-address ``NAME@sopuli``; an entry written by hand in Credential Manager under
-the address ``sopuli`` would replace the first.
+how entries are named (decision 2 of #1417). ``sopuli keyring set`` writes an
+entry through this module (:func:`write`), with the same library that reads it,
+which on Windows stores a second entry of one service at the address
+``NAME@sopuli``; an entry written by hand in Credential Manager under the
+address ``sopuli`` would replace the first.
 
 **Only an OS keyring counts.** The ``keyring`` library picks a backend by
 priority, and it can pick one that is not an OS keyring: ``fail`` and ``null``,
@@ -31,10 +32,11 @@ The library is the ``keyring`` extra (ADR-006), imported on first use.
 
 from __future__ import annotations
 
+import hmac
 from collections.abc import Callable
 from typing import Any
 
-from sopuli.config.errors import ROOT, MaterialError
+from sopuli.config.errors import ROOT, ConfigError, MaterialError
 from sopuli.extras import install_hint
 from sopuli.secrets import Secret
 
@@ -78,8 +80,70 @@ def read(entry: str, *, where: str) -> Secret:
     does. An empty value counts as missing, by §6's rule for an empty variable.
     """
     chosen = backend(where=where)
+    value = _get(chosen, entry, where=where)
+    if not value:
+        raise MaterialError(
+            f"{where}: {describe(entry)} is not in {name_of(chosen)}",
+            at=ROOT,
+            hint=(
+                f"write it with `sopuli keyring set {entry}`, as the user this command "
+                "runs as: the entry is read as that user. A Windows scheduled task "
+                "reads only the entries of the user it runs as"
+            ),
+        )
+    return Secret(value)
+
+
+#: What :func:`compare` finds in an entry before ``keyring set`` writes it.
+ABSENT = "absent"
+SAME = "same"
+DIFFERENT = "different"
+
+
+def compare(entry: str, value: Secret, *, where: str) -> str:
+    """:data:`ABSENT`, :data:`SAME` or :data:`DIFFERENT`: the entry against ``value``.
+
+    The old value is compared in the process and dropped, so ``keyring set`` can
+    report ``changed: false`` (invariant 9) and refuse a replacement nobody
+    asked for, without the old value reaching any output.
+    """
+    old = _get(backend(where=where), entry, where=where)
+    if not old:
+        return ABSENT
+    same = hmac.compare_digest(old.encode("utf-8"), value.reveal().encode("utf-8"))
+    return SAME if same else DIFFERENT
+
+
+def present(entry: str, *, where: str) -> bool:
+    """Whether the entry holds a value, read and dropped, as :func:`compare` does."""
+    return bool(_get(backend(where=where), entry, where=where))
+
+
+def write(entry: str, value: Secret, *, where: str) -> None:
+    """Store ``value`` as the entry, for ``keyring set``.
+
+    The value is revealed here and passed to the keyring library: the store the
+    tool reads it back from (invariant 2, decision #1417).
+    """
+    chosen = backend(where=where)
     try:
-        value = chosen.get_password(SERVICE, entry)
+        chosen.set_password(SERVICE, entry, value.reveal())
+    except Exception as error:  # noqa: BLE001 - `_get`'s reason
+        raise _failed_change("write", entry, chosen, error, where=where) from error
+
+
+def remove(entry: str, *, where: str) -> None:
+    """Delete the entry, for ``keyring delete``. The caller has read that it is there."""
+    chosen = backend(where=where)
+    try:
+        chosen.delete_password(SERVICE, entry)
+    except Exception as error:  # noqa: BLE001 - `_get`'s reason
+        raise _failed_change("delete", entry, chosen, error, where=where) from error
+
+
+def _get(chosen: Any, entry: str, *, where: str) -> str | None:
+    try:
+        value: str | None = chosen.get_password(SERVICE, entry)
     except Exception as error:  # noqa: BLE001 - see below
         # Any exception, not only `KeyringError` and `OSError`: a backend lets
         # its platform's own errors through. On Windows that is win32ctypes'
@@ -90,23 +154,28 @@ def read(entry: str, *, where: str) -> Secret:
             f"{where}: could not read {describe(entry)} from {name_of(chosen)}: "
             f"{type(error).__name__}: {error}",
             at=ROOT,
-            hint=(
-                "the keyring may be locked, or this session cannot reach it. Unlock it, "
-                "or run as the user who wrote the entry. A Windows scheduled task set to "
-                "run whether the user is logged on or not reads the entries only when "
-                "it stores the user's password"
-            ),
+            hint=_UNREACHABLE_HINT,
         ) from error
-    if not value:
-        raise MaterialError(
-            f"{where}: {describe(entry)} is not in {name_of(chosen)}",
-            at=ROOT,
-            hint=(
-                "the entry is read as the user this command runs as. A Windows "
-                "scheduled task reads only the entries of the user it runs as"
-            ),
-        )
-    return Secret(value)
+    return value
+
+
+def _failed_change(
+    verb: str, entry: str, chosen: Any, error: Exception, *, where: str
+) -> ConfigError:
+    return ConfigError(
+        f"{where}: could not {verb} {describe(entry)} in {name_of(chosen)}: "
+        f"{type(error).__name__}: {error}",
+        at=ROOT,
+        hint=_UNREACHABLE_HINT,
+    )
+
+
+_UNREACHABLE_HINT = (
+    "the keyring may be locked, or this session cannot reach it. Unlock it, "
+    "or run as the user who wrote the entry. A Windows scheduled task set to "
+    "run whether the user is logged on or not reads the entries only when "
+    "it stores the user's password"
+)
 
 
 def backend(*, where: str) -> Any:

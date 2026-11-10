@@ -33,33 +33,53 @@ def build(report: KeyringReport) -> dict[str, Any]:
 
 
 def _entry(entry: EntryReport) -> dict[str, Any]:
-    return {
+    built: dict[str, Any] = {
         "entry": entry.entry,
         "required_by": list(entry.required_by),
         "present": entry.present,
         "problem": entry.problem,
     }
+    # Only from the `keyring` verbs: `doctor` acts on nothing.
+    if entry.action is not None:
+        built["action"] = entry.action
+        built["applied"] = entry.applied
+    return built
 
 
 def render(report: KeyringReport) -> list[str]:
     """The text form: the backend, then one line per entry, in one column."""
     names = [f"{SERVICE}/{entry.entry}" for entry in report.entries]
+    states = [_state(entry) for entry in report.entries]
     width = max(len("backend") + 2, *(len(name) + 2 for name in names))
+    column = max((len(state) for state in states), default=0) + 2
     lines = ["keyring", f"  {'backend':<{width}}{report.backend or '(none)'}"]
     if report.problem is not None:
         lines.append(f"  {report.problem}")
     if report.hint is not None:
         lines.append(f"    hint: {report.hint}")
-    for name, entry in zip(names, report.entries, strict=True):
+    for name, state, entry in zip(names, states, report.entries, strict=True):
         named = ", ".join(entry.required_by)
-        lines.append(f"  {name:<{width}}{_state(entry):<9}{named}")
+        lines.append(f"  {name:<{width}}{state:<{column}}{named}".rstrip())
         if entry.problem is not None:
             lines.append(f"    {entry.problem}")
     lines.append("")
     return lines
 
 
+#: What a `keyring` verb did, and what it would do on a dry run.
+_DONE = {
+    "add": ("added", "would add"),
+    "replace": ("replaced", "would replace"),
+    "unchanged": ("unchanged", "unchanged"),
+    "delete": ("deleted", "would delete"),
+    "absent": ("absent", "absent"),
+}
+
+
 def _state(entry: EntryReport) -> str:
+    if entry.action is not None:
+        done, planned = _DONE[entry.action]
+        return done if entry.applied else planned
     if entry.present is None:
         return "unread"
     return "present" if entry.present else "missing"

@@ -179,7 +179,7 @@ def _require_regular(path: Path, status: os.stat_result) -> None:
 #: file: this, 16 hex digits, and :data:`TEMPORARY_SUFFIX`.
 TEMPORARY_PREFIX = ".sopuli-"
 TEMPORARY_SUFFIX = ".tmp"
-_TEMPORARY = re.compile(r"\.sopuli-[0-9a-f]{16}\.tmp")
+_TEMPORARY = re.compile(re.escape(TEMPORARY_PREFIX) + "[0-9a-f]{16}" + re.escape(TEMPORARY_SUFFIX))
 
 #: How old a temporary file must be before :func:`leftovers` reports it. A run
 #: holds its file for the time it takes to write and flush the store, and
@@ -207,12 +207,15 @@ def leftovers(path: Path, *, now: datetime) -> tuple[Leftover, ...]:
     progress, and the store has no lock to tell the two apart (#1415,
     decision 4). A directory that cannot be listed gives nothing, because
     :func:`check_directory` already reports it as the store's health.
-    A link at ``path`` is followed, as :func:`replace` follows it.
+    A link at ``path`` is followed, as :func:`replace` follows it. Never
+    raises.
     """
+    directory = directory_of(path)
+    if directory is None:
+        return ()
     try:
-        directory = _target(path).parent
         entries = list(os.scandir(directory))
-    except (OSError, StoreError):
+    except OSError:
         return ()
     found = []
     for entry in entries:
@@ -220,14 +223,26 @@ def leftovers(path: Path, *, now: datetime) -> tuple[Leftover, ...]:
             continue
         try:
             status = entry.stat(follow_symlinks=False)
-        except OSError:
+            # A time outside what the platform can convert, from a broken
+            # clock or a hand-set one, is skipped rather than raised.
+            written = datetime.fromtimestamp(status.st_mtime, tz=UTC)
+        except (OSError, OverflowError, ValueError):
             continue
         if not stat.S_ISREG(status.st_mode):
             continue
-        age = now - datetime.fromtimestamp(status.st_mtime, tz=UTC)
+        age = now - written
         if age >= LEFTOVER_AGE:
             found.append(Leftover(Path(entry.path), age))
     return tuple(sorted(found, key=lambda one: (-one.age, str(one.path))))
+
+
+def directory_of(path: Path) -> Path | None:
+    """The directory :func:`replace` writes ``path``'s temporary file in, a
+    link at ``path`` followed, or ``None`` where the link cannot be followed."""
+    try:
+        return _target(path).parent
+    except StoreError:
+        return None
 
 
 def replace(path: Path, data: bytes, *, expected: str) -> None:

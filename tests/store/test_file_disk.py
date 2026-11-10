@@ -442,6 +442,22 @@ def test_leftovers_leaves_out_a_write_in_progress_and_other_names(tmp_path: Path
     assert _disk.leftovers(tmp_path / "store.age", now=NOW) == ()
 
 
+def test_leftovers_skips_a_time_the_platform_cannot_convert(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A broken clock's mtime is skipped, never raised: doctor must report."""
+    _left(tmp_path, f".sopuli-{'a' * 16}.tmp", age=timedelta(days=1), now=NOW)
+
+    class Broken(datetime):
+        @classmethod
+        def fromtimestamp(cls, *args: object, **kwargs: object) -> Broken:
+            raise OverflowError("timestamp out of range for platform time_t")
+
+    monkeypatch.setattr(_disk, "datetime", Broken)
+
+    assert _disk.leftovers(tmp_path / "store.age", now=NOW) == ()
+
+
 def test_leftovers_removes_nothing(tmp_path: Path) -> None:
     left = _left(tmp_path, f".sopuli-{'a' * 16}.tmp", age=timedelta(days=2), now=NOW)
 

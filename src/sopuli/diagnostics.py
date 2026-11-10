@@ -28,7 +28,6 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from datetime import timedelta
-from pathlib import Path
 from types import MappingProxyType
 
 from sopuli.admin import Resolved
@@ -67,6 +66,7 @@ from sopuli.lock.manager import LOCK_PREFIX, LockableStore, LockManager, Unguard
 from sopuli.lock.record import LockRecord
 from sopuli.orphans import Unread
 from sopuli.output.document import Diagnostic, DiagnosticLevel
+from sopuli.store.file._disk import Leftover
 from sopuli.store.protocol import OK
 from sopuli.store.survey import VaultReport
 
@@ -1537,18 +1537,28 @@ def file_store_in_use(name: str) -> Diagnostic:
     )
 
 
-def file_store_leftover(name: str, path: Path, age: timedelta) -> Diagnostic:
-    """`SOPULI-W071`: a temporary file a stopped run left beside the file
-    store ``name``'s file (#1430). ``doctor`` raises one per file, and removes
-    none: a younger one may be another run's write in progress."""
+def file_store_leftover(stores: Sequence[str], leftover: Leftover) -> Diagnostic:
+    """`SOPULI-W071`: a temporary file a stopped run left in a directory that
+    holds the file stores ``stores`` (#1430). ``doctor`` raises one per file,
+    and removes none: a younger one may be another run's write in progress.
+
+    The file's name does not say which store wrote it, so where a directory
+    holds more than one, the message names each, and the keys of any of them
+    may open the file.
+    """
+    if len(stores) == 1:
+        who, keys = f'vault "{stores[0]}"', "the store's keys"
+    else:
+        named = ", ".join(f'"{name}"' for name in stores)
+        who, keys = f"vaults {named}", "the keys of one of these stores"
     return Diagnostic(
         level="warning",
         code=FILE_STORE_LEFTOVER,
         message=(
-            f'vault "{name}": {path} is {_age(age)} old, a temporary file left by a run '
-            "that stopped while it wrote the store. It is encrypted to the store's keys, "
-            "and may hold a password version the store has pruned since. Remove it when "
-            "no run is writing the store"
+            f"{who}: {leftover.path} is {_age(leftover.age)} old, a temporary file left by "
+            f"a run that stopped while it wrote the store. It is encrypted to {keys}, and "
+            "may hold a password version the store has pruned since. Remove it when no "
+            "run is writing the store"
         ),
     )
 

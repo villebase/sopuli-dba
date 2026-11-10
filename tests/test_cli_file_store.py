@@ -155,6 +155,40 @@ def test_doctor_prints_a_left_temporary_file_in_the_text_view(
     assert f"{old.name} is 30 minutes old" in result.output
 
 
+def test_two_stores_in_one_directory_get_one_warning_per_file(
+    write_config: WriteConfig, tmp_path: Path, identity: str
+) -> None:
+    """The file's name does not say which store wrote it, so it is reported
+    once, naming both."""
+    old = _left_behind(tmp_path, minutes=60)
+    config = write_config(
+        "version: 1\nvaults:\n" + file_store("acme-dev", tmp_path) + file_store("acme-ci", tmp_path)
+    )
+
+    _, document = run_json(config, "doctor")
+
+    (message,) = [
+        one["message"] for one in document["diagnostics"] if one["code"] == FILE_STORE_LEFTOVER
+    ]
+    assert message.startswith(f'vaults "acme-dev", "acme-ci": {old} is 60 minutes old')
+    assert "encrypted to the keys of one of these stores" in message
+
+
+def test_a_store_that_cannot_be_opened_is_looked_at_too(
+    write_config: WriteConfig, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Listing the directory needs no key, so a store whose identity is not
+    set still has its leftovers reported."""
+    monkeypatch.delenv(VARIABLE, raising=False)
+    old = _left_behind(tmp_path, minutes=60)
+    config = write_config("version: 1\nvaults:\n" + file_store("acme-dev", tmp_path))
+
+    _, document = run_json(config, "doctor")
+
+    found = [one for one in document["diagnostics"] if one["code"] == FILE_STORE_LEFTOVER]
+    assert [str(old) in one["message"] for one in found] == [True]
+
+
 def test_the_leftover_code_is_registered() -> None:
     assert FILE_STORE_LEFTOVER == "SOPULI-W071"
     assert "Nothing removes it" in WARNINGS[FILE_STORE_LEFTOVER]

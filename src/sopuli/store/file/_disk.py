@@ -261,6 +261,13 @@ def _replace_if_unchanged(temporary: Path, path: Path, expected: str) -> None:
             time.sleep(0.05)
 
 
+def check_directory(path: Path) -> None:
+    """Raise :class:`StoreError` unless :func:`replace` could write ``path``'s
+    directory: a link at ``path`` is followed, as a write follows it."""
+    target = _target(path)
+    _require_directory(target.parent, target)
+
+
 def _require_directory(directory: Path, path: Path) -> None:
     """Refuse a directory that is missing, not a directory, or cannot be reached."""
     try:

@@ -8,6 +8,7 @@ Keys are generated per test. The store is not reachable from a config yet
 
 from __future__ import annotations
 
+import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -61,7 +62,6 @@ def make_store(
     path: Path, *, secret: str | None = None, max_versions: int | None = None
 ) -> FileStore:
     return FileStore(
-        name=NAME,
         path=path,
         keys=_crypto.keys(Secret(secret or new_secret()), None, store=NAME),
         max_versions=max_versions,
@@ -262,6 +262,23 @@ def test_health_is_degraded_for_a_damaged_file(store: FileStore) -> None:
     assert "not an age-encrypted file" in (health.detail or "")
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="symbolic links need a privilege on Windows")
+def test_health_follows_a_link_at_addr_to_its_directory(tmp_path: Path) -> None:
+    """A link into a directory that is not there is a store no write can reach."""
+    link = tmp_path / "store.age"
+    link.symlink_to(tmp_path / "unmounted" / "store.age")
+
+    assert make_store(link).health().status == UNREACHABLE
+
+
+@pytest.mark.parametrize("keep", [0, -1, True, 2.0])
+def test_a_max_versions_that_is_not_a_whole_number_of_at_least_one_is_refused(
+    tmp_path: Path, keep: Any
+) -> None:
+    with pytest.raises(StoreError, match=f'file store "{NAME}": max_versions'):
+        make_store(tmp_path / "store.age", max_versions=keep)
+
+
 def test_health_is_unreachable_without_the_directory(tmp_path: Path) -> None:
     store = make_store(tmp_path / "missing" / "store.age")
 
@@ -299,6 +316,33 @@ def test_open_store_reads_the_identity_from_a_file(tmp_path: Path) -> None:
     assert store.max_versions == 3
     store.write("acme/app", {"current": "a"}, cas=0)
     assert data_of(make_store(store.path, secret=secret), "acme/app") == {"current": "a"}
+
+
+def test_open_store_refuses_a_relative_addr(tmp_path: Path) -> None:
+    """A relative path names another file from another directory, and a
+    missing file is an empty store: a second store, silently."""
+    entry = Vault(
+        name=NAME,
+        type="file",
+        addr="acme-dev.age",
+        identity=MaterialRef(kind="env", location="SOPULI_FILE_IDENTITY"),
+    )
+
+    with pytest.raises(StoreError, match="is a relative path"):
+        open_store(entry, env={"SOPULI_FILE_IDENTITY": new_secret()})
+
+
+def test_open_store_expands_a_home_addr(tmp_path: Path) -> None:
+    entry = Vault(
+        name=NAME,
+        type="file",
+        addr="~/acme-dev.age",
+        identity=MaterialRef(kind="env", location="SOPULI_FILE_IDENTITY"),
+    )
+
+    store = open_store(entry, env={"SOPULI_FILE_IDENTITY": new_secret()})
+
+    assert store.path == Path.home() / "acme-dev.age"
 
 
 def test_open_store_reads_the_identity_from_a_variable(tmp_path: Path) -> None:

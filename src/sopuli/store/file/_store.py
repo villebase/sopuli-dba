@@ -25,6 +25,7 @@ read-modify-write.
 
 from __future__ import annotations
 
+import contextlib
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -34,7 +35,7 @@ from typing import Any
 from sopuli.clock import utc_now
 from sopuli.config.errors import ConfigError
 from sopuli.config.model import Vault
-from sopuli.material import resolve
+from sopuli.material import MaterialError, resolve
 from sopuli.secrets import Secret
 from sopuli.store.file import _crypto, _disk
 from sopuli.store.file._document import (
@@ -69,13 +70,26 @@ def open_store(
 
     Reads the identity, but not the store's file: a store whose file does not
     exist yet is an empty store, and its first write creates the file.
+
+    ``addr`` must be absolute, after ``~`` is expanded. A relative path
+    would name a different file from each working directory, and since a
+    missing file is an empty store, a run from another directory would
+    silently start a second store.
     """
     # The builder requires both.
     if vault.addr is None or vault.identity is None:  # pragma: no cover
         raise StoreError(f'file store "{vault.name}" has no `addr` or no `identity`')
+    path = Path(vault.addr).expanduser()
+    if not path.is_absolute():
+        raise StoreError(
+            f'file store "{vault.name}": addr {vault.addr!r} is a relative path',
+            hint=(
+                "write the store file's full path, or one that starts with `~`; a relative "
+                "path would name another file when the tool runs from another directory"
+            ),
+        )
     return FileStore(
-        name=vault.name,
-        path=Path(vault.addr).expanduser(),
+        path=path,
         keys=_crypto.keys(identity_of(vault, env=env), vault.recipients, store=vault.name),
         max_versions=vault.max_versions,
         clock=clock,
@@ -85,29 +99,27 @@ def open_store(
 def identity_of(vault: Vault, *, env: Mapping[str, str]) -> Secret:
     """The store's identity, from its MaterialRef.
 
-    A ``file:`` identity's first bytes are read before the file is decoded,
-    so a binary ``age -p`` identity is refused as passphrase-protected rather
-    than as text that is not UTF-8. A file that cannot be opened here is left
-    to :func:`~sopuli.material.resolve`, whose message says why.
+    A ``file:`` identity that is not UTF-8 text is looked at again: if it
+    starts with age's binary header, ``age -p`` made it, and it is refused as
+    passphrase-protected rather than as text that is not UTF-8.
     """
     ref = vault.identity
     assert ref is not None
-    if ref.kind == "file":
-        try:
-            with Path(ref.location).expanduser().open("rb") as handle:
-                head = handle.read(len(_crypto.BINARY_HEADER))
-        except OSError:
-            pass
-        else:
-            _crypto.refuse_binary_identity(head, store=vault.name)
-    return resolve(ref, env=env, where=f"vault \"{vault.name}\" key 'identity'")
+    try:
+        return resolve(ref, env=env, where=f"vault \"{vault.name}\" key 'identity'")
+    except MaterialError:
+        if ref.kind == "file":
+            with contextlib.suppress(OSError):
+                with Path(ref.location).expanduser().open("rb") as handle:
+                    head = handle.read(len(_crypto.BINARY_HEADER))
+                _crypto.refuse_binary_identity(head, store=vault.name)
+        raise
 
 
 @dataclass
 class FileStore:
     """One ``file`` store. See the module note."""
 
-    name: str
     path: Path
     keys: _crypto.Keys = field(repr=False)
     #: ``None`` keeps the default, 10.
@@ -115,22 +127,35 @@ class FileStore:
     #: When a version was written, for ``created_at``. Injectable for tests.
     clock: Callable[[], datetime] = utc_now
 
+    def __post_init__(self) -> None:
+        keep = self.max_versions
+        if keep is not None and (type(keep) is not int or keep < 1):
+            raise StoreError(
+                f'file store "{self.name}": max_versions is not a whole number of at least 1'
+            )
+
+    @property
+    def name(self) -> str:
+        """The store's name in the config, as its keys carry it."""
+        return self.keys.store
+
     def supports(self) -> frozenset[str]:
         return frozenset({VERSIONING, LIST})
 
     def health(self) -> StoreHealth:
         """Whether the file can be read and decrypted with the store's keys.
 
-        Writes nothing. A store with no file yet is well: its first write
-        creates it. A file this run cannot open is ``unreachable``; one it
-        opens and cannot decrypt or read is ``degraded``, and a wrong
+        Writes nothing, and never raises. A store with no file yet is well:
+        its first write creates it. A directory that is missing or cannot be
+        reached, following a link at ``addr``, is ``unreachable``. A file that
+        cannot be read, decrypted or parsed is ``degraded``, and a wrong
         identity says so in ``authenticated``. There is no other clock, so
         ``server_time`` is ``None``.
         """
-        if not self.path.parent.is_dir():
-            return StoreHealth(
-                status=UNREACHABLE, detail=f"the directory of {self.path} does not exist"
-            )
+        try:
+            _disk.check_directory(self.path)
+        except StoreError as error:
+            return StoreHealth(status=UNREACHABLE, detail=_first_line(error))
         try:
             self._load()
         except _crypto.KeysError as error:

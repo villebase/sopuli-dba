@@ -8,8 +8,10 @@ platform-specific test skips with a reason on the other platform.
 from __future__ import annotations
 
 import os
+import secrets
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 import pytest
@@ -67,6 +69,43 @@ def test_a_file_written_by_replace_reads_back(store_file: Path) -> None:
 def test_a_directory_at_addr_is_refused(tmp_path: Path) -> None:
     with pytest.raises(StoreError, match="is a directory, not a file"):
         read(tmp_path)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="named pipes are a POSIX file type")
+def test_a_pipe_at_addr_is_refused_without_opening_it(tmp_path: Path) -> None:
+    """Opening a pipe would wait for a writer, and the run would hang."""
+    pipe = tmp_path / "store.age"
+    # By name: Windows has no mkfifo, and mypy runs there too.
+    make_fifo = getattr(os, "mkfifo")  # noqa: B009
+    make_fifo(pipe, 0o600)
+
+    with pytest.raises(StoreError, match="is not a regular file"):
+        read(pipe)
+
+
+def test_a_long_file_name_can_be_replaced(tmp_path: Path) -> None:
+    """The temporary name has a fixed length, whatever the store's name."""
+    store_file = tmp_path / ("s" * 240)
+
+    replace(store_file, b"one", expected=ABSENT)
+    replace(store_file, b"two", expected=digest_of(b"one"))
+
+    assert read(store_file).data == b"two"
+
+
+def test_a_temporary_name_that_exists_is_left_alone(
+    store_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Created exclusively, and never removed when this run did not create it."""
+    monkeypatch.setattr(secrets, "token_hex", lambda size: "0" * 16)
+    someone_else = store_file.parent / f".sopuli-{'0' * 16}.tmp"
+    someone_else.write_bytes(b"not this run's")
+
+    with pytest.raises(StoreError, match="could not write the file store's file"):
+        replace(store_file, b"ciphertext", expected=ABSENT)
+
+    assert someone_else.read_bytes() == b"not this run's"
+    assert not store_file.exists()
 
 
 @posix_only
@@ -248,6 +287,37 @@ def test_a_link_at_addr_is_followed_and_kept(tmp_path: Path) -> None:
 
     assert link.is_symlink()
     assert target.read_bytes() == b"second"
+
+
+@windows_only
+def test_replace_waits_for_a_reader_to_close_the_file(store_file: Path) -> None:
+    """Windows refuses to replace an open file; a run that is reading the
+    store holds it open for a moment."""
+    replace(store_file, b"one", expected=ABSENT)
+    reader = store_file.open("rb")
+    closer = threading.Timer(0.3, reader.close)
+    closer.start()
+    try:
+        replace(store_file, b"two", expected=digest_of(b"one"))
+    finally:
+        closer.join()
+
+    assert read(store_file).data == b"two"
+
+
+@windows_only
+def test_replace_says_another_program_may_hold_the_file(
+    store_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    replace(store_file, b"one", expected=ABSENT)
+    monkeypatch.setattr(_disk, "REPLACE_WAIT", 0.2)
+
+    with store_file.open("rb"), pytest.raises(StoreError) as caught:
+        replace(store_file, b"two", expected=digest_of(b"one"))
+
+    assert "another program may have the file open" in (caught.value.hint or "")
+    assert read(store_file).data == b"one"
+    assert leftovers(store_file.parent) == []
 
 
 @windows_only

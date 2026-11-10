@@ -5,8 +5,11 @@ encrypts before :func:`replace` and decrypts after :func:`read`.
 
 **P4's check on every read.** The tool creates this file and reads it on every
 run, which is P4's reason for checking the config file, so the file gets the
-config file's check, the owner included (#1415, decision 6). It is made on
-the open file, so the file checked is the file read.
+config file's check (#1415, decision 6). On POSIX it is made on the open
+file, so the file checked is the file read, and it refuses a file another
+user owns. On Windows it walks the file's DACL by path, as it does for the
+config file. Only a regular file is read: a pipe or a device at ``addr`` is
+refused, not opened.
 
 **Owner-only from the moment it exists.** The new file is written beside the
 old one and then replaces it, so a write that fails part way leaves the old
@@ -34,7 +37,9 @@ import contextlib
 import hashlib
 import os
 import secrets
+import stat
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import BinaryIO
@@ -92,18 +97,16 @@ def read(path: Path) -> Read:
     """
     path = _target(path)
     try:
+        # Looked at before it is opened: opening a pipe waits for a writer.
+        _require_regular(path, os.stat(path))
         with path.open("rb") as handle:
-            check_permissions(path, what=WHAT, owner=True, status=os.fstat(handle.fileno()))
+            status = os.fstat(handle.fileno())
+            _require_regular(path, status)
+            check_permissions(path, what=WHAT, owner=True, status=status)
             data = handle.read()
     except FileNotFoundError:
         return Read(data=None, digest=ABSENT)
     except OSError as error:
-        # Windows answers a directory opened as a file with PermissionError.
-        if path.is_dir():
-            raise StoreError(
-                f"the file store's addr {path} is a directory, not a file",
-                hint="set `addr` to the path of the store's file",
-            ) from None
         # A file this user cannot open may be one P4's check refuses, and its
         # refusal says what to fix. Nothing has been read. The config loader
         # does the same.
@@ -116,6 +119,19 @@ def read(path: Path) -> Read:
     return Read(data=data, digest=digest_of(data))
 
 
+def _require_regular(path: Path, status: os.stat_result) -> None:
+    if stat.S_ISDIR(status.st_mode):
+        raise StoreError(
+            f"the file store's addr {path} is a directory, not a file",
+            hint="set `addr` to the path of the store's file",
+        )
+    if not stat.S_ISREG(status.st_mode):
+        raise StoreError(
+            f"the file store's addr {path} is not a regular file",
+            hint="set `addr` to the path of the store's file",
+        )
+
+
 def replace(path: Path, data: bytes, *, expected: str) -> None:
     """Write ``data`` as the file at ``path``, if the file is still what was read.
 
@@ -126,14 +142,25 @@ def replace(path: Path, data: bytes, *, expected: str) -> None:
     """
     path = _target(path)
     directory = path.parent
-    if not directory.is_dir():
+    # os.path, not Path: Path.is_dir raises on EACCES before Python 3.13.
+    if not os.path.isdir(directory):
         raise StoreError(
             f"the directory of the file store's file {path} does not exist",
             hint="create the directory, readable only by the user that runs the tool",
         )
-    temporary = directory / f".{path.name}.{secrets.token_hex(8)}.tmp"
+    # A fixed length, whatever the store's name: a name near the file
+    # system's limit would otherwise be readable and never replaceable.
+    temporary = directory / f".sopuli-{secrets.token_hex(8)}.tmp"
     try:
-        with _create_owner_only(temporary) as handle:
+        created = _create_owner_only(temporary)
+    except OSError as error:
+        # Nothing to remove: a name that existed is not this run's file.
+        raise StoreError(
+            f"could not write the file store's file {path}: {error.strerror or error}",
+            hint=f"nothing was written; {CHECK_ACCESS}",
+        ) from None
+    try:
+        with created as handle:
             # A file object's write writes everything, where os.write may
             # write part.
             handle.write(data)
@@ -148,14 +175,20 @@ def replace(path: Path, data: bytes, *, expected: str) -> None:
                     "was written. Run the command again"
                 ),
             )
-        os.replace(temporary, path)
+        _replace_waiting(temporary, path)
     except BaseException as error:
         with contextlib.suppress(OSError):
             os.unlink(temporary)
         if isinstance(error, OSError):
+            hint = f"nothing was written; {CHECK_ACCESS}"
+            if sys.platform == "win32" and isinstance(error, PermissionError):
+                hint = (
+                    "nothing was written; another program may have the file open, such as "
+                    f"another run or a virus scanner. Run the command again, or {CHECK_ACCESS}"
+                )
             raise StoreError(
                 f"could not write the file store's file {path}: {error.strerror or error}",
-                hint=f"nothing was written; {CHECK_ACCESS}",
+                hint=hint,
             ) from None
         raise
     # The new file is in place. A directory that cannot be flushed, as on
@@ -164,10 +197,35 @@ def replace(path: Path, data: bytes, *, expected: str) -> None:
         _sync_directory(directory)
 
 
+#: How long :func:`replace` waits, in all, for another program on Windows to
+#: close the file.
+REPLACE_WAIT = 2.0
+
+
+def _replace_waiting(temporary: Path, path: Path) -> None:
+    """``os.replace``, waiting a moment on Windows for a handle to close.
+
+    Windows refuses to replace a file another program has open, and a run
+    reading the store or a virus scanner holds it open briefly.
+    """
+    deadline = time.monotonic() + REPLACE_WAIT
+    while True:
+        try:
+            os.replace(temporary, path)
+            return
+        except PermissionError:
+            if sys.platform != "win32" or time.monotonic() >= deadline:
+                raise
+            time.sleep(0.05)
+
+
 def _target(path: Path) -> Path:
     """``path``, or what a symbolic link at ``path`` names, followed to the end."""
+    # os.path, not Path: Path.is_symlink raises on EACCES before Python 3.13.
+    if not os.path.islink(path):
+        return path
     try:
-        return path.resolve() if path.is_symlink() else path
+        return path.resolve()
     except OSError as error:
         raise StoreError(
             f"could not follow the link at the file store's addr {path}: {error.strerror or error}",

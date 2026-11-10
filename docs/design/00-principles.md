@@ -526,10 +526,11 @@ path, with fictional passwords, as `dumps` wrote them:
 ```
 
 - **Each path lists its kept versions, oldest first.** A write adds the next
-  number. Each write prunes every path to `max_versions`, dropping only the
-  oldest, so the numbers are consecutive and the last is the path's current
-  version, and lowering the setting takes old passwords out of the file at
-  the next write. A number is not reused, so a version number names one write
+  number. A write prunes the path it writes to `max_versions`, dropping only
+  the oldest, so the numbers are consecutive and the last is the path's
+  current version. Other paths are left as they are, so a write never takes
+  away a version that another path's `@version=N` pin reads. A lower
+  `max_versions` reaches each path when that path is next written. A number is not reused, so a version number names one write
   for good, and `@version=N` never reads a later write. The one exception is a
   restore from a backup: numbers written since the backup are used again, so
   the restore hint says to check `@version=N` pins. The store has no

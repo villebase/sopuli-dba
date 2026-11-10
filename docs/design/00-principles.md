@@ -466,8 +466,12 @@ that left a lease behind would change the mount a rotation is using.
 | HashiCorp Vault KV v1 | 2 | no versioning → rollback and staging degrade to emulation |
 | OCI Vault / Secrets | 2 | secret bundles with version *stages* (CURRENT/PENDING/PREVIOUS) map cleanly onto rotation |
 | File backend (age-encrypted, [#1415](../decisions/log.md#1415)) | 3 | local dev and CI fixtures; must be obviously non-production |
-| OS keyring | 4 | personal / workstation use |
 | AWS Secrets Manager, Azure Key Vault | later | AWSSM's AWSCURRENT/AWSPENDING is the same shape as OCI |
+
+The OS keyring is not a store backend ([#1373](../decisions/log.md#1373)).
+Only the operator's own login session can read it, so no application and no
+account owner could fetch a password stored there. It holds the tool's own
+credentials instead (the **Keyring** paragraph of P4).
 
 ### Store capability negotiation
 
@@ -904,7 +908,7 @@ Config files are validated against a published JSON Schema. `sopuli config
 validate` is a first-class command and exits non-zero on unknown keys — a typo in
 a credential tool must never be silently ignored.
 
-The schema is `docs/schemas/sopuli-config-3.8.schema.json`. `sopuli/config/schema.py`
+The schema is `docs/schemas/sopuli-config-4.0.schema.json`. `sopuli/config/schema.py`
 generates it from the config layer, so it cannot drift from what the tool
 accepts. It is structural: an editor that uses it catches a typo, and the rules
 that span several keys stay in the validators, where an error can name the key.

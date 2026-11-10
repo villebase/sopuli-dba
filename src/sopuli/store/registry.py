@@ -108,14 +108,12 @@ class Backend:
 #: has never heard of would fail at connect time with a :class:`KeyError`, which
 #: is precisely the traceback rule 2 exists to prevent.
 #:
-#: ``file`` and ``keyring`` have **no extra**, and that is not an oversight.
-#: Neither is built. ``file`` reaches age through ``pyrage``, and the extra
-#: ``sopuli-dba[file]`` installs it (#1415), but the entry names it only when
-#: the store is built (#1372): an install line here would send somebody to pip
-#: for a store that still cannot open.
-#: ``keyring`` is priority 4 and appears in no extras table yet. Until each is
-#: built, ``extra=None`` means "there is nothing to tell you to install", and
-#: asking for one of them fails as *not implemented in this build* rather than
+#: ``file`` has **no extra**, and that is not an oversight: it is not built.
+#: It reaches age through ``pyrage``, and the extra ``sopuli-dba[file]``
+#: installs it (#1415), but the entry names it only when the store is built
+#: (#1372): an install line here would send somebody to pip for a store that
+#: still cannot open. Until then, ``extra=None`` means "there is nothing to
+#: tell you to install", and asking for it fails as *not implemented in this build* rather than
 #: as a pip problem -- which is true, and is the message that does not send
 #: somebody to `pip` for something `pip` cannot fix.
 BACKENDS: dict[str, Backend] = {
@@ -136,7 +134,6 @@ BACKENDS: dict[str, Backend] = {
     # parts of the store, and the store module's absence is what says this
     # build cannot serve `file` yet (#1372).
     "file": Backend(module="sopuli.store.file.store"),
-    "keyring": Backend(module="sopuli.store.keyring"),
 }
 
 
@@ -177,7 +174,7 @@ def installed(backend: Backend) -> bool:
     :func:`sopuli.extras.installed` is the mechanism, shared with the driver
     registry. A backend with no extra is vacuously installed -- there is no
     client to look for -- which keeps ``config validate`` quiet about ``file``
-    and ``keyring`` rather than warning that something unnamed is missing, and
+    rather than warning that something unnamed is missing, and
     the roadmap gap surfaces at :func:`resolve` where it belongs.
     """
     return extras_installed(backend.provides)

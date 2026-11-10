@@ -245,10 +245,11 @@ def test_a_backend_with_no_module_warns_though_pip_cannot_help(
 def test_every_store_this_machine_cannot_serve_is_named(write_config: WriteConfig) -> None:
     """The report `config validate` owes its reader.
 
-    Two of the four types in ``01-configuration.md`` §3a have no module, so a
-    config declaring all four is a config whose stores are half unusable. A
-    narrow reading would report **one** warning. The OCI store has a module, and
-    the tests run with its SDK installed, so it is not named.
+    ``file`` has no module in this build, so a config with two file stores
+    beside a HashiCorp and an OCI one is a config whose stores are half
+    unusable. A narrow reading would report **one** warning, per type rather
+    than per store. The OCI store has a module, and the tests run with its SDK
+    installed, so it is not named.
 
     Asserted as a set rather than a list: the order is the survey's, sorted by
     backend name, and pinning it here would be pinning `doctor`'s table through a
@@ -264,7 +265,9 @@ def test_every_store_this_machine_cannot_serve_is_named(write_config: WriteConfi
             "    compartment_id: ocid1.compartment.oc1..exampleuniqueid\n"
             "    key_id: ocid1.key.oc1..exampleuniqueid\n"
             f"  vault-local:\n{FILE_STORE}"
-            "  vault-desktop:\n    type: keyring\n"
+            "  vault-desktop:\n"
+            "    type: file\n    addr: ~/sopuli/store.age\n"
+            "    identity: { env: SOPULI_FILE_IDENTITY }\n"
         )
     )
     named = {

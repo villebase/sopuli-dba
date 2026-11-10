@@ -98,8 +98,8 @@ def _status(component: Component) -> Cell | str:
     ``not_implemented`` is **dim when nothing is configured and
     :attr:`~sopuli.output.palette.Role.BAD` when something is**, which is the
     only place in this palette where a status's role depends on another column.
-    It earns the exception: `file` and `keyring` are unimplemented on
-    every run of this build, so colouring them would make every `doctor` look
+    It earns the exception: `file` is unimplemented on
+    every run of this build, so colouring it would make every `doctor` look
     broken to somebody who configured none of them -- while a *configured*
     backend this build has no module for is the run's actual failure, exit 9,
     and nothing anybody installs will fix it.

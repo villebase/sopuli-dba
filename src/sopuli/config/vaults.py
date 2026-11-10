@@ -142,7 +142,19 @@ PATCHABLE_KEYS = tuple(key for key in VAULT_KEYS if key not in UNPATCHABLE_KEYS)
 #: The backends P2 puts in scope. `aws`/`azure` are listed there as "later" and
 #: are absent on purpose: a config that declares a store the tool cannot reach
 #: should fail while it is being written, not at the first rotation.
-VAULT_TYPES = ("hashicorp", "oci", "file", "keyring")
+VAULT_TYPES = ("hashicorp", "oci", "file")
+
+#: Store types a config could once declare: why each was removed, and what to
+#: write instead. A config that still names one is refused with both, so the
+#: refusal does not read as a typo (`01-configuration.md` §9b).
+REMOVED_TYPES = {
+    "keyring": (
+        "only the operator's own login session could read a password it stored (#1373)",
+        "use a hashicorp, oci or file store. The OS keyring still holds the tool's "
+        "own credentials: a vault token as `token: { keyring: NAME }`, an admin "
+        "password as `method: keyring`",
+    ),
+}
 
 #: The store types whose rotated refs must name a field, must not stage into a
 #: key the payload mechanism owns (``sopuli/payload.py``), and must not share a
@@ -155,11 +167,6 @@ VAULT_TYPES = ("hashicorp", "oci", "file", "keyring")
 #: beside the stamps that describe it, so a rotated OCI ref names a field. And a
 #: document holding more than one account stages in payload fields even on OCI
 #: (UC-1 §3), so the reserved keys and the collision rule apply there (#1137).
-#:
-#: ``keyring`` is deliberately absent. P2's capability table has no row for it,
-#: it has no store adapter, and what a single-string-per-entry backend does about
-#: staging is P2's call, not a validation function's. Absent means the checks do
-#: not fire, which is the reversible direction.
 PAYLOAD_RULE_TYPES = frozenset({"hashicorp", "file", "oci"})
 
 #: The store types that keep UC-1's stages as their own versions (P2's
@@ -249,6 +256,14 @@ def build_vaults(document: dict[str, Any]) -> tuple[Vault, ...]:
 def _build_vault(name: str, raw: Any, *, at: KeyPath) -> Vault:
     entry = mapping(raw, at=at)
     reject_unknown_keys(entry, allowed=VAULT_KEYS, at=at)
+    written = entry.get("type")
+    if isinstance(written, str) and written in REMOVED_TYPES:
+        reason, instead = REMOVED_TYPES[written]
+        raise ConfigError(
+            f"the store type {written!r} was removed: {reason}",
+            at=at.key("type"),
+            hint=instead,
+        )
     type_ = choice(
         required_string(entry, "type", at=at, hint=f"one of: {', '.join(VAULT_TYPES)}"),
         allowed=VAULT_TYPES,

@@ -544,8 +544,8 @@ Said plainly rather than left for you to discover:
   about each other. If you want the pods restarted automatically, that is ESO's
   feature, not this project's.
 - **sopuli writes to two of the stores ESO can read:** HashiCorp Vault and OCI
-  Vault (section 8). `file` and `keyring` are accepted in a config file and
-  report that this build has no module for them.
+  Vault (section 8). `file` is accepted in a config file and reports that
+  this build has no module for it.
 - **The manifests are checked against one ESO version, and that version will
   move.** Sections 7 and 8 have the details of what was run. It was ESO 2.10.0; ESO's
   own API has changed between major versions before, and `apiVersion:

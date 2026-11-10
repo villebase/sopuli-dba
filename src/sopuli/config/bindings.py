@@ -577,8 +577,7 @@ def _check_stageable(
     The store types are :data:`~sopuli.config.vaults.PAYLOAD_RULE_TYPES`. OCI
     is one, although it stages natively: a version's content holds the password
     beside the stamps that describe it (#1137), so a rotated OCI ref
-    names a field too. A store this layer has no capability row for, such as
-    ``keyring``, is left alone. An OCI ref must also be an OCI secret name; see
+    names a field too. An OCI ref must also be an OCI secret name; see
     :func:`check_for_store`.
     """
     if secret is None or store is None:

@@ -11,7 +11,7 @@ Put the binding keys at the top level and the file reads like a straightforward
 target list. This is the shape most users will ever need.
 
 ```yaml
-# yaml-language-server: $schema=./sopuli-config-3.8.schema.json
+# yaml-language-server: $schema=./sopuli-config-4.0.schema.json
 version: 1
 
 vaults: {}          # named secret stores
@@ -487,7 +487,7 @@ PDB per tenant across three environments, HashiCorp Vault as master. It needs no
 `applications:` section.
 
 ```yaml
-# yaml-language-server: $schema=./sopuli-config-3.8.schema.json
+# yaml-language-server: $schema=./sopuli-config-4.0.schema.json
 version: 1
 
 runtime:
@@ -846,7 +846,7 @@ config file can be read without knowing what environment it will be read in.
 
 | Key | Meaning |
 |---|---|
-| `type` | **required** — the backend: `hashicorp`, `oci`, `file`, `keyring` (P2). AWS and Azure are listed there as "later" and are refused until they exist. A declared type is validated here and *resolved* to a client only when something connects — see below (ADR-006) |
+| `type` | **required** — the backend: `hashicorp`, `oci`, `file` (P2). AWS and Azure are listed there as "later" and are refused until they exist. `keyring` was removed ([#1373](../decisions/log.md#1373)) and is refused with a message that says so; the OS keyring holds the tool's own credentials instead (§3a). A declared type is validated here and *resolved* to a client only when something connects — see below (ADR-006) |
 | `addr` | backend address, where the backend has one. For `hashicorp`, must be `https://`, except to a loopback host — see *Plain HTTP* below. For `file`, the path of the store's file, and **required** there from some layer. It must be absolute or start with `~`: a relative path would name another file from another working directory, and a missing file is an empty store. Refused on an `oci` store |
 | `mount` | KV mount point (HashiCorp). Refused on an `oci` or `file` store |
 | `kv_version` | `1` or `2` — different backends with different capabilities, not a version to branch on casually (P2). Refused on an `oci` or `file` store |
@@ -940,8 +940,7 @@ file is written. An identity that differs by machine is written as
 are not applied to a `file` store, which would otherwise take a URL as its
 path; the run warns with `SOPULI-W038`, as for an OCI store. The backend is
 not built yet (#1372): a run that reaches a `file` store is still refused
-with `SOPULI-20005`. Which keys a `keyring` store reads is decided when that
-backend is built.
+with `SOPULI-20005`.
 
 #### A declared backend that is not installed (ADR-006)
 
@@ -963,7 +962,7 @@ What changes is where it stops:
 | Moment | With the backend missing |
 |---|---|
 | load, `config validate`, `config show`, `target list` | works. `config validate` adds a **warning** (§9, §10), and exits 0 |
-| any command that resolves the store to a client | **error**, `error.category: "config"`, code `SOPULI-20001`, exit 9 (`03-json-output.md` §3). A `type` this build has no module for, today `file` and `keyring`, is `SOPULI-20005` instead, whether or not its client is installed. Its message has no install line, because installing nothing fixes it |
+| any command that resolves the store to a client | **error**, `error.category: "config"`, code `SOPULI-20001`, exit 9 (`03-json-output.md` §3). A `type` this build has no module for, today `file`, is `SOPULI-20005` instead, whether or not its client is installed. Its message has no install line, because installing nothing fixes it |
 | `sopuli doctor` | **failure**. Its question is "can I reach my vaults", and this is a no |
 
 ```
@@ -3746,7 +3745,7 @@ error message for a file this long.
 ## 9b. The published schema
 
 P3 requires a published JSON Schema. It is
-[`docs/schemas/sopuli-config-3.8.schema.json`](../schemas/sopuli-config-3.8.schema.json),
+[`docs/schemas/sopuli-config-4.0.schema.json`](../schemas/sopuli-config-4.0.schema.json),
 Draft 2020-12, and it exists for the editor rather than for the tool: pointed at
 from a YAML language server, it gives completion and inline errors while somebody
 is editing a 130-line file, which is worth more than the validation itself.
@@ -3757,7 +3756,7 @@ the same constants the builders validate with — `TARGET_KEYS`, `VAULT_TYPES`,
 a section's keys and its type table disagree. Regenerate with:
 
 ```
-python -m sopuli.config.schema > docs/schemas/sopuli-config-3.8.schema.json
+python -m sopuli.config.schema > docs/schemas/sopuli-config-4.0.schema.json
 ```
 
 `tests/config/test_schema.py` fails when the committed file is not what the model
@@ -3840,7 +3839,7 @@ A schema nothing is pointed at is a file in a directory. The association is made
 from the config file itself, with a comment on the first line:
 
 ```yaml
-# yaml-language-server: $schema=./sopuli-config-3.8.schema.json
+# yaml-language-server: $schema=./sopuli-config-4.0.schema.json
 version: 1
 ```
 
@@ -3851,7 +3850,7 @@ description the generator wrote for it, and an unknown key is underlined where i
 was typed.
 
 **The path is relative to the YAML file**, not to the repository. Copy the schema
-next to the config, or point at it where it lives — `$schema=../sopuli-dba/docs/schemas/sopuli-config-3.8.schema.json`
+next to the config, or point at it where it lives — `$schema=../sopuli-dba/docs/schemas/sopuli-config-4.0.schema.json`
 is as valid as the form above.
 
 **The `$id` inside the schema is an identifier, not an address.** It reads like a

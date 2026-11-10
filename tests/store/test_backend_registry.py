@@ -107,14 +107,13 @@ def test_a_backend_whose_client_is_absent_is_not_installed() -> None:
 
 
 def test_a_backend_with_no_extra_is_vacuously_installed() -> None:
-    """`file` and `keyring` have no client to look for (ADR-006's named gap).
+    """`file` has no client to look for (ADR-006's named gap).
 
     Vacuously true rather than false, so `config validate` stays quiet about
-    them instead of warning that something unnamed is missing. Their real state
+    it instead of warning that something unnamed is missing. Its real state
     -- no module in this build -- is `resolve`'s to report.
     """
     assert installed(BACKENDS["file"])
-    assert installed(BACKENDS["keyring"])
 
 
 def test_installed_does_not_import_the_client(monkeypatch: pytest.MonkeyPatch) -> None:

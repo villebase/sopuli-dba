@@ -117,18 +117,33 @@ def test_a_backend_that_is_only_planned_is_refused() -> None:
     assert "unknown vault type 'aws'" in str(caught.value)
 
 
-@pytest.mark.parametrize("kind", ["hashicorp", "oci", "file", "keyring"])
+@pytest.mark.parametrize("kind", ["hashicorp", "oci", "file"])
 def test_every_backend_p2_puts_in_scope_is_accepted(kind: str) -> None:
     entries = {"oci": OCI, "file": FILE}
     entry = entries.get(kind, {"type": kind})
     assert only(**{"store": entry}).type == kind
 
 
+def test_a_removed_type_is_refused_with_why() -> None:
+    """`keyring` was a store type until #1373. A config that still declares it
+    is told the type was removed and what to write, so the refusal does not
+    read as a typo (`01-configuration.md` §9b)."""
+    with pytest.raises(ConfigError) as caught:
+        build_vaults(document(**{"vault-desktop": {"type": "keyring"}}))
+
+    assert str(caught.value.at) == "vaults.vault-desktop.type"
+    assert "the store type 'keyring' was removed" in str(caught.value)
+    assert "#1373" in str(caught.value)
+    assert caught.value.hint is not None
+    assert "token: { keyring: NAME }" in caught.value.hint
+
+
 def test_only_type_is_required() -> None:
-    """A keyring backend has no address and no mount. P2 puts per-backend
-    validation behind the store interface, so demanding a HashiCorp shape of
-    every entry would be the top-level vendor bias P1 forbids."""
-    vault = only(**{"local": {"type": "keyring"}})
+    """An entry may leave its address, mount and auth to a profile or
+    `defaults:` layer. P2 puts per-backend validation behind the store
+    interface, so demanding a full shape of every entry here would be the
+    top-level vendor bias P1 forbids."""
+    vault = only(**{"local": {"type": "hashicorp"}})
 
     assert vault.addr is None
     assert vault.auth is None
@@ -522,9 +537,9 @@ def test_the_transport_keys_are_read() -> None:
 
 
 def test_the_transport_keys_are_all_optional() -> None:
-    """A keyring backend has no address and no TLS. Requiring any of these would be
-    the top-level vendor bias P1 forbids, one level down."""
-    [vault] = build_vaults({"vaults": {"local": {"type": "keyring"}}})
+    """A file store has no namespace, timeout or TLS. Requiring any of these
+    would be the top-level vendor bias P1 forbids, one level down."""
+    [vault] = build_vaults({"vaults": {"local": FILE}})
 
     assert (vault.namespace, vault.timeout_s, vault.tls) == (None, None, None)
 

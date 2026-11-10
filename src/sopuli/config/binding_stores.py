@@ -43,21 +43,30 @@ consulted -- consistent, because this only runs where that chain found nothing.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 
 from sopuli.config.bindings import (
+    admin_store_in_file,
     application_locations,
     check_for_store,
     check_production_stores,
     check_stages_do_not_collide,
+    refuse_non_production_store,
 )
 from sopuli.config.errors import ROOT, ConfigError
-from sopuli.config.model import Binding, Config
+from sopuli.config.expansion import declared_at
+from sopuli.config.model import Binding, Config, ExpandedTarget
 from sopuli.config.secret_refs import normalise_path
 from sopuli.config.vault_env import DEFAULT_STORE_VARIABLE, NO_ENV
 
-__all__ = ["NoStoreError", "complete", "refuse_unresolved", "unresolved"]
+__all__ = [
+    "NoStoreError",
+    "complete",
+    "refuse_non_production_admin_stores",
+    "refuse_unresolved",
+    "unresolved",
+]
 
 
 class NoStoreError(ConfigError):
@@ -118,6 +127,10 @@ def complete(
     ``config``, because they are about one binding and the run uses only these.
     """
     candidate = _candidate(config, env=env)
+    if check_refs:
+        # At plan time, for the admin passwords too, not only when a target is
+        # connected (invariant 4, #1435).
+        refuse_non_production_admin_stores(config, config.expanded_targets, env=env)
     if candidate is None or not any(_needs_store(binding) for binding in config.bindings):
         return config
 
@@ -139,6 +152,37 @@ def complete(
         _check_completed(candidate, config)
         _check_estate_stages(candidate, estate, completed)
     return completed
+
+
+def refuse_non_production_admin_stores(
+    config: Config, targets: Sequence[ExpandedTarget], *, env: Mapping[str, str]
+) -> None:
+    """§10 on an admin password whose store the run chose (#1435).
+
+    The file's part of an ``admin.auth.secret``'s chain is checked at load. Where
+    it names nothing, :func:`sopuli.admin.store_name` falls back to
+    ``SOPULI_VAULT`` and then the active profile's ``vault:``, the order
+    :func:`_candidate` uses, so the candidate here is the store that run opens.
+    Called before a command plans, and again where the admin password is read,
+    so a command that plans elsewhere is still refused before the store opens.
+    """
+    candidate = _candidate(config, env=env)
+    if candidate is None:
+        return
+    for expanded in targets:
+        admin = expanded.target.admin
+        ref = None if admin is None or admin.auth is None else admin.auth.secret
+        if ref is None or admin_store_in_file(expanded, ref, config) is not None:
+            continue
+        refuse_non_production_store(
+            config,
+            candidate.name,
+            target=expanded,
+            what="its admin password",
+            verb="is read from",
+            at=declared_at(expanded, "admin").key("auth").key("secret"),
+            chosen_by=candidate.location,
+        )
 
 
 def _filled(config: Config, candidate: _Candidate) -> Config:

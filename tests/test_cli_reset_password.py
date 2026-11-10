@@ -311,7 +311,10 @@ def test_a_prod_password_is_not_delivered_into_a_non_production_store(
 
     assert result.exception.exit_code == ExitCode.CONFIG_INVALID
     rendered = str(result.exception)
-    assert "the delivered password on target 'tier1-oracle'" in rendered
+    assert (
+        "the delivered password on target 'tier1-oracle' would be written into vault "
+        "'vault-scratch'"
+    ) in rendered
     assert "vault 'vault-scratch', which is marked `non_production: true`" in rendered
     assert "defaults.vault" in rendered
 

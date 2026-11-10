@@ -303,6 +303,39 @@ def test_a_profile_may_not_either() -> None:
     assert "profiles.scratch.vault chose that store" in raised.value.hint
 
 
+def test_a_prod_admin_password_from_a_run_chosen_scratch_store_is_refused_at_plan_time() -> None:
+    """Invariant 4 (#1435): the admin store a run chooses is refused while the
+    command plans, before any target is connected, not when the password is
+    read. The file has no bindings, so this holds where nothing needs filling."""
+    unnamed = build_config(
+        {
+            "version": 1,
+            "vaults": {**VAULTS, "vault-scratch": {"type": "hashicorp", "non_production": True}},
+            "targets": [
+                {
+                    "name": "plain",
+                    "type": "oracle",
+                    "dsn": "h:1521/x",
+                    "environment": "prod",
+                    "admin": {
+                        "username": "C##SOPULI_SVC",
+                        "auth": {"method": "vault", "secret": "ops/dba#password"},
+                    },
+                }
+            ],
+        }
+    )
+
+    with pytest.raises(ConfigError) as raised:
+        binding_stores.complete(unnamed, estate=unnamed, env={"SOPULI_VAULT": "vault-scratch"})
+
+    assert "its admin password on target 'plain' is read from vault 'vault-scratch'" in str(
+        raised.value
+    )
+    assert raised.value.hint is not None
+    assert "SOPULI_VAULT chose that store" in raised.value.hint
+
+
 def test_a_production_store_from_the_environment_passes() -> None:
     config = _prod_with_a_scratch_store()
 

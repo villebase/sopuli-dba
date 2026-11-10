@@ -429,14 +429,23 @@ def test_a_dev_target_may_use_a_non_production_store() -> None:
 #: get one (#1435), and the key the error points at: the one that chose it.
 INHERITED = {
     "defaults": ({"defaults": {"vault": "local"}}, "defaults.vault"),
-    "application entry": ({"application": {"vault": "local"}}, "applications[0]"),
+    "application entry": ({"application": {"vault": "local"}}, "applications[0].vault"),
     "ref prefix": (
         {"application": {"secret_template": "local:apps/{account}#password"}},
         "applications[0]",
     ),
     "override": (
         {"application": {"overrides": [{"where": {"env": "prod"}, "vault": "local"}]}},
-        "applications[0]",
+        "applications[0].overrides[0].vault",
+    ),
+    # An override for another environment chose nothing here: the error names
+    # the key that did.
+    "defaults, beside an override that does not apply": (
+        {
+            "defaults": {"vault": "local"},
+            "application": {"overrides": [{"where": {"env": "dev"}, "vault": "vault-dev"}]},
+        },
+        "defaults.vault",
     ),
 }
 

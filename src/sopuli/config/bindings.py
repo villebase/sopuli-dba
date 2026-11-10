@@ -624,19 +624,22 @@ def check_production_stores(
 
     ``bindings`` defaults to the config's. :func:`sopuli.config.binding_stores.complete`
     passes the ones a profile or ``SOPULI_VAULT`` filled in, with ``chosen_by``
-    naming which. Those layers fill an admin ref's store where the run opens it,
-    so that one is checked there, through :func:`refuse_non_production_store`.
+    naming which. An admin ref's store from those layers is checked by
+    :func:`sopuli.config.binding_stores.refuse_non_production_admin_stores`.
     """
     targets = {expanded.name: expanded for expanded in config.expanded_targets}
     for binding in config.bindings if bindings is None else bindings:
         expanded = targets.get(binding.target)
         if expanded is None or binding.vault is None:
             continue
+        if not is_refused_store(config, binding.vault, expanded):
+            continue
         refuse_non_production_store(
             config,
             binding.vault,
             target=expanded,
             what=f"the password of {binding.account}",
+            verb="would be kept in",
             at=ROOT if chosen_by is not None else _binding_store_at(config, binding, expanded),
             chosen_by=chosen_by,
         )
@@ -653,8 +656,16 @@ def check_production_stores(
             store,
             target=expanded,
             what="its admin password",
+            verb="is read from",
             at=declared_at(expanded, "admin").key("auth").key("secret"),
         )
+
+
+def is_refused_store(config: Config, store: str, target: ExpandedTarget) -> bool:
+    """Whether §10 refuses ``store`` for a password of ``target`` (#1435)."""
+    return target.target.environment == PRODUCTION and any(
+        vault.name == store and vault.non_production for vault in config.vaults
+    )
 
 
 def refuse_non_production_store(
@@ -663,22 +674,20 @@ def refuse_non_production_store(
     *,
     target: ExpandedTarget,
     what: str,
+    verb: str,
     at: KeyPath,
     chosen_by: str | None = None,
 ) -> None:
-    """Refuse ``store`` for ``what`` on ``target`` if the target is `prod` and
-    the store is marked ``non_production`` (§10, #1435).
+    """Refuse ``store`` for ``what`` on ``target`` if :func:`is_refused_store`.
 
-    ``chosen_by`` names a run layer, a profile's ``vault:`` or ``SOPULI_VAULT``,
-    when that is what chose the store. ``SOPULI_VAULT`` has no line in the file,
-    so the hint names it, as :mod:`sopuli.config.binding_stores`'s other
-    refusals do.
+    ``verb`` says what happens to the password there, such as "would be kept
+    in" or "is read from". ``chosen_by`` names a run layer, a profile's
+    ``vault:`` or ``SOPULI_VAULT``, when that is what chose the store.
+    ``SOPULI_VAULT`` has no line in the file, so the hint names it, as
+    :mod:`sopuli.config.binding_stores`'s other refusals do.
     """
-    if target.target.environment != PRODUCTION:
+    if not is_refused_store(config, store, target):
         return
-    if not any(vault.name == store and vault.non_production for vault in config.vaults):
-        return
-    verb = "would be kept in" if what.startswith("the password") else "is read from"
     message = (
         f"{what} on target {target.name!r} {verb} vault {store!r}, which is marked "
         f"`non_production: true`, and the target is {PRODUCTION}"
@@ -706,10 +715,10 @@ def admin_store_in_file(expanded: ExpandedTarget, ref: SecretRef, config: Config
 def _binding_store_at(config: Config, binding: Binding, expanded: ExpandedTarget) -> KeyPath:
     """The line that chose a binding's store, for the error to point at.
 
-    The ref's prefix, the entry's ``vault:`` or an override's are the
-    application entry's. Otherwise the store came from the target or from
-    ``defaults.vault``, and the error names that key, so an operator does not
-    edit an entry that never named a store.
+    :func:`_vault_for`'s order: the ref's prefix (the application entry), the
+    last override that applies to this target and sets ``vault:``, the
+    entry's ``vault:``, the target's, then ``defaults.vault``. Only called
+    when refusing, so a load that refuses nothing pays nothing for it.
     """
     application = next(
         (one for one in config.applications if one.name == binding.application), None
@@ -719,10 +728,11 @@ def _binding_store_at(config: Config, binding: Binding, expanded: ExpandedTarget
         return entry
     if binding.secret is not None and binding.secret.vault is not None:
         return entry
-    if application.vault is not None or any(
-        override.vault is not None for override in application.overrides
-    ):
-        return entry
+    for position, override in reversed(_patches_for(application, expanded)):
+        if override.vault is not None:
+            return entry.key("overrides").index(position).key("vault")
+    if application.vault is not None:
+        return entry.key("vault")
     if expanded.target.vault is not None:
         return declared_at(expanded, "vault")
     return ROOT.key("defaults").key("vault")

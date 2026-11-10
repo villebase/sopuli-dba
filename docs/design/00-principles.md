@@ -553,8 +553,11 @@ path, with fictional passwords, as `dumps` wrote them:
   version has moved since. This check is not a compare-and-set either, and
   the store reports no `cas`.
 - **Every read gets P4's check**, as the config file does: a store file that
-  someone other than its owner can reach, or that another user owns, is
-  refused before it is decrypted.
+  someone other than its owner can reach is refused before it is decrypted,
+  and on POSIX so is one owned by a user other than the tool's own or root,
+  as for the config file. Only a regular file is
+  read: a pipe or a device at `addr` is refused before anything is read
+  from it, without waiting for a writer.
 - **`data` is a JSON object of plain values.** A value JSON cannot hold as it
   is, such as a key that is not text, a number that is not finite, text that is
   not valid UTF-8, or a subclass of a list, a tuple or a dict, is refused at the

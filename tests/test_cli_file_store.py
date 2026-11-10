@@ -23,6 +23,7 @@ from sopuli.config.model import MaterialRef, Vault
 from sopuli.diagnostics import FILE_STORE_IN_USE, WARNINGS
 from sopuli.exit_codes import ExitCode
 from sopuli.invocation import Invocation
+from sopuli.store.file._store import open_store
 
 WriteConfig = Callable[[str], Path]
 
@@ -121,7 +122,17 @@ def test_creds_generate_stages_in_a_file_store(
     assert len(warned(document)) == 1
     raw = (tmp_path / "acme-dev.age").read_bytes()
     assert raw.startswith(b"age-encryption.org/v1")
-    assert b"acme_app_user" not in raw
+    # Decrypted with the run's own identity: one version, holding a pending
+    # password and no current one yet.
+    store = open_store(_vault("acme-dev", tmp_path), env={VARIABLE: identity})
+    # The document, and the advisory lock record the run took on it.
+    assert store.list("") == ("acme/dev/db", "locks/acme/dev/db")
+    stored = store.read("acme/dev/db")
+    assert stored is not None
+    assert stored.version == 1
+    staged = json.dumps(stored.data)
+    assert '"pending"' in staged
+    assert '"current"' not in staged
 
 
 def test_a_changing_command_needs_advisory_only_locking(

@@ -5222,13 +5222,13 @@ def _stores_for(names: set[str], config: Config, *, run: Invocation) -> Mapping[
 
 
 def _warn_if_file_store(vault: Vault, run: Invocation) -> None:
-    """``SOPULI-W070`` for a ``file`` store this run opened, once per store."""
-    if vault.type != "file":
-        return
-    warning = file_store_in_use(vault.name)
-    if any(one.message == warning.message for one in run.document.diagnostics):
-        return
-    run.document.warn_in_text(warning)
+    """``SOPULI-W070`` for a ``file`` store this run has just opened.
+
+    Called once per store: `_stores_for` calls it only when it opens a store
+    the run has not opened, and `doctor` once for each store its survey opened.
+    """
+    if vault.type == "file":
+        run.document.warn_in_text(file_store_in_use(vault.name))
 
 
 def _staged_stores(stores: Mapping[str, SecretStore], run: Invocation) -> Mapping[str, SecretStore]:

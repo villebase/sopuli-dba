@@ -879,8 +879,9 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
         ),
         FILE_STORE_IN_USE: (
             "The run opened a `file` store: one age-encrypted file, for local development "
-            "and CI. It is not for production: it has no compare-and-set and no lock, and "
-            "the file is the only copy of what it holds. One entry per file store the run "
+            "and CI. It is not for production: it has no compare-and-set, so its lock is "
+            "advisory only, and the file is the only copy of what it holds. One entry per "
+            "file store the run "
             "opens, from every command that opens one."
         ),
         CONSTRAINTS_UNREAD: (

@@ -1,7 +1,8 @@
 """The ``file`` store: one age-encrypted file per store (#1372, #1415).
 
 Not built yet. The document format (:mod:`._document`), the encryption
-(:mod:`._crypto`) and the file on disk (:mod:`._disk`) are here. The registry
+(:mod:`._crypto`), the file on disk (:mod:`._disk`) and the store that joins
+them (:mod:`._store`) are here. The registry
 names ``sopuli.store.file.store``, which a later part of #1372 adds; until it
 exists, a run that reaches a ``file`` store is refused with ``SOPULI-20005``,
 and ``config validate`` and ``doctor`` say this build cannot serve it.

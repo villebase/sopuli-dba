@@ -546,6 +546,12 @@ path, with fictional passwords, as `dumps` wrote them:
   it read, by SHA-256, and refuses if another writer changed, created or
   removed it meanwhile. This is not a lock: two runs that compare at the same
   moment can both replace.
+- **Every call reads the file afresh.** A write reads the file, adds a
+  version to the one path it writes and replaces the file, so another run's
+  write to another path in the meantime is kept. A write that carries a
+  `cas`, as the credential commands' writes do, is refused when the path's
+  version has moved since. This check is not a compare-and-set either, and
+  the store reports no `cas`.
 - **Every read gets P4's check**, as the config file does: a store file that
   someone other than its owner can reach, or that another user owns, is
   refused before it is decrypted.

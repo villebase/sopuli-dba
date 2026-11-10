@@ -6,6 +6,8 @@ are generated per test, so no key is written into the repository.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import pytest
 
 pyrage = pytest.importorskip("pyrage", reason="the file extra is not installed")
@@ -281,7 +283,7 @@ def test_every_error_names_the_store() -> None:
     secret, _ = new_identity()
     other, _ = new_identity()
     sealed = seal(PLAINTEXT, keys(Secret(secret), None, store=STORE))
-    failures = [
+    failures: list[Callable[[], object]] = [
         lambda: load_identity(Secret(""), store=STORE),
         lambda: load_identity(Secret("AGE-PLUGIN-X-1QQQQ\n"), store=STORE),
         lambda: load_identity(Secret("-----BEGIN AGE ENCRYPTED FILE-----\n"), store=STORE),

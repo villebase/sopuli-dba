@@ -45,6 +45,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 
 from sopuli import os_keyring
+from sopuli.config.bindings import admin_store_in_file
 from sopuli.config.errors import ConfigError, KeyPath
 from sopuli.config.expansion import declared_at
 from sopuli.config.model import AdminAuth, Config, ExpandedTarget, MaterialRef
@@ -325,12 +326,9 @@ def store_name(
     turns into a refusal: a target declaring ``method: vault`` with no store
     anywhere has named a credential nobody can fetch.
     """
-    if ref.vault is not None:
-        return ref.vault
-    if target.target.vault is not None:
-        return target.target.vault
-    if config.defaults.vault is not None:
-        return config.defaults.vault
+    in_file = admin_store_in_file(target, ref, config)
+    if in_file is not None:
+        return in_file
     asked = env.get(DEFAULT_STORE_VARIABLE, "")
     if asked:
         return asked

@@ -54,7 +54,7 @@ from sopuli.config.products import (
     refuse_a_bare_mysql_account,
     refuse_a_container_clause,
 )
-from sopuli.config.references import dangling
+from sopuli.config.references import PRODUCTION, dangling
 from sopuli.config.secret_refs import (
     FIELD_SEPARATOR,
     POINTER_SEPARATOR,
@@ -606,6 +606,138 @@ def check_for_store(secret: SecretRef, store_type: str, *, at: KeyPath) -> None:
         stage_layout(secret, at=at)
 
 
+def check_production_stores(
+    config: Config,
+    bindings: Sequence[Binding] | None = None,
+    *,
+    chosen_by: str | None = None,
+) -> None:
+    """§10: a store marked ``non_production`` may not hold a `prod` target's passwords.
+
+    `references._check_non_production_vaults` refuses a `prod` target whose own
+    ``vault:`` names such a store. This checks the store each password actually
+    goes to, wherever it was chosen (#1435): a binding's store comes from the
+    ref's prefix, the application entry, an override, the target or
+    ``defaults.vault``, and an ``admin.auth.secret``'s from its prefix, the
+    target or ``defaults.vault``. A target whose own key is fine can still get
+    a non-production store from any of the others.
+
+    ``bindings`` defaults to the config's. :func:`sopuli.config.binding_stores.complete`
+    passes the ones a profile or ``SOPULI_VAULT`` filled in, with ``chosen_by``
+    naming which. An admin ref's store from those layers is checked by
+    :func:`sopuli.config.binding_stores.refuse_non_production_admin_stores`.
+    """
+    targets = {expanded.name: expanded for expanded in config.expanded_targets}
+    for binding in config.bindings if bindings is None else bindings:
+        expanded = targets.get(binding.target)
+        if expanded is None or binding.vault is None:
+            continue
+        if not is_refused_store(config, binding.vault, expanded):
+            continue
+        refuse_non_production_store(
+            config,
+            binding.vault,
+            target=expanded,
+            what=f"the password of {binding.account}",
+            verb="would be kept in",
+            at=ROOT if chosen_by is not None else _binding_store_at(config, binding, expanded),
+            chosen_by=chosen_by,
+        )
+    if chosen_by is not None:
+        return
+    for expanded in config.expanded_targets:
+        admin = expanded.target.admin
+        ref = None if admin is None or admin.auth is None else admin.auth.secret
+        store = None if ref is None else admin_store_in_file(expanded, ref, config)
+        if store is None:
+            continue
+        refuse_non_production_store(
+            config,
+            store,
+            target=expanded,
+            what="its admin password",
+            verb="is read from",
+            at=declared_at(expanded, "admin").key("auth").key("secret"),
+        )
+
+
+def is_refused_store(config: Config, store: str, target: ExpandedTarget) -> bool:
+    """Whether §10 refuses ``store`` for a password of ``target`` (#1435)."""
+    return target.target.environment == PRODUCTION and any(
+        vault.name == store and vault.non_production for vault in config.vaults
+    )
+
+
+def refuse_non_production_store(
+    config: Config,
+    store: str,
+    *,
+    target: ExpandedTarget,
+    what: str,
+    verb: str,
+    at: KeyPath,
+    chosen_by: str | None = None,
+) -> None:
+    """Refuse ``store`` for ``what`` on ``target`` if :func:`is_refused_store`.
+
+    ``verb`` says what happens to the password there, such as "would be kept
+    in" or "is read from". ``chosen_by`` names a run layer, a profile's
+    ``vault:`` or ``SOPULI_VAULT``, when that is what chose the store.
+    ``SOPULI_VAULT`` has no line in the file, so the hint names it, as
+    :mod:`sopuli.config.binding_stores`'s other refusals do.
+    """
+    if not is_refused_store(config, store, target):
+        return
+    message = (
+        f"{what} on target {target.name!r} {verb} vault {store!r}, which is marked "
+        f"`non_production: true`, and the target is {PRODUCTION}"
+    )
+    if chosen_by is not None:
+        hint = (
+            f"{chosen_by} chose that store; name a production store for it in the file, "
+            "or choose another for this run"
+        )
+    else:
+        hint = "keep it in a production store, or drop the marking if it is wrong"
+    raise ConfigError(message, at=at, hint=hint)
+
+
+def admin_store_in_file(expanded: ExpandedTarget, ref: SecretRef, config: Config) -> str | None:
+    """The store an ``admin.auth.secret`` names, as far as the file goes.
+
+    The ref's prefix, the target's ``vault:``, then ``defaults.vault``.
+    :func:`sopuli.admin.store_name` adds the run's layers after these, and this
+    module's checks use the file's part alone, so the three cannot drift apart.
+    """
+    return ref.vault or expanded.target.vault or config.defaults.vault
+
+
+def _binding_store_at(config: Config, binding: Binding, expanded: ExpandedTarget) -> KeyPath:
+    """The line that chose a binding's store, for the error to point at.
+
+    :func:`_vault_for`'s order: the ref's prefix (the application entry), the
+    last override that applies to this target and sets ``vault:``, the
+    entry's ``vault:``, the target's, then ``defaults.vault``. Only called
+    when refusing, so a load that refuses nothing pays nothing for it.
+    """
+    application = next(
+        (one for one in config.applications if one.name == binding.application), None
+    )
+    entry = application_locations(config).get(binding.application, ROOT)
+    if application is None:
+        return entry
+    if binding.secret is not None and binding.secret.vault is not None:
+        return entry
+    for position, override in reversed(_patches_for(application, expanded)):
+        if override.vault is not None:
+            return entry.key("overrides").index(position).key("vault")
+    if application.vault is not None:
+        return entry.key("vault")
+    if expanded.target.vault is not None:
+        return declared_at(expanded, "vault")
+    return ROOT.key("defaults").key("vault")
+
+
 def check_admin_refs(config: Config) -> None:
     """An ``admin.auth.secret`` ref on an OCI store the file names is an OCI name.
 
@@ -621,7 +753,7 @@ def check_admin_refs(config: Config) -> None:
         ref = None if admin is None or admin.auth is None else admin.auth.secret
         if ref is None:
             continue
-        name = ref.vault or expanded.target.vault or config.defaults.vault
+        name = admin_store_in_file(expanded, ref, config)
         if name is not None and types.get(name) == "oci":
             check_oci_name(
                 ref, at=declared_at(expanded, "admin").key("auth").key("secret"), read_only=True

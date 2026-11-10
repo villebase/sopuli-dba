@@ -4031,8 +4031,18 @@ notices until a rotation.
 - a `for_each` with more or fewer than one outer dimension, or with two list
   variables in one value → error (§4 rules 1 and 6), rather than a set that
   generates a surprising number of targets
-- a target with `environment: prod` referencing a vault marked
-  `non_production: true` → error
+- a target with `environment: prod` whose own `vault:` names a vault marked
+  `non_production: true` → error, whatever store its passwords use
+- a password of a target with `environment: prod` kept in, read from or
+  delivered into a vault marked `non_production: true` → error (#1435). This
+  covers an application binding's store, wherever it was named (an
+  application entry's or an override's `vault:`, a ref's prefix, or
+  `defaults.vault`), the store an `admin.auth.secret` is read from, and the
+  store an unseen UC-2 delivery writes into. The error points at the key that
+  chose the store. A store that a profile's `vault:` or `SOPULI_VAULT`
+  supplies is checked when the run resolves it, before the store is opened,
+  and the hint names which of the two chose it. `reset_records:` is not
+  checked: the journal holds no password
 - `locking.break_expired: true` anywhere in the file while any vault is
   `locking: advisory-only` → error naming both ends. Either alone is
   legitimate; together they are an unattended run taking over a lock with no

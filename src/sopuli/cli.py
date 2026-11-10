@@ -113,7 +113,7 @@ from sopuli.config import (
     refuse_unknown_vaults,
 )
 from sopuli.config import delivery as delivery_config
-from sopuli.config.bindings import check_oci_name
+from sopuli.config.bindings import check_oci_name, refuse_non_production_store
 from sopuli.config.errors import KeyPath
 from sopuli.config.expansion import declared_at
 from sopuli.config.model import Delivery, Notify, PersonalAccountRule, Vault
@@ -2362,6 +2362,7 @@ def account_reset_password(
     # what the delivery backends would refuse from the config alone (#1257); the
     # backends themselves, and their store logins, come after any question.
     _refuse_personal_delivery_store(config, delivery, reached)
+    binding_stores.refuse_non_production_admin_stores(config, reached, env=os.environ)
     onepassword_token = _refuse_undeliverable(run, config, delivery, reached)
     plan = plan_builder.build_for_accounts(
         config,
@@ -3605,9 +3606,21 @@ def _refuse_personal_delivery_store(
     checked: set[str] = set()
     for target in reached:
         link = _delivery_store_link(config, delivery, target)
-        if link is None or link[0] in checked:
+        if link is None:
             continue
         name, at = link
+        # §10 per target, because it depends on the target's environment
+        # (#1435): the delivered password is a prod account's.
+        refuse_non_production_store(
+            config,
+            name,
+            target=target,
+            what="the delivered password",
+            verb="would be written into",
+            at=at,
+        )
+        if name in checked:
+            continue
         checked.add(name)
         refuse_personal_on(
             config,
@@ -11066,6 +11079,10 @@ def _admin_reader(target: ExpandedTarget, run: Invocation, config: Config) -> Re
                 at=declared_at(target, "admin").key("auth").key("secret"),
                 read_only=True,
             )
+        # §10 on a store the run chose (#1435). Commands that plan through
+        # `binding_stores.complete` were refused there; this is the backstop for
+        # the rest, still before the store is opened.
+        binding_stores.refuse_non_production_admin_stores(config, [target], env=os.environ)
         store = _stores_for({name}, config, run=run)[name]
         stored = read_secret(store, ref)
         if stored is None:

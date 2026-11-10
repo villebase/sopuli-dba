@@ -68,6 +68,11 @@ OCI_REQUIRED_KEYS = ("vault_id", "compartment_id", "key_id")
 #: required on the merged values (:mod:`sopuli.config.vault_layers`).
 FILE_KEYS = ("identity", "recipients", "max_versions")
 
+#: How many versions of a path a ``file`` store keeps when its
+#: ``max_versions`` is not set (#1415). Defined here, beside the key, so the
+#: store and ``config show`` read one value.
+DEFAULT_MAX_VERSIONS = 10
+
 #: Why a ``file`` key cannot be patched: each says how the store's one file is
 #: written, and a layer that changed one would write it differently from the
 #: next run's. ``identity`` is a MaterialRef, so where it comes from may already

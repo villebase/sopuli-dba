@@ -32,7 +32,7 @@ from sopuli.config.model import Pairs, Safety, Settings, Target, Vault
 from sopuli.config.selection import matches
 from sopuli.config.sharing import SharedSecret, shared_secrets
 from sopuli.config.targets import MARIADB, MYSQL, POSTGRESQL
-from sopuli.config.vaults import OCI_KEYS
+from sopuli.config.vaults import DEFAULT_MAX_VERSIONS, FILE_KEYS, OCI_KEYS
 from sopuli.output.document import Option
 from sopuli.output.explain_view import section as explain_section
 from sopuli.output.palette import Role, paint
@@ -542,29 +542,47 @@ def _vault_rows(config: Config) -> list[str]:
             for vault in config.vaults
         ],
     )
-    return rows + _oci_lines(config)
+    return rows + _key_lines(config)
 
 
-def _oci_lines(config: Config) -> list[str]:
-    """Every OCI store's OCIDs and region, one to a line, under the table (#1145).
+def _key_lines(config: Config) -> list[str]:
+    """The keys of an OCI or a file store, one to a line, under the table.
 
-    An OCI store has no address: these four name it. They go under the table
-    rather than in it because an OCID is about 90 characters, and the
-    ``ADDRESS`` column would cut off the end, which is the part that differs.
+    An OCI store has no address: its OCIDs and region name it (#1145). A
+    file store's address is its file, and its keys say how the file is
+    opened: where the identity comes from, the recipients it encrypts to,
+    and how many versions it keeps (#1372). They go under the table rather
+    than in it because an OCID or an age recipient is longer than the
+    ``ADDRESS`` column, and its end is the part that differs.
 
-    One table for every OCI store, so the cells get :func:`render_table`'s
+    One table for every such store, so the cells get :func:`render_table`'s
     handling and the columns line up across stores. Its heading row is
-    dropped: the keys name themselves.
+    dropped: the keys name themselves. The identity is shown as where it
+    comes from, never as a value: a MaterialRef holds no secret.
     """
     found: list[list[Cell | str]] = []
     for vault in config.vaults:
-        keys = [key for key in OCI_KEYS if getattr(vault, key) is not None]
+        pairs = [pair for key in (*OCI_KEYS, *FILE_KEYS) for pair in _key_pairs(vault, key)]
         found.extend(
-            [vault.name if index == 0 else "", key, getattr(vault, key)]
-            for index, key in enumerate(keys)
+            [vault.name if index == 0 else "", key, value]
+            for index, (key, value) in enumerate(pairs)
         )
     table = render_table([Column("NAME", _NAME), Column("KEY"), Column("VALUE")], found)
     return [f"  {line}" for line in table[1:]]
+
+
+def _key_pairs(vault: Vault, key: str) -> list[tuple[str, str]]:
+    """One store key as ``(key, value)`` lines: none where it is not written,
+    a line per item of a list, and a MaterialRef as where it comes from. A
+    file store's unwritten ``max_versions`` shows the default it keeps."""
+    value = getattr(vault, key)
+    if value is None:
+        if key == "max_versions" and vault.type == "file":
+            return [(key, f"{DEFAULT_MAX_VERSIONS} (default)")]
+        return []
+    if isinstance(value, tuple):
+        return [(key if index == 0 else "", str(item)) for index, item in enumerate(value)]
+    return [(key, str(value))]
 
 
 def _vault_settings(config: Config) -> dict[str, Resolved]:

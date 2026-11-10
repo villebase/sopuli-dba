@@ -195,9 +195,10 @@ class Document:
     ) -> tuple[Document, int]:
         """This document with ``data`` as the next version of ``path``, and its number.
 
-        The oldest versions beyond ``max_versions`` are dropped from **every**
-        path, not only this one, so lowering the setting takes the old
-        passwords out of the file at the next write. ``path`` must
+        The oldest versions of ``path`` beyond ``max_versions`` are dropped.
+        Other paths are left as they are, so a write never takes away a
+        version that another path's ``@version=N`` pin reads; a lower setting
+        reaches each path when that path is next written. ``path`` must
         be non-empty text, valid as UTF-8. ``data`` must be a JSON object of
         plain values: text keys, text that is valid UTF-8, finite numbers,
         integers JSON can write, booleans, ``None``, lists and objects. Two
@@ -259,7 +260,7 @@ class Document:
             raise StoreError(
                 f"version {number} of {path!r} cannot be stored: {problem}", hint=TOOL_FAULT
             ) from None
-        paths = {name: versions[-keep:] for name, versions in self.paths.items()}
+        paths = dict(self.paths)
         paths[path] = (*self.paths.get(path, ()), created)[-keep:]
         return Document(paths), number
 

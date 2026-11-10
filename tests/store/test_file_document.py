@@ -117,13 +117,19 @@ def test_pruning_never_reuses_a_number() -> None:
     assert number == 3
 
 
-def test_a_lower_max_versions_prunes_every_path_at_the_next_write() -> None:
-    """Old passwords leave the file at the next write, not when each path is
-    next rotated."""
+def test_a_write_prunes_only_the_path_it_writes() -> None:
+    """Another path's versions stay, so a write cannot take away a version an
+    `@version=N` pin on that path reads. A lower setting reaches that path at
+    its own next write."""
     document = written(EMPTY, *({"v": n} for n in range(1, 5)))
     document, _ = document.written("acme/other", {"v": 1}, now=NOW, max_versions=1)
 
-    assert numbers(document) == [4]
+    assert numbers(document) == [1, 2, 3, 4]
+    assert [v.number for v in document.paths["acme/other"]] == [1]
+
+    document, _ = document.written(PATH, {"v": 5}, now=NOW, max_versions=1)
+
+    assert numbers(document) == [5]
 
 
 def test_absent_max_versions_keeps_ten() -> None:

@@ -130,6 +130,7 @@ def test_common_account_in_a_pdb_has_no_lock_limits_or_count() -> None:
     )
     (account,) = accounts
     assert account.common is True
+    assert account.held_elsewhere is True
     assert account.locked is None
     assert account.password_lifetime is None
     assert account.failed_login_limit is None
@@ -147,6 +148,7 @@ def test_common_account_in_the_root_reads_everything() -> None:
         lcount=[("C##ACME_ADM", 3)],
     )
     (account,) = accounts
+    assert account.held_elsewhere is False
     assert account.locked is True
     assert account.password_lifetime == "unlimited"
     assert account.failed_login_limit == 10

@@ -197,6 +197,51 @@ def test_vendor_accounts_are_left_out_unless_a_rule_names_them() -> None:
     assert found["APEX_240100"].state == REPORT_OK
 
 
+def _common_in_pdb(name: str) -> SurveyedAccount:
+    """A common account as the survey reads it in a PDB: nothing decidable."""
+    return account(
+        name,
+        common=True,
+        held_elsewhere=True,
+        locked=None,
+        password_lifetime=None,
+        failed_login_limit=None,
+        failed_logins=None,
+        unreadable=("lock in root", "lifetime in root", "limit in root", "count in root"),
+    )
+
+
+def test_a_common_account_in_a_pdb_is_left_out_unless_a_rule_names_it() -> None:
+    """#1438: its checks belong to the CDB target, where they run."""
+    cfg = config(**rule(accounts=["ACME_*_USER"], settings={"password_lifetime": "unlimited"}))
+    found = rows(cfg, _common_in_pdb("C##ACME_MONITOR"), account("ACME_APP_USER"))
+    assert "C##ACME_MONITOR" not in found
+    assert found["ACME_APP_USER"].state == REPORT_PROBLEM
+
+
+def test_a_rule_that_names_a_common_account_brings_it_back_in_a_pdb() -> None:
+    by_name = config(**rule(accounts=["C##ACME_MONITOR"], profile="DEFAULT"))
+    row = rows(by_name, _common_in_pdb("C##ACME_MONITOR"))["C##ACME_MONITOR"]
+    assert row.state == NOT_CHECKED
+    assert row.kind == "technical"
+    by_pattern = config(**rule(accounts=["C##*"], profile="DEFAULT"))
+    assert "C##ACME_MONITOR" in rows(by_pattern, _common_in_pdb("C##ACME_MONITOR"))
+
+
+def test_a_personal_profile_predicate_does_not_bring_a_common_account_back() -> None:
+    """As for Oracle's own accounts: a predicate over a profile names nobody."""
+    cfg = config(personal_accounts=[{"profile": "DEFAULT"}])
+    found = rows(cfg, _common_in_pdb("C##ACME_MONITOR"), account("ACME_DEV_ALICE"))
+    assert "C##ACME_MONITOR" not in found
+    assert found["ACME_DEV_ALICE"].kind == "personal"
+
+
+def test_a_common_account_in_the_root_is_undeclared_where_nothing_names_it() -> None:
+    """The CDB target keeps it, so an undeclared common account still shows."""
+    row = rows(config(), account("C##ACME_MONITOR", common=True))["C##ACME_MONITOR"]
+    assert row.state == UNDECLARED
+
+
 def test_an_application_profile_comes_from_its_policy() -> None:
     cfg = config(
         policies={"app": {"account": {"profile": "ACME_APP_PROF"}}},

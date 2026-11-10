@@ -5300,3 +5300,35 @@ the register.
   because the reader problem is the same. Closing #1373 as "not now" and
   leaving the type in the config, because a type that validates and is
   always refused promises a backend that will not come.
+
+## #1438
+
+- **Decided:** 2026-11-10, #1438
+- **Question:** `report accounts` on a PDB target listed every common account
+  as undeclared, also where the config declares it on the CDB targets. A
+  common account is visible in every PDB, so the survey reads it there.
+  Declaring it on the PDB targets as well made it *not checked*, because its
+  lock, limits and failed-login count are kept in `CDB$ROOT`
+  ([#1122](#1122)), so every PDB run exited 4. What should a PDB's report do
+  with a common account?
+- **Decision:** A, the maintainer's choice. On a PDB target, a common account
+  is left out of the accounts report, as an account Oracle maintains is. A
+  rule that covers the target and names it, by name or by pattern, brings it
+  back. The survey says which accounts are common (`DBA_USERS.COMMON`) and
+  whether this container keeps their values. An application container is
+  treated the same way, because the survey reads none of a common account's
+  values there either. The privilege report covers the same accounts, and
+  `--account` still reaches one that is left out. The run document gets no
+  count of the accounts left out, as it has none for Oracle's own accounts:
+  `read` still counts every account the survey read.
+- **Why:** no check that decides a state can run on a common account in a
+  PDB, so nothing checkable is lost. Its checks belong to the CDB target,
+  where they already run.
+- **Rejected:**
+  1. B: keep them, as a separate kind ("common, not checked here") that is
+     not counted as undeclared. More honest output, but the same noise.
+  2. C: treat a common account in a PDB as declared where a rule declares it
+     on the PDB's CDB. The config has no link from a PDB target to its CDB
+     target, so this needs new config.
+- **Known cost:** a common account that nobody declares no longer shows in a
+  PDB's report. It still shows as undeclared in the CDB's report.

@@ -136,6 +136,14 @@ rule names them, as a rule for `DBSNMP` does. On 11.2, which has no such
 column, the report uses the same list of Oracle's own accounts that the
 guardrails use there (`02-oracle-privileges.md` §4, check 5), so one estate
 gives the same list on every release.
+On a PDB target, common accounts are left out too, unless a rule that covers
+the target names them. A common account is visible in every PDB, but its lock,
+limits and failed-login count are kept in `CDB$ROOT`
+([#1122](../decisions/log.md#1122)), so no check that decides a state can run
+on it in a PDB. The CDB target's report checks it, and lists it as undeclared
+where no rule names it there ([#1438](../decisions/log.md#1438)). The survey
+reads which accounts are common from `DBA_USERS.COMMON`, not from the `C##`
+prefix. The same holds in an application container.
 
 **The lock is the check; the failed-login count is information.** The lock
 status can be read on every release, with one exception: in a PDB, a locked

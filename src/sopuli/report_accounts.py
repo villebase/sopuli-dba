@@ -154,7 +154,8 @@ def evaluate(
     A row for each surveyed account the report covers, and an
     ``ACCOUNT_MISSING`` row for each account the file names on this target by
     name that the survey did not find. An account that Oracle maintains is left
-    out unless the file names it, by name or by pattern.
+    out unless the file names it, by name or by pattern, and so is a common
+    account whose values another container keeps.
     """
     rules = _rules_on(config, target)
     applications = _application_profiles(config, target)
@@ -167,10 +168,13 @@ def evaluate(
         found.add(name)
         matching = [rule for rule in rules if _names(rule, name)]
         named = bool(matching) or name in applications or name in personal_names
-        if surveyed.vendor_maintained and not named:
+        if (surveyed.vendor_maintained or surveyed.held_elsewhere) and not named:
             # Oracle's own accounts are left out unless the file names one, by
-            # name or by a report rule's pattern. A personal predicate over a
-            # profile does not count: `profile: DEFAULT` would bring in SYS.
+            # name or by a report rule's pattern. So is a common account in a
+            # PDB: its lock, limits and count are kept in the root, so no check
+            # that decides a state can run on it here, and the CDB target's
+            # report checks it (#1438). A personal predicate over a profile
+            # does not count: `profile: DEFAULT` would bring in SYS.
             continue
         if name in applications:
             kind = APPLICATION

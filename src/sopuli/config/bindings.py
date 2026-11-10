@@ -685,8 +685,8 @@ def refuse_non_production_store(
     )
     if chosen_by is not None:
         hint = (
-            f"{chosen_by} chose that store for this run; name a production store for it in "
-            "the file, or choose another for this run"
+            f"{chosen_by} chose that store; name a production store for it in the file, "
+            "or choose another for this run"
         )
     else:
         hint = "keep it in a production store, or drop the marking if it is wrong"

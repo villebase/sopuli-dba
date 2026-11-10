@@ -8,6 +8,7 @@ a real hostname, account or vault path, in a test any more than in a document.
 
 from __future__ import annotations
 
+import os
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -15,6 +16,7 @@ from typing import Any
 
 import pytest
 
+from sopuli.config import loading
 from sopuli.config.errors import ConfigError
 from sopuli.config.loading import SUPPORTED_VERSIONS, load_config, load_document
 
@@ -109,6 +111,25 @@ def test_a_directory_is_not_reported_as_a_missing_file(tmp_path: Path) -> None:
     rendered = str(caught.value)
     assert "not a file" in rendered
     assert "does not exist" not in rendered
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="named pipes are a POSIX file type")
+def test_a_pipe_is_refused_without_waiting_for_a_writer(tmp_path: Path) -> None:
+    """Opened the usual way, a pipe waits for a writer and the run hangs."""
+    pipe = tmp_path / "sopuli.yaml"
+    # By name: Windows has no mkfifo, and mypy runs there too.
+    make_fifo = getattr(os, "mkfifo")  # noqa: B009
+    make_fifo(pipe, 0o600)
+
+    with pytest.raises(ConfigError, match="is not a regular file"):
+        load_document(pipe)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="a POSIX character device")
+def test_a_device_is_refused_before_it_is_read() -> None:
+    """A device such as /dev/zero would be read until memory runs out."""
+    with pytest.raises(ConfigError, match="is not a regular file"):
+        load_document(Path(os.devnull))
 
 
 def test_invalid_utf8_is_reported_as_such(tmp_path: Path) -> None:
@@ -219,7 +240,7 @@ def test_permissions_are_checked_before_the_file_is_read(
         order.append("permissions")
         raise ConfigError("nope")
 
-    real_open = Path.open
+    real_open = loading._open
 
     class RecordingHandle:
         """The real handle, with its `read` recorded."""
@@ -240,11 +261,11 @@ def test_permissions_are_checked_before_the_file_is_read(
             order.append("read")
             return bytes(self.real.read())
 
-    def recording_open(self: Path, *args: Any, **kwargs: Any) -> RecordingHandle:
-        return RecordingHandle(real_open(self, *args, **kwargs))
+    def recording_open(opened: Path) -> RecordingHandle:
+        return RecordingHandle(real_open(opened))
 
     monkeypatch.setattr("sopuli.config.loading.check_permissions", refuse)
-    monkeypatch.setattr(Path, "open", recording_open)
+    monkeypatch.setattr(loading, "_open", recording_open)
 
     with pytest.raises(ConfigError):
         load_document(path)

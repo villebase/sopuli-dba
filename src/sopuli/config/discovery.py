@@ -128,17 +128,24 @@ def search_path(
 def _require_file(path: Path, *, source: str) -> Path:
     """A named path has to be there, and has to be a file.
 
-    The two failures are separated because the fixes are different: one is a
-    typo or a file that was never deployed, the other is a directory passed
-    where the file inside it was meant.
+    The failures are separated because the fixes are different: one is a
+    typo or a file that was never deployed, another is a directory passed
+    where the file inside it was meant, and the last is a pipe or a device.
     """
     if path.is_file():
         return path
-    if path.exists():
+    if path.is_dir():
         raise ConfigError(
             f"config path named by {source} is not a file",
             source=path,
             hint="name the file itself, not the directory holding it",
+        )
+    if path.exists():
+        # A pipe or a device: reading it would wait, or never end.
+        raise ConfigError(
+            f"config path named by {source} is not a regular file",
+            source=path,
+            hint="name the config file itself",
         )
     raise ConfigError(
         f"config file named by {source} does not exist",

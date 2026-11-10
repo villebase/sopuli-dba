@@ -944,7 +944,8 @@ on it, and every run that opens one warns with `SOPULI-W070`: it is for local
 development and CI, not for production. It needs `sopuli-dba[file]`.
 A write makes a temporary file, `.sopuli-<16 hex>.tmp`, beside the store's file
 and then replaces the file with it. A run that is killed between the two leaves
-the temporary file behind. `doctor` lists each one older than ten minutes with
+the temporary file behind, and so does a failed replace that cannot remove it.
+`doctor` lists each one older than ten minutes with
 `SOPULI-W071`, and removes none, because a younger one may be another run's
 write in progress (#1430).
 

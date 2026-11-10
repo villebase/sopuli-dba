@@ -134,10 +134,10 @@ def test_doctor_lists_a_temporary_file_a_stopped_run_left(
 
     found = [one for one in document["diagnostics"] if one["code"] == FILE_STORE_LEFTOVER]
     assert [one["message"] for one in found] == [
-        f'vault "acme-dev": {old} is 3 hours old, a temporary file left by a run that '
-        "stopped while it wrote the store. It is encrypted to the store's keys, and may "
-        "hold a password version the store has pruned since. Remove it when no run is "
-        "writing the store"
+        f'vault "acme-dev": {old} is 3 hours old, a temporary file that a write of the '
+        "store left behind: the run stopped before it finished, or could not remove the "
+        "file. It is encrypted to the store's keys, and may hold a password version the "
+        "store has pruned since. Remove it when no run is writing the store"
     ]
     assert found[0]["level"] == "warning"
     assert code == ExitCode.SUCCESS

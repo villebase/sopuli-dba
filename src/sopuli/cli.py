@@ -421,7 +421,7 @@ from sopuli.store.credentials import (
     stage_version,
 )
 from sopuli.store.credentials import apply_patch as write_credential
-from sopuli.store.file._store import leftovers as file_store_leftovers
+from sopuli.store.file import leftovers as file_store_leftovers
 from sopuli.store.native_view import LayoutChangedError, NativeStagedStore
 from sopuli.store.native_view import wrap as native_staged
 from sopuli.store.protocol import (
@@ -1025,7 +1025,7 @@ def doctor(
     for vault in config.vaults:
         if vault.name in run.stores:
             _warn_if_file_store(vault, run)
-    # Only doctor looks for a stopped run's temporary files (#1430). From the
+    # Only doctor looks for the temporary files a write left (#1430). From the
     # config, so a file store the survey could not open is looked at too.
     for found in file_store_leftovers(config.vaults, now=utc_now()):
         for leftover in found.files:

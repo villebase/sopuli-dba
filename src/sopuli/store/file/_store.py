@@ -100,8 +100,8 @@ def open_store(
 
 @dataclass(frozen=True)
 class Leftovers:
-    """The temporary files a stopped run left in one directory, and the file
-    stores kept there, any of which may have left them (#1430)."""
+    """The temporary files writes left in one directory, and the file stores
+    kept there, any of which may have left them (#1430)."""
 
     stores: tuple[str, ...]
     files: tuple[_disk.Leftover, ...]
@@ -109,30 +109,47 @@ class Leftovers:
 
 def leftovers(vaults: Sequence[Vault], *, now: datetime) -> tuple[Leftovers, ...]:
     """Each directory that holds a declared file store and a temporary file a
-    stopped run left there, in the order the stores are declared.
+    write left there, in the order the stores are declared.
 
     Read from the config, not from an opened store: listing a directory needs
     no key, so a store whose identity cannot be read is looked at too. A
-    directory is listed once, however many stores it holds, because the
-    file's name does not say which store wrote it. A store whose ``addr`` is
-    not absolute is skipped, as :func:`open_store` refuses it. Never raises.
+    directory is listed once, however many stores it holds and however their
+    ``addr`` spells it, because the file's name does not say which store
+    wrote it. A store whose ``addr`` is not absolute, or cannot be expanded
+    or reached, is skipped: :func:`open_store` and the store's health report
+    those. Never raises.
     """
-    held: dict[str, tuple[Path, list[str]]] = {}
+    held: dict[object, tuple[Path, list[str]]] = {}
     for vault in vaults:
         if vault.type != "file" or vault.addr is None:
             continue
-        path = Path(vault.addr).expanduser()
-        directory = _disk.directory_of(path) if path.is_absolute() else None
-        if directory is None:
+        try:
+            # `~user` for a user that does not exist raises RuntimeError on
+            # POSIX, and a NUL in the path raises ValueError.
+            path = Path(vault.addr).expanduser()
+            directory = _disk.directory_of(path) if path.is_absolute() else None
+            if directory is None:
+                continue
+            key = _same_directory(directory)
+        except (OSError, RuntimeError, ValueError):
             continue
-        _, names = held.setdefault(os.path.normcase(str(directory)), (path, []))
+        _, names = held.setdefault(key, (directory, []))
         names.append(vault.name)
     found = []
-    for path, names in held.values():
-        files = _disk.leftovers(path, now=now)
+    for directory, names in held.values():
+        files = _disk.leftovers_in(directory, now=now)
         if files:
             found.append(Leftovers(tuple(names), files))
     return tuple(found)
+
+
+def _same_directory(directory: Path) -> object:
+    """What two spellings of one directory share: its device and inode, or
+    its resolved path where the file system gives no inode number."""
+    status = os.stat(directory)
+    if status.st_ino:
+        return (status.st_dev, status.st_ino)
+    return os.path.normcase(os.path.realpath(directory))
 
 
 def identity_of(vault: Vault, *, env: Mapping[str, str]) -> Secret:

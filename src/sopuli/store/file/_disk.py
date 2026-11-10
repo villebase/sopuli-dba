@@ -198,24 +198,33 @@ class Leftover:
 
 
 def leftovers(path: Path, *, now: datetime) -> tuple[Leftover, ...]:
-    """The temporary files :func:`replace` left beside ``path``, oldest first.
-
-    A run that is stopped between creating its file and the replace, by
-    SIGKILL or a power loss, leaves the file behind. Only a regular file with
-    the exact name :func:`replace` gives, older than :data:`LEFTOVER_AGE`, is
-    listed. Nothing is removed: a younger file may be another run's write in
-    progress, and the store has no lock to tell the two apart (#1415,
-    decision 4). A directory that cannot be listed gives nothing, because
-    :func:`check_directory` already reports it as the store's health.
-    A link at ``path`` is followed, as :func:`replace` follows it. Never
-    raises.
-    """
+    """The temporary files :func:`replace` left beside ``path``, oldest first:
+    :func:`leftovers_in` of :func:`directory_of`. Never raises."""
     directory = directory_of(path)
-    if directory is None:
-        return ()
+    return () if directory is None else leftovers_in(directory, now=now)
+
+
+def leftovers_in(directory: Path, *, now: datetime) -> tuple[Leftover, ...]:
+    """The temporary files :func:`replace` left in ``directory``, oldest first.
+
+    A write leaves its file behind when the run is stopped between creating
+    it and the replace, by SIGKILL or a power loss, or when the replace fails
+    and the file cannot be removed, as when another program holds it open on
+    Windows. Only a regular file with the exact name :func:`replace` gives,
+    older than :data:`LEFTOVER_AGE`, is listed. Nothing is removed: a younger
+    file may be another run's write in progress, and the store has no lock to
+    tell the two apart (#1415, decision 4).
+
+    The age is the local clock less the file's time, which the file system
+    sets. On a network file system whose server clock runs behind this
+    host's, a write in progress can look older than it is, so the warning
+    says to remove a file only when no run is writing the store.
+
+    A directory that cannot be listed gives nothing. Never raises.
+    """
     try:
         entries = list(os.scandir(directory))
-    except OSError:
+    except (OSError, ValueError):
         return ()
     found = []
     for entry in entries:
@@ -241,7 +250,7 @@ def directory_of(path: Path) -> Path | None:
     link at ``path`` followed, or ``None`` where the link cannot be followed."""
     try:
         return _target(path).parent
-    except StoreError:
+    except (StoreError, ValueError):
         return None
 
 

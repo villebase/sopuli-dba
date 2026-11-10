@@ -66,7 +66,7 @@ from sopuli.lock.manager import LOCK_PREFIX, LockableStore, LockManager, Unguard
 from sopuli.lock.record import LockRecord
 from sopuli.orphans import Unread
 from sopuli.output.document import Diagnostic, DiagnosticLevel
-from sopuli.store.file._disk import Leftover
+from sopuli.store.file import Leftover
 from sopuli.store.protocol import OK
 from sopuli.store.survey import VaultReport
 
@@ -609,7 +609,7 @@ KEYRING_REPLACE_NEEDS_FLAG = "SOPULI-W069"
 #: not for production (#1415, decision 5).
 FILE_STORE_IN_USE = "SOPULI-W070"
 
-#: `doctor` found a temporary file that a stopped run left in a `file` store's
+#: `doctor` found a temporary file that a write left in a `file` store's
 #: directory (#1430).
 FILE_STORE_LEFTOVER = "SOPULI-W071"
 
@@ -890,7 +890,7 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "opens, from every command that opens one."
         ),
         FILE_STORE_LEFTOVER: (
-            "`doctor` found a temporary file that a stopped run left in a `file` store's "
+            "`doctor` found a temporary file that a write left in a `file` store's "
             "directory, older than ten minutes. It is encrypted to the store's keys, and "
             "may hold a password version the store has pruned since. Nothing removes it: "
             "remove it when no run is writing the store. One entry per file."
@@ -1538,7 +1538,7 @@ def file_store_in_use(name: str) -> Diagnostic:
 
 
 def file_store_leftover(stores: Sequence[str], leftover: Leftover) -> Diagnostic:
-    """`SOPULI-W071`: a temporary file a stopped run left in a directory that
+    """`SOPULI-W071`: a temporary file a write left in a directory that
     holds the file stores ``stores`` (#1430). ``doctor`` raises one per file,
     and removes none: a younger one may be another run's write in progress.
 
@@ -1555,8 +1555,9 @@ def file_store_leftover(stores: Sequence[str], leftover: Leftover) -> Diagnostic
         level="warning",
         code=FILE_STORE_LEFTOVER,
         message=(
-            f"{who}: {leftover.path} is {_age(leftover.age)} old, a temporary file left by "
-            f"a run that stopped while it wrote the store. It is encrypted to {keys}, and "
+            f"{who}: {leftover.path} is {_age(leftover.age)} old, a temporary file that a "
+            "write of the store left behind: the run stopped before it finished, or could "
+            f"not remove the file. It is encrypted to {keys}, and "
             "may hold a password version the store has pruned since. Remove it when no "
             "run is writing the store"
         ),

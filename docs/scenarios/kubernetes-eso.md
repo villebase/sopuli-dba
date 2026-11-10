@@ -545,8 +545,7 @@ Said plainly rather than left for you to discover:
   feature, not this project's.
 - **sopuli writes to two of the stores ESO can read:** HashiCorp Vault and OCI
   Vault (section 8). A `file` store is one encrypted file on the tool's own
-  machine, for development and CI, and ESO cannot read it. `keyring` is
-  accepted in a config file and reports that this build has no module for it.
+  machine, for development and CI, and ESO cannot read it.
 - **The manifests are checked against one ESO version, and that version will
   move.** Sections 7 and 8 have the details of what was run. It was ESO 2.10.0; ESO's
   own API has changed between major versions before, and `apiVersion:

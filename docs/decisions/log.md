@@ -5265,3 +5265,38 @@ the register.
 - **Rejected, the verbs:** requiring a config that names the entry; a mutation
   event in the jsonl stream; always reporting `changed: true`; replacing
   without a flag; refusing a delete of a missing entry.
+
+## #1373
+
+- **Decided:** 2026-11-10, #1373
+- **Question:** should the OS keyring be a store backend, `type: keyring`,
+  holding the passwords the tool manages? P2 listed it as priority 4, "for
+  personal / workstation use". A config could declare it, and every command
+  that reached it was refused with `SOPULI-20005`.
+- **Decision:** the maintainer's: no. `keyring` is removed as a store type,
+  from P2's backends, `VAULT_TYPES`, the backend registry and UC-2's
+  `PERSONAL_TYPES`. A config that declares it is refused with exit 9 and a
+  message that says the type was removed and why. The config schema moves from
+  3.8 to 4.0, because a value of a closed set was removed (§9b of
+  `01-configuration.md`). The keyring stays as a source of the tool's own
+  credentials ([#1417](#1417)).
+- **Why:** it could be built, with the three stages of UC-1 §3 in one JSON
+  value per entry, as the KV v1 and `file` stores keep them. But nobody else
+  could read what it stored. Under UC-1 the reader is an application, usually
+  on a server, and under UC-2 it is the account's owner. Neither can read the
+  operator's keyring, so every rotated password would end up where only the
+  operator's own login session can reach it. The one real fit, a DBA keeping
+  their own passwords on their own machine, is the `file` store's
+  ([#1415](#1415)), which also works on a server with nobody logged in. The
+  keyring also lacks what a store needs: it overwrites without a
+  compare-and-set, which the vault lock and the promotion gate (invariant 7)
+  depend on; the `keyring` library cannot list entries; Credential Manager
+  limits a value to about 2.5 KB (not measured); and most Linux servers have
+  no Secret Service. Removing the type now costs nothing, because no build
+  could use it, and leaving it would keep a value that validates and is then
+  always refused.
+- **Rejected:** building the backend with the stages emulated in one value,
+  for the reasons above. Allowing it for UC-2 only, or for reading only,
+  because the reader problem is the same. Closing #1373 as "not now" and
+  leaving the type in the config, because a type that validates and is
+  always refused promises a backend that will not come.

@@ -27,6 +27,7 @@ from sopuli.config.model import Vault
 from sopuli.lock.record import CLOCK_SKEW
 from sopuli.store import MemoryStore, SecretStore
 from sopuli.store.protocol import OK, UNREACHABLE
+from sopuli.store.registry import BACKENDS, Backend
 from sopuli.store.survey import survey
 
 #: A port nobody is listening on. Needs no container and refuses in
@@ -62,30 +63,36 @@ def test_an_unreachable_store_is_a_report_and_not_a_raise(
     assert report.health.detail
 
 
-def test_the_survey_continues_past_a_store_it_could_not_open() -> None:
+@pytest.fixture
+def unwritten_file(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make `file` a type the config layer accepts and this build has no module
+    for. Every store type has a module today (#1372, #1373), so it is injected."""
+    monkeypatch.setitem(BACKENDS, "file", Backend(module="sopuli.store.absent_backend_xyz"))
+
+
+def test_the_survey_continues_past_a_store_it_could_not_open(unwritten_file: None) -> None:
     """The next store is still asked, which is the whole point of catching.
 
-    `keyring` is a type the config layer accepts and this build has no module
-    for, so it fails at import rather than on the network -- a different failure
-    from the one beside it, and neither may swallow the other.
+    A store with no module fails at import rather than on the network -- a
+    different failure from the one beside it, and neither may swallow the other.
     """
     reports = survey(
-        [vault(name="v-keyring", type="keyring", addr=None), vault(name="v-dead")],
+        [vault(name="v-file", type="file", addr=None), vault(name="v-dead")],
         env={"VAULT_TOKEN": "unused"},
     )
 
-    assert [one.name for one in reports] == ["v-keyring", "v-dead"]
+    assert [one.name for one in reports] == ["v-file", "v-dead"]
     assert all(not one.reachable for one in reports)
 
 
-def test_a_store_that_could_not_be_opened_keeps_its_exception() -> None:
+def test_a_store_that_could_not_be_opened_keeps_its_exception(unwritten_file: None) -> None:
     """Kept whole rather than flattened to a string.
 
     A missing backend is `SOPULI-20001` and a refused login is exit 6, and the
     boundary reads both off the exception. Re-deriving them from a message is
     how they stop agreeing with the rest of the document.
     """
-    report = survey([vault(type="keyring", addr=None)], env={})[0]
+    report = survey([vault(type="file", addr=None)], env={})[0]
 
     assert report.failure is not None
     assert getattr(report.failure, "category", None) == "config"

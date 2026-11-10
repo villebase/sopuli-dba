@@ -1362,8 +1362,8 @@ for a lock at `locks/acme/acme/dev` on the tier-1 stack.
   and password, or does not apply the variable at all (`SOPULI-W057`). It is
   quoted for a POSIX shell. It is `null` while a lock
   that has not expired is held at the secret path, for the lock and for its
-  secret, because somebody may be rotating it. It is also `null` on a `file` or
-  `keyring` store, because this build has no command for one.
+  secret, because somebody may be rotating it. It is also `null` on a `file`
+  store, because this build has no command for one.
 - **On OCI, `delete_command` is the OCI CLI's
   `oci vault secret schedule-secret-deletion`** for the secret's OCID, which
   the listing gave, because the CLI deletes no secret by name. From run schema
@@ -1656,7 +1656,6 @@ declares one Oracle target and one HashiCorp store, laid out one row to a line:
   "backends": [
     { "name": "file",      "status": "not_implemented", "vaults": [] },
     { "name": "hashicorp", "status": "installed",       "vaults": ["vault-dev"] },
-    { "name": "keyring",   "status": "not_implemented", "vaults": [] },
     { "name": "oci",       "status": "installed",       "vaults": [] }
   ],
   "drivers": [

@@ -117,10 +117,29 @@ def backend(*, where: str) -> Any:
     connection. An estate whose targets each name an entry would otherwise
     choose again for every target. The cache is keyed on :data:`loader`, so a
     test that replaces it chooses again.
+
+    **A failure is remembered too**, for the same reason: a server with no
+    keyring would otherwise probe D-Bus again for every vault and target that
+    names an entry. Each later caller gets the same refusal, naming its own
+    position.
     """
-    global _chosen
+    global _chosen, _failed
     if _chosen is not None and _chosen[0] is loader:
         return _chosen[1]
+    if _failed is not None and _failed[0] is loader:
+        _, message, hint = _failed
+        raise MaterialError(f"{where}: {message}", at=ROOT, hint=hint)
+    try:
+        chosen = _select(where=where)
+    except MaterialError as error:
+        _failed = (loader, error.message.removeprefix(f"{where}: "), error.hint)
+        raise
+    _chosen = (loader, chosen)
+    return chosen
+
+
+def _select(*, where: str) -> Any:
+    """Load the library and choose its OS backend, or refuse."""
     library = _load(where=where)
     try:
         found = library.get_keyring()
@@ -138,7 +157,6 @@ def backend(*, where: str) -> Any:
     chosen = choose(candidates)
     if chosen is None:
         raise _no_os_keyring(candidates, where=where)
-    _chosen = (loader, chosen)
     return chosen
 
 
@@ -214,6 +232,10 @@ Loader = Callable[[], Any]
 #: The loader and the backend :func:`backend` chose with it. Keyed on the
 #: loader so that a test which replaces it chooses again.
 _chosen: tuple[Loader, Any] | None = None
+
+#: The loader, and the refusal :func:`backend` gave with it: its message without
+#: the caller's position, and its hint.
+_failed: tuple[Loader, str, str | None] | None = None
 
 
 def _import() -> Any:

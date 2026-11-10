@@ -126,6 +126,26 @@ def test_the_file_store_names_its_extra_and_client() -> None:
     assert backend.install_command == 'pip install "sopuli-dba[file]"'
 
 
+def test_a_machine_without_pyrage_is_told_to_install_the_file_extra(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The store module imports `pyrage` itself, so its absence is SOPULI-20001
+    with the install line, not a bare ModuleNotFoundError from mid-run."""
+    monkeypatch.setitem(
+        BACKENDS,
+        "file",
+        Backend(module="sopuli.store.file.store", extra="file", provides=frozenset({"pyrage"})),
+    )
+    monkeypatch.setitem(sys.modules, "pyrage", None)
+    monkeypatch.delitem(sys.modules, "sopuli.store.file.store", raising=False)
+
+    with pytest.raises(BackendNotInstalledError) as caught:
+        resolve(vault("acme-dev", "file"))
+
+    assert caught.value.code == BACKEND_NOT_INSTALLED
+    assert 'pip install "sopuli-dba[file]"' in (caught.value.hint or "")
+
+
 def test_installed_does_not_import_the_client(monkeypatch: pytest.MonkeyPatch) -> None:
     """Asking must not run a vendor package's import side effects: for an SDK
     that can mean reading a config file or calling a metadata service, which is

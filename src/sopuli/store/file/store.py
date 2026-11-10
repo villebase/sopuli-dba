@@ -13,6 +13,13 @@ from __future__ import annotations
 from collections.abc import Mapping
 from pathlib import Path
 
+# The client, imported here so that a machine without it fails at this
+# module's import, which the registry turns into SOPULI-20001 and the install
+# line (ADR-006 rule 2). The store's parts import it inside their functions,
+# so without this a missing `pyrage` would surface as a bare
+# ModuleNotFoundError from the middle of a run.
+import pyrage  # noqa: F401
+
 from sopuli.config.model import Vault
 from sopuli.store.file._store import FileStore, open_store
 

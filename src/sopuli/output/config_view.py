@@ -28,7 +28,7 @@ from typing import Any
 
 from sopuli.config import Binding, Config, ExpandedTarget, as_dict
 from sopuli.config.locking import LOCK_REQUIRED
-from sopuli.config.model import Pairs, Safety, Settings, Target, Vault
+from sopuli.config.model import MaterialRef, Pairs, Safety, Settings, Target, Vault
 from sopuli.config.selection import matches
 from sopuli.config.sharing import SharedSecret, shared_secrets
 from sopuli.config.targets import MARIADB, MYSQL, POSTGRESQL
@@ -635,13 +635,21 @@ def _vault_json(vault: Vault) -> dict[str, Any]:
     declaration-only guardrails, and ``config.declared`` carries them as written.
     The verbs that take a lock, and `lock status` and `lock break`, report the
     second as ``lock.mode``. Adding either later is additive.
+
+    A file store's ``identity`` is a MaterialRef, which JSON has no form for.
+    It is written as the config file writes it, ``{"env": "NAME"}``: where the
+    identity comes from, never its value (#1429).
     """
     return {
         "name": vault.name,
         "type": vault.type,
         "settings": {
             key: Option(
-                value=answer.value,
+                value=(
+                    {answer.value.kind: answer.value.location}
+                    if isinstance(answer.value, MaterialRef)
+                    else answer.value
+                ),
                 source=str(answer.layer),
                 source_detail=answer.detail,
             ).to_dict()

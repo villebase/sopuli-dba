@@ -6,7 +6,7 @@ for text output that keep it consistent with both.
 `sopuli/output/` produces them, and CI validates the output against the
 published schemas.
 
-Schemas: [`../schemas/sopuli-run-1.90.schema.json`](../schemas/sopuli-run-1.90.schema.json),
+Schemas: [`../schemas/sopuli-run-1.91.schema.json`](../schemas/sopuli-run-1.91.schema.json),
 [`../schemas/sopuli-event-1.25.schema.json`](../schemas/sopuli-event-1.25.schema.json)
 Examples, each from a real run:
 [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json),
@@ -637,15 +637,16 @@ An OCI store has no `addr`. From run schema 1.65, its `settings` carry
 `source` is always `object`. The text view prints them whole under the table,
 one to a line, because an OCID is longer than the `ADDRESS` column.
 
-A `file` store's `settings` carry `addr`, its file. Its `identity`,
-`recipients` and `max_versions` are not in `settings`: the resolver takes
-values that are a boolean, a number, a string or a list, and `identity` is an
-object, a MaterialRef. They are in `config.declared`, as written, which
-`config show --resolved` does not carry. The text view
-prints them under the table as the OCI keys are: the identity as where it
-comes from (`env SOPULI_FILE_IDENTITY`), never a value, each recipient on a
-line of its own, and `max_versions` with `(default)` when the file does not
-set it (#1372).
+A `file` store's `settings` carry `addr`, its file. From run schema 1.91, they
+also carry `identity`, `recipients` and `max_versions` where the store's entry
+writes them (#1429). Only the declaration can set these, so their `source` is
+always `object`. `identity` is an object, as the config file writes it, such as
+`{"env": "SOPULI_FILE_IDENTITY"}`: it names where the identity comes from,
+never its value. `recipients` is an array. An unwritten `max_versions` is
+absent, as any key no layer wrote is, and the store keeps 10. The text view
+prints these keys under the table as the OCI keys are: the identity as where it
+comes from (`env SOPULI_FILE_IDENTITY`), each recipient on a line of its own,
+and `max_versions` with `(default)` when the file does not set it (#1372).
 
 A `settings` entry has the **same shape** as an `invocation.options` entry. The
 schema has one `$defs/resolved_setting` that both use: it is one question about

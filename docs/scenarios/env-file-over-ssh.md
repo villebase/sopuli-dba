@@ -152,10 +152,10 @@ ok: 1 target, 1 binding, 1 warning
 Here the part of the path that the certificate check would protect is the
 tunnel's last step, inside the machine. The SSH host key protects the rest.
 
-With OCI Vault instead, only the store changes. `vault_id`, `compartment_id`
-and `key_id` are your vault's OCIDs, and a secret's name is the part of the
-SecretRef before `#`, such as `acme-app-db` in
-`"vault-oci:acme-app-db#password"`:
+With OCI Vault instead, the store and every SecretRef change. `vault_id`,
+`compartment_id` and `key_id` are your vault's OCIDs. A secret's name is the
+part of the SecretRef before `#`, and an OCI secret name cannot contain `/`, so
+`acme/prod/app` becomes a name such as `acme-app-db`:
 
 ```yaml
 vaults:
@@ -165,6 +165,15 @@ vaults:
     compartment_id: ocid1.compartment.oc1..exampleuniqueid
     key_id:         ocid1.key.oc1.eu-frankfurt-1.exampleuniqueid
     auth: config_file
+
+defaults:
+  vault: vault-oci
+
+# in the target:
+      auth: { method: vault, secret: "vault-oci:sopuli-admin-db#password" }
+
+# in the application:
+    secret: "vault-oci:acme-app-db#password"
 ```
 
 `doctor` connects through the tunnel and reports what it found:
@@ -197,6 +206,11 @@ $ ssh deploy@app.example.com "sudo sed -n 's|^DATABASE_URL=postgresql://[^:]*:\(
 sopuli: the supplied password for 'acme_app_user' violates policy 'env-safe'
   hint: length (is 24 characters, policy asks for at least 32) -- fix the password, or pass `--no-policy-check`, which records in the audit event what it let through
 ```
+
+The command copies the password as `DATABASE_URL` spells it. A password with
+characters that a URL encodes, such as `%40` for `@`, arrives encoded, and the
+`creds check` below then fails to log in. For such a password, pipe in the
+decoded value instead.
 
 A password chosen before the policy existed may not meet it. The first
 rotation replaces it with one that does, so adopt it as it is:
@@ -251,20 +265,28 @@ argument, so `ps` on the machine never shows it:
 # Reads the new password from stdin, puts it into DATABASE_URL in
 # /opt/acme/.env, and restarts the app. The password is never an argument.
 set -euo pipefail
-env_file=/opt/acme/.env
+env_file=$(readlink -f /opt/acme/.env)
 
-IFS= read -r pw || [ -n "$pw" ]
+IFS= read -r pw || true
 case $pw in
   '' | *[!A-Za-z0-9]*) echo "refused: the password must be letters and digits" >&2; exit 1 ;;
 esac
 
 tmp=$(mktemp "$env_file.XXXXXX")
+trap 'rm -f "$tmp"' EXIT
+found=0
 while IFS= read -r line || [ -n "$line" ]; do
   case $line in
-    DATABASE_URL=*) printf 'DATABASE_URL=postgresql://acme_app_user:%s@127.0.0.1:5432/acme\n' "$pw" ;;
+    DATABASE_URL=*)
+      printf 'DATABASE_URL=postgresql://acme_app_user:%s@127.0.0.1:5432/acme\n' "$pw"
+      found=1 ;;
     *) printf '%s\n' "$line" ;;
   esac
 done < "$env_file" > "$tmp"
+if [ "$found" != 1 ]; then
+  echo "refused: no line in $env_file starts with DATABASE_URL=" >&2
+  exit 1
+fi
 chown --reference="$env_file" "$tmp"
 chmod --reference="$env_file" "$tmp"
 mv "$tmp" "$env_file"
@@ -277,24 +299,50 @@ What it does, and why:
 
 - It refuses anything but letters and digits, the policy's character set. A
   wrong value never reaches `.env`, and nothing in the value can break the URL.
+  Empty input, for example from a vault read that failed, is refused the same
+  way.
 - It writes a new file next to `.env`, gives it the old file's owner and mode,
   and then renames it over `.env`. The application never reads a half-written
-  file, and `.env` stays as readable as it was.
+  file, and `.env` stays as readable as it was. If any step fails, the new file
+  is removed, so no copy of the password is left behind.
+- If `.env` is a symbolic link, it updates the file the link points to and
+  keeps the link.
+- If no line starts with `DATABASE_URL=`, it refuses, and does not restart the
+  application. A line written `export DATABASE_URL=…` does not match.
 - `printf` is a shell builtin, so the password is not an argument of any
   process.
-- It keeps every other line of `.env` as it was.
+- It keeps every other line of `.env` as it was, and writes the whole URL.
 
-Change the URL and the restart command to match your application. If the
-`deploy` user should run only this command as root, give it a sudoers line
-such as:
+Change the URL and the restart command to match your application. Keep any
+query string your URL has, such as `?sslmode=disable`, in the `printf` line.
+
+`ssh` runs `sudo` without a terminal, so `sudo` cannot ask for a password.
+Every `sudo` command in this scenario needs a `NOPASSWD` rule for the SSH user.
+The rotation needs only this one:
 
 ```
 deploy ALL=(root) NOPASSWD: /usr/local/sbin/acme-set-db-password
 ```
 
+§4 and §7 also read `.env` with `sudo sed`. Run those as an account that has
+wider `sudo`, or add a rule for them as well.
+
 ---
 
 ## 6. Rotate, then update `.env`
+
+The update reads the new password with the `vault` CLI, which takes its address
+and token from `VAULT_ADDR` and `VAULT_TOKEN`. Set them before you rotate. The
+address is the store's `addr`; the CLI's default is `https://127.0.0.1:8200`,
+which does not reach a Vault on plain HTTP:
+
+```
+$ export VAULT_ADDR=http://127.0.0.1:8200
+$ export VAULT_TOKEN=...
+```
+
+sopuli-dba reads the same `VAULT_TOKEN` when the store's `auth` names no token
+source ([`../design/01-configuration.md`](../design/01-configuration.md) §6).
 
 PostgreSQL keeps one password for each role. When the rotation changes it, the
 old password stops working at once, and the application cannot log in until it
@@ -356,8 +404,10 @@ the vault read, the SSH connection and the restart together, so rotate when a
 short gap suits the application.
 
 With OCI Vault, read the new password with the OCI CLI instead of `vault kv
-get`. The tool stores each version as a JSON document, `{"password": "…"}`,
-base64-encoded, so decode it and pick out the field before the pipe to `ssh`.
+get`. The tool stores each version as a base64-encoded JSON document. The
+password is its `password` field; the other fields record where the version
+came from. Decode the content and pick out `password` before the pipe to
+`ssh`.
 
 ---
 
@@ -419,9 +469,10 @@ no harm.
 - **The rotation succeeds, but the update fails**, for example because the SSH
   connection drops. The database and the vault have the new password, and
   `.env` has the old one. Run the update line.
-- **The tunnel is closed.** Every command that connects fails with a timeout,
-  and `doctor` reports the target as not reachable. Open the tunnel (§2) and
-  run the command again:
+- **The tunnel is closed.** Every command that connects fails with SQLSTATE
+  `08001`, and `doctor` reports the target as not reachable. This sample is from
+  Windows, where libpq reports `connection timeout expired`. On Linux, libpq
+  reports `Connection refused` instead. Open the tunnel (§2) and run the command again:
 
   ```
   $ sopuli --config sopuli.yaml creds check --app acme

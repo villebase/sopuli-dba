@@ -5236,7 +5236,10 @@ the register.
   every supported platform (P4). `keyring:` keeps that promise only where a
   user keyring exists, and is refused elsewhere: usually on a Linux server
   with no desktop session, and in a Windows scheduled task that runs as
-  another user than the one who wrote the entry. A missing entry is `config`
+  another user than the one who wrote the entry. A task that runs as that
+  user reads it whether the user is signed in or not, with or without a
+  stored password (measured 2026-11-10 on Windows 11 with a local account;
+  `01-configuration.md` §3a). A missing entry is `config`
   and exit 9, the error an unset `env:` variable gives, not an authentication
   failure: the keyring has refused nothing, and there was nothing to send.
 - **The verbs:** decided 2026-11-10, the maintainer's, as recommended:

@@ -243,6 +243,37 @@ the guardrails skip it in the run ([#1117](../decisions/log.md#1117)).
 `doctor --check-privileges` audits every declared role, so it reports the
 missing grant, because it reports what the tool account holds.
 
+### 2.5 What the reports can read
+
+The UC-5 `report` commands are not built on PostgreSQL yet (#1411). This is
+what the tool account, `LOGIN CREATEROLE` and nothing else, can read for them.
+It was measured on 13.23 to 18.6 (`10_report_read_probe.py`, #1443). The
+reports need no grant beyond §2.1.
+
+- **Roles.** It reads every column of `pg_roles`: `rolcanlogin`,
+  `rolvaliduntil` and the attributes. `rolpassword` reads as `********`, and
+  `pg_authid` is refused.
+- **Lock, expiry and logins.** PostgreSQL has no lock and no failed-login
+  counter. `NOLOGIN` and `VALID UNTIL` are the nearest things to a lock and an
+  expiry. No catalog keeps a role's last password change, its last login or
+  its failed logins, on any release. `pg_stat_database` counts sessions per
+  database, from 14, and not per role.
+- **Memberships.** A recursive query over `pg_auth_members` gives each role's
+  roles with the path through them, and agrees with `pg_has_role()`. Before
+  16, a membership is inherited when the member is `INHERIT`. From 16 it is
+  inherited when the grant's `inherit_option` is true, and the server applies
+  `WITH INHERIT FALSE`. 13 to 15 ignore that clause.
+- **Object privileges.** The ACLs of `pg_database`, `pg_namespace`,
+  `pg_class`, `pg_proc` and `pg_default_acl` read through `aclexplode()`.
+  Schema and object ACLs are per database: a session sees only the database it
+  is connected to, and `has_table_privilege()` on another database's table is
+  refused, `0A000`. `has_table_privilege()` given a name in a schema the tool
+  account has no `USAGE` on is refused, `42501`, because the name is resolved
+  with the tool account's rights. Given the table's oid, it answers.
+- **Cost.** With about 520 roles and 1001 tables, the membership query took
+  0.02 s or less, and `has_table_privilege()` over every role and table took
+  0.18 to 0.34 s, and about 2 s on 13.23.
+
 ---
 
 ## 3. What must not be granted
@@ -382,5 +413,6 @@ longer password is refused before anything is sent.
 | `sql/postgres/07_password_length_probe.py` | the longest password that sets as a verifier and logs in (`pg-password-length`) |
 | `sql/postgres/08_pgbouncer_probe.py` | what PgBouncer does with the query budget the driver sends, and how it refuses a login |
 | `sql/postgres/09_supabase_roles_probe.sql` | which roles a Supabase database lets the tool account change, and what supautils refuses |
+| `sql/postgres/10_report_read_probe.py` | what the UC-5 reports can read with the tool account's grants: roles, memberships with their path, and object privileges (§2.5) |
 
 The probes are for throwaway servers only: each header says what it creates.

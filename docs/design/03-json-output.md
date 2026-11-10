@@ -1654,9 +1654,9 @@ declares one Oracle target and one HashiCorp store, laid out one row to a line:
 ```json
 "install": {
   "backends": [
-    { "name": "file",      "status": "not_implemented", "vaults": [] },
-    { "name": "hashicorp", "status": "installed",       "vaults": ["vault-dev"] },
-    { "name": "oci",       "status": "installed",       "vaults": [] }
+    { "name": "file",      "status": "installed", "vaults": [] },
+    { "name": "hashicorp", "status": "installed", "vaults": ["vault-dev"] },
+    { "name": "oci",       "status": "installed", "vaults": [] }
   ],
   "drivers": [
     { "name": "mariadb",    "status": "installed", "targets": 0 },

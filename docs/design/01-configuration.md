@@ -3891,9 +3891,9 @@ trustworthy for exactly the case it exists to serve. The command that actually
 needs the client is where this becomes an error (§3a).
 
 **Missing means "this machine cannot serve it", not "the client is absent"**
-(E4). A type with no backend module in this build warns, and so does a type whose
-client is not installed. Without the first, a file whose every store was unusable
-would validate as `ok: 0 warnings`. The wording says which case it is:
+(E4). A type whose client is not installed warns, and so would a type with no
+backend module in this build; every type §3a accepts has one today. The
+wording says which case it is. On a base install:
 
 ```console
 $ sopuli --config validate.yaml config validate
@@ -3902,7 +3902,7 @@ config: validate.yaml
 ok: 0 targets, 0 bindings, 2 warnings
 
 2 warnings:
-  vault "vault-local" declares type "file", but this build has no file backend yet -- this is not something to install
+  vault "vault-local" declares type "file", but that backend is not installed; install it with: pip install "sopuli-dba[file]", or after a pipx install: pipx runpip sopuli-dba install "sopuli-dba[file]"
   vault "vault-hc" declares type "hashicorp", but that backend is not installed; install it with: pip install "sopuli-dba[hashicorp]", or after a pipx install: pipx runpip sopuli-dba install "sopuli-dba[hashicorp]"
 ```
 
@@ -3910,8 +3910,8 @@ Ordered by backend `type:` rather than by the order the stores are written in �
 the survey's order, so a reader comparing this against `doctor`'s table is
 reading the same list twice rather than two shuffles of it.
 
-The first is a warning `pip` cannot act on. The action it names is still real:
-*do not deploy this file yet*.
+A type with no module would be a warning `pip` cannot act on. The action it
+names would still be real: *do not deploy this file yet*.
 
 **The same survey `doctor` reads, at a different level.** One function answers
 "can this machine serve it" for the whole tool (`sopuli/diagnostics.py`'s

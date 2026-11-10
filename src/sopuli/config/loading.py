@@ -39,7 +39,7 @@ from pathlib import Path
 from typing import Any
 
 from sopuli.config.applications import build_applications
-from sopuli.config.bindings import build_bindings, check_admin_refs
+from sopuli.config.bindings import build_bindings, check_admin_refs, check_production_stores
 from sopuli.config.codes import (
     DELIVERY_UNSERVICEABLE,
     NOTIFY_UNSERVICEABLE,
@@ -607,6 +607,9 @@ def build_config(
     check_personal_mysql_accounts(config)
     config = replace(config, bindings=build_bindings(config))
     check_admin_refs(config)
+    # §10 on the store each password actually goes to, which only the bindings
+    # know: `check_references` sees a target's own `vault:` key alone (#1435).
+    check_production_stores(config)
     return replace(
         config,
         warnings=(*layered, *warnings, *_delivery_warnings(config)),

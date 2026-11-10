@@ -54,7 +54,7 @@ from sopuli.config.products import (
     refuse_a_bare_mysql_account,
     refuse_a_container_clause,
 )
-from sopuli.config.references import dangling
+from sopuli.config.references import PRODUCTION, dangling
 from sopuli.config.secret_refs import (
     FIELD_SEPARATOR,
     POINTER_SEPARATOR,
@@ -604,6 +604,80 @@ def check_for_store(secret: SecretRef, store_type: str, *, at: KeyPath) -> None:
         check_oci_name(secret, at=at)
     if store_type in PAYLOAD_RULE_TYPES:
         stage_layout(secret, at=at)
+
+
+def check_production_stores(
+    config: Config,
+    bindings: Sequence[Binding] | None = None,
+    *,
+    chosen_by: str | None = None,
+) -> None:
+    """§10: a store marked ``non_production`` may not hold a `prod` target's passwords.
+
+    `references._check_non_production_vaults` refuses a `prod` target whose own
+    ``vault:`` names such a store. This checks the store each password actually
+    goes to, wherever it was chosen (#1435): a binding's store comes from the
+    ref's prefix, the application entry, an override, the target or
+    ``defaults.vault``, and an ``admin.auth.secret``'s from its prefix, the
+    target or ``defaults.vault``. A target whose own key is fine can still get
+    a non-production store from any of the others.
+
+    ``bindings`` defaults to the config's. :func:`sopuli.config.binding_stores.complete`
+    passes the ones a profile or ``SOPULI_VAULT`` filled in, with ``chosen_by``
+    naming which. The error then points at the document as a whole and names
+    that source in its hint, as that module's other refusals do, because
+    ``SOPULI_VAULT`` has no line in the file. Those layers do not fill the
+    admin ref here, so it is checked only at load.
+    """
+    non_production = {vault.name for vault in config.vaults if vault.non_production}
+    if not non_production:
+        return
+    prod = {
+        expanded.name: expanded
+        for expanded in config.expanded_targets
+        if expanded.target.environment == PRODUCTION
+    }
+    where = application_locations(config)
+    for binding in config.bindings if bindings is None else bindings:
+        if binding.target not in prod or binding.vault not in non_production:
+            continue
+        if chosen_by is not None:
+            raise ConfigError(
+                f"{binding.account} on target {binding.target!r} is {PRODUCTION}, but this "
+                f"run would keep its password in vault {binding.vault!r}, which is marked "
+                f"`non_production: true`",
+                at=ROOT,
+                hint=(
+                    f"{chosen_by} chose that store; name a production store for it in the "
+                    "file, or choose another for this run"
+                ),
+            )
+        raise ConfigError(
+            f"{binding.account} on target {binding.target!r} is {PRODUCTION}, but its "
+            f"password would be kept in vault {binding.vault!r}, which is marked "
+            f"`non_production: true`",
+            at=where.get(binding.application, ROOT),
+            hint=(
+                "name a production store for it on the target, the application entry or "
+                "the ref, or drop the marking if it is wrong"
+            ),
+        )
+    if chosen_by is not None:
+        return
+    for expanded in prod.values():
+        auth = expanded.target.admin.auth if expanded.target.admin is not None else None
+        ref = auth.secret if auth is not None else None
+        if ref is None:
+            continue
+        store = ref.vault or expanded.target.vault or config.defaults.vault
+        if store not in non_production:
+            continue
+        raise ConfigError(
+            f"target {expanded.name!r} is {PRODUCTION}, but its admin password is read "
+            f"from vault {store!r}, which is marked `non_production: true`",
+            at=declared_at(expanded, "admin").key("auth").key("secret"),
+            hint="keep it in a production store, or drop the marking if it is wrong",
+        )
 
 
 def check_admin_refs(config: Config) -> None:

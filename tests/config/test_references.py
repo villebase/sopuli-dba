@@ -425,6 +425,86 @@ def test_a_dev_target_may_use_a_non_production_store() -> None:
     assert config.targets[0].vault == "local"
 
 
+#: Every way a binding on a target that names no store of its own can still
+#: get one (#1435): the check is on the store the password goes to.
+INHERITED = {
+    "defaults": {"defaults": {"vault": "local"}},
+    "application entry": {"application": {"vault": "local"}},
+    "ref prefix": {"application": {"secret_template": "local:apps/{account}#password"}},
+    "override": {
+        "application": {"overrides": [{"where": {"env": "prod"}, "vault": "local"}]},
+    },
+}
+
+
+def _prod_estate(how: dict[str, Any]) -> dict[str, Any]:
+    """A prod target that names no store, and one application on it."""
+    application = {
+        "name": "acme",
+        "accounts": ["acme_web_user"],
+        "secret_template": "apps/{account}#password",
+        **how.get("application", {}),
+    }
+    sections: dict[str, Any] = {
+        "vaults": {"local": LOCAL_FILE_STORE, **VAULTS},
+        "targets": [{**TARGET, "environment": "prod", "labels": {"env": "prod"}}],
+        "applications": [application],
+    }
+    if "defaults" in how:
+        sections["defaults"] = how["defaults"]
+    return document(**sections)
+
+
+@pytest.mark.parametrize("how", INHERITED.values(), ids=INHERITED.keys())
+def test_a_prod_password_may_not_reach_a_non_production_store_another_way(
+    how: dict[str, Any],
+) -> None:
+    """A prod target whose own `vault:` is empty passed the check until #1435,
+    and `creds generate` then wrote its passwords into the non-production store.
+    """
+    with pytest.raises(ConfigError) as caught:
+        build_config(_prod_estate(how))
+
+    rendered = str(caught.value)
+    assert "acme_web_user on target 'cdb-root-dev' is prod" in rendered
+    assert "vault 'local', which is marked `non_production: true`" in rendered
+    assert "applications[0]" in rendered
+
+
+def test_a_prod_password_in_a_production_store_passes_beside_a_non_production_default() -> None:
+    """`defaults.vault` naming a development store refuses only the passwords
+    that would land there, not a prod target whose bindings all name another."""
+    config = build_config(
+        _prod_estate({"defaults": {"vault": "local"}, "application": {"vault": "vault-dev"}})
+    )
+
+    assert [binding.vault for binding in config.bindings] == ["vault-dev"]
+
+
+def test_a_prod_admin_password_may_not_be_read_from_a_non_production_store() -> None:
+    with pytest.raises(ConfigError) as caught:
+        build_config(
+            document(
+                vaults={"local": LOCAL_FILE_STORE},
+                defaults={"vault": "local"},
+                targets=[
+                    {
+                        **TARGET,
+                        "environment": "prod",
+                        "admin": {
+                            "username": "C##SOPULI_SVC",
+                            "auth": {"method": "vault", "secret": "ops/admin#password"},
+                        },
+                    }
+                ],
+            )
+        )
+
+    rendered = str(caught.value)
+    assert "its admin password is read from vault 'local'" in rendered
+    assert "targets[0].admin.auth.secret" in rendered
+
+
 # ------------------------------------------------------ external admin auth ---
 
 ALIAS = "CDBPROD"

@@ -4031,8 +4031,13 @@ notices until a rotation.
 - a `for_each` with more or fewer than one outer dimension, or with two list
   variables in one value → error (§4 rules 1 and 6), rather than a set that
   generates a surprising number of targets
-- a target with `environment: prod` referencing a vault marked
-  `non_production: true` → error
+- a password of a target with `environment: prod` kept in, or an admin
+  password read from, a vault marked `non_production: true` → error. The
+  rule is on the store the password actually uses, wherever it was named: the
+  target's `vault:`, an application entry's or an override's, a ref's prefix,
+  or `defaults.vault`. A store a profile's `vault:` or `SOPULI_VAULT` supplies
+  is checked when a run fills it in, before any store is opened, and the
+  message names which of the two chose it (#1435)
 - `locking.break_expired: true` anywhere in the file while any vault is
   `locking: advisory-only` → error naming both ends. Either alone is
   legitimate; together they are an unattended run taking over a lock with no

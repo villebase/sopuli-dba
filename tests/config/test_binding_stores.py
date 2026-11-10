@@ -253,6 +253,63 @@ def test_refusing_counts_the_rest_rather_than_listing_them() -> None:
         binding_stores.refuse_unresolved(config, action="checking credentials")
 
 
+def _prod_with_a_scratch_store(**extra: Any) -> Config:
+    """A prod target and a binding with no store, beside one marked non-production."""
+    return build_config(
+        {
+            "version": 1,
+            "vaults": {**VAULTS, "vault-scratch": {"type": "hashicorp", "non_production": True}},
+            "targets": [
+                {"name": "plain", "type": "oracle", "dsn": "h:1521/x", "environment": "prod"}
+            ],
+            "applications": [
+                {
+                    "name": "acme",
+                    "targets": ["plain"],
+                    "accounts": ["acme_web_user"],
+                    "secret_template": REF,
+                }
+            ],
+            **extra,
+        }
+    )
+
+
+def test_the_environment_may_not_send_a_prod_password_to_a_non_production_store() -> None:
+    """§10 on a store the run supplies (#1435). The loader checks the stores the
+    file names; this one is unknown until `SOPULI_VAULT` is read."""
+    config = _prod_with_a_scratch_store()
+
+    with pytest.raises(ConfigError) as raised:
+        binding_stores.complete(config, estate=config, env={"SOPULI_VAULT": "vault-scratch"})
+
+    message = str(raised.value)
+    assert "acme_web_user on target 'plain' is prod" in message
+    assert "this run would keep its password in vault 'vault-scratch'" in message
+    assert raised.value.hint is not None
+    assert "SOPULI_VAULT chose that store" in raised.value.hint
+
+
+def test_a_profile_may_not_either() -> None:
+    config = _prod_with_a_scratch_store(
+        profiles={"scratch": {"vault": "vault-scratch"}}, defaults={"profile": "scratch"}
+    )
+
+    with pytest.raises(ConfigError) as raised:
+        binding_stores.complete(config, estate=config)
+
+    assert raised.value.hint is not None
+    assert "profiles.scratch.vault chose that store" in raised.value.hint
+
+
+def test_a_production_store_from_the_environment_passes() -> None:
+    config = _prod_with_a_scratch_store()
+
+    completed = binding_stores.complete(config, estate=config, env={"SOPULI_VAULT": "vault-ci"})
+
+    assert store_of(completed) == "vault-ci"
+
+
 def test_refusing_passes_once_everything_resolves() -> None:
     loaded = estate()
     config = binding_stores.complete(loaded, estate=loaded, env={"SOPULI_VAULT": "vault-ci"})

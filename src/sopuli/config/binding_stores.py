@@ -49,6 +49,7 @@ from dataclasses import dataclass, replace
 from sopuli.config.bindings import (
     application_locations,
     check_for_store,
+    check_production_stores,
     check_stages_do_not_collide,
 )
 from sopuli.config.errors import ROOT, ConfigError
@@ -125,6 +126,17 @@ def complete(
     if check_refs:
         _check_completed(candidate, config)
         _check_estate_stages(candidate, estate, completed)
+        # §10 on the bindings this run just gave a store (#1435): the loader
+        # checked the ones the file names, and these had none until now.
+        check_production_stores(
+            completed,
+            [
+                filled
+                for before, filled in zip(config.bindings, completed.bindings, strict=True)
+                if _needs_store(before)
+            ],
+            chosen_by=candidate.location,
+        )
     return completed
 
 

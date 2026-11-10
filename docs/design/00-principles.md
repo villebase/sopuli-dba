@@ -520,7 +520,8 @@ the record is written without compare-and-set, and every run says so
 ### The file store's file
 
 A `file` store is one file, encrypted with age to the store's recipients
-([#1415](../decisions/log.md#1415)). The store is not built yet (#1372). What
+([#1415](../decisions/log.md#1415)). It is for local development and CI, and
+every run that opens one warns with `SOPULI-W070`. What
 the file decrypts to is UTF-8 JSON, compact and with sorted keys, written by
 `sopuli/store/file/_document.py` and read by nothing else. Two writes to one
 path, with fictional passwords, as `dumps` wrote them:
@@ -602,7 +603,7 @@ pip install "sopuli-dba[mysql]"        # + PyMySQL, to reach MySQL
 pip install "sopuli-dba[mariadb]"      # + PyMySQL and PyNaCl, for MariaDB
 pip install "sopuli-dba[hashicorp]"    # + HashiCorp Vault
 pip install "sopuli-dba[oci]"          # + OCI Vault / Secrets
-pip install "sopuli-dba[file]"         # + age, for the file store (not built yet, #1372)
+pip install "sopuli-dba[file]"         # + age, for the file store (development and CI)
 pip install "sopuli-dba[notify]"       # + UC-2's webhook notify channel
 pip install "sopuli-dba[yopass]"       # + UC-2's one_time_link delivery: httpx and pysequoia
 pip install "sopuli-dba[onepassword]"  # + UC-2's onepassword_share delivery: 1Password's SDK

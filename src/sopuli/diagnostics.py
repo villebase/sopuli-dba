@@ -604,6 +604,10 @@ IDENTITY_UNCHECKED = "SOPULI-W068"
 #: real run is refused without `--replace` (#1417).
 KEYRING_REPLACE_NEEDS_FLAG = "SOPULI-W069"
 
+#: The run opened a `file` store, which is for local development and CI and
+#: not for production (#1415, decision 5).
+FILE_STORE_IN_USE = "SOPULI-W070"
+
 #: ``SOPULI-W004`` and ``SOPULI-W034`` to ``SOPULI-W039`` -- imported above
 #: rather than defined here. They are raised in the config layer, which cannot
 #: import this module, so they are defined in :mod:`sopuli.config.codes` and
@@ -872,6 +876,13 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "A dry run of `keyring set` found a different value in the entry, so the "
             "same run without `--dry-run` is refused with exit 8 unless `--replace` is "
             "given. Only on a dry run: the real run refuses instead of warning."
+        ),
+        FILE_STORE_IN_USE: (
+            "The run opened a `file` store: one age-encrypted file, for local development "
+            "and CI. It is not for production: it has no compare-and-set, so its lock is "
+            "advisory only, and the file is the only copy of what it holds. One entry per "
+            "file store the run "
+            "opens, from every command that opens one."
         ),
         CONSTRAINTS_UNREAD: (
             "`creds generate` could not read a target's password constraints, so the "
@@ -1496,6 +1507,22 @@ def identity_unchecked(target: str, caveat: str) -> Diagnostic:
         code=IDENTITY_UNCHECKED,
         target=target,
         message=f"{target}: {caveat}",
+    )
+
+
+def file_store_in_use(name: str) -> Diagnostic:
+    """`SOPULI-W070`: the run opened the file store ``name`` (#1415, decision 5).
+
+    On every run that opens one, so the store is in each run's record, as
+    ``locking: advisory-only`` is.
+    """
+    return Diagnostic(
+        level="warning",
+        code=FILE_STORE_IN_USE,
+        message=(
+            f'vault "{name}" is a file store, for local development and CI: it is not '
+            "for production"
+        ),
     )
 
 

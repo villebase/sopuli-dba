@@ -227,7 +227,5 @@ it.
 
 The file backend (P2, priority 3) reaches age through the Python library
 `pyrage`, so its extra is `sopuli-dba[file]`
-([#1415](log.md#1415)). The extra exists and installs `pyrage`. The store
-itself is not built yet (#1372), so the registry names no extra for `file`
-until it is: telling an operator to install something that still cannot open
-the store would be the wrong instruction.
+([#1415](log.md#1415)). The registry names it, so a machine without
+`pyrage` is told to install `sopuli-dba[file]` (#1372).

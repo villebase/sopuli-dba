@@ -107,13 +107,44 @@ def test_a_backend_whose_client_is_absent_is_not_installed() -> None:
 
 
 def test_a_backend_with_no_extra_is_vacuously_installed() -> None:
-    """`file` has no client to look for (ADR-006's named gap).
+    """A backend with no extra has no client to look for (ADR-006's named gap).
 
     Vacuously true rather than false, so `config validate` stays quiet about
     it instead of warning that something unnamed is missing. Its real state
-    -- no module in this build -- is `resolve`'s to report.
+    -- no module in this build -- is `resolve`'s to report. No backend in the
+    registry has this shape today, so the test builds one.
     """
-    assert installed(BACKENDS["file"])
+    assert installed(Backend(module="sopuli.store.absent_backend_xyz"))
+
+
+def test_the_file_store_names_its_extra_and_client() -> None:
+    """Built (#1372), so a machine without `pyrage` is told what to install."""
+    backend = BACKENDS["file"]
+
+    # Not `provides`: conftest empties it for every test, so the suite's
+    # output does not depend on what is installed.
+    assert backend.extra == "file"
+    assert backend.install_command == 'pip install "sopuli-dba[file]"'
+
+
+def test_a_machine_without_pyrage_is_told_to_install_the_file_extra(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The store module imports `pyrage` itself, so its absence is SOPULI-20001
+    with the install line, not a bare ModuleNotFoundError from mid-run."""
+    monkeypatch.setitem(
+        BACKENDS,
+        "file",
+        Backend(module="sopuli.store.file.store", extra="file", provides=frozenset({"pyrage"})),
+    )
+    monkeypatch.setitem(sys.modules, "pyrage", None)
+    monkeypatch.delitem(sys.modules, "sopuli.store.file.store", raising=False)
+
+    with pytest.raises(BackendNotInstalledError) as caught:
+        resolve(vault("acme-dev", "file"))
+
+    assert caught.value.code == BACKEND_NOT_INSTALLED
+    assert 'pip install "sopuli-dba[file]"' in (caught.value.hint or "")
 
 
 def test_installed_does_not_import_the_client(monkeypatch: pytest.MonkeyPatch) -> None:

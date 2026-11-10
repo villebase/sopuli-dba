@@ -108,14 +108,11 @@ class Backend:
 #: has never heard of would fail at connect time with a :class:`KeyError`, which
 #: is precisely the traceback rule 2 exists to prevent.
 #:
-#: ``file`` has **no extra**, and that is not an oversight: it is not built.
-#: It reaches age through ``pyrage``, and the extra ``sopuli-dba[file]``
-#: installs it (#1415), but the entry names it only when the store is built
-#: (#1372): an install line here would send somebody to pip for a store that
-#: still cannot open. Until then, ``extra=None`` means "there is nothing to
-#: tell you to install", and asking for it fails as *not implemented in this build* rather than
-#: as a pip problem -- which is true, and is the message that does not send
-#: somebody to `pip` for something `pip` cannot fix.
+#: Every entry has an extra today. A backend that is declared before it is
+#: built has **no extra**, on purpose: ``extra=None`` means "there is nothing
+#: to tell you to install", and asking for it fails as *not implemented in this
+#: build* rather than as a pip problem -- which is true, and is the message
+#: that does not send somebody to `pip` for something `pip` cannot fix.
 BACKENDS: dict[str, Backend] = {
     "hashicorp": Backend(
         module="sopuli.store.hashicorp",
@@ -130,10 +127,13 @@ BACKENDS: dict[str, Backend] = {
         extra="oci",
         provides=frozenset({"oci"}),
     ),
-    # The store module itself, not the package: the package already holds
-    # parts of the store, and the store module's absence is what says this
-    # build cannot serve `file` yet (#1372).
-    "file": Backend(module="sopuli.store.file.store"),
+    # #1415: age, through `pyrage`. The store module itself, not the package,
+    # which imports no vendor client.
+    "file": Backend(
+        module="sopuli.store.file.store",
+        extra="file",
+        provides=frozenset({"pyrage"}),
+    ),
 }
 
 
@@ -173,8 +173,8 @@ def installed(backend: Backend) -> bool:
 
     :func:`sopuli.extras.installed` is the mechanism, shared with the driver
     registry. A backend with no extra is vacuously installed -- there is no
-    client to look for -- which keeps ``config validate`` quiet about ``file``
-    rather than warning that something unnamed is missing, and
+    client to look for -- which keeps ``config validate`` quiet about such a
+    backend rather than warning that something unnamed is missing, and
     the roadmap gap surfaces at :func:`resolve` where it belongs.
     """
     return extras_installed(backend.provides)

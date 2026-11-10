@@ -851,7 +851,7 @@ config file can be read without knowing what environment it will be read in.
 | `mount` | KV mount point (HashiCorp). Refused on an `oci` or `file` store |
 | `kv_version` | `1` or `2` — different backends with different capabilities, not a version to branch on casually (P2). Refused on an `oci` or `file` store |
 | `namespace` | HashiCorp Enterprise namespace, sent as the `X-Vault-Namespace` header. Absent means no namespace. Refused on an `oci` or `file` store |
-| `identity` | `file` only, and **required** there: a MaterialRef, `{ file: PATH }` or `{ env: NAME }`, naming the age identity that decrypts the store: one X25519 secret key, as `age-keygen` writes it. The store, when it is built (#1372), refuses a passphrase-protected identity, because it would need a prompt, and a plugin identity (`AGE-PLUGIN-…`), because it needs the plugin's own program |
+| `identity` | `file` only, and **required** there: a MaterialRef, `{ file: PATH }` or `{ env: NAME }`, naming the age identity that decrypts the store: one X25519 secret key, as `age-keygen` writes it. The store refuses a passphrase-protected identity, because it would need a prompt, and a plugin identity (`AGE-PLUGIN-…`), because it needs the plugin's own program |
 | `recipients` | `file` only: a list of age recipients (lower case, `age1…`) the store is encrypted to, besides the identity's own key, which is always a recipient so that the next run can read what this one wrote. Absent means the identity's key alone. A value that is not an `age1…` recipient, an SSH key among them, is refused when the file is read, without being repeated, in case it is a secret key pasted by mistake. This build encrypts to X25519 recipients only, as `age-keygen -y` prints them: a plugin (`age1yubikey1…`) or post-quantum (`age1pq1…`) recipient passes the config check and is refused when the store opens |
 | `max_versions` | `file` only: how many versions of each path the store keeps, at least 1. `1` keeps only the current version. Absent means 10 |
 | `vault_id`, `compartment_id`, `key_id` | `oci` only, and **required** there: the vault's OCID, the compartment new secrets are created in, and the KMS key that encrypts them. The tool creates secrets, and OCI's `CreateSecret` needs all three. They are not credentials, so they are plain strings. Refused on any other store, and no `defaults:` block or profile may change them: a different value is a second store |
@@ -938,9 +938,10 @@ keys. The three `file` keys are refused on every other store, and no
 file is written. An identity that differs by machine is written as
 `identity: { env: NAME }`. HashiCorp's own variables, such as `VAULT_ADDR`,
 are not applied to a `file` store, which would otherwise take a URL as its
-path; the run warns with `SOPULI-W038`, as for an OCI store. The backend is
-not built yet (#1372): a run that reaches a `file` store is still refused
-with `SOPULI-20005`.
+path; the run warns with `SOPULI-W038`, as for an OCI store. The store has no
+compare-and-set, so a command that changes it needs `locking: advisory-only`
+on it, and every run that opens one warns with `SOPULI-W070`: it is for local
+development and CI, not for production. It needs `sopuli-dba[file]`.
 
 #### A declared backend that is not installed (ADR-006)
 
@@ -962,7 +963,7 @@ What changes is where it stops:
 | Moment | With the backend missing |
 |---|---|
 | load, `config validate`, `config show`, `target list` | works. `config validate` adds a **warning** (§9, §10), and exits 0 |
-| any command that resolves the store to a client | **error**, `error.category: "config"`, code `SOPULI-20001`, exit 9 (`03-json-output.md` §3). A `type` this build has no module for, today `file`, is `SOPULI-20005` instead, whether or not its client is installed. Its message has no install line, because installing nothing fixes it |
+| any command that resolves the store to a client | **error**, `error.category: "config"`, code `SOPULI-20001`, exit 9 (`03-json-output.md` §3). A `type` this build has no module for, which no type is today, is `SOPULI-20005` instead, whether or not its client is installed. Its message has no install line, because installing nothing fixes it |
 | `sopuli doctor` | **failure**. Its question is "can I reach my vaults", and this is a no |
 
 ```
@@ -3890,9 +3891,9 @@ trustworthy for exactly the case it exists to serve. The command that actually
 needs the client is where this becomes an error (§3a).
 
 **Missing means "this machine cannot serve it", not "the client is absent"**
-(E4). A type with no backend module in this build warns, and so does a type whose
-client is not installed. Without the first, a file whose every store was unusable
-would validate as `ok: 0 warnings`. The wording says which case it is:
+(E4). A type whose client is not installed warns, and so would a type with no
+backend module in this build; every type §3a accepts has one today. The
+wording says which case it is. On a base install:
 
 ```console
 $ sopuli --config validate.yaml config validate
@@ -3901,7 +3902,7 @@ config: validate.yaml
 ok: 0 targets, 0 bindings, 2 warnings
 
 2 warnings:
-  vault "vault-local" declares type "file", but this build has no file backend yet -- this is not something to install
+  vault "vault-local" declares type "file", but that backend is not installed; install it with: pip install "sopuli-dba[file]", or after a pipx install: pipx runpip sopuli-dba install "sopuli-dba[file]"
   vault "vault-hc" declares type "hashicorp", but that backend is not installed; install it with: pip install "sopuli-dba[hashicorp]", or after a pipx install: pipx runpip sopuli-dba install "sopuli-dba[hashicorp]"
 ```
 
@@ -3909,8 +3910,8 @@ Ordered by backend `type:` rather than by the order the stores are written in �
 the survey's order, so a reader comparing this against `doctor`'s table is
 reading the same list twice rather than two shuffles of it.
 
-The first is a warning `pip` cannot act on. The action it names is still real:
-*do not deploy this file yet*.
+A type with no module would be a warning `pip` cannot act on. The action it
+names would still be real: *do not deploy this file yet*.
 
 **The same survey `doctor` reads, at a different level.** One function answers
 "can this machine serve it" for the whole tool (`sopuli/diagnostics.py`'s

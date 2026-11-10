@@ -161,8 +161,8 @@ def backends_installed(monkeypatch: pytest.MonkeyPatch) -> None:
     backend opt out by naming the absent client themselves
     (``tests/store/test_missing_backend.py``). Emptying ``provides`` rather than
     faking an import: :func:`~sopuli.store.registry.installed` reports a backend
-    with nothing to look for as installed, which is the same path `file` and
-    `keyring` take in production.
+    with nothing to look for as installed, which is the same path `keyring`
+    takes in production.
     """
     for name, backend in list(BACKENDS.items()):
         monkeypatch.setitem(BACKENDS, name, replace(backend, provides=frozenset()))

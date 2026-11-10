@@ -47,8 +47,7 @@ the tool wrote at paths the config no longer declares (§13).
 
 There is no `sopuli admin` command. To install the Oracle service account, run
 the SQL in `sql/oracle/` by hand. The PostgreSQL tool role is created by hand in
-`psql` (§7). The store backends are `hashicorp` and `oci` (§8.8); `doctor`
-lists the others as `not_implemented`. A PostgreSQL target runs `doctor`, the
+`psql` (§7). The store backends are `hashicorp`, `oci` (§8.8) and `file`. A PostgreSQL target runs `doctor`, the
 `creds` commands (§7) and the `account` commands (§9). It refuses
 `account expire-password` and the seen reset, because PostgreSQL cannot make a
 role change its password at its next login. A MySQL target and a MariaDB target
@@ -396,12 +395,14 @@ Exit 1. Set it and run again:
 $ export SOPULI_DB_ADMIN_PASSWORD=sopuli-test
 $ sopuli --config sopuli.yaml doctor
 install
-  KIND     NAME        STATUS           CONFIGURED
-  backend  file        not_implemented  -
-  backend  hashicorp   installed        vault-dev
-  backend  oci         installed        -
-  driver   oracle      installed        1 target
-  driver   postgresql  installed        -
+  KIND     NAME        STATUS     CONFIGURED
+  backend  file        installed  -
+  backend  hashicorp   installed  vault-dev
+  backend  oci         installed  -
+  driver   mariadb     installed  -
+  driver   mysql       installed  -
+  driver   oracle      installed  1 target
+  driver   postgresql  installed  -
 
 vaults
   VAULT      TYPE       STATUS  AUTH  SKEW

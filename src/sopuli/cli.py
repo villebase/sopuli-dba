@@ -116,7 +116,7 @@ from sopuli.config import delivery as delivery_config
 from sopuli.config.bindings import check_oci_name
 from sopuli.config.errors import KeyPath
 from sopuli.config.expansion import declared_at
-from sopuli.config.model import Delivery, Notify, PersonalAccountRule
+from sopuli.config.model import Delivery, Notify, PersonalAccountRule, Vault
 from sopuli.config.password_keys import declared_password_key, place_of
 from sopuli.config.products import (
     account_key,
@@ -158,6 +158,7 @@ from sopuli.diagnostics import (
     constraint_diagnostics,
     encryption_diagnostics,
     failed_login_block_unread,
+    file_store_in_use,
     guardrail_diagnostics,
     guardrail_pass_ahead,
     guardrail_refuses_ahead,
@@ -1017,6 +1018,11 @@ def doctor(
     )
     document.vaults = [build_vault(report, error=_vault_error(report)) for report in vaults]
     document.diagnostics.extend(vault_diagnostics(vaults))
+    # The survey opens the stores itself, so a file store it opened is warned
+    # about here rather than in `_stores_for`.
+    for vault in config.vaults:
+        if vault.name in run.stores:
+            _warn_if_file_store(vault, run)
 
     client = _client_report(config)
     examined = [
@@ -3938,7 +3944,7 @@ def _delivery_backend(
     from sopuli.delivery import vault_path, vault_wrapped
 
     name = _delivery_store(config, delivery, target)
-    store = _stores_for({name}, config, token_file=run.vault_token_file, cache=run.stores)[name]
+    store = _stores_for({name}, config, run=run)[name]
     if delivery.vault_path is not None:
         settings = delivery.vault_path
         return vault_path.for_store(store, vault=name, ttl=settings.ttl, prefix=settings.prefix)
@@ -4335,7 +4341,7 @@ def _reset_journal(run: Invocation, config: Config) -> SecretStore | None:
     records = config.reset_records
     if records is None:
         return None
-    opened = _stores_for({records.vault}, config, token_file=run.vault_token_file, cache=run.stores)
+    opened = _stores_for({records.vault}, config, run=run)
     return opened.get(records.vault)
 
 
@@ -4614,7 +4620,7 @@ def lock_status(
     if region is not None:
         wanted.add(region.store)
 
-    stores = _stores_for(wanted, config, token_file=run.vault_token_file, cache=run.stores)
+    stores = _stores_for(wanted, config, run=run)
     leftovers = discover_locks(everything, stores=stores)
     states = survey(
         acquisition_order([*keys, *leftovers.keys]),
@@ -4729,7 +4735,7 @@ def lock_break(
 
     paths = run.sources
     config = run.config
-    entry = _lockable_store(key, config, token_file=run.vault_token_file)
+    entry = _lockable_store(key, config, run=run)
     # Invariant 4: the capability is asked about before the record is read, so a
     # store that can never serve this command says so rather than looking as
     # though this particular lock could not be taken.
@@ -4924,12 +4930,7 @@ def vault_orphans(vaults: tuple[str, ...], prefix: str | None, run: Invocation) 
                 f"--prefix {prefix!r} is under the `reset_records:` prefix "
                 f"{region.prefix!r}, whose records vault orphans leaves out"
             )
-    stores = _stores_for(
-        set(through.values()),
-        config,
-        token_file=run.vault_token_file,
-        cache=run.stores,
-    )
+    stores = _stores_for(set(through.values()), config, run=run)
     # Every binding's path, declared in every store: `sopuli.orphans` says why.
     declared = orphans_declared_by(config.bindings)
     # `sopuli.orphans` says what counts as this tool's record.
@@ -5162,49 +5163,43 @@ def _can_prompt() -> bool:
     return is_a_terminal(sys.stdin)
 
 
-def _lockable_store(
-    key: LockKey, config: Config, *, token_file: Path | None = None
-) -> LockableStore:
+def _lockable_store(key: LockKey, config: Config, *, run: Invocation) -> LockableStore:
     """The one store this lock lives in, and whether a lock in it can be fenced.
 
     `locking` is carried alongside the client rather than re-read, for the reason
     :class:`~sopuli.lock.manager.LockableStore` gives: a command must not be able
     to disagree with what `config show` displayed about the same store.
     """
-    store = _stores_for({key.store}, config, token_file=token_file)[key.store]
+    store = _stores_for({key.store}, config, run=run)[key.store]
     locking = next(vault.locking for vault in config.vaults if vault.name == key.store)
     return LockableStore(store=store, locking=locking)
 
 
-def _stores_for(
-    names: set[str],
-    config: Config,
-    *,
-    token_file: Path | None = None,
-    cache: dict[str, SecretStore] | None = None,
-) -> Mapping[str, SecretStore]:
+def _stores_for(names: set[str], config: Config, *, run: Invocation) -> Mapping[str, SecretStore]:
     """Open every store a survey needs, and only those.
 
     One connection per store rather than one per path: a store is a client, and
     an estate with forty paths in one vault should authenticate once.
 
-    ``cache`` is the run's own client map (:attr:`Invocation.stores`), and it is
-    what makes that sentence true **across** the calls as well as within one.
-    This function is called several times in a run -- for the lock stores, for
-    the binding stores, and for an admin credential's. Without the cache, a
-    config whose admin ref and application documents live in one vault would
-    authenticate to it twice. Passed a cache, a name already opened is reused
-    and only the rest are dialled.
+    The run's own client map (:attr:`Invocation.stores`) is what makes that
+    sentence true **across** the calls as well as within one. This function is
+    called several times in a run -- for the lock stores, for the binding
+    stores, and for an admin credential's. Without the map, a config whose
+    admin ref and application documents live in one vault would authenticate
+    to it twice. A name already opened is reused and only the rest are dialled.
 
     Every client here is built the same way, from the ``vaults:`` entry and the
     run's token file, so a same-named one is not merely similar but identical in
     construction -- which is what makes reuse safe rather than merely cheap.
     Nothing closes a store, so a shared client has no lifecycle to get wrong.
 
-    ``token_file`` is ``--vault-token-file``'s path, forwarded as a location: it
-    reaches ``method: token`` stores and is read there, on §3a's chain, so this
-    is how a command line authenticates a store without a variable or a file in
-    a fixed place (decision C16).
+    The run's token file is ``--vault-token-file``'s path, forwarded as a
+    location: it reaches ``method: token`` stores and is read there, on §3a's
+    chain, so this is how a command line authenticates a store without a
+    variable or a file in a fixed place (decision C16).
+
+    A ``file`` store, once opened, puts ``SOPULI-W070`` on the run (#1415,
+    decision 5): it is for development and CI, not for production.
 
     The names are resolved against `vaults:` with the same `dangling` message
     every other name in the file gets. `references.py` has already checked them,
@@ -5218,11 +5213,22 @@ def _stores_for(
     # The name is checked above before the cache is consulted, so a dangling one
     # is refused whether or not some earlier call in this run happened to open a
     # store of that name -- the message is about the file, not about this cache.
-    opened = {} if cache is None else cache
+    opened = run.stores
     for name in sorted(names):
         if name not in opened:
-            opened[name] = connect(declared[name], env=os.environ, token_file=token_file)
+            opened[name] = connect(declared[name], env=os.environ, token_file=run.vault_token_file)
+            _warn_if_file_store(declared[name], run)
     return {name: opened[name] for name in sorted(names)}
+
+
+def _warn_if_file_store(vault: Vault, run: Invocation) -> None:
+    """``SOPULI-W070`` for a ``file`` store this run has just opened.
+
+    Called once per store: `_stores_for` calls it only when it opens a store
+    the run has not opened, and `doctor` once for each store its survey opened.
+    """
+    if vault.type == "file":
+        run.document.warn_in_text(file_store_in_use(vault.name))
 
 
 def _staged_stores(stores: Mapping[str, SecretStore], run: Invocation) -> Mapping[str, SecretStore]:
@@ -6111,14 +6117,7 @@ class _HistoryStores:
     def get(self, name: str, *, staged: bool) -> SecretStore | Error:
         if name not in self.opened:
             try:
-                self.opened.update(
-                    _stores_for(
-                        {name},
-                        self.config,
-                        token_file=self.run.vault_token_file,
-                        cache=self.run.stores,
-                    )
-                )
+                self.opened.update(_stores_for({name}, self.config, run=self.run))
             except Exception as failed:  # noqa: BLE001 -- that store's accounts say so
                 self.opened[name] = _finding(failed)
         store = self.opened[name]
@@ -6584,8 +6583,7 @@ def creds_check(
         _stores_for(
             {binding.vault for binding in config.bindings if binding.vault is not None},
             config,
-            token_file=run.vault_token_file,
-            cache=run.stores,
+            run=run,
         ),
         run,
     )
@@ -7247,9 +7245,7 @@ def creds_generate(
         confirmation_required=asks,
     )
     stores = _staged_stores(
-        _stores_for(
-            {key.store for key in keys}, config, token_file=run.vault_token_file, cache=run.stores
-        ),
+        _stores_for({key.store for key in keys}, config, run=run),
         run,
     )
     found, unread = _plan_documents(keys, stores)
@@ -8671,9 +8667,7 @@ def creds_apply(
 
     keys = _document_keys(bindings)
     stores = _staged_stores(
-        _stores_for(
-            {key.store for key in keys}, config, token_file=run.vault_token_file, cache=run.stores
-        ),
+        _stores_for({key.store for key in keys}, config, run=run),
         run,
     )
     # Read once before a question, so a store that cannot be read refuses before
@@ -11072,7 +11066,7 @@ def _admin_reader(target: ExpandedTarget, run: Invocation, config: Config) -> Re
                 at=declared_at(target, "admin").key("auth").key("secret"),
                 read_only=True,
             )
-        store = _stores_for({name}, config, token_file=run.vault_token_file, cache=run.stores)[name]
+        store = _stores_for({name}, config, run=run)[name]
         stored = read_secret(store, ref)
         if stored is None:
             # An empty path is the operator's mistake rather than a store failure,
@@ -13188,9 +13182,7 @@ def creds_finish_rollover(
     demand = _refuse_unconfirmable(plan, run, action=action, confirmed=confirm, noun="window")
     keys = _document_keys(bindings)
     stores = _staged_stores(
-        _stores_for(
-            {key.store for key in keys}, config, token_file=run.vault_token_file, cache=run.stores
-        ),
+        _stores_for({key.store for key in keys}, config, run=run),
         run,
     )
     # No lock: this verb writes to no store. The documents are read for one
@@ -13762,9 +13754,7 @@ def creds_rotate(
 
     keys = _document_keys(bindings)
     stores = _staged_stores(
-        _stores_for(
-            {key.store for key in keys}, config, token_file=run.vault_token_file, cache=run.stores
-        ),
+        _stores_for({key.store for key in keys}, config, run=run),
         run,
     )
     # `--max-age-days` leaves a document that is not due unwritten, so it is
@@ -14870,9 +14860,7 @@ def creds_status(
 
     keys = _document_keys(bindings)
     stores = _staged_stores(
-        _stores_for(
-            {key.store for key in keys}, config, token_file=run.vault_token_file, cache=run.stores
-        ),
+        _stores_for({key.store for key in keys}, config, run=run),
         run,
     )
     documents = _read_documents(keys, stores, run=run)

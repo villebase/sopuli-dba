@@ -243,8 +243,9 @@ ignore_missing_imports = true
 module = ["pymysql", "pymysql.*"]
 ignore_missing_imports = true
 
-# pyrage ships no type information either. Only `sopuli.store.file._crypto`
-# imports it, and the tests that need it; both treat its objects as `Any`.
+# pyrage ships no type information either. Only the `sopuli.store.file`
+# package imports it, which ADR-006 requires, and the tests that need it; both
+# treat its objects as `Any`.
 [[tool.mypy.overrides]]
 module = ["pyrage", "pyrage.*"]
 ignore_missing_imports = true

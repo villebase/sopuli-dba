@@ -104,6 +104,17 @@ def unwritten(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
+@pytest.fixture
+def unextended(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make `file` name a backend with **no extra and no module**.
+
+    ADR-006's named gap: nothing to install and nothing written. No store type
+    has that shape today, since the file store was built (#1372) and the
+    keyring store type removed (#1373), so it is injected.
+    """
+    monkeypatch.setitem(BACKENDS, "file", Backend(module="sopuli.store.absent_backend_xyz"))
+
+
 def _validate_json(path: Path) -> dict[str, Any]:
     result = CliRunner().invoke(
         cli, ["--config", str(path), "--output", "json", "config", "validate"]
@@ -177,8 +188,8 @@ def test_an_unwritten_backend_is_not_sent_to_pip(
     the validator quieter rather than the machine better.
 
     The warning's level and code are the same either way; what is fixed here is
-    what it says. `file` -- which has no client to look for at all -- reaches
-    the same sentence through
+    what it says. A backend with no client to look for at all reaches the same
+    sentence through
     :func:`test_a_backend_with_no_module_warns_though_pip_cannot_help`.
     """
     document = _validate_json(write_config(CONFIG))
@@ -213,14 +224,14 @@ def test_the_unwritten_wording_is_the_one_doctor_uses(
 
 
 def test_a_backend_with_no_module_warns_though_pip_cannot_help(
-    write_config: WriteConfig,
+    unextended: None, write_config: WriteConfig
 ) -> None:
     """The case that no amount of installing fixes.
 
-    `file` has no extra -- ADR-006's named gap -- so a narrow reading would
-    find nothing to look for and say nothing, on every machine,
-    unconditionally. A file declaring only that would validate as ``0 warnings``
-    and could not work anywhere.
+    A backend with no extra and no module -- ADR-006's named gap -- gives a
+    narrow reading nothing to look for, so it would say nothing, on every
+    machine, unconditionally. A file declaring only that would validate as
+    ``0 warnings`` and could not work anywhere.
 
     Warning about it is not actionable by `pip`, and that is not the same as not
     actionable: the action is *do not deploy this yet*, and it is the fact its
@@ -228,9 +239,8 @@ def test_a_backend_with_no_module_warns_though_pip_cannot_help(
     is temporary by construction -- it goes away backend by backend as they are
     written -- where the silence it replaces was permanent.
 
-    **No fixture.** This is the one assertion in the module that needs none: the
-    answer does not depend on what is installed, only on what is written, so it
-    is the same on a developer machine and in CI's base cell.
+    Every store type has a module and an extra today, so the ``unextended``
+    fixture gives `file` this shape.
     """
     document = _validate_json(write_config(f"version: 1\nvaults:\n  local:\n{FILE_STORE}"))
     (found,) = document["diagnostics"]
@@ -243,16 +253,16 @@ def test_a_backend_with_no_module_warns_though_pip_cannot_help(
 
 
 def test_every_store_this_machine_cannot_serve_is_named(
-    unwritten: None, write_config: WriteConfig
+    unwritten: None, unextended: None, write_config: WriteConfig
 ) -> None:
     """The report `config validate` owes its reader.
 
-    ``file`` has no module in this build, and the ``unwritten`` fixture takes
-    HashiCorp's away, so two of the three types in a config that declares one
-    of each have none: a config whose stores are mostly unusable. A narrow
-    reading would report **one** warning, stopping at the first type it finds.
-    The OCI store has a module, and the tests run with its SDK installed, so it
-    is not named.
+    The ``unwritten`` and ``unextended`` fixtures take the modules of
+    `hashicorp` and `file` away, so two of the three types in a config that
+    declares one of each have none: a config whose stores are mostly unusable.
+    A narrow reading would report **one** warning, stopping at the first type
+    it finds. The OCI store has a module, and the tests run with its SDK
+    installed, so it is not named.
 
     Asserted as a set rather than a list: the order is the survey's, sorted by
     backend name, and pinning it here would be pinning `doctor`'s table through a

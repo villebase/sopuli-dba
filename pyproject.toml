@@ -103,6 +103,16 @@ oci = [
   # should not inherit it.
   "oci>=2.126",
 ]
+file = [
+  # #1415: the `file` store encrypts with age, through pyrage, a binding to the
+  # Rust `rage`. 1.4.0 is the release the encryption tests run against; the
+  # floor is confirmed when the store is built and measured (#1372). Its abi3
+  # wheels cover CPython 3.10 and later on glibc Linux x86_64 and aarch64,
+  # macOS and Windows x64, so a new Python needs no Rust. There is no wheel for
+  # musl Linux (Alpine) or Windows on ARM: there it builds from source and
+  # needs Rust, and so does `all`.
+  "pyrage>=1.4.0",
+]
 notify = [
   # E7 (#442): UC-2's notify channel posts to a webhook, and a channel that opens
   # a socket is an extra like any other. `httpx` again, and the duplication with
@@ -149,7 +159,7 @@ keyring = [
 # everything. It is deliberately not what README recommends -- an install line
 # that reads `sopuli[all]` undoes the split for every reader who copies it.
 all = [
-  "sopuli-dba[oracle,postgres,mysql,mariadb,hashicorp,oci,notify,yopass,onepassword,keyring]",
+  "sopuli-dba[oracle,postgres,mysql,mariadb,hashicorp,oci,file,notify,yopass,onepassword,keyring]",
 ]
 
 dev = [
@@ -231,6 +241,12 @@ ignore_missing_imports = true
 # that need it import it too. All treat its objects as `Any`.
 [[tool.mypy.overrides]]
 module = ["pymysql", "pymysql.*"]
+ignore_missing_imports = true
+
+# pyrage ships no type information either. Only `sopuli.store.file._crypto`
+# imports it, and the tests that need it; both treat its objects as `Any`.
+[[tool.mypy.overrides]]
+module = ["pyrage", "pyrage.*"]
 ignore_missing_imports = true
 
 # 1Password's SDK ships no type information either. Only

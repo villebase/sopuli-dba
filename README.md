@@ -195,6 +195,7 @@ pair of brackets, separated by commas.
 | `"sopuli-dba[mariadb]"` | PyMySQL, with PyNaCl for the `ed25519` plugin | you manage MariaDB servers |
 | `"sopuli-dba[hashicorp]"` | the HashiCorp Vault client | your secrets are in HashiCorp Vault |
 | `"sopuli-dba[oci]"` | the OCI SDK | your secrets are in OCI Vault / Secrets |
+| `"sopuli-dba[file]"` | `pyrage`, an age library | the file store, for development and CI. Not built yet (#1372) |
 | `"sopuli-dba[notify]"` | an HTTP client for the notify webhook | `account reset-password` posts a notice to a webhook |
 | `"sopuli-dba[yopass]"` | an HTTP client and `pysequoia`, an OpenPGP library | `account reset-password` hands a password over as a one-time Yopass link |
 | `"sopuli-dba[onepassword]"` | 1Password's SDK, on Python 3.13 and earlier | `account reset-password` hands a password over as a 1Password share link that opens once |

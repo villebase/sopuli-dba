@@ -31,8 +31,8 @@ from pathlib import Path
 import pytest
 
 #: The clients the extras install, as ADR-006 names them: ``httpx``, the OCI SDK,
-#: ``python-oracledb``, ``psycopg``, PyMySQL, PyNaCl, ``pysequoia``, 1Password's SDK and
-#: ``keyring``, which reaches the Secret Service over D-Bus on Linux. Kept
+#: ``python-oracledb``, ``psycopg``, PyMySQL, PyNaCl, ``pyrage``, ``pysequoia``, 1Password's
+#: SDK and ``keyring``, which reaches the Secret Service over D-Bus on Linux. Kept
 #: here as a literal rather than derived from ``BACKENDS`` on purpose: this test is the check
 #: *on* that table, and a check that reads its expectation out of the thing it is checking
 #: would pass an empty table. The CI install-shape job's base cell lists the same names.
@@ -45,6 +45,7 @@ CLIENTS = (
     "oracledb",
     "psycopg",
     "pymysql",
+    "pyrage",
     "pysequoia",
 )
 

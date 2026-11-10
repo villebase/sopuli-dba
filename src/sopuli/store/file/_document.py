@@ -1,7 +1,7 @@
 """What a ``file`` store holds, as the bytes that get encrypted (#1415).
 
-Pure: no I/O and no encryption. The store encrypts what :func:`dumps` returns
-with age, and decrypts what :func:`loads` reads. `00-principles.md` P2, *The
+Pure: no I/O and no encryption. :mod:`sopuli.store.file._crypto` encrypts what
+:func:`dumps` returns, and decrypts what :func:`loads` reads. `00-principles.md` P2, *The
 file store's file*, specifies the format; this module is its one reader and
 writer.
 

@@ -77,7 +77,7 @@ cosmetic:
    What a test can hold is the dependency set that stands for it: in a base
    install none of the clients the backends reach with — `httpx`, the OCI SDK,
    `python-oracledb`, `psycopg`, PyMySQL and the PyNaCl it uses for MariaDB,
-   `pysequoia`, 1Password's SDK — is importable. The standard library's `urllib` and
+   `pyrage`, `pysequoia`, 1Password's SDK — is importable. The standard library's `urllib` and
    `http.client` are importable in every Python and no packaging rule changes
    that, so they are covered by the rule's intent rather than by its assertion:
    base code does not reach the network, whatever it would reach it with.
@@ -227,5 +227,7 @@ it.
 
 The file backend (P2, priority 3) reaches age through the Python library
 `pyrage`, so its extra is `sopuli-dba[file]`
-([#1415](log.md#1415)). The backend is not built yet (#1372), and the extra is
-added with it.
+([#1415](log.md#1415)). The extra exists and installs `pyrage`. The store
+itself is not built yet (#1372), so the registry names no extra for `file`
+until it is: telling an operator to install something that still cannot open
+the store would be the wrong instruction.

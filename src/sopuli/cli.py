@@ -62,6 +62,7 @@ from __future__ import annotations
 
 import getpass
 import importlib
+import io
 import os
 import re
 import sys
@@ -5666,7 +5667,9 @@ def keyring_set(entry: str, replace: bool, run: Invocation) -> str:
     The value is read from stdin when it is piped or redirected, with one
     trailing newline removed. At a terminal the command asks for it twice and
     does not show it. It is never an option, because the process list shows
-    the command line.
+    the command line. Git Bash's terminal (mintty) without `winpty` looks
+    like a pipe, so there the command reads stdin without asking: pipe the
+    value in, or use Windows Terminal.
 
     The command needs no config, so it can run on a new machine before the
     config can authenticate. When a config is loaded and names no such entry,
@@ -5683,9 +5686,10 @@ def keyring_set(entry: str, replace: bool, run: Invocation) -> str:
     # The backend first: a machine with no keyring refuses before anybody is
     # asked to type a value it cannot store.
     os_keyring.backend(where=WHERE_SET)
-    value = read_value(
-        name, stdin=sys.stdin.buffer, terminal=is_a_terminal(sys.stdin), ask=getpass.getpass
-    )
+    # No stdin at all, under a service launcher, reads as empty and is refused
+    # as an empty value, with its hint.
+    stdin = getattr(sys.stdin, "buffer", None) or io.BytesIO()
+    value = read_value(name, stdin=stdin, terminal=is_a_terminal(sys.stdin), ask=getpass.getpass)
     change = set_entry(name, value, config=run.loaded_config, replace=replace, dry_run=run.dry_run)
     return _keyring_done(run, change)
 
@@ -5724,10 +5728,17 @@ def _keyring_done(run: Invocation, change: Change) -> str:
     """Fill the run document and the text from what a `keyring` verb did."""
     document = run.document
     document.keyring = build_keyring(change.report)
-    document.diagnostics.extend(change.diagnostics)
-    document.finish(ExitCode.SUCCESS, Summary(total=1, ok=1, changed=int(change.changed), failed=0))
     lines = render_keyring(change.report)
-    lines.extend(f"{one.level}: {one.message}" for one in change.diagnostics)
+    for one in change.diagnostics:
+        if one.level == "warning":
+            # Printed with every other verb's warnings.
+            document.warn_in_text(one)
+        else:
+            # A note about this entry, so it closes the section, as `lock
+            # break`'s "nothing to break" does.
+            document.diagnostics.append(one)
+            lines.append(f"note: {one.message}")
+    document.finish(ExitCode.SUCCESS, Summary(total=1, ok=1, changed=int(change.changed), failed=0))
     return "\n".join(lines).rstrip("\n")
 
 

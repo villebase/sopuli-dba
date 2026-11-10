@@ -40,7 +40,9 @@ the command. Install the extra `sopuli-dba[keyring]` first.
 The value is read from stdin when it is piped or redirected, with one
 trailing newline removed. At a terminal the command asks for it twice and
 does not show it. It is never an option, because the process list shows
-the command line.
+the command line. Git Bash's terminal (mintty) without `winpty` looks
+like a pipe, so there the command reads stdin without asking: pipe the
+value in, or use Windows Terminal.
 
 The command needs no config, so it can run on a new machine before the
 config can authenticate. When a config is loaded and names no such entry,

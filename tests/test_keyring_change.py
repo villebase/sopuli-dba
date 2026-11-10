@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import io
 import json
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +18,7 @@ from click.testing import CliRunner
 from conftest import WriteConfig
 from sopuli import invocation, os_keyring
 from sopuli.cli import cli
+from sopuli.config.discovery import CONFIG_ENV, discover
 from sopuli.config.errors import ArgumentError
 from sopuli.config.loading import build_config
 from sopuli.config.model import Config
@@ -251,11 +253,33 @@ def _never(prompt: str) -> str:
 
 
 @pytest.fixture
-def no_config(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The search finds no file, as on a new machine."""
+def no_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """The search finds no file, as on a new machine.
+
+    The real `discover`, searching an empty directory and home, so that a named
+    file and `SOPULI_CONFIG` are still handled as a real run handles them.
+    """
     monkeypatch.delenv("SOPULI_CONFIG", raising=False)
     monkeypatch.delenv("SOPULI_PROFILE", raising=False)
-    monkeypatch.setattr(invocation, "discover", lambda *_, **__: ())
+
+    def isolated(
+        explicit: Sequence[Path] = (),
+        *,
+        env: Mapping[str, str] | None = None,
+        optional: bool = False,
+        **_: Any,
+    ) -> tuple[Path, ...]:
+        named = {key: value for key, value in (env or {}).items() if key == CONFIG_ENV}
+        return discover(
+            explicit,
+            env=named,
+            platform="linux",
+            cwd=tmp_path,
+            home=tmp_path / "home",
+            optional=optional,
+        )
+
+    monkeypatch.setattr(invocation, "discover", isolated)
 
 
 def test_set_runs_with_no_config_and_validates(keyring: Backend, no_config: None) -> None:
@@ -298,6 +322,57 @@ def test_a_named_config_must_still_exist(keyring: Backend, tmp_path: Path) -> No
     result = CliRunner().invoke(cli, ["keyring", "delete", "vault-dev", "--config", str(missing)])
 
     assert getattr(result.exception, "exit_code", None) == ExitCode.CONFIG_INVALID
+
+
+def test_a_config_named_by_the_variable_must_still_exist(
+    keyring: Backend, no_config: None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(CONFIG_ENV, str(tmp_path / "nope.yaml"))
+
+    result = CliRunner().invoke(cli, ["keyring", "delete", "vault-dev"])
+
+    assert getattr(result.exception, "exit_code", None) == ExitCode.CONFIG_INVALID
+
+
+@pytest.mark.parametrize("how", ["flag", "variable"])
+def test_a_profile_asks_for_a_config(
+    keyring: Backend, no_config: None, monkeypatch: pytest.MonkeyPatch, how: str
+) -> None:
+    """A profile lives in a config, so naming one is not running without one."""
+    args = ["keyring", "delete", "vault-dev"]
+    if how == "flag":
+        args += ["--profile", "laptop"]
+    else:
+        monkeypatch.setenv("SOPULI_PROFILE", "laptop")
+
+    result = CliRunner().invoke(cli, args)
+
+    assert getattr(result.exception, "exit_code", None) == ExitCode.CONFIG_INVALID
+    assert "no config file found" in str(result.exception)
+
+
+def test_an_entry_with_an_empty_value_can_be_deleted(keyring: Backend) -> None:
+    """A reader treats it as missing; delete must still remove it."""
+    keyring.entries["vault-dev"] = ""
+
+    change = delete_entry("vault-dev", config=None, dry_run=False)
+
+    assert keyring.entries == {}
+    assert change.report.entries[0].action == "delete"
+
+
+def test_the_replace_warning_is_printed_with_the_warnings(
+    keyring: Backend, no_config: None
+) -> None:
+    keyring.entries["vault-dev"] = "hvs.old"
+
+    result = CliRunner().invoke(
+        cli, ["keyring", "set", "vault-dev", "--dry-run", "--output", "json"], input="hvs.new\n"
+    )
+
+    document = json.loads(result.output)
+    assert [one.get("code") for one in document["diagnostics"]] == ["SOPULI-W069"]
+    assert keyring.entries == {"vault-dev": "hvs.old"}
 
 
 def test_a_loaded_config_lists_who_needs_the_entry(

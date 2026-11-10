@@ -143,6 +143,7 @@ def set_entry(
         applied=not dry_run,
         changed=write,
         notes=notes,
+        where=WHERE_SET,
     )
 
 
@@ -160,6 +161,7 @@ def delete_entry(entry: str, *, config: Config | None, dry_run: bool) -> Change:
         applied=not dry_run,
         changed=write,
         notes=[],
+        where=WHERE_DELETE,
     )
 
 
@@ -177,8 +179,9 @@ def _change(
     applied: bool,
     changed: bool,
     notes: list[Diagnostic],
+    where: str,
 ) -> Change:
-    chosen = os_keyring.backend(where=WHERE_SET)
+    chosen = os_keyring.backend(where=where)
     required_by = tuple(sources(config).get(entry, ())) if config is not None else ()
     one = EntryReport(
         entry=entry,

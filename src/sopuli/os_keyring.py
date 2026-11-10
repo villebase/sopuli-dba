@@ -115,8 +115,12 @@ def compare(entry: str, value: Secret, *, where: str) -> str:
 
 
 def present(entry: str, *, where: str) -> bool:
-    """Whether the entry holds a value, read and dropped, as :func:`compare` does."""
-    return bool(_get(backend(where=where), entry, where=where))
+    """Whether the entry exists, read and dropped, as :func:`compare` does.
+
+    An entry written by hand with an empty value counts: a reader treats it as
+    missing, and ``keyring delete`` must still be able to remove it.
+    """
+    return _get(backend(where=where), entry, where=where) is not None
 
 
 def write(entry: str, value: Secret, *, where: str) -> None:

@@ -750,12 +750,15 @@ def load_optional_config(invocation: Invocation, *, env: Mapping[str, str]) -> L
         or bool(env.get(CONFIG_ENV, "").strip())
         or invocation.value("profile") is not None
     )
-    if not asked and not discover(optional=True, env=env):
+    paths = discover(invocation.config_paths, env=env, optional=not asked)
+    if not paths:
         return None
-    return load_config_layers(invocation, env=env)
+    return load_config_layers(invocation, env=env, paths=paths)
 
 
-def load_config_layers(invocation: Invocation, *, env: Mapping[str, str]) -> LoadedConfig:
+def load_config_layers(
+    invocation: Invocation, *, env: Mapping[str, str], paths: tuple[Path, ...] = ()
+) -> LoadedConfig:
     """Discover and read the configuration, under the profile that was asked for.
 
     The one place a command's file is opened. The profile *name* comes from the
@@ -765,9 +768,10 @@ def load_config_layers(invocation: Invocation, *, env: Mapping[str, str]) -> Loa
     (:func:`sopuli.config.profiles.select_profile`).
 
     Reading the file is what makes layers 3 to 5 reachable, so it cannot be
-    deferred to the verb -- see the module note.
+    deferred to the verb -- see the module note. ``paths`` are files a caller
+    already found, so the search is not run twice.
     """
-    paths = discover(invocation.config_paths, env=env)
+    paths = paths or discover(invocation.config_paths, env=env)
     declared, config = load_layers(
         paths,
         profile=invocation.value("profile"),

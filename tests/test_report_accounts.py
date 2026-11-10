@@ -202,7 +202,7 @@ def _common_in_pdb(name: str) -> SurveyedAccount:
     return account(
         name,
         common=True,
-        held_elsewhere=True,
+        kept_in_root=True,
         locked=None,
         password_lifetime=None,
         failed_login_limit=None,
@@ -217,6 +217,15 @@ def test_a_common_account_in_a_pdb_is_left_out_unless_a_rule_names_it() -> None:
     found = rows(cfg, _common_in_pdb("C##ACME_MONITOR"), account("ACME_APP_USER"))
     assert "C##ACME_MONITOR" not in found
     assert found["ACME_APP_USER"].state == REPORT_PROBLEM
+
+
+def test_the_privilege_report_keeps_a_common_account_in_a_pdb() -> None:
+    """Its grants made in the PDB are read there, so it stays undeclared."""
+    surveyed = _common_in_pdb("C##ACME_MONITOR")
+    kept = {
+        row.account: row for row in evaluate(TARGET, config(), [surveyed], keep_kept_in_root=True)
+    }
+    assert kept["C##ACME_MONITOR"].state == UNDECLARED
 
 
 def test_a_rule_that_names_a_common_account_brings_it_back_in_a_pdb() -> None:

@@ -147,15 +147,21 @@ class _Expectation:
 
 
 def evaluate(
-    target: str, config: Config, survey: Sequence[SurveyedAccount]
+    target: str,
+    config: Config,
+    survey: Sequence[SurveyedAccount],
+    *,
+    keep_kept_in_root: bool = False,
 ) -> tuple[AccountRow, ...]:
     """Every row the report shows for ``target``, worst first.
 
     A row for each surveyed account the report covers, and an
     ``ACCOUNT_MISSING`` row for each account the file names on this target by
     name that the survey did not find. An account that Oracle maintains is left
-    out unless the file names it, by name or by pattern, and so is a common
-    account whose values another container keeps.
+    out unless the file names it, by name or by pattern. So is a common account
+    in a PDB (:attr:`SurveyedAccount.kept_in_root`), unless
+    ``keep_kept_in_root``: the privilege report keeps it, because its grants
+    made in the PDB are read there, though its lock and limits are not.
     """
     rules = _rules_on(config, target)
     applications = _application_profiles(config, target)
@@ -168,7 +174,8 @@ def evaluate(
         found.add(name)
         matching = [rule for rule in rules if _names(rule, name)]
         named = bool(matching) or name in applications or name in personal_names
-        if (surveyed.vendor_maintained or surveyed.held_elsewhere) and not named:
+        left_out = surveyed.vendor_maintained or (surveyed.kept_in_root and not keep_kept_in_root)
+        if left_out and not named:
             # Oracle's own accounts are left out unless the file names one, by
             # name or by a report rule's pattern. So is a common account in a
             # PDB: its lock, limits and count are kept in the root, so no check
@@ -517,7 +524,7 @@ def undeclared_row(target: str, surveyed: SurveyedAccount) -> AccountRow:
 
     For a caller that asks for one account by name, such as
     ``report privileges --account``, where the account is one :func:`evaluate`
-    leaves out (one Oracle maintains, that nothing names).
+    leaves out: one Oracle maintains, that nothing names.
     """
     return _row(target, surveyed, UNDECLARED_KIND, (), UNDECLARED)
 

@@ -5315,12 +5315,13 @@ the register.
   is left out of the accounts report, as an account Oracle maintains is. A
   rule that covers the target and names it, by name or by pattern, brings it
   back. The survey says which accounts are common (`DBA_USERS.COMMON`) and
-  whether this container keeps their values. An application container is
-  treated the same way, because the survey reads none of a common account's
-  values there either. The privilege report covers the same accounts, and
-  `--account` still reaches one that is left out. The run document gets no
-  count of the accounts left out, as it has none for Oracle's own accounts:
-  `read` still counts every account the survey read.
+  whether `CDB$ROOT` keeps their values. An application container keeps its
+  common accounts listed: where it keeps their values was not measured, and
+  an application-common user's own container may be the target itself, so
+  leaving it out could hide it from every report. The privilege report keeps
+  them too, because a grant made in the PDB is read there. The run document
+  gets no count of the accounts left out, as it has none for Oracle's own
+  accounts: `read` still counts every account the survey read.
 - **Why:** no check that decides a state can run on a common account in a
   PDB, so nothing checkable is lost. Its checks belong to the CDB target,
   where they already run.
@@ -5331,4 +5332,7 @@ the register.
      on the PDB's CDB. The config has no link from a PDB target to its CDB
      target, so this needs new config.
 - **Known cost:** a common account that nobody declares no longer shows in a
-  PDB's report. It still shows as undeclared in the CDB's report.
+  PDB's accounts report. It shows as undeclared in the CDB root's report only
+  where the config declares the root as a target. A config with PDB targets
+  alone no longer lists it in any accounts report, though the privilege
+  report still does.

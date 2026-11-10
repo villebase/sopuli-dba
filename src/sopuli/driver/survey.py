@@ -38,11 +38,13 @@ class SurveyedAccount:
     that field order. The reasons are sentences for a person; which fields are
     ``None`` says which checks cannot run.
 
-    ``held_elsewhere`` is whether another container keeps the account's lock,
-    limits and failed-login count: true for a common account read in an Oracle
-    PDB or application container. No check that decides a state can run on
-    such an account here, so the accounts report leaves it out unless a rule
-    names it (UC-5 §4, #1438).
+    ``kept_in_root`` is whether ``CDB$ROOT`` keeps the account's lock, limits
+    and failed-login count: true for a common account read in an Oracle PDB
+    that is not an application container. No check that decides a state can
+    run on such an account there, so the accounts report leaves it out unless
+    a rule names it (UC-5 §4, #1438). In an application container it is false:
+    where the values are kept there was not measured, and an
+    application-common user's own container may be the target itself.
     """
 
     name: str
@@ -55,4 +57,4 @@ class SurveyedAccount:
     failed_login_limit: Limit
     failed_logins: int | None
     unreadable: tuple[str, ...] = ()
-    held_elsewhere: bool = False
+    kept_in_root: bool = False

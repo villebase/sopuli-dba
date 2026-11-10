@@ -130,7 +130,7 @@ def test_common_account_in_a_pdb_has_no_lock_limits_or_count() -> None:
     )
     (account,) = accounts
     assert account.common is True
-    assert account.held_elsewhere is True
+    assert account.kept_in_root is True
     assert account.locked is None
     assert account.password_lifetime is None
     assert account.failed_login_limit is None
@@ -148,7 +148,7 @@ def test_common_account_in_the_root_reads_everything() -> None:
         lcount=[("C##ACME_ADM", 3)],
     )
     (account,) = accounts
-    assert account.held_elsewhere is False
+    assert account.kept_in_root is False
     assert account.locked is True
     assert account.password_lifetime == "unlimited"
     assert account.failed_login_limit == 10
@@ -297,6 +297,8 @@ def test_in_an_application_container_the_reasons_say_unmeasured() -> None:
     )
     (account,) = accounts
     assert account.locked is None
+    # Not taken as kept in the root: the report keeps it listed (#1438).
+    assert account.kept_in_root is False
     assert len(account.unreadable) == 4
     assert all("not been measured" in reason for reason in account.unreadable)
     assert not any("CDB$ROOT" in reason for reason in account.unreadable)

@@ -1278,7 +1278,7 @@ def survey_with_profiles(
                 failed_login_limit=resolved[FAILED_LOGIN_ATTEMPTS],
                 failed_logins=failed,
                 unreadable=tuple(reasons),
-                held_elsewhere=held_elsewhere,
+                kept_in_root=held_elsewhere and not application,
             )
         )
     accounts = tuple(sorted(surveyed, key=lambda account: account.name))

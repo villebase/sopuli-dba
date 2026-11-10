@@ -1507,16 +1507,19 @@ needs the `file` extra:
 pip install "sopuli-dba[file]"
 ```
 
-The store is opened with an age identity, a secret key. Make one with the
-library the extra installed, and keep it readable only by you:
+The store is opened with an age identity, a secret key that decrypts every
+password in the store. The tool does not check who can read it, so keep it
+readable only by you. Make one with the library the extra installed; this
+writes the file as UTF-8 and, on Linux and macOS, makes it mode 0600:
 
 ```
 $ mkdir ~/sopuli-file
-$ python -c "from pyrage import x25519; print(x25519.Identity.generate())" > ~/sopuli-file/identity.txt
+$ python -c "import os; from pyrage import x25519; p = os.path.expanduser('~/sopuli-file/identity.txt'); open(p, 'w', encoding='utf-8').write(f'{x25519.Identity.generate()}\n'); os.chmod(p, 0o600)"
 ```
 
 `age-keygen -o ~/sopuli-file/identity.txt` makes the same file, if you have
-`age`. The samples below ran against the PostgreSQL cluster of §7, with this
+`age`. On Windows, give the file to your user alone, as for the config file
+(§5). The samples below ran against the PostgreSQL cluster of §7, with this
 config as `file.yaml`:
 
 ```yaml
@@ -1602,7 +1605,8 @@ rotation: staged 1 document, promoted 1 document
 
 The last warning is `SOPULI-W070`, and every run that opens a file store prints
 it. The store keeps the last 10 versions of each secret, or `max_versions` of
-them. The personal-account commands refuse a file store.
+them. The personal-account commands refuse a file store as the store for
+reset records or for a delivery.
 
 ---
 

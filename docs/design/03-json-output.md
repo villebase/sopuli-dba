@@ -638,8 +638,10 @@ An OCI store has no `addr`. From run schema 1.65, its `settings` carry
 one to a line, because an OCID is longer than the `ADDRESS` column.
 
 A `file` store's `settings` carry `addr`, its file. Its `identity`,
-`recipients` and `max_versions` are written only in its declaration, so they
-are in `config.declared`, as written, and not in `settings`. The text view
+`recipients` and `max_versions` are not in `settings`: the resolver takes
+values that are a boolean, a number, a string or a list, and `identity` is an
+object, a MaterialRef. They are in `config.declared`, as written, which
+`config show --resolved` does not carry. The text view
 prints them under the table as the OCI keys are: the identity as where it
 comes from (`env SOPULI_FILE_IDENTITY`), never a value, each recipient on a
 line of its own, and `max_versions` with `(default)` when the file does not

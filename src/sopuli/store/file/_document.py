@@ -29,6 +29,10 @@ from types import MappingProxyType
 from typing import Any
 
 from sopuli.clock import from_rfc3339, to_rfc3339
+
+# How many versions of a path are kept when the store's `max_versions` is not
+# set (#1415): defined in the config layer, beside the key.
+from sopuli.config.vaults import DEFAULT_MAX_VERSIONS as DEFAULT_MAX_VERSIONS
 from sopuli.store.protocol import StoreError
 
 FORMAT = "sopuli-file-store"
@@ -47,9 +51,6 @@ MAX_VERSION_NUMBER = 2**63 - 1
 #: higher is damage, not a release that could exist.
 NEWEST_PLAUSIBLE = 99
 
-#: How many versions of a path are kept when the store's ``max_versions`` is not
-#: set (#1415).
-DEFAULT_MAX_VERSIONS = 10
 
 #: How deep a version's data may nest. A credential payload is two or three
 #: levels deep. Checked on the write and on each version the reader parses;

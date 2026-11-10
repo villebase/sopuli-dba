@@ -351,8 +351,8 @@ def test_no_backend_module_is_loaded_by_an_offline_command(tmp_path: Path) -> No
 def test_an_unimplemented_backend_nobody_configured_is_dimmed() -> None:
     """`file` is unimplemented on every run of this build.
 
-    Colouring it would make every `doctor` look broken to somebody who
-    configured none of them, which is the opposite of what the column is for.
+    Colouring it would make every `doctor` look broken to somebody who did
+    not configure it, which is the opposite of what the column is for.
     """
     from sopuli.install_shape import NOT_IMPLEMENTED, Component
     from sopuli.output.install_view import _status

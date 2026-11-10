@@ -150,9 +150,9 @@ VAULT_TYPES = ("hashicorp", "oci", "file")
 REMOVED_TYPES = {
     "keyring": (
         "only the operator's own login session could read a password it stored (#1373)",
-        "use a hashicorp, oci or file store. The OS keyring still holds the tool's "
-        "own credentials: a vault token as `token: { keyring: NAME }`, an admin "
-        "password as `method: keyring`",
+        "keep these passwords in another store, such as `hashicorp`. The OS keyring still holds "
+        "the tool's own credentials: a vault token as `token: { keyring: NAME }`, "
+        "an admin password as `method: keyring`",
     ),
 }
 

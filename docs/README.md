@@ -20,6 +20,7 @@ on which Oracle release, and what it showed.
 | [scenarios/kubernetes-eso.md](scenarios/kubernetes-eso.md) | the vault-write side of an External Secrets Operator setup, and the division of responsibility that makes it safe |
 | [scenarios/personal-password-delivery.md](scenarios/personal-password-delivery.md) | one person's password reset end to end, each way to hand the new password over, and which one to choose |
 | [scenarios/supabase.md](scenarios/supabase.md) | replacing a shared `postgres` password on Supabase with one vault-managed login role for each service |
+| [scenarios/env-file-over-ssh.md](scenarios/env-file-over-ssh.md) | one small app on a VM with PostgreSQL: rotating through an SSH tunnel, and updating the app's `.env` over SSH |
 | [../examples/](../examples/) | runnable config files with comments, starting with the smallest one that works |
 | [reference/](reference/README.md) | every command: its usage, its help text and its options, generated from the command definitions |
 | [../CONTRIBUTING.md](../CONTRIBUTING.md) | what a first-time contributor needs that `workflow.md` and `CLAUDE.md` do not say for that audience |

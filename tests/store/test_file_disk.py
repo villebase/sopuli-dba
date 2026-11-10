@@ -83,6 +83,38 @@ def test_a_pipe_at_addr_is_refused_without_opening_it(tmp_path: Path) -> None:
         read(pipe)
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="named pipes are a POSIX file type")
+def test_a_pipe_put_at_addr_before_the_replace_is_refused(tmp_path: Path) -> None:
+    """The comparison opens the file as the read does, so it does not hang."""
+    store_file = tmp_path / "store.age"
+    replace(store_file, b"one", expected=ABSENT)
+    seen = read(store_file)
+    store_file.unlink()
+    make_fifo = getattr(os, "mkfifo")  # noqa: B009
+    make_fifo(store_file, 0o600)
+
+    with pytest.raises(StoreError, match="is not a regular file"):
+        replace(store_file, b"two", expected=seen.digest)
+
+
+@posix_only
+def test_a_link_loop_at_addr_is_a_store_error(tmp_path: Path) -> None:
+    """A loop is RuntimeError before Python 3.13, and must not escape."""
+    store_file = tmp_path / "store.age"
+    store_file.symlink_to(store_file)
+
+    with pytest.raises(StoreError):
+        read(store_file)
+
+
+def test_a_parent_that_is_a_file_is_named_as_such(tmp_path: Path) -> None:
+    parent = tmp_path / "not-a-directory"
+    parent.write_bytes(b"x")
+
+    with pytest.raises(StoreError, match="could not reach the directory|is not a directory"):
+        replace(parent / "store.age", b"ciphertext", expected=ABSENT)
+
+
 def test_a_long_file_name_can_be_replaced(tmp_path: Path) -> None:
     """The temporary name has a fixed length, whatever the store's name."""
     store_file = tmp_path / ("s" * 240)
@@ -303,6 +335,30 @@ def test_replace_waits_for_a_reader_to_close_the_file(store_file: Path) -> None:
         closer.join()
 
     assert read(store_file).data == b"two"
+
+
+@windows_only
+def test_each_retry_compares_the_file_again(
+    store_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A run that held the file open may replace it once it closes. The next
+    attempt must see that, not overwrite it."""
+    replace(store_file, b"one", expected=ABSENT)
+    seen = read(store_file)
+    real_replace = os.replace
+
+    def held_then_replaced(source: object, target: object) -> None:
+        monkeypatch.setattr(os, "replace", real_replace)
+        replace(store_file, b"another run", expected=seen.digest)
+        raise PermissionError(5, "Access is denied")
+
+    monkeypatch.setattr(os, "replace", held_then_replaced)
+
+    with pytest.raises(FileChangedError):
+        replace(store_file, b"this run", expected=seen.digest)
+
+    assert read(store_file).data == b"another run"
+    assert leftovers(store_file.parent) == []
 
 
 @windows_only

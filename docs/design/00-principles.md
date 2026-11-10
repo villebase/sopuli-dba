@@ -548,7 +548,8 @@ path, with fictional passwords, as `dumps` wrote them:
   moment can both replace.
 - **Every read gets P4's check**, as the config file does: a store file that
   someone other than its owner can reach is refused before it is decrypted,
-  and on POSIX so is one that another user owns. Only a regular file is
+  and on POSIX so is one owned by a user other than the tool's own or root,
+  as for the config file. Only a regular file is
   read: a pipe or a device at `addr` is refused, not opened.
 - **`data` is a JSON object of plain values.** A value JSON cannot hold as it
   is, such as a key that is not text, a number that is not finite, text that is

@@ -104,6 +104,17 @@ def unwritten(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
+@pytest.fixture
+def unextended(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make `file` name a backend with **no extra and no module**.
+
+    ADR-006's named gap: nothing to install and nothing written. No store type
+    has that shape today, since the file store was built (#1372) and the
+    keyring store type removed (#1373), so it is injected.
+    """
+    monkeypatch.setitem(BACKENDS, "file", Backend(module="sopuli.store.absent_backend_xyz"))
+
+
 def _validate_json(path: Path) -> dict[str, Any]:
     result = CliRunner().invoke(
         cli, ["--config", str(path), "--output", "json", "config", "validate"]
@@ -177,8 +188,8 @@ def test_an_unwritten_backend_is_not_sent_to_pip(
     the validator quieter rather than the machine better.
 
     The warning's level and code are the same either way; what is fixed here is
-    what it says. `keyring` -- which has no client to look for at all -- reaches
-    the same sentence through
+    what it says. A backend with no client to look for at all reaches the same
+    sentence through
     :func:`test_a_backend_with_no_module_warns_though_pip_cannot_help`.
     """
     document = _validate_json(write_config(CONFIG))
@@ -213,14 +224,14 @@ def test_the_unwritten_wording_is_the_one_doctor_uses(
 
 
 def test_a_backend_with_no_module_warns_though_pip_cannot_help(
-    write_config: WriteConfig,
+    unextended: None, write_config: WriteConfig
 ) -> None:
     """The case that no amount of installing fixes.
 
-    `keyring` has no extra and no module, so a narrow reading would find
-    nothing to look for and say nothing, on every machine, unconditionally. A
-    file declaring only that would validate as ``0 warnings`` and could not work
-    anywhere.
+    A backend with no extra and no module -- ADR-006's named gap -- gives a
+    narrow reading nothing to look for, so it would say nothing, on every
+    machine, unconditionally. A file declaring only that would validate as
+    ``0 warnings`` and could not work anywhere.
 
     Warning about it is not actionable by `pip`, and that is not the same as not
     actionable: the action is *do not deploy this yet*, and it is the fact its
@@ -228,27 +239,30 @@ def test_a_backend_with_no_module_warns_though_pip_cannot_help(
     is temporary by construction -- it goes away backend by backend as they are
     written -- where the silence it replaces was permanent.
 
-    **No fixture.** This is the one assertion in the module that needs none: the
-    answer does not depend on what is installed, only on what is written, so it
-    is the same on a developer machine and in CI's base cell.
+    Every store type has a module and an extra today, so the ``unextended``
+    fixture gives `file` this shape.
     """
-    document = _validate_json(write_config("version: 1\nvaults:\n  local:\n    type: keyring\n"))
+    document = _validate_json(write_config(f"version: 1\nvaults:\n  local:\n{FILE_STORE}"))
     (found,) = document["diagnostics"]
 
     assert document["exit_code"] == ExitCode.SUCCESS
     assert found["level"] == "warning"
     assert found["code"] == MISSING_BACKEND
     assert "pip install" not in found["message"]
-    assert "this build has no keyring backend yet" in found["message"]
+    assert "this build has no file backend yet" in found["message"]
 
 
-def test_every_store_this_machine_cannot_serve_is_named(write_config: WriteConfig) -> None:
+def test_every_store_this_machine_cannot_serve_is_named(
+    unwritten: None, unextended: None, write_config: WriteConfig
+) -> None:
     """The report `config validate` owes its reader.
 
-    One of the four types in ``01-configuration.md`` §3a, ``keyring``, has no
-    module, so a config declaring all four has a store that cannot work. The OCI
-    and file stores have modules, and the tests run with their clients installed,
-    so they are not named.
+    The ``unwritten`` and ``unextended`` fixtures take the modules of
+    `hashicorp` and `file` away, so two of the three types in a config that
+    declares one of each have none: a config whose stores are mostly unusable.
+    A narrow reading would report **one** warning, stopping at the first type
+    it finds. The OCI store has a module, and the tests run with its SDK
+    installed, so it is not named.
 
     Asserted as a set rather than a list: the order is the survey's, sorted by
     backend name, and pinning it here would be pinning `doctor`'s table through a
@@ -264,16 +278,15 @@ def test_every_store_this_machine_cannot_serve_is_named(write_config: WriteConfi
             "    compartment_id: ocid1.compartment.oc1..exampleuniqueid\n"
             "    key_id: ocid1.key.oc1..exampleuniqueid\n"
             f"  vault-local:\n{FILE_STORE}"
-            "  vault-desktop:\n    type: keyring\n"
         )
     )
     named = {
         name
-        for name in ("vault-dr", "vault-local", "vault-desktop")
+        for name in ("vault-hc", "vault-dr", "vault-local")
         if any(f'"{name}"' in entry["message"] for entry in document["diagnostics"])
     }
 
-    assert named == {"vault-desktop"}
+    assert named == {"vault-hc", "vault-local"}
     assert document["exit_code"] == ExitCode.SUCCESS
 
 

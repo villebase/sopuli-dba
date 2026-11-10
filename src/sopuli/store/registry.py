@@ -108,12 +108,11 @@ class Backend:
 #: has never heard of would fail at connect time with a :class:`KeyError`, which
 #: is precisely the traceback rule 2 exists to prevent.
 #:
-#: ``keyring`` has **no extra**, and that is not an oversight: it is not built.
-#: It is priority 4 and appears in no extras table yet. Until it is built,
-#: ``extra=None`` means "there is nothing to tell you to install", and asking
-#: for it fails as *not implemented in this build* rather than as a pip problem
-#: -- which is true, and is the message that does not send somebody to `pip`
-#: for something `pip` cannot fix.
+#: Every entry has an extra today. A backend that is declared before it is
+#: built has **no extra**, on purpose: ``extra=None`` means "there is nothing
+#: to tell you to install", and asking for it fails as *not implemented in this
+#: build* rather than as a pip problem -- which is true, and is the message
+#: that does not send somebody to `pip` for something `pip` cannot fix.
 BACKENDS: dict[str, Backend] = {
     "hashicorp": Backend(
         module="sopuli.store.hashicorp",
@@ -135,7 +134,6 @@ BACKENDS: dict[str, Backend] = {
         extra="file",
         provides=frozenset({"pyrage"}),
     ),
-    "keyring": Backend(module="sopuli.store.keyring"),
 }
 
 
@@ -175,8 +173,8 @@ def installed(backend: Backend) -> bool:
 
     :func:`sopuli.extras.installed` is the mechanism, shared with the driver
     registry. A backend with no extra is vacuously installed -- there is no
-    client to look for -- which keeps ``config validate`` quiet about
-    ``keyring`` rather than warning that something unnamed is missing, and
+    client to look for -- which keeps ``config validate`` quiet about such a
+    backend rather than warning that something unnamed is missing, and
     the roadmap gap surfaces at :func:`resolve` where it belongs.
     """
     return extras_installed(backend.provides)

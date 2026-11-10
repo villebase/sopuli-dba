@@ -107,13 +107,14 @@ def test_a_backend_whose_client_is_absent_is_not_installed() -> None:
 
 
 def test_a_backend_with_no_extra_is_vacuously_installed() -> None:
-    """`keyring` has no client to look for.
+    """A backend with no extra has no client to look for (ADR-006's named gap).
 
     Vacuously true rather than false, so `config validate` stays quiet about
     it instead of warning that something unnamed is missing. Its real state
-    -- no module in this build -- is `resolve`'s to report.
+    -- no module in this build -- is `resolve`'s to report. No backend in the
+    registry has this shape today, so the test builds one.
     """
-    assert installed(BACKENDS["keyring"])
+    assert installed(Backend(module="sopuli.store.absent_backend_xyz"))
 
 
 def test_the_file_store_names_its_extra_and_client() -> None:

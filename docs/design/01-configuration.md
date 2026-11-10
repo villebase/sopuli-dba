@@ -11,7 +11,7 @@ Put the binding keys at the top level and the file reads like a straightforward
 target list. This is the shape most users will ever need.
 
 ```yaml
-# yaml-language-server: $schema=./sopuli-config-3.8.schema.json
+# yaml-language-server: $schema=./sopuli-config-4.0.schema.json
 version: 1
 
 vaults: {}          # named secret stores
@@ -487,7 +487,7 @@ PDB per tenant across three environments, HashiCorp Vault as master. It needs no
 `applications:` section.
 
 ```yaml
-# yaml-language-server: $schema=./sopuli-config-3.8.schema.json
+# yaml-language-server: $schema=./sopuli-config-4.0.schema.json
 version: 1
 
 runtime:
@@ -846,7 +846,7 @@ config file can be read without knowing what environment it will be read in.
 
 | Key | Meaning |
 |---|---|
-| `type` | **required** — the backend: `hashicorp`, `oci`, `file`, `keyring` (P2). AWS and Azure are listed there as "later" and are refused until they exist. A declared type is validated here and *resolved* to a client only when something connects — see below (ADR-006) |
+| `type` | **required** — the backend: `hashicorp`, `oci`, `file` (P2). AWS and Azure are listed there as "later" and are refused until they exist. `keyring` was removed ([#1373](../decisions/log.md#1373)) and is refused with a message that says so; the OS keyring holds the tool's own credentials instead (§3a). A declared type is validated here and *resolved* to a client only when something connects — see below (ADR-006) |
 | `addr` | backend address, where the backend has one. For `hashicorp`, must be `https://`, except to a loopback host — see *Plain HTTP* below. For `file`, the path of the store's file, and **required** there from some layer. It must be absolute or start with `~`: a relative path would name another file from another working directory, and a missing file is an empty store. Refused on an `oci` store |
 | `mount` | KV mount point (HashiCorp). Refused on an `oci` or `file` store |
 | `kv_version` | `1` or `2` — different backends with different capabilities, not a version to branch on casually (P2). Refused on an `oci` or `file` store |
@@ -941,8 +941,7 @@ are not applied to a `file` store, which would otherwise take a URL as its
 path; the run warns with `SOPULI-W038`, as for an OCI store. The store has no
 compare-and-set, so a command that changes it needs `locking: advisory-only`
 on it, and every run that opens one warns with `SOPULI-W070`: it is for local
-development and CI, not for production. It needs `sopuli-dba[file]`. Which
-keys a `keyring` store reads is decided when that backend is built.
+development and CI, not for production. It needs `sopuli-dba[file]`.
 
 #### A declared backend that is not installed (ADR-006)
 
@@ -964,7 +963,7 @@ What changes is where it stops:
 | Moment | With the backend missing |
 |---|---|
 | load, `config validate`, `config show`, `target list` | works. `config validate` adds a **warning** (§9, §10), and exits 0 |
-| any command that resolves the store to a client | **error**, `error.category: "config"`, code `SOPULI-20001`, exit 9 (`03-json-output.md` §3). A `type` this build has no module for, today `keyring`, is `SOPULI-20005` instead, whether or not its client is installed. Its message has no install line, because installing nothing fixes it |
+| any command that resolves the store to a client | **error**, `error.category: "config"`, code `SOPULI-20001`, exit 9 (`03-json-output.md` §3). A `type` this build has no module for, which no type is today, is `SOPULI-20005` instead, whether or not its client is installed. Its message has no install line, because installing nothing fixes it |
 | `sopuli doctor` | **failure**. Its question is "can I reach my vaults", and this is a no |
 
 ```
@@ -3747,7 +3746,7 @@ error message for a file this long.
 ## 9b. The published schema
 
 P3 requires a published JSON Schema. It is
-[`docs/schemas/sopuli-config-3.8.schema.json`](../schemas/sopuli-config-3.8.schema.json),
+[`docs/schemas/sopuli-config-4.0.schema.json`](../schemas/sopuli-config-4.0.schema.json),
 Draft 2020-12, and it exists for the editor rather than for the tool: pointed at
 from a YAML language server, it gives completion and inline errors while somebody
 is editing a 130-line file, which is worth more than the validation itself.
@@ -3758,7 +3757,7 @@ the same constants the builders validate with — `TARGET_KEYS`, `VAULT_TYPES`,
 a section's keys and its type table disagree. Regenerate with:
 
 ```
-python -m sopuli.config.schema > docs/schemas/sopuli-config-3.8.schema.json
+python -m sopuli.config.schema > docs/schemas/sopuli-config-4.0.schema.json
 ```
 
 `tests/config/test_schema.py` fails when the committed file is not what the model
@@ -3841,7 +3840,7 @@ A schema nothing is pointed at is a file in a directory. The association is made
 from the config file itself, with a comment on the first line:
 
 ```yaml
-# yaml-language-server: $schema=./sopuli-config-3.8.schema.json
+# yaml-language-server: $schema=./sopuli-config-4.0.schema.json
 version: 1
 ```
 
@@ -3852,7 +3851,7 @@ description the generator wrote for it, and an unknown key is underlined where i
 was typed.
 
 **The path is relative to the YAML file**, not to the repository. Copy the schema
-next to the config, or point at it where it lives — `$schema=../sopuli-dba/docs/schemas/sopuli-config-3.8.schema.json`
+next to the config, or point at it where it lives — `$schema=../sopuli-dba/docs/schemas/sopuli-config-4.0.schema.json`
 is as valid as the form above.
 
 **The `$id` inside the schema is an identifier, not an address.** It reads like a
@@ -3892,9 +3891,9 @@ trustworthy for exactly the case it exists to serve. The command that actually
 needs the client is where this becomes an error (§3a).
 
 **Missing means "this machine cannot serve it", not "the client is absent"**
-(E4). A type with no backend module in this build warns, and so does a type whose
-client is not installed. Without the first, a file whose every store was unusable
-would validate as `ok: 0 warnings`. The wording says which case it is:
+(E4). A type whose client is not installed warns, and so would a type with no
+backend module in this build; every type §3a accepts has one today. The
+wording says which case it is. On a base install:
 
 ```console
 $ sopuli --config validate.yaml config validate
@@ -3903,7 +3902,7 @@ config: validate.yaml
 ok: 0 targets, 0 bindings, 2 warnings
 
 2 warnings:
-  vault "vault-local" declares type "file", but this build has no file backend yet -- this is not something to install
+  vault "vault-local" declares type "file", but that backend is not installed; install it with: pip install "sopuli-dba[file]", or after a pipx install: pipx runpip sopuli-dba install "sopuli-dba[file]"
   vault "vault-hc" declares type "hashicorp", but that backend is not installed; install it with: pip install "sopuli-dba[hashicorp]", or after a pipx install: pipx runpip sopuli-dba install "sopuli-dba[hashicorp]"
 ```
 
@@ -3911,8 +3910,8 @@ Ordered by backend `type:` rather than by the order the stores are written in �
 the survey's order, so a reader comparing this against `doctor`'s table is
 reading the same list twice rather than two shuffles of it.
 
-The first is a warning `pip` cannot act on. The action it names is still real:
-*do not deploy this file yet*.
+A type with no module would be a warning `pip` cannot act on. The action it
+names would still be real: *do not deploy this file yet*.
 
 **The same survey `doctor` reads, at a different level.** One function answers
 "can this machine serve it" for the whole tool (`sopuli/diagnostics.py`'s

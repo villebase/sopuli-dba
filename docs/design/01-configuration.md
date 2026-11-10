@@ -3441,7 +3441,7 @@ optional, and absent means no rules. A whole config with rules is in
 ```yaml
 reports:
   accounts:
-    - accounts: [DBSNMP, "ORDS_*", "APEX_*"]
+    - accounts: [DBSNMP, "ACME_SVC_*"]
       targets: { group: prod }
       profile: TECH_NOEXPIRE
       settings: { password_lifetime: unlimited }

@@ -77,8 +77,11 @@ applications:
     secret_template: "vault-prod:acme/{target}#DB_CREDENTIALS/{account}"
 
 # ---------------------------------------------------------------------------
-# What the report checks. There are no built-in rules: an account no rule
-# covers is listed as "no rule", and a setting no rule names is not compared.
+# What the report checks. There are no built-in rules. An account that no
+# application and no rule here names is listed as undeclared: information,
+# which never changes the exit code. A declared account that no
+# rule gives a profile or a setting is listed as "no rule". A setting no rule
+# names is not compared. Every account's lock is checked.
 # ---------------------------------------------------------------------------
 reports:
   accounts:
@@ -87,16 +90,19 @@ reports:
     # Oracle's own accounts, such as DBSNMP, are left out of the report unless
     # a rule names them, as this one does. `profile:` and `settings:` both:
     # the accounts must sit on TECH_NOEXPIRE, and their passwords must never
-    # expire.
-    - accounts: [DBSNMP, "ORDS_*", "APEX_*"]
+    # expire. A pattern covers every account it matches, locked ones too, so
+    # keep it to accounts that should all pass.
+    - accounts: [DBSNMP, "ACME_SVC_*"]
       targets: { group: prod }
       profile: TECH_NOEXPIRE
       settings: { password_lifetime: unlimited }
 
-    # The application accounts, on every target, because the rule has no
-    # `targets:`. `settings:` only: their profile comes from the policy above,
-    # and a rule may not give `profile:` to an account an application names.
-    - accounts: ["acme_*_user"]
+    # The application accounts, by name, on every target, because the rule
+    # has no `targets:`. By name rather than `acme_*_user`, so that a leftover
+    # account nobody declares still shows as undeclared. `settings:` only:
+    # their profile comes from the policy above, and a rule may not give
+    # `profile:` to an account an application names.
+    - accounts: [acme_web_user, acme_batch_user]
       settings: { failed_login_limit: 10 }
 
     # `profile:` only: the reporting account must sit on ACME_REPORTING. What
@@ -107,9 +113,12 @@ reports:
 
   # What a database profile's limits must be, for every account on it.
   # `unlimited` matches only an unlimited value, and a number is the largest
-  # value allowed. An entry here does not expect the profile to exist on
-  # every target: a rule's `profile:` above does that, on the targets the
-  # rule covers.
+  # value allowed. Where a rule and an entry here set one setting to two
+  # values, that check reports "not checked". An entry here does not expect
+  # the profile to exist on every target. A rule's `profile:` does, on the
+  # targets the rule covers, and so does a policy's `account.profile`, on
+  # every target its accounts are bound to: ACME_APP must exist on all three
+  # targets above.
   db_profiles:
     - name: TECH_NOEXPIRE
       settings: { password_lifetime: unlimited, failed_login_limit: 10 }

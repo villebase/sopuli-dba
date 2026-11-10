@@ -364,6 +364,16 @@ Measured on 23.26.3.0.0 (`02-oracle-privileges.md` §2, #1377):
 Each extra grant is `SELECT` only and optional, and the tool probes for it. A
 report that cannot read a view says *not checked* for what it needed.
 
+On PostgreSQL, where the reports are not built yet, the tool account reads
+what they need with the grants it already has. PostgreSQL keeps no date of a
+role's last password change, no last login and no failed logins, so those
+would always be *not checked* there, and `report history` would show only the
+store's records. Object privileges are per database: a session can read only
+the grants of the database it connects to. The reports on PostgreSQL are not
+specified yet; #1411 lists what to decide first, such as what the privilege
+report does about a cluster's other databases. Measured on 13.23 to 18.6
+(`02-postgres-privileges.md` §2.5, #1443).
+
 ---
 
 ## 9. Decisions
@@ -384,6 +394,7 @@ No question here is open, so none has an ID in the decision register.
 | Does a privilege through a role count for the account? | yes, and the role is named (§5) |
 | How long a history? | every rotation the store still has, and where it ends (§6) |
 | Which product first? | Oracle |
+| Which product after Oracle? | PostgreSQL, decided on 2026-11-10 (#1411) |
 | An account with no rule | the `no rule` state: shown, not a problem, not OK (§3) |
 | Built-in rules? | none (§7) |
 | Is the rule format specific to Oracle? | no; the settings are stated in words common to all products, and Oracle's profiles are an addition (§7) |

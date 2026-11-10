@@ -5994,7 +5994,9 @@ def _privileges_target(
             )
         try:
             surveyed = survey_accounts()
-            rows = report_states.evaluate(target.name, config, surveyed)
+            # A common account in a PDB stays: its grants made in the PDB are
+            # read here, though its lock and limits are not (#1438).
+            rows = report_states.evaluate(target.name, config, surveyed, keep_kept_in_root=True)
             absent = None
             if wanted is not None:
                 rows = _wanted_rows(target.name, rows, surveyed, wanted)

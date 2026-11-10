@@ -136,6 +136,18 @@ rule names them, as a rule for `DBSNMP` does. On 11.2, which has no such
 column, the report uses the same list of Oracle's own accounts that the
 guardrails use there (`02-oracle-privileges.md` §4, check 5), so one estate
 gives the same list on every release.
+On a PDB target, common accounts are left out too, unless a rule that covers
+the target names them. A common account is visible in every PDB, but its lock,
+limits and failed-login count are kept in `CDB$ROOT`
+([#1122](../decisions/log.md#1122)), so no check that decides a state can run
+on it in a PDB. Where the CDB root is a target, its report checks it, and
+lists it as undeclared where no rule names it there
+([#1438](../decisions/log.md#1438)). The survey reads which accounts are common
+from `DBA_USERS.COMMON`. On a release whose `DBA_USERS` read in a PDB lacks
+that column, it takes a name with the `C##` prefix as common, as it does for
+the lock. An application container keeps its common accounts listed: where it
+keeps their values was not measured, and an application-common user's own
+container may be the target itself.
 
 **The lock is the check; the failed-login count is information.** The lock
 status can be read on every release, with one exception: in a PDB, a locked
@@ -188,7 +200,9 @@ already reads, so no statement is added (#1390).
 ## 5. The privilege report
 
 **Built, on Oracle:** `sopuli report privileges [--detail] [--account NAME]
-[--public]`, for the same accounts `report accounts` covers.
+[--public]`, for the same accounts `report accounts` covers, and also for the
+common accounts it leaves out on a PDB target: their grants made in the PDB
+are read there.
 `docs/local-testing.md` §9a has a run. It needs the optional grant on the
 privilege views (`00_install.sql`, `grant_report_reads=Y`); without it, the
 part it could not read is *not checked* and the run exits 4. It judges nothing,

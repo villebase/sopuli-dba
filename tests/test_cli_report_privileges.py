@@ -298,3 +298,20 @@ def test_account_filter_may_name_an_undeclared_account(
     result = report(write_config, "--account", "acme_rr_app")
     assert result.exit_code == ExitCode.SUCCESS, result.output
     assert session["session"].asked == ((APP,), False)
+
+
+def test_a_common_account_in_a_pdb_keeps_its_privileges_read(
+    write_config: WriteConfig, session: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#1438 leaves it out of the accounts report, but not out of this one:
+    its grants made in the PDB are read there."""
+    common = SurveyedAccount(
+        "C##ACME_MONITOR", "OPEN", None, "DEFAULT", True, False, None, None, None,
+        unreadable=("lock", "lifetime", "limit", "count"), kept_in_root=True,
+    )  # fmt: skip
+    plain = session["session"].survey_accounts()
+    monkeypatch.setattr(session["session"], "survey_accounts", lambda: (common, *plain))
+    result = report(write_config)
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    asked, _ = session["session"].asked
+    assert "C##ACME_MONITOR" in asked

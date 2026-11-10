@@ -1,4 +1,5 @@
-"""A `file` store from the command line, and `SOPULI-W070` (#1372, #1415).
+"""A `file` store from the command line, `SOPULI-W070` (#1372, #1415) and
+`SOPULI-W071` (#1430).
 
 Real file stores with real age encryption, in a temporary directory; the
 identity comes from a variable. The tests that open a store need the `file`
@@ -8,7 +9,10 @@ extra and skip without it; the rest do not.
 from __future__ import annotations
 
 import json
+import os
+import secrets
 import sys
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
@@ -20,7 +24,7 @@ from sopuli import cli as cli_module
 from sopuli.cli import cli
 from sopuli.config import Config
 from sopuli.config.model import MaterialRef, Vault
-from sopuli.diagnostics import FILE_STORE_IN_USE, WARNINGS
+from sopuli.diagnostics import FILE_STORE_IN_USE, FILE_STORE_LEFTOVER, WARNINGS
 from sopuli.exit_codes import ExitCode
 from sopuli.invocation import Invocation
 from sopuli.store.file._store import open_store
@@ -107,6 +111,87 @@ def test_doctor_prints_the_warning_in_the_text_view(
     result = CliRunner().invoke(cli, ["--config", str(config), "doctor"])
 
     assert 'vault "acme-dev" is a file store' in result.output
+
+
+def _left_behind(directory: Path, *, minutes: int) -> Path:
+    """A temporary file as a write names it, last written ``minutes`` ago."""
+    path = directory / f".sopuli-{secrets.token_hex(8)}.tmp"
+    path.write_bytes(b"ciphertext")
+    stamp = time.time() - minutes * 60
+    os.utime(path, (stamp, stamp))
+    return path
+
+
+def test_doctor_lists_a_temporary_file_a_stopped_run_left(
+    write_config: WriteConfig, tmp_path: Path, identity: str
+) -> None:
+    """#1430: one SOPULI-W071 per file older than ten minutes, and nothing removed."""
+    old = _left_behind(tmp_path, minutes=180)
+    _left_behind(tmp_path, minutes=1)
+    config = write_config("version: 1\nvaults:\n" + file_store("acme-dev", tmp_path))
+
+    code, document = run_json(config, "doctor")
+
+    found = [one for one in document["diagnostics"] if one["code"] == FILE_STORE_LEFTOVER]
+    assert [one["message"] for one in found] == [
+        f'vault "acme-dev": {old} is 3 hours old, a temporary file that a write of the '
+        "store left behind: the run stopped before it finished, or could not remove the "
+        "file. It is encrypted to the store's keys, and may hold a password version the "
+        "store has pruned since. Remove it when no run is writing the store"
+    ]
+    assert found[0]["level"] == "warning"
+    assert code == ExitCode.SUCCESS
+    assert old.exists()
+
+
+def test_doctor_prints_a_left_temporary_file_in_the_text_view(
+    write_config: WriteConfig, tmp_path: Path, identity: str
+) -> None:
+    old = _left_behind(tmp_path, minutes=30)
+    config = write_config("version: 1\nvaults:\n" + file_store("acme-dev", tmp_path))
+
+    result = CliRunner().invoke(cli, ["--config", str(config), "doctor"])
+
+    assert f"{old.name} is 30 minutes old" in result.output
+
+
+def test_two_stores_in_one_directory_get_one_warning_per_file(
+    write_config: WriteConfig, tmp_path: Path, identity: str
+) -> None:
+    """The file's name does not say which store wrote it, so it is reported
+    once, naming both."""
+    old = _left_behind(tmp_path, minutes=60)
+    config = write_config(
+        "version: 1\nvaults:\n" + file_store("acme-dev", tmp_path) + file_store("acme-ci", tmp_path)
+    )
+
+    _, document = run_json(config, "doctor")
+
+    (message,) = [
+        one["message"] for one in document["diagnostics"] if one["code"] == FILE_STORE_LEFTOVER
+    ]
+    assert message.startswith(f'vaults "acme-dev", "acme-ci": {old} is 60 minutes old')
+    assert "encrypted to the keys of one of these stores" in message
+
+
+def test_a_store_that_cannot_be_opened_is_looked_at_too(
+    write_config: WriteConfig, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Listing the directory needs no key, so a store whose identity is not
+    set still has its leftovers reported."""
+    monkeypatch.delenv(VARIABLE, raising=False)
+    old = _left_behind(tmp_path, minutes=60)
+    config = write_config("version: 1\nvaults:\n" + file_store("acme-dev", tmp_path))
+
+    _, document = run_json(config, "doctor")
+
+    found = [one for one in document["diagnostics"] if one["code"] == FILE_STORE_LEFTOVER]
+    assert [str(old) in one["message"] for one in found] == [True]
+
+
+def test_the_leftover_code_is_registered() -> None:
+    assert FILE_STORE_LEFTOVER == "SOPULI-W071"
+    assert "Nothing removes it" in WARNINGS[FILE_STORE_LEFTOVER]
 
 
 def test_creds_generate_stages_in_a_file_store(

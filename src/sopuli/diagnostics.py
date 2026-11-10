@@ -66,6 +66,7 @@ from sopuli.lock.manager import LOCK_PREFIX, LockableStore, LockManager, Unguard
 from sopuli.lock.record import LockRecord
 from sopuli.orphans import Unread
 from sopuli.output.document import Diagnostic, DiagnosticLevel
+from sopuli.store.file import Leftover
 from sopuli.store.protocol import OK
 from sopuli.store.survey import VaultReport
 
@@ -608,6 +609,10 @@ KEYRING_REPLACE_NEEDS_FLAG = "SOPULI-W069"
 #: not for production (#1415, decision 5).
 FILE_STORE_IN_USE = "SOPULI-W070"
 
+#: `doctor` found a temporary file that a write left in a `file` store's
+#: directory (#1430).
+FILE_STORE_LEFTOVER = "SOPULI-W071"
+
 #: ``SOPULI-W004`` and ``SOPULI-W034`` to ``SOPULI-W039`` -- imported above
 #: rather than defined here. They are raised in the config layer, which cannot
 #: import this module, so they are defined in :mod:`sopuli.config.codes` and
@@ -883,6 +888,12 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "advisory only, and the file is the only copy of what it holds. One entry per "
             "file store the run "
             "opens, from every command that opens one."
+        ),
+        FILE_STORE_LEFTOVER: (
+            "`doctor` found a temporary file that a write left in a `file` store's "
+            "directory, older than ten minutes. It is encrypted to the store's keys, and "
+            "may hold a password version the store has pruned since. Nothing removes it: "
+            "remove it when no run is writing the store. One entry per file."
         ),
         CONSTRAINTS_UNREAD: (
             "`creds generate` could not read a target's password constraints, so the "
@@ -1524,6 +1535,45 @@ def file_store_in_use(name: str) -> Diagnostic:
             "for production"
         ),
     )
+
+
+def file_store_leftover(stores: Sequence[str], leftover: Leftover) -> Diagnostic:
+    """`SOPULI-W071`: a temporary file a write left in a directory that
+    holds the file stores ``stores`` (#1430). ``doctor`` raises one per file,
+    and removes none: a younger one may be another run's write in progress.
+
+    The file's name does not say which store wrote it, so where a directory
+    holds more than one, the message names each, and the keys of any of them
+    may open the file.
+    """
+    if len(stores) == 1:
+        who, keys = f'vault "{stores[0]}"', "the store's keys"
+    else:
+        named = ", ".join(f'"{name}"' for name in stores)
+        who, keys = f"vaults {named}", "the keys of one of these stores"
+    return Diagnostic(
+        level="warning",
+        code=FILE_STORE_LEFTOVER,
+        message=(
+            f"{who}: {leftover.path} is {_age(leftover.age)} old, a temporary file that a "
+            "write of the store left behind: the run stopped before it finished, or could "
+            f"not remove the file. It is encrypted to {keys}, and "
+            "may hold a password version the store has pruned since. Remove it when no "
+            "run is writing the store"
+        ),
+    )
+
+
+def _age(age: timedelta) -> str:
+    """An age in the largest whole unit that is at least 2 of it: minutes,
+    hours or days."""
+    minutes = int(age.total_seconds() // 60)
+    if minutes < 120:
+        return f"{minutes} minute{'' if minutes == 1 else 's'}"
+    hours = minutes // 60
+    if hours < 48:
+        return f"{hours} hours"
+    return f"{hours // 24} days"
 
 
 def admin_diagnostics(target: str, credential: Resolved) -> list[Diagnostic]:

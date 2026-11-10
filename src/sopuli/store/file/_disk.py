@@ -36,12 +36,14 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import os
+import re
 import secrets
 import stat
 import sys
 import time
 from collections.abc import Iterator
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import BinaryIO
 
@@ -173,6 +175,85 @@ def _require_regular(path: Path, status: os.stat_result) -> None:
         )
 
 
+#: The name of the file :func:`replace` writes before it replaces the store's
+#: file: this, 16 hex digits, and :data:`TEMPORARY_SUFFIX`.
+TEMPORARY_PREFIX = ".sopuli-"
+TEMPORARY_SUFFIX = ".tmp"
+_TEMPORARY = re.compile(re.escape(TEMPORARY_PREFIX) + "[0-9a-f]{16}" + re.escape(TEMPORARY_SUFFIX))
+
+#: How old a temporary file must be before :func:`leftovers` reports it. A run
+#: holds its file for the time it takes to write and flush the store, and
+#: :data:`REPLACE_WAIT` at most after that, so a file this old is not a run's
+#: write in progress, unless the run is stopped in a debugger or the disk has
+#: stalled. Ten minutes leaves room for a slow network file system.
+LEFTOVER_AGE = timedelta(minutes=10)
+
+
+@dataclass(frozen=True)
+class Leftover:
+    """A temporary file a run left in the store's directory (#1430)."""
+
+    path: Path
+    age: timedelta
+
+
+def leftovers(path: Path, *, now: datetime) -> tuple[Leftover, ...]:
+    """The temporary files :func:`replace` left beside ``path``, oldest first:
+    :func:`leftovers_in` of :func:`directory_of`. Never raises."""
+    directory = directory_of(path)
+    return () if directory is None else leftovers_in(directory, now=now)
+
+
+def leftovers_in(directory: Path, *, now: datetime) -> tuple[Leftover, ...]:
+    """The temporary files :func:`replace` left in ``directory``, oldest first.
+
+    A write leaves its file behind when the run is stopped between creating
+    it and the replace, by SIGKILL or a power loss, or when the replace fails
+    and the file cannot be removed, as when another program holds it open on
+    Windows. Only a regular file with the exact name :func:`replace` gives,
+    older than :data:`LEFTOVER_AGE`, is listed. Nothing is removed: a younger
+    file may be another run's write in progress, and the store has no lock to
+    tell the two apart (#1415, decision 4).
+
+    The age is the local clock less the file's time, which the file system
+    sets. On a network file system whose server clock runs behind this
+    host's, a write in progress can look older than it is, so the warning
+    says to remove a file only when no run is writing the store.
+
+    A directory that cannot be listed gives nothing. Never raises.
+    """
+    try:
+        entries = list(os.scandir(directory))
+    except (OSError, ValueError):
+        return ()
+    found = []
+    for entry in entries:
+        if not _TEMPORARY.fullmatch(entry.name):
+            continue
+        try:
+            status = entry.stat(follow_symlinks=False)
+            # A time outside what the platform can convert, from a broken
+            # clock or a hand-set one, is skipped rather than raised.
+            written = datetime.fromtimestamp(status.st_mtime, tz=UTC)
+        except (OSError, OverflowError, ValueError):
+            continue
+        if not stat.S_ISREG(status.st_mode):
+            continue
+        age = now - written
+        if age >= LEFTOVER_AGE:
+            found.append(Leftover(Path(entry.path), age))
+    return tuple(sorted(found, key=lambda one: (-one.age, str(one.path))))
+
+
+def directory_of(path: Path) -> Path | None:
+    """The directory :func:`replace` writes ``path``'s temporary file in, a
+    link at ``path`` followed, or ``None`` where the link cannot be followed."""
+    try:
+        return _target(path).parent
+    except (StoreError, ValueError):
+        return None
+
+
 def replace(path: Path, data: bytes, *, expected: str) -> None:
     """Write ``data`` as the file at ``path``, if the file is still what was read.
 
@@ -186,7 +267,7 @@ def replace(path: Path, data: bytes, *, expected: str) -> None:
     _require_directory(directory, path)
     # A fixed length, whatever the store's name: a name near the file
     # system's limit would otherwise be readable and never replaceable.
-    temporary = directory / f".sopuli-{secrets.token_hex(8)}.tmp"
+    temporary = directory / f"{TEMPORARY_PREFIX}{secrets.token_hex(8)}{TEMPORARY_SUFFIX}"
     try:
         created = _create_owner_only(temporary)
     except OSError as error:

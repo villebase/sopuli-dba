@@ -113,7 +113,11 @@ from sopuli.config import (
     refuse_unknown_vaults,
 )
 from sopuli.config import delivery as delivery_config
-from sopuli.config.bindings import check_oci_name
+from sopuli.config.bindings import (
+    admin_store_in_file,
+    check_oci_name,
+    refuse_non_production_store,
+)
 from sopuli.config.errors import KeyPath
 from sopuli.config.expansion import declared_at
 from sopuli.config.model import Delivery, Notify, PersonalAccountRule, Vault
@@ -3605,9 +3609,16 @@ def _refuse_personal_delivery_store(
     checked: set[str] = set()
     for target in reached:
         link = _delivery_store_link(config, delivery, target)
-        if link is None or link[0] in checked:
+        if link is None:
             continue
         name, at = link
+        # §10 per target, because it depends on the target's environment
+        # (#1435): the delivered password is a prod account's.
+        refuse_non_production_store(
+            config, name, target=target, what="the delivered password", at=at
+        )
+        if name in checked:
+            continue
         checked.add(name)
         refuse_personal_on(
             config,
@@ -11065,6 +11076,21 @@ def _admin_reader(target: ExpandedTarget, run: Invocation, config: Config) -> Re
                 ref,
                 at=declared_at(target, "admin").key("auth").key("secret"),
                 read_only=True,
+            )
+        # §10 on the store the run chose (#1435). The loader checked the
+        # file's part of the chain; a profile or SOPULI_VAULT is checked here.
+        if admin_store_in_file(target, ref, config) is None:
+            refuse_non_production_store(
+                config,
+                name,
+                target=target,
+                what="its admin password",
+                at=declared_at(target, "admin").key("auth").key("secret"),
+                chosen_by=(
+                    DEFAULT_STORE_VARIABLE
+                    if os.environ.get(DEFAULT_STORE_VARIABLE)
+                    else "the active profile's `vault:`"
+                ),
             )
         store = _stores_for({name}, config, run=run)[name]
         stored = read_secret(store, ref)

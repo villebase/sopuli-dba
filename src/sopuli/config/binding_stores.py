@@ -124,10 +124,9 @@ def complete(
     _refuse_dangling(candidate, config)
     completed = _filled(config, candidate)
     if check_refs:
-        _check_completed(candidate, config)
-        _check_estate_stages(candidate, estate, completed)
-        # §10 on the bindings this run just gave a store (#1435): the loader
-        # checked the ones the file names, and these had none until now.
+        # §10 first, on the bindings this run just gave a store (#1435): the
+        # loader checked the ones the file names, and these had none until now.
+        # A safety refusal should not wait behind a ref-shape one.
         check_production_stores(
             completed,
             [
@@ -137,6 +136,8 @@ def complete(
             ],
             chosen_by=candidate.location,
         )
+        _check_completed(candidate, config)
+        _check_estate_stages(candidate, estate, completed)
     return completed
 
 

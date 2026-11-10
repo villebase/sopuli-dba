@@ -438,6 +438,46 @@ def test_an_admin_ref_on_an_oci_store_a_profile_supplies_is_refused_before_openi
     assert harness["opened"] == []
 
 
+#: A prod target whose admin ref names no store, and a profile that supplies a
+#: store marked non-production.
+PROD_ADMIN_FROM_A_SCRATCH_PROFILE = (
+    VAULTS
+    + """  vault-scratch:
+    type: hashicorp
+    addr: https://vault-scratch.example.com:8200
+    non_production: true
+profiles:
+  scratch:
+    vault: vault-scratch
+targets:
+  - name: orders-pdb
+    type: oracle
+    environment: prod
+    dsn: "db.example.com:1521/orders"
+    admin:
+      username: C##SOPULI_SVC
+      auth: { method: vault, secret: "ops/dba#password" }
+"""
+)
+
+
+def test_a_prod_admin_password_from_a_store_a_profile_supplies_is_refused_before_opening(
+    runner: CliRunner, write_config: WriteConfig, estate: Callable[..., dict[str, Any]]
+) -> None:
+    """§10 on the store the run chose (#1435). The file names none, so the
+    loader cannot check it, and the run refuses it before it opens the store."""
+    harness = estate()
+    config = write_config(PROD_ADMIN_FROM_A_SCRATCH_PROFILE)
+
+    result = _doctor(runner, config, "--profile", "scratch", "--output", "json")
+    entry = json.loads(result.output)["targets"][0]
+
+    assert entry["reachable"] is False
+    message = entry["error"]["message"]
+    assert "its admin password on target 'orders-pdb' is read from vault 'vault-scratch'" in message
+    assert harness["opened"] == []
+
+
 def test_an_admin_ref_may_use_the_whole_oci_name_length(
     runner: CliRunner, write_config: WriteConfig, estate: Callable[..., dict[str, Any]]
 ) -> None:

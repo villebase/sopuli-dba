@@ -260,6 +260,62 @@ def test_a_dry_run_refuses_a_delivery_into_an_oci_store(
     assert "would be reset" not in result.output
 
 
+#: `vault_path` into a HashiCorp store marked non-production, for a prod
+#: target, with the store from `defaults.vault`.
+NON_PRODUCTION_DELIVERY = (
+    MANUAL.replace("environment: dev", "environment: prod")
+    .replace(
+        """delivery:
+  method: manual
+  manual:
+    force_expire: true
+""",
+        """delivery:
+  method: vault_path
+  vault_path:
+    ttl: 1h
+    prefix: handover
+
+vaults:
+  vault-scratch:
+    type: hashicorp
+    addr: https://vault-scratch.example.com
+    non_production: true
+""",
+    )
+    .replace(
+        """defaults:
+  policy: personal-standard
+""",
+        """defaults:
+  policy: personal-standard
+  vault: vault-scratch
+""",
+    )
+    .format(dsn="192.0.2.10:1521/ALPHA", user="SOPULI_SVC", account=ACCOUNT)
+)
+
+
+def test_a_prod_password_is_not_delivered_into_a_non_production_store(
+    runner: CliRunner, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§10 on the store a delivery writes into (#1435). The store depends on
+    the target, so it is checked per target, before the plan."""
+
+    def no_store(*_: Any, **__: Any) -> Any:
+        raise AssertionError("a store was opened")
+
+    monkeypatch.setattr("sopuli.cli.connect", no_store)
+
+    result = run(runner, write_config(NON_PRODUCTION_DELIVERY), "--account", ACCOUNT, "--dry-run")
+
+    assert result.exception.exit_code == ExitCode.CONFIG_INVALID
+    rendered = str(result.exception)
+    assert "the delivered password on target 'tier1-oracle'" in rendered
+    assert "vault 'vault-scratch', which is marked `non_production: true`" in rendered
+    assert "defaults.vault" in rendered
+
+
 def test_a_target_s_own_oci_store_is_refused_for_a_delivery(
     runner: CliRunner, write_config: WriteConfig
 ) -> None:

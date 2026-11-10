@@ -284,8 +284,9 @@ def test_the_environment_may_not_send_a_prod_password_to_a_non_production_store(
         binding_stores.complete(config, estate=config, env={"SOPULI_VAULT": "vault-scratch"})
 
     message = str(raised.value)
-    assert "acme_web_user on target 'plain' is prod" in message
-    assert "this run would keep its password in vault 'vault-scratch'" in message
+    assert "the password of acme_web_user on target 'plain'" in message
+    assert "would be kept in vault 'vault-scratch'" in message
+    assert "the target is prod" in message
     assert raised.value.hint is not None
     assert "SOPULI_VAULT chose that store" in raised.value.hint
 

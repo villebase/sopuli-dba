@@ -426,14 +426,18 @@ def test_a_dev_target_may_use_a_non_production_store() -> None:
 
 
 #: Every way a binding on a target that names no store of its own can still
-#: get one (#1435): the check is on the store the password goes to.
+#: get one (#1435), and the key the error points at: the one that chose it.
 INHERITED = {
-    "defaults": {"defaults": {"vault": "local"}},
-    "application entry": {"application": {"vault": "local"}},
-    "ref prefix": {"application": {"secret_template": "local:apps/{account}#password"}},
-    "override": {
-        "application": {"overrides": [{"where": {"env": "prod"}, "vault": "local"}]},
-    },
+    "defaults": ({"defaults": {"vault": "local"}}, "defaults.vault"),
+    "application entry": ({"application": {"vault": "local"}}, "applications[0]"),
+    "ref prefix": (
+        {"application": {"secret_template": "local:apps/{account}#password"}},
+        "applications[0]",
+    ),
+    "override": (
+        {"application": {"overrides": [{"where": {"env": "prod"}, "vault": "local"}]}},
+        "applications[0]",
+    ),
 }
 
 
@@ -455,9 +459,9 @@ def _prod_estate(how: dict[str, Any]) -> dict[str, Any]:
     return document(**sections)
 
 
-@pytest.mark.parametrize("how", INHERITED.values(), ids=INHERITED.keys())
+@pytest.mark.parametrize(("how", "at"), INHERITED.values(), ids=INHERITED.keys())
 def test_a_prod_password_may_not_reach_a_non_production_store_another_way(
-    how: dict[str, Any],
+    how: dict[str, Any], at: str
 ) -> None:
     """A prod target whose own `vault:` is empty passed the check until #1435,
     and `creds generate` then wrote its passwords into the non-production store.
@@ -466,9 +470,10 @@ def test_a_prod_password_may_not_reach_a_non_production_store_another_way(
         build_config(_prod_estate(how))
 
     rendered = str(caught.value)
-    assert "acme_web_user on target 'cdb-root-dev' is prod" in rendered
+    assert "the password of acme_web_user on target 'cdb-root-dev'" in rendered
     assert "vault 'local', which is marked `non_production: true`" in rendered
-    assert "applications[0]" in rendered
+    assert "the target is prod" in rendered
+    assert str(caught.value.at) == at
 
 
 def test_a_prod_password_in_a_production_store_passes_beside_a_non_production_default() -> None:
@@ -501,7 +506,7 @@ def test_a_prod_admin_password_may_not_be_read_from_a_non_production_store() -> 
         )
 
     rendered = str(caught.value)
-    assert "its admin password is read from vault 'local'" in rendered
+    assert "its admin password on target 'cdb-root-dev' is read from vault 'local'" in rendered
     assert "targets[0].admin.auth.secret" in rendered
 
 

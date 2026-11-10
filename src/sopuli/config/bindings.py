@@ -624,60 +624,108 @@ def check_production_stores(
 
     ``bindings`` defaults to the config's. :func:`sopuli.config.binding_stores.complete`
     passes the ones a profile or ``SOPULI_VAULT`` filled in, with ``chosen_by``
-    naming which. The error then points at the document as a whole and names
-    that source in its hint, as that module's other refusals do, because
-    ``SOPULI_VAULT`` has no line in the file. Those layers do not fill the
-    admin ref here, so it is checked only at load.
+    naming which. Those layers fill an admin ref's store where the run opens it,
+    so that one is checked there, through :func:`refuse_non_production_store`.
     """
-    non_production = {vault.name for vault in config.vaults if vault.non_production}
-    if not non_production:
-        return
-    prod = {
-        expanded.name: expanded
-        for expanded in config.expanded_targets
-        if expanded.target.environment == PRODUCTION
-    }
-    where = application_locations(config)
+    targets = {expanded.name: expanded for expanded in config.expanded_targets}
     for binding in config.bindings if bindings is None else bindings:
-        if binding.target not in prod or binding.vault not in non_production:
+        expanded = targets.get(binding.target)
+        if expanded is None or binding.vault is None:
             continue
-        if chosen_by is not None:
-            raise ConfigError(
-                f"{binding.account} on target {binding.target!r} is {PRODUCTION}, but this "
-                f"run would keep its password in vault {binding.vault!r}, which is marked "
-                f"`non_production: true`",
-                at=ROOT,
-                hint=(
-                    f"{chosen_by} chose that store; name a production store for it in the "
-                    "file, or choose another for this run"
-                ),
-            )
-        raise ConfigError(
-            f"{binding.account} on target {binding.target!r} is {PRODUCTION}, but its "
-            f"password would be kept in vault {binding.vault!r}, which is marked "
-            f"`non_production: true`",
-            at=where.get(binding.application, ROOT),
-            hint=(
-                "name a production store for it on the target, the application entry or "
-                "the ref, or drop the marking if it is wrong"
-            ),
+        refuse_non_production_store(
+            config,
+            binding.vault,
+            target=expanded,
+            what=f"the password of {binding.account}",
+            at=ROOT if chosen_by is not None else _binding_store_at(config, binding, expanded),
+            chosen_by=chosen_by,
         )
     if chosen_by is not None:
         return
-    for expanded in prod.values():
-        auth = expanded.target.admin.auth if expanded.target.admin is not None else None
-        ref = auth.secret if auth is not None else None
-        if ref is None:
+    for expanded in config.expanded_targets:
+        admin = expanded.target.admin
+        ref = None if admin is None or admin.auth is None else admin.auth.secret
+        store = None if ref is None else admin_store_in_file(expanded, ref, config)
+        if store is None:
             continue
-        store = ref.vault or expanded.target.vault or config.defaults.vault
-        if store not in non_production:
-            continue
-        raise ConfigError(
-            f"target {expanded.name!r} is {PRODUCTION}, but its admin password is read "
-            f"from vault {store!r}, which is marked `non_production: true`",
+        refuse_non_production_store(
+            config,
+            store,
+            target=expanded,
+            what="its admin password",
             at=declared_at(expanded, "admin").key("auth").key("secret"),
-            hint="keep it in a production store, or drop the marking if it is wrong",
         )
+
+
+def refuse_non_production_store(
+    config: Config,
+    store: str,
+    *,
+    target: ExpandedTarget,
+    what: str,
+    at: KeyPath,
+    chosen_by: str | None = None,
+) -> None:
+    """Refuse ``store`` for ``what`` on ``target`` if the target is `prod` and
+    the store is marked ``non_production`` (§10, #1435).
+
+    ``chosen_by`` names a run layer, a profile's ``vault:`` or ``SOPULI_VAULT``,
+    when that is what chose the store. ``SOPULI_VAULT`` has no line in the file,
+    so the hint names it, as :mod:`sopuli.config.binding_stores`'s other
+    refusals do.
+    """
+    if target.target.environment != PRODUCTION:
+        return
+    if not any(vault.name == store and vault.non_production for vault in config.vaults):
+        return
+    verb = "would be kept in" if what.startswith("the password") else "is read from"
+    message = (
+        f"{what} on target {target.name!r} {verb} vault {store!r}, which is marked "
+        f"`non_production: true`, and the target is {PRODUCTION}"
+    )
+    if chosen_by is not None:
+        hint = (
+            f"{chosen_by} chose that store for this run; name a production store for it in "
+            "the file, or choose another for this run"
+        )
+    else:
+        hint = "keep it in a production store, or drop the marking if it is wrong"
+    raise ConfigError(message, at=at, hint=hint)
+
+
+def admin_store_in_file(expanded: ExpandedTarget, ref: SecretRef, config: Config) -> str | None:
+    """The store an ``admin.auth.secret`` names, as far as the file goes.
+
+    The ref's prefix, the target's ``vault:``, then ``defaults.vault``.
+    :func:`sopuli.admin.store_name` adds the run's layers after these, and this
+    module's checks use the file's part alone, so the three cannot drift apart.
+    """
+    return ref.vault or expanded.target.vault or config.defaults.vault
+
+
+def _binding_store_at(config: Config, binding: Binding, expanded: ExpandedTarget) -> KeyPath:
+    """The line that chose a binding's store, for the error to point at.
+
+    The ref's prefix, the entry's ``vault:`` or an override's are the
+    application entry's. Otherwise the store came from the target or from
+    ``defaults.vault``, and the error names that key, so an operator does not
+    edit an entry that never named a store.
+    """
+    application = next(
+        (one for one in config.applications if one.name == binding.application), None
+    )
+    entry = application_locations(config).get(binding.application, ROOT)
+    if application is None:
+        return entry
+    if binding.secret is not None and binding.secret.vault is not None:
+        return entry
+    if application.vault is not None or any(
+        override.vault is not None for override in application.overrides
+    ):
+        return entry
+    if expanded.target.vault is not None:
+        return declared_at(expanded, "vault")
+    return ROOT.key("defaults").key("vault")
 
 
 def check_admin_refs(config: Config) -> None:
@@ -695,7 +743,7 @@ def check_admin_refs(config: Config) -> None:
         ref = None if admin is None or admin.auth is None else admin.auth.secret
         if ref is None:
             continue
-        name = ref.vault or expanded.target.vault or config.defaults.vault
+        name = admin_store_in_file(expanded, ref, config)
         if name is not None and types.get(name) == "oci":
             check_oci_name(
                 ref, at=declared_at(expanded, "admin").key("auth").key("secret"), read_only=True

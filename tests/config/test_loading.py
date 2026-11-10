@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import sys
+import threading
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -121,8 +122,51 @@ def test_a_pipe_is_refused_without_waiting_for_a_writer(tmp_path: Path) -> None:
     make_fifo = getattr(os, "mkfifo")  # noqa: B009
     make_fifo(pipe, 0o600)
 
-    with pytest.raises(ConfigError, match="is not a regular file"):
-        load_document(pipe)
+    outcome: list[BaseException | None] = []
+
+    def load() -> None:
+        try:
+            load_document(pipe)
+        except BaseException as error:  # noqa: BLE001 - handed back to the test
+            outcome.append(error)
+        else:
+            outcome.append(None)
+
+    # In a thread, so a regression fails the test by name instead of hanging it.
+    worker = threading.Thread(target=load, daemon=True)
+    worker.start()
+    worker.join(timeout=10)
+
+    assert not worker.is_alive(), "load_document waited on the pipe"
+    assert isinstance(outcome[0], ConfigError)
+    assert "is not a regular file" in str(outcome[0])
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="named pipes are a POSIX file type")
+def test_a_pipe_put_at_the_path_after_its_check_is_refused_without_waiting(
+    tmp_path: Path,
+) -> None:
+    """The check by path and the open are two steps; the open must not wait."""
+    pipe = tmp_path / "sopuli.yaml"
+    make_fifo = getattr(os, "mkfifo")  # noqa: B009
+    make_fifo(pipe, 0o600)
+    outcome: list[BaseException | None] = []
+
+    def read() -> None:
+        try:
+            loading._read(pipe)
+        except BaseException as error:  # noqa: BLE001 - handed back to the test
+            outcome.append(error)
+        else:
+            outcome.append(None)
+
+    worker = threading.Thread(target=read, daemon=True)
+    worker.start()
+    worker.join(timeout=10)
+
+    assert not worker.is_alive(), "_read waited on the pipe"
+    assert isinstance(outcome[0], ConfigError)
+    assert "is not a regular file" in str(outcome[0])
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="a POSIX character device")

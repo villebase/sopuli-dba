@@ -116,6 +116,11 @@ TOP_LEVEL_KEYS = (
 )
 
 
+#: A config path that is there, but is a pipe, a socket or a device.
+NOT_REGULAR = "config path is not a regular file"
+NAME_THE_FILE = "name the config file itself"
+
+
 def load_document(path: Path) -> dict[str, Any]:
     """Read, parse and sanity-check one config file. Returns raw data."""
     if not path.exists():
@@ -133,6 +138,14 @@ def load_document(path: Path) -> dict[str, Any]:
             "config path is not a file",
             source=path,
             hint="point --config at the file itself, not the directory holding it",
+        )
+    if not path.is_file():
+        # A pipe, a socket or a device. Refused by path, before an open: opening
+        # some devices acts on them, such as a tape that rewinds when closed.
+        raise ConfigError(
+            NOT_REGULAR,
+            source=path,
+            hint=NAME_THE_FILE,
         )
 
     document = _require_mapping(parse_yaml(_read(path), source=path), path)
@@ -702,8 +715,8 @@ def _read(path: Path) -> str:
 def _open(path: Path) -> BinaryIO:
     """``path`` open for reading, without waiting on it.
 
-    The callers have checked that the path is a file, but another program can
-    put a pipe or a device there before the open. Opened without
+    The callers have checked by path that it is a regular file, but another
+    program can put a pipe or a device there before the open. Opened without
     ``O_NONBLOCK``, a pipe would wait for a writer and the run would hang with
     no message. ``O_NOCTTY`` keeps a terminal from becoming this process's.
     The descriptor is made blocking again before it is read.
@@ -732,11 +745,7 @@ def _require_regular(path: Path, status: os.stat_result) -> None:
     ``/dev/zero``, until memory runs out.
     """
     if not stat.S_ISREG(status.st_mode):
-        raise ConfigError(
-            "config path is not a regular file",
-            source=path,
-            hint="point --config at the config file itself",
-        )
+        raise ConfigError(NOT_REGULAR, source=path, hint=NAME_THE_FILE)
 
 
 def _require_mapping(document: Any, path: Path) -> dict[str, Any]:

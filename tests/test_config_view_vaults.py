@@ -30,20 +30,30 @@ Four things are worth asserting rather than the rows appearing:
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
 import click
+from jsonschema import Draft202012Validator
 
 from sopuli.config.loading import build_config
 from sopuli.config.model import Config
 from sopuli.invocation import RESOLVED_SETTINGS
 from sopuli.output.config_view import build_section, render_text
+from sopuli.output.document import SCHEMA_VERSION
 from sopuli.settings import Contribution, Resolved, resolve_all
 from sopuli.settings.sources import config_contributions
 
 STORE = "vault-dev"
 PROFILE = "standby"
+
+RUN_SCHEMA = (
+    Path(__file__).resolve().parent.parent
+    / "docs"
+    / "schemas"
+    / f"sopuli-run-{SCHEMA_VERSION}.schema.json"
+)
 
 DECLARED = {"type": "hashicorp", "addr": "https://vault-dev.example.com:8200", "mount": "kv"}
 
@@ -326,6 +336,43 @@ def test_a_file_store_without_max_versions_shows_the_default() -> None:
 
     assert "max_versions  10 (default)" in text
     assert "recipients" not in text
+
+
+def test_a_file_stores_keys_reach_json_with_their_location() -> None:
+    """#1429: the identity as the file writes it, where it comes from and never
+    a value; the recipients as an array; and the versions kept. Only the
+    declaration can set them, so each one's source is `object`."""
+    section = build_section(
+        [Path("estate.yaml")],
+        with_file(recipients=RECIPIENTS, max_versions=3),
+        {"version": 1},
+        resolved=True,
+    )
+    store = next(one for one in section["vaults"] if one["name"] == "acme-dev")
+
+    assert store["settings"]["identity"] == {
+        "value": {"env": "SOPULI_FILE_IDENTITY"},
+        "source": "object",
+        "source_detail": "vaults.acme-dev.identity",
+    }
+    assert store["settings"]["recipients"]["value"] == RECIPIENTS
+    assert store["settings"]["max_versions"]["value"] == 3
+    # The section as `--resolved --output json` writes it, against the
+    # published schema.
+    schema = json.loads(RUN_SCHEMA.read_text(encoding="utf-8"))
+    Draft202012Validator({"$defs": schema["$defs"], "$ref": "#/$defs/config_view"}).validate(
+        json.loads(json.dumps(section))
+    )
+
+
+def test_a_file_stores_unwritten_keys_are_absent_from_json() -> None:
+    """As for any key no layer wrote. The text view names the default
+    `max_versions`; the JSON leaves it out rather than claim a layer set it."""
+    store = next(
+        one for one in json_vaults(with_file(), resolved=True) if one["name"] == "acme-dev"
+    )
+
+    assert set(store["settings"]) == {"addr", "identity"}
 
 
 def test_a_setting_carries_the_layer_and_the_location() -> None:

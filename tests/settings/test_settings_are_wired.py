@@ -39,7 +39,7 @@ from pathlib import Path
 import pytest
 
 from sopuli.config.vault_layers import REACH_KEYS, TLS_KEYS, setting_name
-from sopuli.config.vaults import OCI_KEYS
+from sopuli.config.vaults import FILE_KEYS, OCI_KEYS
 from sopuli.invocation import RESOLVED_SETTINGS
 from sopuli.settings.registry import SETTINGS
 
@@ -65,7 +65,7 @@ def _constructed() -> set[str]:
 
     `vaults.*.addr` and its ten siblings appear as a literal nowhere:
     `config/vault_layers.py` calls `resolve(setting_name(key), ...)` over
-    `REACH_KEYS`, `TLS_KEYS` and `OCI_KEYS`, so the `*` is filled in at run time
+    `REACH_KEYS`, `TLS_KEYS`, `OCI_KEYS` and `FILE_KEYS`, so the `*` is filled in at run time
     and a search for the spelling finds only the registry. Computed here from the
     same tuples the consumer walks, so a key added to one is covered without an
     edit here -- and a *new* family built some other way fails this test, which
@@ -75,6 +75,7 @@ def _constructed() -> set[str]:
         {setting_name(key) for key in REACH_KEYS}
         | {setting_name(f"tls.{key}") for key in TLS_KEYS}
         | {setting_name(key) for key in OCI_KEYS}
+        | {setting_name(key) for key in FILE_KEYS}
     )
 
 
@@ -163,13 +164,13 @@ def consumers(names: set[str]) -> dict[str, list[str]]:
     return found
 
 
-def test_the_registry_has_every_oci_store_key() -> None:
-    """The registry is a literal, so the OCI keys are spelled out there. A key
-    added to `OCI_KEYS` alone would be resolved against a setting that does not
-    exist (#1145)."""
+def test_the_registry_has_every_oci_and_file_store_key() -> None:
+    """The registry is a literal, so these keys are spelled out there. A key
+    added to `OCI_KEYS` or `FILE_KEYS` alone would be resolved against a setting
+    that does not exist (#1145, #1429)."""
     registered = {name for name in SETTINGS if name.startswith("vaults.*.")}
 
-    assert {setting_name(key) for key in OCI_KEYS} <= registered
+    assert {setting_name(key) for key in (*OCI_KEYS, *FILE_KEYS)} <= registered
 
 
 def test_every_setting_that_is_not_declared_inert_has_a_consumer() -> None:

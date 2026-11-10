@@ -205,6 +205,25 @@ def test_an_unsupported_type_is_refused() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    ("layers", "policy"),
+    [
+        ({Layer.OBJECT, Layer.PROFILE}, MergePolicy.OVERRIDE),
+        ({Layer.OBJECT}, MergePolicy.RATCHET),
+    ],
+)
+def test_an_object_setting_is_declaration_only(layers: set[Layer], policy: MergePolicy) -> None:
+    """No rule merges two MaterialRefs, so only one layer may supply one (#1429)."""
+    with pytest.raises(ValueError, match="only the declaration may supply"):
+        Setting(name="vaults.*.identity", type=object, layers=frozenset(layers), policy=policy)
+
+
+def test_an_object_setting_accepts_any_value_but_none() -> None:
+    identity = setting("vaults.*.identity")
+    assert identity.accepts(object())
+    assert not identity.accepts(None)
+
+
 def test_every_entry_declares_a_layer_that_can_supply_its_builtin() -> None:
     """A built-in default is layer 6, so the setting has to accept layer 6."""
     for name, one in SETTINGS.items():

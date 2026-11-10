@@ -50,6 +50,7 @@ EXAMPLE_FILES = [
     "admin-credentials.yaml",
     "personal-accounts.yaml",
     "app-creds-and-personal-accounts.yaml",
+    "file-store.yaml",
 ]
 
 

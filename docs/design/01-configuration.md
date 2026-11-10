@@ -847,7 +847,7 @@ config file can be read without knowing what environment it will be read in.
 | Key | Meaning |
 |---|---|
 | `type` | **required** — the backend: `hashicorp`, `oci`, `file`, `keyring` (P2). AWS and Azure are listed there as "later" and are refused until they exist. A declared type is validated here and *resolved* to a client only when something connects — see below (ADR-006) |
-| `addr` | backend address, where the backend has one. For `hashicorp`, must be `https://`, except to a loopback host — see *Plain HTTP* below. For `file`, the path of the store's file, and **required** there from some layer. Refused on an `oci` store |
+| `addr` | backend address, where the backend has one. For `hashicorp`, must be `https://`, except to a loopback host — see *Plain HTTP* below. For `file`, the path of the store's file, and **required** there from some layer. It must be absolute or start with `~`: a relative path would name another file from another working directory, and a missing file is an empty store. Refused on an `oci` store |
 | `mount` | KV mount point (HashiCorp). Refused on an `oci` or `file` store |
 | `kv_version` | `1` or `2` — different backends with different capabilities, not a version to branch on casually (P2). Refused on an `oci` or `file` store |
 | `namespace` | HashiCorp Enterprise namespace, sent as the `X-Vault-Namespace` header. Absent means no namespace. Refused on an `oci` or `file` store |

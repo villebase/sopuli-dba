@@ -6,6 +6,8 @@ are generated per test, so no key is written into the repository.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import pytest
 
 pyrage = pytest.importorskip("pyrage", reason="the file extra is not installed")
@@ -18,12 +20,17 @@ from sopuli.store.file._crypto import (  # noqa: E402
     KeysError,
     keys,
     load_identity,
+    refuse_binary_identity,
     seal,
     unseal,
 )
 from sopuli.store.protocol import StoreError  # noqa: E402
 
 PLAINTEXT = b'{"current":"Pw-acme-not-a-real-1"}'
+
+#: The store's name in the config, which every error names.
+STORE = "acme-dev"
+NAMED = f'file store "{STORE}"'
 
 
 def new_identity() -> tuple[str, str]:
@@ -34,7 +41,7 @@ def new_identity() -> tuple[str, str]:
 
 def test_what_is_sealed_unseals_with_the_identity() -> None:
     secret, _ = new_identity()
-    store = keys(Secret(secret), None)
+    store = keys(Secret(secret), None, store=STORE)
 
     sealed = seal(PLAINTEXT, store)
 
@@ -49,7 +56,7 @@ def test_the_identity_s_own_key_is_always_a_recipient() -> None:
     secret, public = new_identity()
     _, colleague = new_identity()
 
-    store = keys(Secret(secret), (colleague,))
+    store = keys(Secret(secret), (colleague,), store=STORE)
 
     assert [str(one) for one in store.recipients] == [public, colleague]
     assert unseal(seal(PLAINTEXT, store), store) == PLAINTEXT
@@ -59,29 +66,29 @@ def test_every_recipient_can_read_what_is_sealed() -> None:
     secret, _ = new_identity()
     colleague_secret, colleague = new_identity()
 
-    sealed = seal(PLAINTEXT, keys(Secret(secret), (colleague,)))
+    sealed = seal(PLAINTEXT, keys(Secret(secret), (colleague,), store=STORE))
 
-    assert unseal(sealed, keys(Secret(colleague_secret), None)) == PLAINTEXT
+    assert unseal(sealed, keys(Secret(colleague_secret), None, store=STORE)) == PLAINTEXT
 
 
 def test_an_identity_file_with_comments_is_read() -> None:
     secret, public = new_identity()
     text = f"# created: 2026-11-09T10:00:00Z\n# public key: {public}\n\n{secret}\n"
 
-    assert str(load_identity(Secret(text)).public()) == public
+    assert str(load_identity(Secret(text), store=STORE).public()) == public
 
 
 def test_a_byte_order_mark_before_the_identity_is_skipped() -> None:
     """Windows editors and PowerShell 5 write one."""
     secret, public = new_identity()
 
-    assert str(load_identity(Secret(chr(0xFEFF) + secret + "\n")).public()) == public
+    assert str(load_identity(Secret(chr(0xFEFF) + secret + "\n"), store=STORE).public()) == public
 
 
 def test_the_identity_never_renders_its_key() -> None:
     """str of a pyrage identity is the secret key; the wrapper shows ***."""
     secret, _ = new_identity()
-    store = keys(Secret(secret), None)
+    store = keys(Secret(secret), None, store=STORE)
 
     assert secret not in str(store.identity)
     assert secret not in repr(store.identity)
@@ -93,7 +100,7 @@ def test_the_identity_s_own_key_listed_again_is_kept_once() -> None:
     secret, public = new_identity()
     _, colleague = new_identity()
 
-    store = keys(Secret(secret), (public, colleague, colleague))
+    store = keys(Secret(secret), (public, colleague, colleague), store=STORE)
 
     assert [str(one) for one in store.recipients] == [public, colleague]
 
@@ -107,19 +114,37 @@ def test_the_identity_s_own_key_listed_again_is_kept_once() -> None:
     ids=["binary-header-only", "armoured"],
 )
 def test_a_passphrase_protected_identity_is_refused(text: str) -> None:
-    """The armoured form is text and reaches this check as it is. A real
-    binary file is not UTF-8, so only its text header can be shown here: the
-    store must refuse the binary file before decoding it (#1372)."""
+    """The armoured form is text and reaches this check as it is."""
     with pytest.raises(KeysError) as caught:
-        load_identity(Secret(text))
+        load_identity(Secret(text), store=STORE)
 
     assert "passphrase-protected" in str(caught.value)
     assert "prompt" in str(caught.value)
 
 
+def test_a_binary_passphrase_protected_identity_is_refused_from_its_first_bytes() -> None:
+    """What `age -p` writes: the secret key, encrypted with a passphrase, in
+    binary. It is not UTF-8, so it is refused before it is decoded (#1372)."""
+    secret, _ = new_identity()
+    protected = bytes(pyrage.passphrase.encrypt(f"{secret}\n".encode(), "a passphrase"))
+    with pytest.raises(UnicodeDecodeError):
+        protected.decode("utf-8")
+
+    with pytest.raises(KeysError) as caught:
+        refuse_binary_identity(protected[:64], store=STORE)
+
+    assert str(caught.value).startswith(f"{NAMED}: the identity is passphrase-protected")
+
+
+def test_an_identity_file_s_first_bytes_are_accepted_when_they_are_a_key() -> None:
+    secret, _ = new_identity()
+
+    refuse_binary_identity(f"{secret}\n".encode()[:64], store=STORE)
+
+
 def test_a_plugin_identity_is_refused() -> None:
     with pytest.raises(KeysError) as caught:
-        load_identity(Secret("AGE-PLUGIN-YUBIKEY-1QQQQQQQQQQQQQQQQQQQQQQQ\n"))
+        load_identity(Secret("AGE-PLUGIN-YUBIKEY-1QQQQQQQQQQQQQQQQQQQQQQQ\n"), store=STORE)
 
     assert "plugin identity" in str(caught.value)
 
@@ -129,7 +154,7 @@ def test_two_keys_are_refused() -> None:
     second, _ = new_identity()
 
     with pytest.raises(KeysError) as caught:
-        load_identity(Secret(f"{first}\n{second}\n"))
+        load_identity(Secret(f"{first}\n{second}\n"), store=STORE)
 
     assert "not one age secret key" in str(caught.value)
     assert first not in str(caught.value)
@@ -138,7 +163,7 @@ def test_two_keys_are_refused() -> None:
 @pytest.mark.parametrize("text", ["", "# only a comment\n", "hunter2"])
 def test_text_that_is_not_a_secret_key_is_refused_without_repeating_it(text: str) -> None:
     with pytest.raises(KeysError) as caught:
-        load_identity(Secret(text))
+        load_identity(Secret(text), store=STORE)
 
     assert "not one age secret key" in str(caught.value)
     if text.strip():
@@ -150,7 +175,7 @@ def test_a_damaged_secret_key_is_refused_without_repeating_it() -> None:
     broken = secret[:-4] + "QQQQ"
 
     with pytest.raises(KeysError) as caught:
-        load_identity(Secret(broken))
+        load_identity(Secret(broken), store=STORE)
 
     assert "not a valid age secret key" in str(caught.value)
     assert broken not in str(caught.value)
@@ -158,7 +183,7 @@ def test_a_damaged_secret_key_is_refused_without_repeating_it() -> None:
 
 def test_an_identity_problem_is_a_config_error() -> None:
     with pytest.raises(KeysError) as caught:
-        load_identity(Secret(""))
+        load_identity(Secret(""), store=STORE)
 
     assert caught.value.category == "config"
     assert caught.value.exit_code == ExitCode.CONFIG_INVALID
@@ -175,7 +200,7 @@ def test_a_recipient_that_is_not_x25519_is_refused_by_position(recipient: str) -
     _, colleague = new_identity()
 
     with pytest.raises(KeysError) as caught:
-        keys(Secret(secret), (colleague, recipient))
+        keys(Secret(secret), (colleague, recipient), store=STORE)
 
     assert "recipients[1] is not an X25519 age recipient" in str(caught.value)
 
@@ -183,10 +208,10 @@ def test_a_recipient_that_is_not_x25519_is_refused_by_position(recipient: str) -
 def test_another_identity_cannot_open_the_store() -> None:
     secret, _ = new_identity()
     other, _ = new_identity()
-    sealed = seal(PLAINTEXT, keys(Secret(secret), None))
+    sealed = seal(PLAINTEXT, keys(Secret(secret), None, store=STORE))
 
     with pytest.raises(KeysError) as caught:
-        unseal(sealed, keys(Secret(other), None))
+        unseal(sealed, keys(Secret(other), None, store=STORE))
 
     assert "cannot decrypt its file" in str(caught.value)
     # A wrong `addr` gives the same error, so the hint names both.
@@ -209,7 +234,7 @@ def test_a_file_that_is_not_age_is_a_store_error_not_an_identity_error() -> None
     secret, _ = new_identity()
 
     with pytest.raises(StoreError) as caught:
-        unseal(b"plain text, not age", keys(Secret(secret), None))
+        unseal(b"plain text, not age", keys(Secret(secret), None, store=STORE))
 
     assert not isinstance(caught.value, KeysError)
     assert "not an age-encrypted file" in str(caught.value)
@@ -223,7 +248,7 @@ def test_an_armoured_file_with_leading_space_is_not_age_rather_than_damaged() ->
     secret, _ = new_identity()
 
     with pytest.raises(StoreError) as caught:
-        unseal(b"\n  -----BEGIN AGE ENCRYPTED FILE-----\n", keys(Secret(secret), None))
+        unseal(b"\n  -----BEGIN AGE ENCRYPTED FILE-----\n", keys(Secret(secret), None, store=STORE))
 
     assert "not an age-encrypted file" in str(caught.value)
 
@@ -234,7 +259,7 @@ def test_a_file_encrypted_with_a_passphrase_is_named_as_such() -> None:
     sealed = pyrage.passphrase.encrypt(PLAINTEXT, "a passphrase")
 
     with pytest.raises(StoreError) as caught:
-        unseal(sealed, keys(Secret(secret), None))
+        unseal(sealed, keys(Secret(secret), None, store=STORE))
 
     assert not isinstance(caught.value, KeysError)
     assert "encrypted with a passphrase" in str(caught.value)
@@ -243,11 +268,31 @@ def test_a_file_encrypted_with_a_passphrase_is_named_as_such() -> None:
 
 def test_a_damaged_age_file_says_to_check_before_restoring() -> None:
     secret, _ = new_identity()
-    sealed = seal(PLAINTEXT, keys(Secret(secret), None))
+    sealed = seal(PLAINTEXT, keys(Secret(secret), None, store=STORE))
 
     with pytest.raises(StoreError) as caught:
-        unseal(sealed[:-20], keys(Secret(secret), None))
+        unseal(sealed[:-20], keys(Secret(secret), None, store=STORE))
 
     assert "cannot be decrypted" in str(caught.value)
     hint = caught.value.hint or ""
     assert hint.index("`addr` names this store's file") < hint.index("restore")
+
+
+def test_every_error_names_the_store() -> None:
+    """A config with two file stores must say which one failed (#1421's review)."""
+    secret, _ = new_identity()
+    other, _ = new_identity()
+    sealed = seal(PLAINTEXT, keys(Secret(secret), None, store=STORE))
+    failures: list[Callable[[], object]] = [
+        lambda: load_identity(Secret(""), store=STORE),
+        lambda: load_identity(Secret("AGE-PLUGIN-X-1QQQQ\n"), store=STORE),
+        lambda: load_identity(Secret("-----BEGIN AGE ENCRYPTED FILE-----\n"), store=STORE),
+        lambda: keys(Secret(secret), ("age1pq1" + "q" * 60,), store=STORE),
+        lambda: unseal(b"not age", keys(Secret(secret), None, store=STORE)),
+        lambda: unseal(sealed, keys(Secret(other), None, store=STORE)),
+        lambda: unseal(sealed[:-20], keys(Secret(secret), None, store=STORE)),
+    ]
+    for failure in failures:
+        with pytest.raises(StoreError) as caught:
+            failure()
+        assert str(caught.value).startswith(f"{NAMED}: ")

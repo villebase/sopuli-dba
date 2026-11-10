@@ -113,24 +113,48 @@ class Keys:
 
     identity: Identity
     recipients: tuple[x25519.Recipient, ...]
+    #: The store's name in the config, which every error from here names.
+    store: str
 
 
-def keys(identity: Secret, recipients: tuple[str, ...] | None) -> Keys:
-    """The store's keys: its identity, and every recipient it encrypts to.
+def keys(identity: Secret, recipients: tuple[str, ...] | None, *, store: str) -> Keys:
+    """The keys of the file store named ``store``: its identity, and every
+    recipient it encrypts to.
 
     The identity's own public key is always the first recipient, so the next
     run can read what this one wrote. ``recipients`` adds to it (#1415). A
     recipient listed twice, or the identity's own key listed again, is kept
     once.
     """
-    own = load_identity(identity)
+    own = load_identity(identity, store=store)
     found: dict[str, x25519.Recipient] = {}
-    for one in (own.public(), *_recipients(recipients or ())):
+    for one in (own.public(), *_recipients(recipients or (), store=store)):
         found.setdefault(str(one), one)
-    return Keys(identity=own, recipients=tuple(found.values()))
+    return Keys(identity=own, recipients=tuple(found.values()), store=store)
 
 
-def load_identity(text: Secret) -> Identity:
+def refuse_binary_identity(head: bytes, *, store: str) -> None:
+    """Refuse an identity file whose first bytes are a binary age header.
+
+    ``age -p`` writes a passphrase-protected identity in binary, which is not
+    UTF-8 text, so the store calls this with the file's first bytes before the
+    file is decoded. :func:`load_identity` refuses the armoured form.
+    """
+    if head.startswith(BINARY_HEADER):
+        raise _passphrase_protected(store)
+
+
+def _passphrase_protected(store: str) -> KeysError:
+    return KeysError(
+        f'file store "{store}": the identity is passphrase-protected',
+        hint=(
+            "opening it would need a prompt, which a scheduled run cannot answer; "
+            "keep an unprotected identity readable only by the tool's own user"
+        ),
+    )
+
+
+def load_identity(text: Secret, *, store: str) -> Identity:
     """The one X25519 identity in an age identity file's text.
 
     Comment lines (``#``) and blank lines are skipped, as ``age`` does, and so
@@ -140,41 +164,37 @@ def load_identity(text: Secret) -> Identity:
 
     A passphrase-protected identity is refused here when its text reaches
     this function, as the armoured form does. The binary form is not UTF-8
-    text, so the store must look at the file's first bytes before decoding
-    it, and refuse it there with the same words (#1372).
+    text, and :func:`refuse_binary_identity` refuses it before it is decoded.
     """
     import pyrage
     from pyrage import x25519
 
     raw = text.reveal().removeprefix(BYTE_ORDER_MARK)
     if raw.lstrip().startswith(ENCRYPTED_PREFIXES):
-        raise KeysError(
-            "the file store's identity is passphrase-protected",
-            hint=(
-                "opening it would need a prompt, which a scheduled run cannot answer; "
-                "keep an unprotected identity readable only by the tool's own user"
-            ),
-        )
+        raise _passphrase_protected(store)
     lines = [line.strip() for line in raw.splitlines()]
     found = [line for line in lines if line and not line.startswith("#")]
     if any(line.startswith("AGE-PLUGIN-") for line in found):
         raise KeysError(
-            "the file store's identity is an age plugin identity",
+            f'file store "{store}": the identity is an age plugin identity',
             hint="this build opens a file store with an X25519 identity, from `age-keygen`",
         )
     if len(found) != 1 or not found[0].startswith(SECRET_KEY_PREFIX):
-        raise KeysError("the file store's identity is not one age secret key", hint=ONE_SECRET_KEY)
+        raise KeysError(
+            f'file store "{store}": the identity is not one age secret key', hint=ONE_SECRET_KEY
+        )
     try:
         return Identity(x25519.Identity.from_str(found[0]))
     except pyrage.IdentityError:
         # pyrage's message names no key, but it is not repeated either: the
         # line is a secret.
         raise KeysError(
-            "the file store's identity is not a valid age secret key", hint=ONE_SECRET_KEY
+            f'file store "{store}": the identity is not a valid age secret key',
+            hint=ONE_SECRET_KEY,
         ) from None
 
 
-def _recipients(values: tuple[str, ...]) -> tuple[x25519.Recipient, ...]:
+def _recipients(values: tuple[str, ...], *, store: str) -> tuple[x25519.Recipient, ...]:
     import pyrage
     from pyrage import x25519
 
@@ -184,7 +204,7 @@ def _recipients(values: tuple[str, ...]) -> tuple[x25519.Recipient, ...]:
             parsed.append(x25519.Recipient.from_str(value))
         except pyrage.RecipientError:
             raise KeysError(
-                f"recipients[{index}] is not an X25519 age recipient",
+                f'file store "{store}": recipients[{index}] is not an X25519 age recipient',
                 hint=(
                     "this build encrypts a file store to X25519 keys only, as "
                     "`age-keygen -y` prints them; plugin and post-quantum recipients "
@@ -201,7 +221,7 @@ def seal(plaintext: bytes, keys: Keys) -> bytes:
     try:
         return bytes(pyrage.encrypt(plaintext, list(keys.recipients)))
     except pyrage.EncryptError:
-        raise StoreError("the file store could not encrypt its document") from None
+        raise StoreError(f'file store "{keys.store}": could not encrypt its document') from None
 
 
 #: What to check before anything else when the store's file cannot be read. A
@@ -229,14 +249,15 @@ def unseal(ciphertext: bytes, keys: Keys) -> bytes:
     # and would refuse what a stripped check had let through.
     if not ciphertext.startswith(tuple(prefix.encode() for prefix in ENCRYPTED_PREFIXES)):
         raise StoreError(
-            "the file store's file is not an age-encrypted file",
+            f'file store "{keys.store}": the file is not an age-encrypted file',
             hint=f"{CHECK_FIRST}; if both are right, restore the file from a backup",
         )
     # The store always writes a binary header, which is text up to `---`. A
     # passphrase stanza there means `age -p` made the file, not this store.
     if ciphertext.startswith(BINARY_HEADER) and (SCRYPT_STANZA in ciphertext.split(b"\n---", 1)[0]):
         raise StoreError(
-            "the file store's file is encrypted with a passphrase, not to the store's keys",
+            f'file store "{keys.store}": the file is encrypted with a passphrase, '
+            "not to the store's keys",
             hint=(
                 "this store did not write it: check that the store's `addr` names this "
                 "store's file. A file store is opened with its identity, never a passphrase"
@@ -247,11 +268,11 @@ def unseal(ciphertext: bytes, keys: Keys) -> bytes:
     except pyrage.DecryptError as error:
         if "no matching keys" in str(error).lower():
             raise KeysError(
-                "the file store's identity cannot decrypt its file",
+                f'file store "{keys.store}": the identity cannot decrypt its file',
                 hint=f"{CHECK_FIRST}; the file was encrypted to other keys",
             ) from None
         raise StoreError(
-            "the file store's file is an age file that cannot be decrypted",
+            f'file store "{keys.store}": the file is an age file that cannot be decrypted',
             hint=(
                 f"{CHECK_FIRST}; if both are right, the file is damaged: restore it "
                 "from a backup, and check that what it holds still matches the databases"

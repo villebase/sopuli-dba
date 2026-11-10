@@ -47,8 +47,8 @@ the tool wrote at paths the config no longer declares (§13).
 
 There is no `sopuli admin` command. To install the Oracle service account, run
 the SQL in `sql/oracle/` by hand. The PostgreSQL tool role is created by hand in
-`psql` (§7). The store backends are `hashicorp` and `oci` (§8.8); `doctor`
-lists the others as `not_implemented`. A PostgreSQL target runs `doctor`, the
+`psql` (§7). The store backends are `hashicorp`, `oci` (§8.8) and `file`
+(§8.9); `doctor` lists `keyring` as `not_implemented`. A PostgreSQL target runs `doctor`, the
 `creds` commands (§7) and the `account` commands (§9). It refuses
 `account expire-password` and the seen reset, because PostgreSQL cannot make a
 role change its password at its next login. A MySQL target and a MariaDB target
@@ -1495,6 +1495,114 @@ OCI keeps at most 30 versions of a secret. When a write would make a 31st, the
 tool schedules the deletion of the oldest DEPRECATED version first, and says
 so as `SOPULI-W059`. To read the password from Kubernetes, see
 [`scenarios/kubernetes-eso.md`](scenarios/kubernetes-eso.md) §8.
+
+### 8.9 With a file store
+
+A `file` store keeps every secret in one file, encrypted with age. It needs no
+server, so it is the quickest store to try the commands with. It is for local
+development and CI, not for production: every run that opens one says so. It
+needs the `file` extra:
+
+```
+pip install "sopuli-dba[file]"
+```
+
+The store is opened with an age identity, a secret key. Make one with the
+library the extra installed, and keep it readable only by you:
+
+```
+$ mkdir ~/sopuli-file
+$ python -c "from pyrage import x25519; print(x25519.Identity.generate())" > ~/sopuli-file/identity.txt
+```
+
+`age-keygen -o ~/sopuli-file/identity.txt` makes the same file, if you have
+`age`. The samples below ran against the PostgreSQL cluster of §7, with this
+config as `file.yaml`:
+
+```yaml
+version: 1
+vaults:
+  vault-file:
+    type: file
+    addr: ~/sopuli-file/acme-dev.age
+    identity: { file: ~/sopuli-file/identity.txt }
+    locking: advisory-only
+defaults:
+  vault: vault-file
+targets:
+  - name: pg-dev
+    type: postgresql
+    environment: dev
+    dsn: "127.0.0.1:5432"
+    admin: { username: sopuli_admin, auth: { method: env } }
+    postgres: { sslmode: disable }
+policies:
+  standard:
+    password: { length: 24, charset: alnum, first_char: alpha }
+accounts:
+  - acme_app_user
+secret_template: "vault-file:acme/{env}/db#DB_CREDENTIALS/{account}"
+policy: standard
+```
+
+`addr` must be a full path, or one that starts with `~`. The store has no
+compare-and-set, so a command that changes it needs `locking: advisory-only`;
+without it, `creds generate` stops with exit 5. The file does not exist until
+the first write creates it, readable only by you. `config show` prints the
+store's keys under the table:
+
+```
+$ sopuli --config file.yaml config show
+...
+vaults
+NAME        TYPE  ADDRESS                     NOTE
+vault-file  file  ~/sopuli-file/acme-dev.age  advisory-only
+  vault-file  identity      file ~/sopuli-file/identity.txt
+              max_versions  10 (default)
+```
+
+The commands then run as they do against Vault. The samples leave out the
+`sslmode` warning and note of §7:
+
+```
+$ sopuli --config file.yaml creds generate
+...
+ACCOUNT        SECRET                  RESULT
+acme_app_user  vault-file:acme/dev/db  staged v1
+
+1 staged; no database was changed -- run `sopuli creds apply` to use them
+
+2 warnings:
+...
+  vault "vault-file" is a file store, for local development and CI: it is not for production
+
+$ sopuli --config file.yaml creds apply
+...
+ACCOUNT        TARGET  STATE    DETAIL
+acme_app_user  pg-dev  IN_SYNC  changed and verified by login
+
+1 changed, 1 promoted to `current`
+
+$ sopuli --config file.yaml creds check
+...
+ACCOUNT        TARGET  STATE    DETAIL
+acme_app_user  pg-dev  IN_SYNC  vault v2 verified by login
+
+all 1 in sync
+
+$ sopuli --config file.yaml creds rotate --confirm
+...
+ACCOUNT        TARGET  STATE    DETAIL
+acme_app_user  pg-dev  IN_SYNC  changed and verified by login
+
+1 changed, 1 promoted to `current`
+
+rotation: staged 1 document, promoted 1 document
+```
+
+The last warning is `SOPULI-W070`, and every run that opens a file store prints
+it. The store keeps the last 10 versions of each secret, or `max_versions` of
+them. The personal-account commands refuse a file store.
 
 ---
 

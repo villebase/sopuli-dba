@@ -287,6 +287,47 @@ def test_an_oci_stores_ocids_are_printed_whole_under_the_table() -> None:
     assert "             region          eu-frankfurt-1" in text
 
 
+#: Two fictional age recipients, long enough to pass the config's shape check.
+RECIPIENTS = ["age1" + "q" * 58, "age1" + "p" * 58]
+
+
+def with_file(**keys: Any) -> Config:
+    """The usual estate, and a file store beside it that no binding uses."""
+    shape = document()
+    shape["vaults"]["acme-dev"] = {
+        "type": "file",
+        "addr": "/srv/sopuli/acme-dev.age",
+        "identity": {"env": "SOPULI_FILE_IDENTITY"},
+        "locking": "advisory-only",
+        **keys,
+    }
+    return build_config(shape)
+
+
+def test_a_file_stores_keys_are_printed_under_the_table() -> None:
+    """#1372: where the identity comes from, never its value; each recipient
+    whole, one to a line; and how many versions the store keeps."""
+    text = click.unstyle(
+        render_text(
+            [Path("estate.yaml")],
+            with_file(recipients=RECIPIENTS, max_versions=3),
+            resolved=False,
+        )
+    )
+
+    assert "  acme-dev  identity      env SOPULI_FILE_IDENTITY" in text
+    assert f"            recipients    {RECIPIENTS[0]}" in text
+    assert f"                          {RECIPIENTS[1]}" in text
+    assert "            max_versions  3" in text
+
+
+def test_a_file_store_without_max_versions_shows_the_default() -> None:
+    text = click.unstyle(render_text([Path("estate.yaml")], with_file(), resolved=False))
+
+    assert "max_versions  10 (default)" in text
+    assert "recipients" not in text
+
+
 def test_a_setting_carries_the_layer_and_the_location() -> None:
     """The same `value` / `source` / `source_detail` triple `invocation.options`
     carries, pointed at the same `$defs/resolved_setting`: one question about one

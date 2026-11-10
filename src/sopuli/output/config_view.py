@@ -40,6 +40,7 @@ from sopuli.output.table import Cell, Column, render_table
 from sopuli.personal import rules_for
 from sopuli.settings import Contribution, Layer, Resolved, render_value, resolve_all
 from sopuli.settings.sources import safety_block, target_safety
+from sopuli.store.file._document import DEFAULT_MAX_VERSIONS
 
 #: The environment safety rules key on (§9), and the one this view highlights.
 PRODUCTION = "prod"
@@ -542,29 +543,50 @@ def _vault_rows(config: Config) -> list[str]:
             for vault in config.vaults
         ],
     )
-    return rows + _oci_lines(config)
+    return rows + _key_lines(config)
 
 
-def _oci_lines(config: Config) -> list[str]:
-    """Every OCI store's OCIDs and region, one to a line, under the table (#1145).
+def _key_lines(config: Config) -> list[str]:
+    """The keys of an OCI or a file store, one to a line, under the table.
 
-    An OCI store has no address: these four name it. They go under the table
-    rather than in it because an OCID is about 90 characters, and the
-    ``ADDRESS`` column would cut off the end, which is the part that differs.
+    An OCI store has no address: its OCIDs and region name it (#1145). A
+    file store's address is its file, and its keys say how the file is
+    opened: where the identity comes from, the recipients it encrypts to,
+    and how many versions it keeps (#1372). They go under the table rather
+    than in it because an OCID or an age recipient is longer than the
+    ``ADDRESS`` column, and its end is the part that differs.
 
-    One table for every OCI store, so the cells get :func:`render_table`'s
+    One table for every such store, so the cells get :func:`render_table`'s
     handling and the columns line up across stores. Its heading row is
-    dropped: the keys name themselves.
+    dropped: the keys name themselves. The identity is shown as where it
+    comes from, never as a value: a MaterialRef holds no secret.
     """
     found: list[list[Cell | str]] = []
     for vault in config.vaults:
-        keys = [key for key in OCI_KEYS if getattr(vault, key) is not None]
+        pairs = [(key, getattr(vault, key)) for key in OCI_KEYS if getattr(vault, key) is not None]
+        if vault.type == "file":
+            pairs.extend(_file_keys(vault))
         found.extend(
-            [vault.name if index == 0 else "", key, getattr(vault, key)]
-            for index, key in enumerate(keys)
+            [vault.name if index == 0 else "", key, value]
+            for index, (key, value) in enumerate(pairs)
         )
     table = render_table([Column("NAME", _NAME), Column("KEY"), Column("VALUE")], found)
     return [f"  {line}" for line in table[1:]]
+
+
+def _file_keys(vault: Vault) -> list[tuple[str, str]]:
+    """A file store's keys as ``(key, value)`` lines: a recipient to a line."""
+    pairs = []
+    if vault.identity is not None:
+        pairs.append(("identity", str(vault.identity)))
+    pairs.extend(
+        ("recipients" if index == 0 else "", recipient)
+        for index, recipient in enumerate(vault.recipients or ())
+    )
+    keep = DEFAULT_MAX_VERSIONS if vault.max_versions is None else vault.max_versions
+    suffix = "" if vault.max_versions is not None else " (default)"
+    pairs.append(("max_versions", f"{keep}{suffix}"))
+    return pairs
 
 
 def _vault_settings(config: Config) -> dict[str, Resolved]:

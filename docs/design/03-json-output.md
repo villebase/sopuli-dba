@@ -637,6 +637,14 @@ An OCI store has no `addr`. From run schema 1.65, its `settings` carry
 `source` is always `object`. The text view prints them whole under the table,
 one to a line, because an OCID is longer than the `ADDRESS` column.
 
+A `file` store's `settings` carry `addr`, its file. Its `identity`,
+`recipients` and `max_versions` are written only in its declaration, so they
+are in `config.declared`, as written, and not in `settings`. The text view
+prints them under the table as the OCI keys are: the identity as where it
+comes from (`env SOPULI_FILE_IDENTITY`), never a value, each recipient on a
+line of its own, and `max_versions` with `(default)` when the file does not
+set it (#1372).
+
 A `settings` entry has the **same shape** as an `invocation.options` entry. The
 schema has one `$defs/resolved_setting` that both use: it is one question about
 one resolver, and a second shape for it would be two things a consumer must

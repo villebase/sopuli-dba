@@ -12,6 +12,7 @@ from __future__ import annotations
 import pytest
 
 from sopuli.admin import NobodyToAskError
+from sopuli.config.errors import ConfigError
 from sopuli.config.model import AdminAuth, AdminCredential, ExpandedTarget, Target
 from sopuli.exit_codes import ExitCode
 from sopuli.safety import NAMED_TARGETS, refuse_if_nobody_to_ask
@@ -95,3 +96,30 @@ def test_every_prompt_target_is_named_up_to_the_ceiling() -> None:
     assert all(f"{name} (targets[0].admin.auth)" in message for name in names[:NAMED_TARGETS])
     assert names[NAMED_TARGETS] not in message
     assert "and 2 more" in message
+
+
+def test_a_keyring_target_without_the_extra_is_refused_before_connecting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#1417: that target cannot be reached, and finding out at its connection
+    would come after the run changed the others. Refused even with a terminal."""
+    monkeypatch.setattr("sopuli.safety.installed", lambda provides: False)
+
+    with pytest.raises(ConfigError) as caught:
+        refuse_if_nobody_to_ask(
+            [target("orders-pdb", "env"), target("billing-pdb", "keyring")],
+            answer,
+            action="applying a password",
+        )
+
+    message = str(caught.value)
+    assert "billing-pdb" in message
+    assert "orders-pdb" not in message
+    assert caught.value.exit_code == ExitCode.CONFIG_INVALID
+    assert 'pip install "sopuli-dba[keyring]"' in (caught.value.hint or "")
+
+
+def test_a_keyring_target_with_the_extra_goes_through(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("sopuli.safety.installed", lambda provides: True)
+
+    refuse_if_nobody_to_ask([target("billing-pdb", "keyring")], None, action="applying a password")

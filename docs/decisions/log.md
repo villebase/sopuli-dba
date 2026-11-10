@@ -5177,3 +5177,65 @@ the register.
   write when two runs replace the file in the moment between the hash check
   and the rename. `pyrage` is a new dependency, and the version floor of
   `sopuli-dba[file]` is set when the backend is built and measured.
+
+## #1417
+
+- **Decided:** 2026-11-09, #1417
+- **Question:** the second use in #1373. The OS keyring can hold the secrets
+  the tool authenticates with, such as a vault token or a target's admin
+  password, in place of a plaintext token file or an environment variable.
+  Where may it be named, in what shape, how is an entry written, is it
+  flagged, what happens where there is no keyring, and which library reads
+  it?
+- **Decision:** the maintainer's, all six as recommended:
+  1. `keyring` is a third MaterialRef kind, so every material slot takes it,
+     and a target's `admin.auth` gains `method: keyring`.
+  2. The shape is a string with the service fixed to `sopuli`:
+     `token: { keyring: vault-dev }` and
+     `auth: { method: keyring, entry: cdb-root-dev }`.
+  3. Entries are written by a verb, `sopuli keyring set NAME`, which reads the
+     value from stdin or a prompt, and removed by `sopuli keyring delete NAME`.
+  4. The source is not flagged low-assurance. In P2's list it comes after
+     `prompt` and before `env`.
+  5. A missing entry, a locked keyring, or no keyring at all is an error that
+     names the entry and the backend. Only an OS keyring counts: the
+     library's empty backends and plaintext ones such as `keyrings.alt` are
+     refused. It never falls back to another source. `doctor` checks each
+     keyring source the config declares.
+  6. The library is the `keyring` package, as the extra `sopuli-dba[keyring]`.
+- **Why:**
+  1. C9 gives vault material and the admin credential one grammar. Allowing
+     the keyring in some slots and not others would add a rule for each slot.
+  2. A string keeps the MaterialRef a one-key mapping with a string value,
+     and lets the tool decide how entries are named. A mapping form can be
+     added later, as a minor change, to read an entry another tool wrote.
+  3. Writing through the library that reads the entry gives it the name the
+     reader looks for. Windows Credential Manager entries written by `cmdkey`
+     are not always named the way the library expects. The verb also reads
+     the value the way invariant 1 requires.
+  4. An environment variable leaks to child processes, to `/proc/PID/environ`,
+     to crash dumps and to CI logs. A keyring entry is readable by the same
+     user in an unlocked session, the same exposure as a `0600` file, and a
+     `file:` source is not flagged.
+  5. A fallback hides which source a run used. A plaintext backend is the
+     `file:` source under another name.
+  6. Direct calls to each platform's API would be three implementations to
+     maintain.
+- **Rejected:**
+  1. The keyring in the vault token only, or in the admin credential only.
+  2. A mapping `{ service, user }` as the first form, and a single string
+     holding both parts, which would need a separator and escaping rules.
+  3. Documenting the OS tools that write an entry (`secret-tool`, `security`,
+     `cmdkey`) in place of a verb, and documenting the `keyring` package's own
+     command-line tool.
+  4. Flagging the source like `env`.
+  5. Falling back to another source, and accepting `keyrings.alt`'s plaintext
+     file on a server with no keyring.
+  6. Direct calls to each platform's API.
+- **Known cost:** `MATERIAL_KINDS` promised that every kind can be read on
+  every supported platform (P4). `keyring:` keeps that promise only where a
+  user keyring exists, and is refused elsewhere: usually on a Linux server
+  with no desktop session, and in a Windows scheduled task that runs as
+  another user than the one who wrote the entry. A missing entry is `config`
+  and exit 9, the error an unset `env:` variable gives, not an authentication
+  failure: the keyring has refused nothing, and there was nothing to send.

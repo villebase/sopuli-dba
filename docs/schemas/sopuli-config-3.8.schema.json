@@ -468,7 +468,7 @@
     },
     "material_ref": {
       "type": "object",
-      "description": "Where a piece of auth material comes from: an environment variable or a file. Not a SecretRef -- this is what you need before you have a vault.",
+      "description": "Where a piece of auth material comes from: an environment variable, a file, or an entry under the service `sopuli` in the OS keyring. Not a SecretRef -- this is what you need before you have a vault.",
       "additionalProperties": false,
       "minProperties": 1,
       "maxProperties": 1,
@@ -478,6 +478,10 @@
           "minLength": 1
         },
         "file": {
+          "type": "string",
+          "minLength": 1
+        },
+        "keyring": {
           "type": "string",
           "minLength": 1
         }
@@ -574,7 +578,7 @@
     },
     "admin_auth": {
       "type": "object",
-      "description": "P2's bootstrap sources, in its order of preference: external authentication, a vault path, an interactive prompt, an environment variable.",
+      "description": "P2's bootstrap sources, in its order of preference: external authentication, a vault path, an interactive prompt, the OS keyring, an environment variable.",
       "additionalProperties": false,
       "required": [
         "method"
@@ -586,8 +590,14 @@
             "external",
             "vault",
             "prompt",
+            "keyring",
             "env"
           ]
+        },
+        "entry": {
+          "type": "string",
+          "minLength": 1,
+          "description": "For `method: keyring`: the name of an entry under the service `sopuli` in the OS keyring."
         },
         "password_env": {
           "type": "string",

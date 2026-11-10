@@ -24,6 +24,7 @@ from collections.abc import Mapping
 
 import pytest
 
+from sopuli import os_keyring
 from sopuli.admin import (
     ADMIN_USER_ENV,
     AdminCredentialError,
@@ -83,6 +84,21 @@ def answer(_: ExpandedTarget, __: str | None) -> Secret:
 
 def env(**values: str) -> Mapping[str, str]:
     return values
+
+
+class OneEntryKeyring:
+    """A fake `keyring` library whose Windows backend holds every entry.
+    `tests/test_os_keyring.py` tests the keyring itself."""
+
+    def get_keyring(self) -> object:
+        class WinVaultKeyring:
+            priority = 5
+
+            def get_password(self, service: str, user: str) -> str:
+                return "from-the-keyring"
+
+        WinVaultKeyring.__module__ = "keyring.backends.Windows"
+        return WinVaultKeyring()
 
 
 class Recorder:
@@ -544,7 +560,9 @@ def test_the_source_never_carries_the_value() -> None:
 
 
 @pytest.mark.parametrize("method", sorted(ADMIN_METHODS))
-def test_every_declared_method_resolves_to_something(method: str) -> None:
+def test_every_declared_method_resolves_to_something(
+    method: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """The list in `ADMIN_METHODS` and the branch here are one list. A method
     added to the config vocabulary and not here would parse, validate, and then
     fail at the first connection -- which is exactly the failure invariant 4
@@ -552,6 +570,9 @@ def test_every_declared_method_resolves_to_something(method: str) -> None:
     keys: dict[str, object] = {}
     if method == "vault":
         keys["secret"] = parse_secret_ref(REF)
+    if method == "keyring":
+        keys["entry"] = "cdb-root-qa"
+        monkeypatch.setattr(os_keyring, "loader", lambda: OneEntryKeyring())
     if method == EXTERNAL:
         credential = AdminCredential(auth=AdminAuth(method=method))
     else:

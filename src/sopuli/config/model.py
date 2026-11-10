@@ -236,9 +236,10 @@ class MaterialRef:
     plaintext from this object because there is nowhere for plaintext to sit.
     """
 
-    #: One of :data:`~sopuli.config.auth.MATERIAL_KINDS` -- ``env`` or ``file``.
+    #: One of :data:`~sopuli.config.auth.MATERIAL_KINDS` -- ``env``, ``file`` or
+    #: ``keyring``.
     kind: str
-    #: The variable name or the path, as written.
+    #: The variable name, the path or the keyring entry, as written.
     location: str
 
     def __str__(self) -> str:
@@ -469,6 +470,7 @@ class AdminAuth:
     ``external``     -- (a wallet, Kerberos, OS authentication)
     ``vault``        ``secret``
     ``prompt``       --
+    ``keyring``      ``entry``
     ``env``          ``password_env``
     ================ ==================================================
 
@@ -481,11 +483,16 @@ class AdminAuth:
     ``SOPULI_DB_ADMIN_PASSWORD`` does not scale past one admin credential. Absent
     means that pair, and this source stays flagged low-assurance wherever it is
     reported (P2).
+
+    ``entry`` names an entry under the service ``sopuli`` in the OS keyring
+    (#1417). That source is not flagged: a keyring entry is readable by the same
+    user in an unlocked session, the same exposure as a ``0600`` file.
     """
 
     method: str
     secret: SecretRef | None = None
     password_env: str | None = None
+    entry: str | None = None
 
 
 @dataclass(frozen=True)

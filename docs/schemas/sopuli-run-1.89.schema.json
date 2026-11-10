@@ -67,7 +67,9 @@
         "account.expire-password",
         "report.accounts",
         "report.privileges",
-        "report.history"
+        "report.history",
+        "keyring.set",
+        "keyring.delete"
       ]
     },
     "invocation": {
@@ -111,7 +113,7 @@
     },
     "keyring": {
       "$ref": "#/$defs/keyring_report",
-      "description": "The OS keyring backend and each entry `doctor` reads from it, emitted by `doctor` for configs whose vaults or targets read a credential from the keyring (#1417). Additive in 1.88: no existing consumer sees it."
+      "description": "The OS keyring backend and each entry `doctor` reads from it, emitted by `doctor` for configs whose vaults or targets read a credential from the keyring (#1417). Additive in 1.88: no existing consumer sees it. Also emitted by `keyring set` and `keyring delete`, with the one entry they act on (additive in 1.89)."
     },
     "vaults": {
       "type": "array",
@@ -2351,6 +2353,14 @@
               "problem": {
                 "type": ["string", "null"],
                 "description": "Why a read failed, when the backend was there."
+              },
+              "action": {
+                "enum": ["add", "replace", "unchanged", "delete", "absent"],
+                "description": "What `keyring set` or `keyring delete` did to the entry, or would do on a dry run. Absent in `doctor`, which changes nothing. `unchanged` and `absent` change nothing, so a second run reports one of them. For these verbs, `present` is whether the entry held a value before the run. Additive in 1.89."
+              },
+              "applied": {
+                "type": "boolean",
+                "description": "Whether `action` was carried out: false on a dry run. Present exactly when `action` is. Additive in 1.89."
               }
             }
           }

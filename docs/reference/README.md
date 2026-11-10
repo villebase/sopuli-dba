@@ -13,6 +13,7 @@ generated from the same definitions that `--help` reads.
 - [`sopuli config`](config.md): Inspect and validate configuration.
 - [`sopuli creds`](creds.md): Manage application database account credentials.
 - [`sopuli doctor`](doctor.md): Check that every target can be reached, and report what it is.
+- [`sopuli keyring`](keyring.md): Write and remove the tool's own credentials in the OS keyring.
 - [`sopuli lock`](lock.md): Show the advisory locks, and break one.
 - [`sopuli policy`](policy.md): Inspect password policies.
 - [`sopuli report`](report.md): Read-only reports across the declared targets (UC-5).

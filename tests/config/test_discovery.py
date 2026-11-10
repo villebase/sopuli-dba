@@ -222,6 +222,18 @@ def test_finding_nothing_lists_everywhere_it_looked(tmp_path: Path) -> None:
     assert CONFIG_ENV in rendered
 
 
+def test_finding_nothing_is_empty_where_a_config_is_optional(tmp_path: Path) -> None:
+    """The `keyring` verbs run on a machine with no config yet (#1417)."""
+    found = discover(env={}, platform=POSIX, cwd=tmp_path, home=tmp_path / "home", optional=True)
+
+    assert found == ()
+
+
+def test_a_named_file_is_still_required_where_a_config_is_optional(tmp_path: Path) -> None:
+    with pytest.raises(ConfigError):
+        discover([tmp_path / "nope.yaml"], env={}, platform=POSIX, cwd=tmp_path, optional=True)
+
+
 # ---------------------------------------------------------------- defaults ---
 
 

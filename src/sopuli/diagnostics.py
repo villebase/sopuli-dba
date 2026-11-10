@@ -600,9 +600,13 @@ PRODUCT_LIMIT_USED = "SOPULI-W067"
 #: is not `Synced`.
 IDENTITY_UNCHECKED = "SOPULI-W068"
 
+#: A dry run of `keyring set` found a different value in the entry, so the
+#: real run is refused without `--replace` (#1417).
+KEYRING_REPLACE_NEEDS_FLAG = "SOPULI-W069"
+
 #: The run opened a `file` store, which is for local development and CI and
 #: not for production (#1415, decision 5).
-FILE_STORE_IN_USE = "SOPULI-W069"
+FILE_STORE_IN_USE = "SOPULI-W070"
 
 #: ``SOPULI-W004`` and ``SOPULI-W034`` to ``SOPULI-W039`` -- imported above
 #: rather than defined here. They are raised in the config layer, which cannot
@@ -867,6 +871,11 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "PostgreSQL, `system_identifier` could not be read; on MariaDB, a Galera node "
             "was not `Synced`, so its cluster was not claimed. The message says which. One "
             "entry per target, from every command that connects."
+        ),
+        KEYRING_REPLACE_NEEDS_FLAG: (
+            "A dry run of `keyring set` found a different value in the entry, so the "
+            "same run without `--dry-run` is refused with exit 8 unless `--replace` is "
+            "given. Only on a dry run: the real run refuses instead of warning."
         ),
         FILE_STORE_IN_USE: (
             "The run opened a `file` store: one age-encrypted file, for local development "
@@ -1501,7 +1510,7 @@ def identity_unchecked(target: str, caveat: str) -> Diagnostic:
 
 
 def file_store_in_use(name: str) -> Diagnostic:
-    """`SOPULI-W069`: the run opened the file store ``name`` (#1415, decision 5).
+    """`SOPULI-W070`: the run opened the file store ``name`` (#1415, decision 5).
 
     On every run that opens one, so the store is in each run's record, as
     ``locking: advisory-only`` is.

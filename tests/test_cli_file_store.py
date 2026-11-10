@@ -1,4 +1,4 @@
-"""A `file` store from the command line, and `SOPULI-W069` (#1372, #1415).
+"""A `file` store from the command line, and `SOPULI-W070` (#1372, #1415).
 
 Real file stores with real age encryption, in a temporary directory; the
 identity comes from a variable. The tests that open a store need the `file`
@@ -78,7 +78,7 @@ def warned(document: dict[str, Any]) -> list[str]:
 
 
 def test_the_code_is_registered() -> None:
-    assert FILE_STORE_IN_USE == "SOPULI-W069"
+    assert FILE_STORE_IN_USE == "SOPULI-W070"
     assert "not for production" in WARNINGS[FILE_STORE_IN_USE]
 
 

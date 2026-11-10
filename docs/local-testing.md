@@ -38,7 +38,7 @@ sopuli policy sample        sopuli creds rotate           sopuli account expire-
 sopuli lock status          sopuli creds status           sopuli doctor
 sopuli lock break           sopuli creds finish-rollover  sopuli about
 sopuli vault orphans        sopuli report accounts        sopuli report privileges
-sopuli report history
+sopuli report history       sopuli keyring set            sopuli keyring delete
 ```
 
 The `creds` commands manage application credentials (UC-1). The `account`
@@ -348,6 +348,30 @@ mode:   cas
 
 `mode: cas` means the store supports compare-and-set, so two runs cannot both
 take the same lock.
+
+### The token in the OS keyring
+
+With the `sopuli-dba[keyring]` extra, the token can live in Windows Credential
+Manager, the macOS Keychain, or the Secret Service on a Linux desktop. Name the
+entry on the store:
+
+```yaml
+    auth: { method: token, token: { keyring: vault-dev } }
+```
+
+Write the entry. The value comes from stdin, or, at a terminal, from a prompt
+asked twice:
+
+```
+$ printf '%s' "$VAULT_TOKEN" | sopuli --config sopuli.yaml keyring set vault-dev
+keyring
+  backend           keyring.backends.Windows.WinVaultKeyring
+  sopuli/vault-dev  added  vaults.vault-dev.auth.token
+```
+
+The same command again reports `unchanged`. A different value needs
+`--replace`. `sopuli keyring delete vault-dev` removes the entry. Neither
+command needs a config.
 
 ---
 

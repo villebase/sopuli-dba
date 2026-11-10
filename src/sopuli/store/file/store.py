@@ -4,7 +4,7 @@
 for every backend. The store itself is :class:`._store.FileStore`.
 
 **Not for production** (#1415, decision 5): every run that opens a file store
-says so with ``SOPULI-W069``, and ``doctor`` prints a line saying so. The
+says so with ``SOPULI-W070``, and ``doctor`` prints a line saying so. The
 warning is added where the run opens its stores, in ``cli._stores_for``.
 """
 

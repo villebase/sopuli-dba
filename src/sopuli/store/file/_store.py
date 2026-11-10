@@ -3,7 +3,7 @@
 It joins the three parts of this package: :mod:`._disk` reads and replaces the
 file, :mod:`._crypto` decrypts and encrypts it, and :mod:`._document` is what
 it holds. :mod:`.store`, which the registry names, opens it with
-:func:`open_store`. ``SOPULI-W069``, the warning every run that opens one
+:func:`open_store`. ``SOPULI-W070``, the warning every run that opens one
 gets, is added where the run opens its stores, in ``cli._stores_for``.
 
 **Every call reads the file afresh.** A write reads the file, adds its

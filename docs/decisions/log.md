@@ -5236,6 +5236,32 @@ the register.
   every supported platform (P4). `keyring:` keeps that promise only where a
   user keyring exists, and is refused elsewhere: usually on a Linux server
   with no desktop session, and in a Windows scheduled task that runs as
-  another user than the one who wrote the entry. A missing entry is `config`
+  another user than the one who wrote the entry. A task that runs as that
+  user reads it whether the user is signed in or not, with or without a
+  stored password (measured 2026-11-10 on Windows 11 with a local account;
+  `01-configuration.md` §3a). A missing entry is `config`
   and exit 9, the error an unset `env:` variable gives, not an authentication
   failure: the keyring has refused nothing, and there was nothing to send.
+- **The verbs:** decided 2026-11-10, the maintainer's, as recommended:
+  1. `keyring set` and `keyring delete` need no config. When a config is
+     loaded and nothing in it names the entry, the run says so. `--dry-run`
+     applies; `readonly` does not, because it governs databases and vaults.
+  2. The report is a run document with the `keyring` section, and no event.
+  3. `set` reads the old value, compares it in the process, and reports
+     `unchanged` when it is the same (invariant 9).
+  4. Replacing a different value needs `--replace`; without it the run exits
+     8, and a dry run warns.
+  5. The value comes from stdin when it is not a terminal, with one trailing
+     `\n` or `\r\n` removed, and otherwise from a prompt asked twice. An empty
+     value is refused.
+  6. Deleting a missing entry reports `absent` and exits 0.
+- **Why, the verbs:** the verb is how a new machine gets the credential its
+  config authenticates with, so it cannot need that config. Invariant 5
+  protects databases and vaults, not the tool's own credential store. An
+  audit event can be added later as a minor change, and removing one would be
+  major. A mistyped vault token stops every scheduled run on the machine, which
+  `--overwrite-current` is the precedent for guarding. PowerShell's pipe adds
+  `\r\n`, and a stored `\r` would fail every login.
+- **Rejected, the verbs:** requiring a config that names the entry; a mutation
+  event in the jsonl stream; always reporting `changed: true`; replacing
+  without a flag; refusing a delete of a missing entry.

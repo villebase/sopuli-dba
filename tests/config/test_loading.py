@@ -8,13 +8,16 @@ a real hostname, account or vault path, in a test any more than in a document.
 
 from __future__ import annotations
 
+import os
 import sys
+import threading
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from sopuli.config import loading
 from sopuli.config.errors import ConfigError
 from sopuli.config.loading import SUPPORTED_VERSIONS, load_config, load_document
 
@@ -109,6 +112,68 @@ def test_a_directory_is_not_reported_as_a_missing_file(tmp_path: Path) -> None:
     rendered = str(caught.value)
     assert "not a file" in rendered
     assert "does not exist" not in rendered
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="named pipes are a POSIX file type")
+def test_a_pipe_is_refused_without_waiting_for_a_writer(tmp_path: Path) -> None:
+    """Opened the usual way, a pipe waits for a writer and the run hangs."""
+    pipe = tmp_path / "sopuli.yaml"
+    # By name: Windows has no mkfifo, and mypy runs there too.
+    make_fifo = getattr(os, "mkfifo")  # noqa: B009
+    make_fifo(pipe, 0o600)
+
+    outcome: list[BaseException | None] = []
+
+    def load() -> None:
+        try:
+            load_document(pipe)
+        except BaseException as error:  # noqa: BLE001 - handed back to the test
+            outcome.append(error)
+        else:
+            outcome.append(None)
+
+    # In a thread, so a regression fails the test by name instead of hanging it.
+    worker = threading.Thread(target=load, daemon=True)
+    worker.start()
+    worker.join(timeout=10)
+
+    assert not worker.is_alive(), "load_document waited on the pipe"
+    assert isinstance(outcome[0], ConfigError)
+    assert "is not a regular file" in str(outcome[0])
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="named pipes are a POSIX file type")
+def test_a_pipe_put_at_the_path_after_its_check_is_refused_without_waiting(
+    tmp_path: Path,
+) -> None:
+    """The check by path and the open are two steps; the open must not wait."""
+    pipe = tmp_path / "sopuli.yaml"
+    make_fifo = getattr(os, "mkfifo")  # noqa: B009
+    make_fifo(pipe, 0o600)
+    outcome: list[BaseException | None] = []
+
+    def read() -> None:
+        try:
+            loading._read(pipe)
+        except BaseException as error:  # noqa: BLE001 - handed back to the test
+            outcome.append(error)
+        else:
+            outcome.append(None)
+
+    worker = threading.Thread(target=read, daemon=True)
+    worker.start()
+    worker.join(timeout=10)
+
+    assert not worker.is_alive(), "_read waited on the pipe"
+    assert isinstance(outcome[0], ConfigError)
+    assert "is not a regular file" in str(outcome[0])
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="a POSIX character device")
+def test_a_device_is_refused_before_it_is_read() -> None:
+    """A device such as /dev/zero would be read until memory runs out."""
+    with pytest.raises(ConfigError, match="is not a regular file"):
+        load_document(Path(os.devnull))
 
 
 def test_invalid_utf8_is_reported_as_such(tmp_path: Path) -> None:
@@ -219,7 +284,7 @@ def test_permissions_are_checked_before_the_file_is_read(
         order.append("permissions")
         raise ConfigError("nope")
 
-    real_open = Path.open
+    real_open = loading._open
 
     class RecordingHandle:
         """The real handle, with its `read` recorded."""
@@ -240,11 +305,11 @@ def test_permissions_are_checked_before_the_file_is_read(
             order.append("read")
             return bytes(self.real.read())
 
-    def recording_open(self: Path, *args: Any, **kwargs: Any) -> RecordingHandle:
-        return RecordingHandle(real_open(self, *args, **kwargs))
+    def recording_open(opened: Path) -> RecordingHandle:
+        return RecordingHandle(real_open(opened))
 
     monkeypatch.setattr("sopuli.config.loading.check_permissions", refuse)
-    monkeypatch.setattr(Path, "open", recording_open)
+    monkeypatch.setattr(loading, "_open", recording_open)
 
     with pytest.raises(ConfigError):
         load_document(path)

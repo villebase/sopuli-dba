@@ -33,10 +33,12 @@ from __future__ import annotations
 
 import contextlib
 import os
+import stat
+import sys
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO
 
 from sopuli.config.applications import build_applications
 from sopuli.config.bindings import build_bindings, check_admin_refs, check_production_stores
@@ -114,6 +116,11 @@ TOP_LEVEL_KEYS = (
 )
 
 
+#: A config path that is there, but is a pipe, a socket or a device.
+NOT_REGULAR = "config path is not a regular file"
+NAME_THE_FILE = "name the config file itself"
+
+
 def load_document(path: Path) -> dict[str, Any]:
     """Read, parse and sanity-check one config file. Returns raw data."""
     if not path.exists():
@@ -122,7 +129,7 @@ def load_document(path: Path) -> dict[str, Any]:
             source=path,
             hint="pass --config PATH, or set SOPULI_CONFIG",
         )
-    if not path.is_file():
+    if path.is_dir():
         # A directory passes `exists` and fails `is_file`. Reporting that as
         # "does not exist" sends someone looking for a typo in a path that is
         # spelled correctly -- `--config /etc/sopuli` rather than
@@ -131,6 +138,14 @@ def load_document(path: Path) -> dict[str, Any]:
             "config path is not a file",
             source=path,
             hint="point --config at the file itself, not the directory holding it",
+        )
+    if not path.is_file():
+        # A pipe, a socket or a device. Refused by path, before an open: opening
+        # some devices acts on them, such as a tape that rewinds when closed.
+        raise ConfigError(
+            NOT_REGULAR,
+            source=path,
+            hint=NAME_THE_FILE,
         )
 
     document = _require_mapping(parse_yaml(_read(path), source=path), path)
@@ -673,8 +688,10 @@ def _read(path: Path) -> str:
     the path after the check is not the one read. Windows walks the ACL by path.
     """
     try:
-        with path.open("rb") as handle:
-            check_permissions(path, owner=True, status=os.fstat(handle.fileno()))
+        with _open(path) as handle:
+            status = os.fstat(handle.fileno())
+            _require_regular(path, status)
+            check_permissions(path, owner=True, status=status)
             data = handle.read()
         return data.decode(ENCODING)
     except UnicodeDecodeError as error:
@@ -693,6 +710,42 @@ def _read(path: Path) -> str:
             f"cannot read the config file: {error.strerror or error}",
             source=path,
         ) from error
+
+
+def _open(path: Path) -> BinaryIO:
+    """``path`` open for reading, without waiting on it.
+
+    The callers have checked by path that it is a regular file, but another
+    program can put a pipe or a device there before the open. Opened without
+    ``O_NONBLOCK``, a pipe would wait for a writer and the run would hang with
+    no message. ``O_NOCTTY`` keeps a terminal from becoming this process's.
+    The descriptor is made blocking again before it is read.
+    """
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_NONBLOCK", 0)
+        | getattr(os, "O_NOCTTY", 0)
+        | getattr(os, "O_BINARY", 0)
+    )
+    descriptor = os.open(path, flags)
+    try:
+        if sys.platform != "win32":
+            # Windows has no O_NONBLOCK to undo, and refuses the call.
+            os.set_blocking(descriptor, True)
+        return os.fdopen(descriptor, "rb")
+    except BaseException:
+        os.close(descriptor)
+        raise
+
+
+def _require_regular(path: Path, status: os.stat_result) -> None:
+    """Refuse anything but a regular file, before a byte of it is read.
+
+    A pipe would be read until its writer closes it, and a device, such as
+    ``/dev/zero``, until memory runs out.
+    """
+    if not stat.S_ISREG(status.st_mode):
+        raise ConfigError(NOT_REGULAR, source=path, hint=NAME_THE_FILE)
 
 
 def _require_mapping(document: Any, path: Path) -> dict[str, Any]:

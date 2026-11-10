@@ -14,6 +14,7 @@ it is checking, so a literal branch would be dead code -- unchecked and untested
 
 from __future__ import annotations
 
+import os
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -205,6 +206,22 @@ def test_a_directory_is_reported_as_a_directory(tmp_path: Path) -> None:
         discover([tmp_path], env={}, platform=POSIX, cwd=tmp_path)
 
     assert "is not a file" in str(caught.value)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="named pipes are a POSIX file type")
+def test_a_pipe_is_not_reported_as_a_directory(tmp_path: Path) -> None:
+    """The directory's hint, to name the file inside it, would mislead."""
+    pipe = tmp_path / "sopuli.yaml"
+    # By name: Windows has no mkfifo, and mypy runs there too.
+    make_fifo = getattr(os, "mkfifo")  # noqa: B009
+    make_fifo(pipe, 0o600)
+
+    with pytest.raises(ConfigError) as caught:
+        discover([pipe], env={}, platform=POSIX, cwd=tmp_path)
+
+    rendered = str(caught.value)
+    assert "is not a regular file" in rendered
+    assert "directory" not in rendered
 
 
 def test_finding_nothing_lists_everywhere_it_looked(tmp_path: Path) -> None:

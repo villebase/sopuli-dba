@@ -27,7 +27,7 @@ from typing import Any, Literal
 # `sopuli.clock`, and `sopuli.output.emit` and the tests import them from here.
 from sopuli.clock import to_rfc3339, utc_now
 
-SCHEMA_VERSION = "1.87"
+SCHEMA_VERSION = "1.88"
 TOOL_NAME = "sopuli"  # schema pins this to the binary name (D1), not the distribution
 
 
@@ -454,6 +454,11 @@ class RunDocument:
     #: missing wallet in every document that never needed one is noise.
     #: :mod:`sopuli.output.wallet_view` owns the shape.
     wallet: dict[str, Any] | None = None
+    #: The ``keyring`` section, emitted by ``doctor`` (#1417). The OS keyring
+    #: backend and each entry the configuration names. Absent when it names
+    #: none, for ``wallet``'s reason. :mod:`sopuli.output.keyring_view` owns
+    #: the shape.
+    keyring: dict[str, Any] | None = None
     #: The ``vaults`` section, emitted by ``doctor``. Every store the
     #: configuration declares: whether it answered, whether this run's
     #: credential was accepted, and how far its clock is from this machine's.
@@ -569,6 +574,8 @@ class RunDocument:
             document["install"] = self.install
         if self.wallet is not None:
             document["wallet"] = self.wallet
+        if self.keyring is not None:
+            document["keyring"] = self.keyring
         if self.vaults is not None:
             document["vaults"] = self.vaults
         if self.constraints is not None:

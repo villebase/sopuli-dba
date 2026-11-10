@@ -186,6 +186,29 @@ class ArgumentError(ConfigError):
     exit_code = ExitCode.USAGE
 
 
+class MaterialError(ConfigError):
+    """A named source held nothing to read.
+
+    Raised when a :class:`~sopuli.config.model.MaterialRef` is resolved, by
+    :mod:`sopuli.material` and :mod:`sopuli.os_keyring`. It lives here, beside
+    its parent, so that both can import it without importing each other.
+
+    ``config`` and exit 9, by the same reasoning ADR-006 used for a missing
+    backend (E5): the file is not wrong and the service has not refused
+    anything -- what is incomplete is *this machine*, and the person reading the
+    message is the one who fixes it, here, now.
+
+    Distinct from the exit 6 an auth method raises when the store rejects a
+    credential. That one means "we found it and it was not accepted"; this one
+    means "there was nothing to send".
+
+    No ``error.code``. An error gets one only where its category and exit code do
+    not tell it apart (J3). Like most ``config`` errors, this is fixed in what the
+    configuration points at: the variable, the path or the keyring entry, which
+    the message names.
+    """
+
+
 def location_of(mark: Mark | None) -> tuple[int | None, int | None]:
     """Turn a PyYAML mark into a line and column a human would recognise.
 

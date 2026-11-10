@@ -1149,8 +1149,8 @@ KV `mount:` on the vault itself, and it defaults to the method's own name.
 ### MaterialRef — where auth material comes from
 
 Everything secret-bearing above — `token`, `role_id`, `secret_id`, `jwt`,
-`password` — is a **MaterialRef**: a one-key mapping, exactly one of `env` or
-`file`.
+`password` — is a **MaterialRef**: a one-key mapping, exactly one of `env`,
+`file` or `keyring`.
 
 ```yaml
 vaults:
@@ -1240,6 +1240,20 @@ reason for it:
   bytes rather than text for the same reason: text mode would rewrite a carriage
   return inside a value and the symptom would be a credential that authenticates
   nowhere while the file on disk looks right.
+- **`keyring:` names an entry in the OS keyring** (#1417): Windows Credential
+  Manager, the macOS Keychain, or the Secret Service or KWallet on Linux. The service is
+  always `sopuli` and the value is the entry's user name, so
+  `token: { keyring: vault-dev }` reads the entry `sopuli/vault-dev`. The tool
+  decides how entries are named, and the config names only the entry. It needs
+  the `sopuli-dba[keyring]` extra. Only an OS keyring counts: a backend that
+  holds nothing, or one that writes a plaintext file such as `keyrings.alt`'s,
+  is refused rather than read. A missing entry, a locked keyring, or a session
+  with no keyring at all is an error, `config` and exit 9, that names the entry
+  and the backend, as an unset `env:` variable is. It never falls back to
+  another source. A scheduled run on a Linux server usually has no keyring,
+  because the Secret Service needs a desktop session, and a Windows scheduled
+  task reads only the entries of the user it runs as. Use `env:` or `file:`
+  there.
 - **Identity is inline, proof is not.** `role`, `username`, `profile` and `mount`
   name *who* rather than prove it, so they are written as they are. `role_id` is
   arguably an identifier too, and is a MaterialRef anyway: carving out one field
@@ -1281,7 +1295,7 @@ new value.
 
 The bootstrap problem P2 states: the DBA credential the tool uses is itself a
 secret, and it cannot come from the vault the tool has not authenticated to yet.
-So `admin.auth` names one of P2's four sources, **in its order of preference**,
+So `admin.auth` names one of P2's sources, **in its order of preference**,
 in the same grammar as a vault's `auth:` (§3a) and with its own vocabulary.
 
 | `method` | Its keys | |
@@ -1289,6 +1303,7 @@ in the same grammar as a vault's `auth:` (§3a) and with its own vocabulary.
 | `external` | none | a wallet / secure external password store, Kerberos, OS auth |
 | `vault` | `secret` | a vault authenticated by machine identity, not by a password |
 | `prompt` | none | interactive |
+| `keyring` | `entry` | an entry under the service `sopuli` in the OS keyring, read as a `keyring:` MaterialRef is (§3a) |
 | `env` | `password_env` | supported, and flagged low-assurance in output (P2) |
 
 ```yaml
@@ -1366,6 +1381,22 @@ does not scale past one admin credential, so `password_env:` says which variable
 holds this one; absent, it is that pair. Either way this source stays flagged
 low-assurance wherever it is reported.
 
+**`method: keyring` names its entry, and is not flagged** (#1417). `entry:` is
+required, for `vault`'s reason: there is no default to fall back on. An
+environment variable leaks to child processes, to `/proc/PID/environ`, to crash
+dumps and to CI logs. A keyring entry is readable by the same user in an
+unlocked session, the same exposure as a `0600` file, and a `file:` source is
+not flagged either. Like `password_env:`, `entry:` takes a target set's
+dimensions, so `entry: "cdb-{env}"` gives each generated target its own. On an
+explicit target nothing renders a placeholder, so one left in `entry:` or
+`password_env:` is refused when the file is loaded, as in `secret:`.
+
+**A mutating command checks the `keyring` extra before it connects.** A
+`method: keyring` target on an install without `sopuli-dba[keyring]` is
+refused with the other plan-time refusals, exit 9, before any target is
+changed. A locked keyring or a missing entry is found only when the entry is
+read.
+
 **And "flagged" means `SOPULI-W022`.** Every command that connects emits
 one per target whose credential came from a low-assurance source; `doctor`
 prints it as well, and the others leave it in `diagnostics[]`. P2 asks for the
@@ -1423,7 +1454,7 @@ set is the tempting reading of §6 and it is a guess: §6 calls that pair *the
 default for* `method: env`, which is a statement about a declared method and not
 about an absent one. A credential tool that authenticates from whatever variable
 it found lying in the environment, because the file said nothing, is doing the
-thing P2's bootstrap section exists to prevent. The error names the four methods
+thing P2's bootstrap section exists to prevent. The error names every method
 and the variable, so the fix is the one line it quotes. Refusing is also the
 reversible half: deciding later that a bare variable implies `method: env` only
 widens what works.
@@ -2202,7 +2233,7 @@ language (C7): `{name}` is looked up in one flat scope and that is all there is.
 | | |
 |---|---|
 | **In scope** | the outer dimension (`{env}`), the scalar variables of the value being rendered, and the inner dimension's current value (`{tenant}`) |
-| **Substituted in** | every string the template writes — `name`, `dsn`, `environment`, `vault`, `admin.username`, `admin.auth.secret`, `admin.auth.password_env`, `oracle.container`, `postgres.database`, `postgres.sslrootcert`, `mysql.ssl_ca`, `labels` keys and values, `safety.confirm_environments`. A field left unrendered would reach a connection string, or a vault, with its braces intact |
+| **Substituted in** | every string the template writes — `name`, `dsn`, `environment`, `vault`, `admin.username`, `admin.auth.secret`, `admin.auth.password_env`, `admin.auth.entry`, `oracle.container`, `postgres.database`, `postgres.sslrootcert`, `mysql.ssl_ca`, `labels` keys and values, `safety.confirm_environments`. A field left unrendered would reach a connection string, or a vault, with its braces intact |
 | **Not substituted in** | `type`, `oracle.scope`, `postgres.sslmode`, `mysql.ssl_mode`, `admin.auth.method`. They are closed sets, so a placeholder there is already refused when the set is read |
 | **No escaping** | there is no way to write a literal brace. An unbalanced or empty one (`{`, `{}`) is an error, not a literal |
 | **Shadowing** | a variable may not share the name of the dimension it sits under — `for_each: { env: { dev: { env: production } } }` gives `{env}` two meanings, and either choice silently decides a rendered secret path |
@@ -3740,7 +3771,7 @@ change.
 required, and `additionalProperties: false` — P3's "exits non-zero on unknown
 keys", in the form an editor can use. The shape rules of §4 are here too, since
 they are about shape: one outer dimension, one list per value. So is a
-MaterialRef's — exactly one of `env` / `file`, and no property for a value at all,
+MaterialRef's — exactly one of `env` / `file` / `keyring`, and no property for a value at all,
 which is the one rule in the artefact that is a security property rather than a
 convenience (P2).
 

@@ -10,10 +10,14 @@ before you have a vault at all -- so it is a second, smaller type, named
 differently so that the chicken-and-egg stays visible rather than being papered
 over by reusing one word for both.
 
-It is a one-key mapping, exactly one of ``env`` or ``file``::
+It is a one-key mapping, exactly one of ``env``, ``file`` or ``keyring``::
 
     secret_id: { env: SOPULI_VAULT_SECRET_ID }
     secret_id: { file: /run/secrets/vault_secret_id }
+    secret_id: { keyring: vault-dev }
+
+``keyring`` names an entry under the service ``sopuli`` in the OS keyring
+(#1417). Only the entry is written, so the tool decides how entries are named.
 
 Preferred over an ``_env`` / ``_file`` suffix convention because it makes P2's
 constraint *structural*: there is no slot for an inline string, so "auth material
@@ -35,7 +39,7 @@ legal exactly where the method has no *required* keys, which is what keeps §2's
 and §4's existing examples valid unchanged; ``auth: approle`` is refused, naming
 the keys it needs, because there is nowhere in a scalar to write them.
 
-What this module checks is shape: the material is one of ``env`` / ``file``, the
+What this module checks is shape: the material is one of ``env`` / ``file`` / ``keyring``, the
 method is in the vocabulary for its position, and the keys are the ones that
 method takes. Whether the values are *true* -- that the variable is set, that the
 role exists -- is checked when something authenticates, which is where P1 and P2
@@ -52,10 +56,12 @@ from sopuli.config.errors import ConfigError, KeyPath
 from sopuli.config.fields import choice, mapping, reject_unknown_keys, string
 from sopuli.config.model import MaterialRef
 
-#: The two sources a MaterialRef may name. Closed, and deliberately short: each
-#: entry is a promise that the tool can read material from there on every
-#: supported platform (P4), which rules out anything shell-shaped.
-MATERIAL_KINDS = ("env", "file")
+#: The sources a MaterialRef may name. Closed, and deliberately short: each entry
+#: is a promise that the tool can read material from there on every supported
+#: platform (P4), which rules out anything shell-shaped. ``keyring`` keeps the
+#: promise only where a user keyring exists, and is refused with a message that
+#: says so elsewhere, such as a Linux server with no desktop session (#1417).
+MATERIAL_KINDS = ("env", "file", "keyring")
 
 
 @dataclass(frozen=True)

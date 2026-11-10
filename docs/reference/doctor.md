@@ -37,6 +37,11 @@ and the password, not to the file permissions, so the command reports the
 wallet problem before it connects. The wallet check only warns; each
 target's connection decides the result.
 
+For a config whose vaults or targets read a credential from the OS
+keyring, the command shows which keyring it uses and whether each of those
+entries is there. Like the wallet check, this changes no exit code: a
+missing entry also fails the vault or target that needs it.
+
 `--check-privileges` warns and never fails. An over-granted account is
 someone else's problem to fix, and a failing `doctor` would block the
 person who ran it, perhaps during an incident, over something they did not

@@ -245,8 +245,11 @@ def admin_auth(**keys: Any) -> Any:
 
 @pytest.mark.parametrize("method", list(ADMIN_METHODS))
 def test_every_bootstrap_source_p2_ranks_is_accepted(method: str) -> None:
-    """P2's four sources, in its order of preference, pinned."""
-    filled = {"vault": {"secret": "ops/sopuli/admin#password"}}.get(method, {})
+    """P2's sources, in its order of preference, pinned."""
+    filled = {
+        "vault": {"secret": "ops/sopuli/admin#password"},
+        "keyring": {"entry": "cdb-root-dev"},
+    }.get(method, {})
 
     assert admin_auth(method=method, **filled).method == method
 

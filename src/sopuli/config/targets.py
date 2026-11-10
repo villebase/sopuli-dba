@@ -99,6 +99,9 @@ ADMIN_METHODS: dict[str, Method] = {
     EXTERNAL: Method(),
     "vault": Method(required=("secret",)),
     "prompt": Method(),
+    # #1417: an entry under the service `sopuli` in the OS keyring. Required,
+    # for `vault`'s reason: there is no default entry to fall back on.
+    "keyring": Method(required=("entry",)),
     "env": Method(optional=("password_env",)),
 }
 
@@ -247,7 +250,7 @@ def read_admin(raw: Any, *, at: KeyPath) -> AdminCredential | None:
 
 
 def read_admin_auth(raw: Any, *, at: KeyPath) -> AdminAuth | None:
-    """``admin.auth`` -- one of P2's four sources, and what it needs to say.
+    """``admin.auth`` -- one of P2's sources, and what it needs to say.
 
     ``method: vault`` carries a whole SecretRef rather than a field of its own:
     the ref grammar already has a vault prefix and §7's tokens, and a second,
@@ -265,19 +268,22 @@ def read_admin_auth(raw: Any, *, at: KeyPath) -> AdminAuth | None:
         method=method,
         secret=None if ref is None else parse_secret_ref(ref, at=at.key("secret")),
         password_env=optional_string(auth, "password_env", at=at),
+        entry=optional_string(auth, "entry", at=at),
     )
 
 
 def _shape(key: str) -> str:
     """How one `admin.auth` key is written, for the error about a missing one.
 
-    Only `method: vault` requires anything, and what it requires is a whole
-    SecretRef -- which is the answer somebody staring at "needs `secret`" wants,
-    since the alternative readings are a bare password (never) and a field of this
-    block's own invention (there is none).
+    `method: vault` requires a whole SecretRef -- which is the answer somebody
+    staring at "needs `secret`" wants, since the alternative readings are a bare
+    password (never) and a field of this block's own invention (there is none).
+    `method: keyring` requires the name of its entry.
     """
     if key == "secret":
         return "a SecretRef -- `[vault:]path#field`, in the target's vault by default (§7)"
+    if key == "entry":
+        return "the name of an entry under the service `sopuli` in the OS keyring"
     return "written inline"  # pragma: no cover - no other admin key is required
 
 

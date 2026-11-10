@@ -354,7 +354,7 @@ jobs:
       matrix:
         # base first, because it is the cell that can actually fail: the others
         # prove an extra resolves, and base proves the boundary held.
-        shape: ["", "[oracle]", "[postgres]", "[mysql]", "[mariadb]", "[hashicorp]", "[oci]", "[file]", "[notify]", "[yopass]", "[onepassword]", "[all]"]
+        shape: ["", "[oracle]", "[postgres]", "[mysql]", "[mariadb]", "[hashicorp]", "[oci]", "[file]", "[notify]", "[yopass]", "[onepassword]", "[keyring]", "[all]"]
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -392,7 +392,7 @@ jobs:
           import sys
 
           # CLIENTS in tests/store/test_install_shape.py.
-          clients = ("httpx", "nacl", "oci", "onepassword", "oracledb", "psycopg", "pymysql", "pyrage", "pysequoia")
+          clients = ("httpx", "keyring", "nacl", "oci", "onepassword", "oracledb", "psycopg", "pymysql", "pyrage", "pysequoia")
           present = [name for name in clients if importlib.util.find_spec(name) is not None]
           if present:
               sys.exit(f"base install pulled in a backend client: {', '.join(present)}")

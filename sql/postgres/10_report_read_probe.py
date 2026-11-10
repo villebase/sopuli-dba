@@ -5,8 +5,8 @@ account is LOGIN CREATEROLE and nothing else (02-postgres-privileges.md §2.1).
 This measures, on each server, as that account unless a step says otherwise:
 
   PR0  which of pg_roles's columns it reads, every one the catalog lists,
-       whether rolpassword reads as the mask ******** there, and whether
-       pg_authid refuses it
+       whether rolpassword reads as the mask ******** there for a role with a
+       password and for one without, and whether pg_authid refuses it
   PR1  which pg_catalog columns could hold an account's lock, expiry, last
        password change, last login or failed logins: a column of a role
        catalog whose name contains passw, login, fail, valid, lock, expir,
@@ -27,10 +27,15 @@ This measures, on each server, as that account unless a step says otherwise:
        and by oid, for an inheriting, a NOINHERIT and an INHERIT FALSE member.
        Then a function left with its default ACL: what aclexplode() gives for
        its NULL proacl, and what it gives for acldefault('f', owner), with
-       PUBLIC, grantee 0, which has no pg_roles row
+       PUBLIC, grantee 0, which has no pg_roles row. Then the other catalogs
+       that carry an ACL: pg_attribute, pg_language, pg_type,
+       pg_largeobject_metadata, pg_foreign_data_wrapper, pg_foreign_server,
+       pg_tablespace and pg_parameter_acl, with a column grant and a language
+       grant in the fixture
   PR5  the time of PR2's query over every role, and of has_table_privilege()
        over every role and table, after the superuser adds 500 roles in
-       chains of five and 1000 tables, each granted to one role
+       chains of five and 1000 tables, each granted to one role. Each query
+       runs once untimed, then three times timed
 
 PR4, the date of a role's last password change for `report history`, is
 PR1's answer: a column for it would be one PR1 lists.
@@ -54,7 +59,8 @@ The fixture, which the superuser creates on each server:
                       paths to sopuli_probe_top
   schema sopuli_probe, table t, function f() granted to sopuli_probe_app
   alone, function g() left with its default ACL, and default privileges for
-  sopuli_probe_top on the schema's tables
+  sopuli_probe_top on the schema's tables. SELECT on column t.n and USAGE on
+  language sql, granted to sopuli_probe_app
   database sopuli_probe_db2, with a table t2 granted to sopuli_probe_app
 
 It MEASURES and decides nothing. It selects no verifier: rolpassword is
@@ -64,16 +70,18 @@ STATUS: run on 13.23, 14.24, 15.19, 16.15, 17.11 and 18.6, the postgres:13 to
 postgres:18 images of test/compose.yaml profile postgres-matrix, on 2026-11-10
 (#1443). The client was psycopg 3.3.6 with libpq 18.4, on Windows 11 AMD64.
 Twice, exit 0, the same result both times but for the timings, which are the
-ranges below. An earlier version of the probe, which did not send WITH
-INHERIT FALSE to 13 to 15 and had no two-path member and no g(), is not
-counted.
+ranges below. Earlier versions of the probe are not counted: they did not
+send WITH INHERIT FALSE to 13 to 15, had no two-path member, no g(), no role
+without a password and no other ACL catalogs, and timed each query once,
+cold.
 
 RESULTS
 
   PR0  pg_roles has 13 columns, and the tool account reads all 13: rolname,
        the attributes, rolconnlimit, rolpassword, rolvaliduntil, rolconfig
        and oid. rolpassword reads as the mask ******** for a role with a
-       password. pg_authid refuses it: 42501, "permission denied for table
+       password and for one without, so it says nothing about whether a role
+       has one. pg_authid refuses it: 42501, "permission denied for table
        pg_authid". rolcanlogin and rolvaliduntil read as each fixture role
        was created
   PR1  no column holds an account's last password change, last login or
@@ -107,22 +115,28 @@ RESULTS
        sopuli_probe_set false on 16 to 18 and true on 13 to 15. g()'s proacl
        is NULL, and aclexplode() of it gives no row.
        aclexplode(acldefault('f', owner)) gives PUBLIC EXECUTE and the
-       owner's EXECUTE. PUBLIC is grantee 0, and pg_roles has no row for it
+       owner's EXECUTE. PUBLIC is grantee 0, and pg_roles has no row for it.
+       The tool account reads the ACLs of pg_attribute, with the column grant
+       on t.n, pg_language, with the grant on sql, pg_type,
+       pg_largeobject_metadata, pg_foreign_data_wrapper, pg_foreign_server
+       and pg_tablespace. pg_parameter_acl exists from 15, and it reads it;
+       13 and 14 have none: 42P01, "relation "pg_parameter_acl" does not
+       exist"
   PR5  about 520 roles, 1014 membership paths: the recursive query takes
-       0.01 to 0.02 s. has_table_privilege() over every role and the 1001
-       tables of the schema takes 0.20 to 0.47 s, and in one release of
-       each run 2.3 to 2.6 s, on 15.19 in one run and 13.23 in the other.
-       9006 pairs are true, and 10007 on 14 and 15: the bulk tables take the
-       fixture's default SELECT for sopuli_probe_top, so pg_read_all_data
+       0.01 s. has_table_privilege() over every role and the 1001 tables of
+       the schema takes 0.16 to 0.42 s, and 1.73 to 1.96 s on 13.23, in
+       both runs, after the untimed run. 9006 pairs are true, and 10007 on
+       14 and 15: the bulk tables take the fixture's default SELECT for
+       sopuli_probe_top, so pg_read_all_data
        holds 1001 of them from 14, and sopuli_probe_set holds 1001 where its
        grant is inherited, on 13 to 15
 
   So a target, which is one database, can read every role, its login and
   expiry, and its memberships with the path, as the tool account holds them
-  today. It can read object privileges only in the database it connects to,
-  and an object with its default privileges has a NULL ACL, which only
-  acldefault() expands. It can read no last password change, last login or
-  failed logins.
+  today. It can read the ACLs of the thirteen catalogs above, but only in the
+  database it connects to, and an object with its default privileges has a
+  NULL ACL, which only acldefault() expands. It can read no last password
+  change, last login or failed logins, and not whether a role has a password.
 
 HOW TO RUN, against the matrix (test/README.md), from the repo root, with the
 repo's virtual environment:
@@ -260,10 +274,16 @@ def _clean(version: int) -> None:
     with _connect(version) as su:
         su.execute(sql.SQL("DROP DATABASE IF EXISTS {}").format(sql.Identifier(DB2)))
         su.execute(sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(sql.Identifier(SCHEMA)))
-        for role in _all_roles():
-            if _one(su, "SELECT count(*) FROM pg_roles WHERE rolname = %s", (role,)):
-                su.execute(sql.SQL("DROP OWNED BY {}").format(sql.Identifier(role)))
-                su.execute(sql.SQL("DROP ROLE {}").format(sql.Identifier(role)))
+        found = [
+            row[0]
+            for row in su.execute(
+                "SELECT rolname::text FROM pg_roles WHERE rolname = ANY(%s)", (_all_roles(),)
+            ).fetchall()
+        ]
+        if found:
+            names = sql.SQL(", ").join(sql.Identifier(role) for role in found)
+            su.execute(sql.SQL("DROP OWNED BY {}").format(names))
+            su.execute(sql.SQL("DROP ROLE {}").format(names))
 
 
 def _grant_without_inherit(su: psycopg.Connection[Any], member: str) -> None:
@@ -304,6 +324,8 @@ def _setup(version: int) -> None:
             f"CREATE FUNCTION {SCHEMA}.f() RETURNS int LANGUAGE sql AS 'SELECT 1'",
             f"REVOKE EXECUTE ON FUNCTION {SCHEMA}.f() FROM PUBLIC",
             f"GRANT EXECUTE ON FUNCTION {SCHEMA}.f() TO sopuli_probe_app",
+            f"GRANT SELECT (n) ON {SCHEMA}.t TO sopuli_probe_app",
+            "GRANT USAGE ON LANGUAGE sql TO sopuli_probe_app",
             f"CREATE FUNCTION {SCHEMA}.g() RETURNS int LANGUAGE sql AS 'SELECT 1'",
             f"ALTER DEFAULT PRIVILEGES IN SCHEMA {SCHEMA} GRANT SELECT ON TABLES"
             " TO sopuli_probe_top",
@@ -356,10 +378,12 @@ def _pr0(conn: psycopg.Connection[Any]) -> None:
         f"  PR0  pg_roles columns: {len(columns)}, read {len(columns) - len(refused)}:"
         f" {', '.join(columns)}"
     )
-    masked = _one(
-        conn, "SELECT rolpassword = '********' FROM pg_roles WHERE rolname = %s", (ADMIN,)
-    )
-    print(f"  PR0  pg_roles.rolpassword is the mask for a role with a password: {masked}")
+    # The tool account has a password; sopuli_probe_off was created without one.
+    for role in (ADMIN, "sopuli_probe_off"):
+        masked = _one(
+            conn, "SELECT rolpassword = '********' FROM pg_roles WHERE rolname = %s", (role,)
+        )
+        print(f"  PR0  pg_roles.rolpassword is the mask for {role}: {masked}")
     try:
         conn.execute("SELECT rolname FROM pg_authid LIMIT 1")
         print("  PR0  pg_authid: READ")
@@ -496,11 +520,12 @@ def _pr3(conn: psycopg.Connection[Any]) -> None:
         """
         SELECT p.proacl IS NULL,
                (SELECT count(*) FROM aclexplode(p.proacl)),
-               (SELECT string_agg(
-                         CASE x.grantee WHEN 0 THEN 'PUBLIC'
-                              ELSE (SELECT rolname::text FROM pg_roles WHERE oid = x.grantee)
-                         END || ' ' || x.privilege_type, '; ' ORDER BY 1)
-                  FROM aclexplode(acldefault('f', p.proowner)) x)
+               (SELECT string_agg(e, '; ' ORDER BY e)
+                  FROM (SELECT CASE x.grantee WHEN 0 THEN 'PUBLIC'
+                                    ELSE (SELECT rolname::text FROM pg_roles
+                                           WHERE oid = x.grantee)
+                               END || ' ' || x.privilege_type AS e
+                          FROM aclexplode(acldefault('f', p.proowner)) x) d)
           FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
          WHERE n.nspname = %s AND p.proname = 'g'
         """,
@@ -512,38 +537,71 @@ def _pr3(conn: psycopg.Connection[Any]) -> None:
     )
     public = _one(conn, "SELECT count(*) FROM pg_roles WHERE oid = 0")
     print(f"  PR3  pg_roles rows for grantee 0 (PUBLIC): {public}")
+    # The other catalogs that carry an ACL. The fixture grants a column and a
+    # language; the rest are read for whether the tool account can read them.
+    others = {
+        "pg_attribute": "SELECT attrelid::regclass::text || '.' || attname::text, attacl"
+        " FROM pg_attribute WHERE attacl IS NOT NULL",
+        "pg_language": "SELECT lanname::text, lanacl FROM pg_language",
+        "pg_type": "SELECT typname::text, typacl FROM pg_type",
+        "pg_largeobject_metadata": "SELECT oid::text, lomacl FROM pg_largeobject_metadata",
+        "pg_foreign_data_wrapper": "SELECT fdwname::text, fdwacl FROM pg_foreign_data_wrapper",
+        "pg_foreign_server": "SELECT srvname::text, srvacl FROM pg_foreign_server",
+        "pg_tablespace": "SELECT spcname::text, spcacl FROM pg_tablespace",
+        "pg_parameter_acl": "SELECT parname::text, paracl FROM pg_parameter_acl",
+    }
+    for name, query in others.items():
+        try:
+            rows = conn.execute(
+                f"""
+                SELECT o.name, g.rolname::text, x.privilege_type
+                  FROM ({query}) AS o(name, acl)
+                  CROSS JOIN LATERAL aclexplode(o.acl) x
+                  JOIN pg_roles g ON g.oid = x.grantee
+                 WHERE g.rolname LIKE 'sopuli\\_probe\\_%'
+                 ORDER BY 1, 2, 3
+                """
+            ).fetchall()
+            shown = "; ".join(f"{o} {g} {p}" for o, g, p in rows)
+            print(f"  PR3  {name}: read; {shown or 'no fixture grant'}")
+        except psycopg.Error as error:
+            print(f"  PR3  {name}: {error.sqlstate} {error.diag.message_primary}")
 
 
 def _pr5(conn: psycopg.Connection[Any]) -> None:
     inherit = _inherit(conn)
     roles = _one(conn, "SELECT count(*) FROM pg_roles")
-    started = time.perf_counter()
-    paths = conn.execute(MEMBERSHIP_QUERY.format(inherit=inherit)).fetchall()
-    membership = time.perf_counter() - started
     tables = _one(
         conn,
         "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace"
         " WHERE n.nspname = %s AND c.relkind = 'r'",
         (SCHEMA,),
     )
-    started = time.perf_counter()
-    granted = _one(
-        conn,
-        """
+    privilege_query = """
         SELECT count(*)
           FROM pg_roles r
           CROSS JOIN pg_class c
           JOIN pg_namespace n ON n.oid = c.relnamespace
          WHERE n.nspname = %s AND c.relkind = 'r'
            AND has_table_privilege(r.oid, c.oid, 'SELECT')
-        """,
-        (SCHEMA,),
-    )
-    privilege = time.perf_counter() - started
+    """
+    # One untimed run of each warms the caches the bulk DDL left cold; then
+    # three timed runs, of which the smallest and largest are printed.
+    paths = conn.execute(MEMBERSHIP_QUERY.format(inherit=inherit)).fetchall()
+    granted = _one(conn, privilege_query, (SCHEMA,))
+    membership, privilege = [], []
+    for _ in range(3):
+        started = time.perf_counter()
+        conn.execute(MEMBERSHIP_QUERY.format(inherit=inherit)).fetchall()
+        membership.append(time.perf_counter() - started)
+        started = time.perf_counter()
+        _one(conn, privilege_query, (SCHEMA,))
+        privilege.append(time.perf_counter() - started)
     print(
-        f"  PR5  {roles} roles: membership query {len(paths)} paths in {membership:.2f} s;"
-        f" has_table_privilege over {roles} roles x {tables} tables, {granted} true,"
-        f" in {privilege:.2f} s"
+        f"  PR5  {roles} roles: membership query {len(paths)} paths in"
+        f" {min(membership):.2f} to {max(membership):.2f} s; has_table_privilege over"
+        f" {roles} roles x {tables} tables, {granted} true, in"
+        f" {min(privilege):.2f} to {max(privilege):.2f} s"
     )
 
 

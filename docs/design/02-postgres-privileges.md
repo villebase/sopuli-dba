@@ -247,12 +247,13 @@ missing grant, because it reports what the tool account holds.
 
 The UC-5 `report` commands are not built on PostgreSQL yet (#1411). This is
 what the tool account, `LOGIN CREATEROLE` and nothing else, can read for them.
-It was measured on 13.23 to 18.6 (`10_report_read_probe.py`, #1443). The
-reports need no grant beyond §2.1.
+It was measured on 13.23 to 18.6 (`10_report_read_probe.py`, #1443). Each
+catalog below is readable with §2.1's grants alone.
 
 - **Roles.** It reads all 13 columns of `pg_roles`, among them
   `rolcanlogin`, `rolvaliduntil` and the attributes. `rolpassword` reads as
-  `********`, and `pg_authid` is refused.
+  `********` for every role, with a password or without, so the tool account
+  cannot tell whether a role has one. `pg_authid` is refused.
 - **Lock, expiry and logins.** PostgreSQL has no lock and no failed-login
   counter. `NOLOGIN` and `VALID UNTIL` are the nearest things to a lock and an
   expiry. No catalog keeps a role's last password change, its last login or
@@ -265,8 +266,12 @@ reports need no grant beyond §2.1.
   is inherited when the member is `INHERIT`, and `GRANT … WITH INHERIT FALSE`
   is a syntax error, `42601`. From 16 a membership is inherited when the
   grant's `inherit_option` is true.
-- **Object privileges.** The ACLs of `pg_database`, `pg_namespace`,
-  `pg_class`, `pg_proc` and `pg_default_acl` read through `aclexplode()`.
+- **Object privileges.** The ACLs read through `aclexplode()` in each of
+  these catalogs: `pg_database`, `pg_namespace`, `pg_class`,
+  `pg_attribute` (column grants), `pg_proc`, `pg_default_acl`,
+  `pg_language`, `pg_type`, `pg_largeobject_metadata`,
+  `pg_foreign_data_wrapper`, `pg_foreign_server`, `pg_tablespace`, and
+  `pg_parameter_acl`, which exists from 15.
   Schema and object ACLs are per database: a session sees only the database it
   is connected to, and `has_table_privilege()` on another database's table is
   refused, `0A000`. `has_table_privilege()` given a name in a schema the tool
@@ -277,10 +282,9 @@ reports need no grant beyond §2.1.
   a function, `PUBLIC` hold privileges on it. `acldefault()` gives those. A
   grant to `PUBLIC` names grantee 0, which `pg_roles` has no row for. A report
   that joins `aclexplode()` to `pg_roles` alone misses both.
-- **Cost.** With about 520 roles and 1001 tables, the membership query took
-  0.02 s or less, and `has_table_privilege()` over every role and table took
-  0.20 to 0.47 s, and 2.3 to 2.6 s on the one release of each run that was
-  slow, a different one each time.
+- **Cost.** With about 520 roles and 1001 tables, after one untimed run, the
+  membership query took 0.01 s, and `has_table_privilege()` over every role
+  and table took 0.16 to 0.42 s on 14.24 to 18.6 and 1.7 to 2.0 s on 13.23.
 
 ---
 

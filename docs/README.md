@@ -549,6 +549,20 @@ such as "from 16", means the one release of it that was measured.
   each of its 4096 iterations: 0.1 s or less up to 8192 bytes, under 1 s at
   65536 and about 10 s at 1 MiB, at each login. Clients other than libpq were
   not measured. `sql/postgres/07_password_length_probe.py` measures it.
+- `verified` `pg-report-reads` (#1443) — **What can UC-5's report commands
+  read on PostgreSQL, with the tool account's grants?**
+  Every role in `pg_roles`, with `rolcanlogin` and `rolvaliduntil`, and every
+  membership in `pg_auth_members` with its path; a recursive query agrees
+  with `pg_has_role()` per role pair. `rolpassword` is the mask for every
+  role, so whether a role has a password cannot be read, and `pg_authid` is
+  refused. No catalog keeps a last password change, a last login or failed
+  logins. The ACLs of thirteen catalogs read through `aclexplode()`, only in
+  the database the session is connected to; another database's objects are
+  not visible. A default ACL is NULL until `acldefault()` expands it, and
+  `PUBLIC` is grantee 0, with no `pg_roles` row. Before 16 inheritance is the
+  member's `INHERIT`, and from 16 the grant's `inherit_option`.
+  `02-postgres-privileges.md` §2.5 has the details.
+  `sql/postgres/10_report_read_probe.py` measures it.
 - `unverified` `psycopg-libpq-macos` (#1032) — **Which libpq does psycopg's
   binary wheel bundle on macOS?**
   Not run: there is no macOS host. Linux arm64 is not run either. The libpq 16
@@ -1010,6 +1024,10 @@ and built on Oracle: `report accounts`, `report privileges` and
 `report history`. It reads every declared target, changes nothing, and is the
 only place that lists the accounts the config does not declare
 ([#1376](decisions/log.md#1376)).
+
+On PostgreSQL, MySQL and MariaDB the reports are not built. #1411 tracks that
+work, and lists the questions to decide before each report is specified there.
+PostgreSQL is next: what it can read is measured (`pg-report-reads`).
 
 ### UC-1b — self-rotation, where there is no admin credential
 

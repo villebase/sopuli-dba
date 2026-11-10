@@ -250,19 +250,21 @@ what the tool account, `LOGIN CREATEROLE` and nothing else, can read for them.
 It was measured on 13.23 to 18.6 (`10_report_read_probe.py`, #1443). The
 reports need no grant beyond §2.1.
 
-- **Roles.** It reads every column of `pg_roles`: `rolcanlogin`,
-  `rolvaliduntil` and the attributes. `rolpassword` reads as `********`, and
-  `pg_authid` is refused.
+- **Roles.** It reads all 13 columns of `pg_roles`, among them
+  `rolcanlogin`, `rolvaliduntil` and the attributes. `rolpassword` reads as
+  `********`, and `pg_authid` is refused.
 - **Lock, expiry and logins.** PostgreSQL has no lock and no failed-login
   counter. `NOLOGIN` and `VALID UNTIL` are the nearest things to a lock and an
   expiry. No catalog keeps a role's last password change, its last login or
   its failed logins, on any release. `pg_stat_database` counts sessions per
   database, from 14, and not per role.
 - **Memberships.** A recursive query over `pg_auth_members` gives each role's
-  roles with the path through them, and agrees with `pg_has_role()`. Before
-  16, a membership is inherited when the member is `INHERIT`. From 16 it is
-  inherited when the grant's `inherit_option` is true, and the server applies
-  `WITH INHERIT FALSE`. 13 to 15 ignore that clause.
+  roles with the path through them. A role can reach another by several
+  paths, and `pg_has_role()` answers per pair: it agrees with the query when a
+  pair counts as inherited where one of its paths is. Before 16, a membership
+  is inherited when the member is `INHERIT`, and `GRANT … WITH INHERIT FALSE`
+  is a syntax error, `42601`. From 16 a membership is inherited when the
+  grant's `inherit_option` is true.
 - **Object privileges.** The ACLs of `pg_database`, `pg_namespace`,
   `pg_class`, `pg_proc` and `pg_default_acl` read through `aclexplode()`.
   Schema and object ACLs are per database: a session sees only the database it
@@ -270,9 +272,15 @@ reports need no grant beyond §2.1.
   refused, `0A000`. `has_table_privilege()` given a name in a schema the tool
   account has no `USAGE` on is refused, `42501`, because the name is resolved
   with the tool account's rights. Given the table's oid, it answers.
+- **Default privileges.** An object nobody has granted or revoked on has a
+  NULL ACL, and `aclexplode()` gives no row for it, though the owner and, for
+  a function, `PUBLIC` hold privileges on it. `acldefault()` gives those. A
+  grant to `PUBLIC` names grantee 0, which `pg_roles` has no row for. A report
+  that joins `aclexplode()` to `pg_roles` alone misses both.
 - **Cost.** With about 520 roles and 1001 tables, the membership query took
   0.02 s or less, and `has_table_privilege()` over every role and table took
-  0.18 to 0.34 s, and about 2 s on 13.23.
+  0.20 to 0.47 s, and 2.3 to 2.6 s on the one release of each run that was
+  slow, a different one each time.
 
 ---
 

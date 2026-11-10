@@ -368,9 +368,10 @@ On PostgreSQL, where the reports are not built yet, the tool account reads
 what they need with the grants it already has. PostgreSQL keeps no date of a
 role's last password change, no last login and no failed logins, so those
 would always be *not checked* there, and `report history` would show only the
-store's records. Object privileges are per database: a target reports the
-grants of the database it connects to. Measured on 13.23 to 18.6
-(`02-postgres-privileges.md` §2.5, #1443).
+store's records. Object privileges are per database: a session can read only
+the grants of the database it connects to. What the privilege report does
+about the cluster's other databases is open (#1411, question 4). Measured on
+13.23 to 18.6 (`02-postgres-privileges.md` §2.5, #1443).
 
 ---
 

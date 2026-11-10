@@ -4,8 +4,9 @@
 account is LOGIN CREATEROLE and nothing else (02-postgres-privileges.md §2.1).
 This measures, on each server, as that account unless a step says otherwise:
 
-  PR0  which columns of pg_roles it reads, whether rolpassword reads as the
-       mask ******** there, and whether pg_authid refuses it
+  PR0  which of pg_roles's columns it reads, every one the catalog lists,
+       whether rolpassword reads as the mask ******** there, and whether
+       pg_authid refuses it
   PR1  which pg_catalog columns could hold an account's lock, expiry, last
        password change, last login or failed logins: a column of a role
        catalog whose name contains passw, login, fail, valid, lock, expir,
@@ -14,15 +15,19 @@ This measures, on each server, as that account unless a step says otherwise:
        value
   PR2  pg_auth_members's columns, and whether a recursive query over it gives
        each fixture role's roles with the path, as pg_has_role() does: MEMBER
-       for every membership, USAGE for the inherited ones. Inheritance is
-       pg_auth_members.inherit_option where the column exists, and the
-       member's rolinherit where it does not
+       for every membership, and USAGE where at least one path is inherited.
+       Inheritance is pg_auth_members.inherit_option where the column
+       exists, and the member's rolinherit where it does not. The setup also
+       says whether the server accepted GRANT ... WITH INHERIT FALSE
   PR3  the ACLs of pg_database, pg_namespace, pg_class, pg_proc and
        pg_default_acl through aclexplode(), which fixture grants each shows,
        and whether a grant made in a second database can be seen from the
        first, by ACL or by has_table_privilege(). Then has_table_privilege()
        on a table the tool account has no USAGE on its schema for, by name
-       and by oid, for an inheriting, a NOINHERIT and an INHERIT FALSE member
+       and by oid, for an inheriting, a NOINHERIT and an INHERIT FALSE member.
+       Then a function left with its default ACL: what aclexplode() gives for
+       its NULL proacl, and what it gives for acldefault('f', owner), with
+       PUBLIC, grantee 0, which has no pg_roles row
   PR5  the time of PR2's query over every role, and of has_table_privilege()
        over every role and table, after the superuser adds 500 roles in
        chains of five and 1000 tables, each granted to one role
@@ -41,9 +46,14 @@ The fixture, which the superuser creates on each server:
                       pg_read_all_settings
   sopuli_probe_top    NOLOGIN, granted SELECT on sopuli_probe.t
   sopuli_probe_noinh  LOGIN NOINHERIT, a member of sopuli_probe_top
-  sopuli_probe_set    LOGIN, a member of sopuli_probe_top WITH INHERIT FALSE
-                      where the server has the option
-  schema sopuli_probe, table t, function f(), and default privileges for
+  sopuli_probe_set    LOGIN, a member of sopuli_probe_top, granted WITH
+                      INHERIT FALSE; where the server refuses the clause, the
+                      probe says so and grants without it
+  sopuli_probe_two    LOGIN, a member of sopuli_probe_mid, and of
+                      sopuli_probe_top directly as sopuli_probe_set is: two
+                      paths to sopuli_probe_top
+  schema sopuli_probe, table t, function f() granted to sopuli_probe_app
+  alone, function g() left with its default ACL, and default privileges for
   sopuli_probe_top on the schema's tables
   database sopuli_probe_db2, with a table t2 granted to sopuli_probe_app
 
@@ -54,29 +64,36 @@ STATUS: run on 13.23, 14.24, 15.19, 16.15, 17.11 and 18.6, the postgres:13 to
 postgres:18 images of test/compose.yaml profile postgres-matrix, on 2026-11-10
 (#1443). The client was psycopg 3.3.6 with libpq 18.4, on Windows 11 AMD64.
 Twice, exit 0, the same result both times but for the timings, which are the
-ranges below.
+ranges below. An earlier version of the probe, which did not send WITH
+INHERIT FALSE to 13 to 15 and had no two-path member and no g(), is not
+counted.
 
 RESULTS
 
-  PR0  the tool account reads all 11 columns of pg_roles. rolpassword reads
-       as the mask ******** for a role with a password. pg_authid refuses
-       it: 42501, "permission denied for table pg_authid". rolcanlogin and
-       rolvaliduntil read as each fixture role was created
+  PR0  pg_roles has 13 columns, and the tool account reads all 13: rolname,
+       the attributes, rolconnlimit, rolpassword, rolvaliduntil, rolconfig
+       and oid. rolpassword reads as the mask ******** for a role with a
+       password. pg_authid refuses it: 42501, "permission denied for table
+       pg_authid". rolcanlogin and rolvaliduntil read as each fixture role
+       was created
   PR1  no column holds an account's last password change, last login or
        failed logins, on any release. The role catalogs have rolcanlogin,
        rolvaliduntil and the password column alone. pg_stat_database counts
        sessions, sessions_fatal and the like from 14, per database and not
        per role. 17 adds pg_database.dathasloginevt, which says only that a
        login event trigger exists
-  PR2  pg_auth_members has roleid, member, grantor and admin_option on 13 to
-       15. 16 adds oid, inherit_option and set_option. The recursive query
-       gives 7 paths for the fixture roles, the same on every release but
-       one: on 16 to 18 the WITH INHERIT FALSE grant to sopuli_probe_set
-       is not inherited, and on 13 to 15, which ignore the clause, it is.
-       Each path agrees with pg_has_role(), USAGE and MEMBER, and pg_has_role
-       knows no membership the query misses. A NOINHERIT member is a MEMBER
-       without USAGE on every release. pg_read_all_settings appears in the
-       path as any role does
+  PR2  13 to 15 refuse GRANT ... WITH INHERIT FALSE: 42601, "syntax error at
+       or near "INHERIT"". 16 to 18 accept it. pg_auth_members has roleid,
+       member, grantor and admin_option on 13 to 15, and 16 adds oid,
+       inherit_option and set_option. The recursive query gives 11 paths and
+       10 role pairs for the fixture roles. On 16 to 18 the WITH INHERIT FALSE
+       grants are not inherited; on 13 to 15 they were made without the
+       clause, and are. Each pair agrees with pg_has_role(): MEMBER for every
+       pair, and USAGE where one of its paths is inherited. sopuli_probe_two
+       reaches sopuli_probe_top by an inherited path through sopuli_probe_mid
+       and, on 16 to 18, a direct path that is not, and pg_has_role USAGE is
+       true. pg_has_role knows no membership the query misses. A NOINHERIT
+       member is a MEMBER without USAGE on every release
   PR3  the tool account reads every ACL of the five catalogs: USAGE on the
        schema, SELECT on t, EXECUTE on f() and the default SELECT on tables
        for sopuli_probe_top. pg_database shows no fixture grant, as none was
@@ -86,20 +103,26 @@ RESULTS
        has_table_privilege() on sopuli_probe.t by name is refused, 42501,
        "permission denied for schema sopuli_probe", because the name is
        resolved with the tool account's own rights. By oid it answers: true
-       for the inheriting member, false for the NOINHERIT one, and for the
-       INHERIT FALSE one false on 16 to 18 and true on 13 to 15
-  PR5  about 520 roles, 1010 membership paths: the recursive query takes
+       for the inheriting member, false for the NOINHERIT one, and for
+       sopuli_probe_set false on 16 to 18 and true on 13 to 15. g()'s proacl
+       is NULL, and aclexplode() of it gives no row.
+       aclexplode(acldefault('f', owner)) gives PUBLIC EXECUTE and the
+       owner's EXECUTE. PUBLIC is grantee 0, and pg_roles has no row for it
+  PR5  about 520 roles, 1014 membership paths: the recursive query takes
        0.01 to 0.02 s. has_table_privilege() over every role and the 1001
-       tables of the schema takes 0.18 to 0.34 s, and 1.92 to 2.40 s on
-       13.23. 8005 pairs are true, and 9006 on 14 and 15: the bulk tables
-       take the fixture's default SELECT for sopuli_probe_top, so the INHERIT
-       FALSE member holds 1001 of them where the clause is ignored, and
-       pg_read_all_data holds 1001 from 14
+       tables of the schema takes 0.20 to 0.47 s, and in one release of
+       each run 2.3 to 2.6 s, on 15.19 in one run and 13.23 in the other.
+       9006 pairs are true, and 10007 on 14 and 15: the bulk tables take the
+       fixture's default SELECT for sopuli_probe_top, so pg_read_all_data
+       holds 1001 of them from 14, and sopuli_probe_set holds 1001 where its
+       grant is inherited, on 13 to 15
 
-  So a target, which is one database, can report every role, its login and
+  So a target, which is one database, can read every role, its login and
   expiry, and its memberships with the path, as the tool account holds them
-  today. It can report object privileges only in the database it connects
-  to. It can report no last password change, last login or failed logins.
+  today. It can read object privileges only in the database it connects to,
+  and an object with its default privileges has a NULL ACL, which only
+  acldefault() expands. It can read no last password change, last login or
+  failed logins.
 
 HOW TO RUN, against the matrix (test/README.md), from the repo root, with the
 repo's virtual environment:
@@ -120,8 +143,7 @@ from __future__ import annotations
 import os
 import sys
 import time
-from collections.abc import Iterator
-from contextlib import contextmanager
+from typing import Any
 
 import psycopg
 from psycopg import sql
@@ -140,26 +162,13 @@ FIXTURE = (
     "sopuli_probe_top",
     "sopuli_probe_noinh",
     "sopuli_probe_set",
+    "sopuli_probe_two",
 )
 SCHEMA = "sopuli_probe"
 DB2 = "sopuli_probe_db2"
 BULK_ROLES = 500
 BULK_TABLES = 1000
 CHAIN = 5
-
-PG_ROLES_COLUMNS = (
-    "rolname",
-    "rolsuper",
-    "rolinherit",
-    "rolcreaterole",
-    "rolcreatedb",
-    "rolcanlogin",
-    "rolreplication",
-    "rolconnlimit",
-    "rolvaliduntil",
-    "rolbypassrls",
-    "rolconfig",
-)
 
 #: PR2. Every role a role is a member of, directly or through others, with
 #: the path and whether every step of it is inherited. `{inherit}` is the
@@ -191,19 +200,18 @@ INHERIT_BY_OPTION = "a.inherit_option"
 INHERIT_BY_MEMBER = "r.rolinherit"
 
 
-class StepError(Exception):
-    """A step that is not a result failed."""
-
-
 def _port(version: int) -> str:
     return os.environ.get(f"SOPULI_TEST_POSTGRES{version}_PORT", f"54{version}")
 
 
-@contextmanager
 def _connect(
-    version: int, user: str, password: str, dbname: str = "postgres"
-) -> Iterator[psycopg.Connection]:
-    with psycopg.connect(
+    version: int,
+    user: str = "postgres",
+    password: str = SUPERUSER_PASSWORD,
+    dbname: str = "postgres",
+) -> psycopg.Connection[Any]:
+    """The superuser by default, or the tool account."""
+    return psycopg.connect(
         host="127.0.0.1",
         port=_port(version),
         user=user,
@@ -211,29 +219,36 @@ def _connect(
         dbname=dbname,
         autocommit=True,
         connect_timeout=10,
-    ) as conn:
-        yield conn
-
-
-def _superuser(version: int, dbname: str = "postgres") -> psycopg.Connection:
-    return psycopg.connect(
-        host="127.0.0.1",
-        port=_port(version),
-        user="postgres",
-        password=SUPERUSER_PASSWORD,
-        dbname=dbname,
-        autocommit=True,
-        connect_timeout=10,
     )
 
 
-def _has_column(conn: psycopg.Connection, relation: str, column: str) -> bool:
-    found = conn.execute(
-        "SELECT 1 FROM pg_attribute WHERE attrelid = %s::regclass AND attname = %s"
-        " AND NOT attisdropped",
-        (relation, column),
-    ).fetchone()
-    return found is not None
+def _one(conn: psycopg.Connection[Any], query: Any, params: Any = None) -> Any:
+    """The first column of the one row a query returns."""
+    row = conn.execute(query, params).fetchone()
+    if row is None:
+        raise RuntimeError(f"no row from: {query}")
+    return row[0]
+
+
+def _has_column(conn: psycopg.Connection[Any], relation: str, column: str) -> bool:
+    return bool(
+        _one(
+            conn,
+            "SELECT count(*) FROM pg_attribute WHERE attrelid = %s::regclass AND attname = %s"
+            " AND NOT attisdropped",
+            (relation, column),
+        )
+    )
+
+
+def _inherit(conn: psycopg.Connection[Any]) -> str:
+    """Where a membership's inheritance is read: the grant's option, where the
+    catalog has one, or the member's attribute."""
+    return (
+        INHERIT_BY_OPTION
+        if _has_column(conn, "pg_auth_members", "inherit_option")
+        else INHERIT_BY_MEMBER
+    )
 
 
 def _all_roles() -> list[str]:
@@ -242,20 +257,31 @@ def _all_roles() -> list[str]:
 
 def _clean(version: int) -> None:
     """Drop what this probe creates, whatever an earlier run left."""
-    with _superuser(version) as su:
+    with _connect(version) as su:
         su.execute(sql.SQL("DROP DATABASE IF EXISTS {}").format(sql.Identifier(DB2)))
         su.execute(sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(sql.Identifier(SCHEMA)))
         for role in _all_roles():
-            exists = su.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (role,)).fetchone()
-            if exists:
+            if _one(su, "SELECT count(*) FROM pg_roles WHERE rolname = %s", (role,)):
                 su.execute(sql.SQL("DROP OWNED BY {}").format(sql.Identifier(role)))
                 su.execute(sql.SQL("DROP ROLE {}").format(sql.Identifier(role)))
 
 
-def _setup(version: int) -> bool:
-    """Create the fixture. Returns whether a grant can be WITH INHERIT FALSE."""
-    with _superuser(version) as su:
-        has_option = _has_column(su, "pg_auth_members", "inherit_option")
+def _grant_without_inherit(su: psycopg.Connection[Any], member: str) -> None:
+    """GRANT sopuli_probe_top WITH INHERIT FALSE, or without the clause where
+    the server refuses it, and say which."""
+    try:
+        su.execute(f"GRANT sopuli_probe_top TO {member} WITH INHERIT FALSE")
+        print(f"  PR2  GRANT ... TO {member} WITH INHERIT FALSE: accepted")
+    except psycopg.Error as error:
+        print(
+            f"  PR2  GRANT ... TO {member} WITH INHERIT FALSE:"
+            f" {error.sqlstate} {error.diag.message_primary}; granted without it"
+        )
+        su.execute(f"GRANT sopuli_probe_top TO {member}")
+
+
+def _setup(version: int) -> None:
+    with _connect(version) as su:
         statements = [
             f"CREATE ROLE {ADMIN} LOGIN CREATEROLE PASSWORD '{ADMIN_PASSWORD}'",
             "CREATE ROLE sopuli_probe_top NOLOGIN",
@@ -265,12 +291,12 @@ def _setup(version: int) -> bool:
             "CREATE ROLE sopuli_probe_off NOLOGIN",
             "CREATE ROLE sopuli_probe_noinh LOGIN NOINHERIT",
             "CREATE ROLE sopuli_probe_set LOGIN",
+            "CREATE ROLE sopuli_probe_two LOGIN",
             "GRANT sopuli_probe_top TO sopuli_probe_mid",
             "GRANT pg_read_all_settings TO sopuli_probe_mid",
             "GRANT sopuli_probe_mid TO sopuli_probe_app",
+            "GRANT sopuli_probe_mid TO sopuli_probe_two",
             "GRANT sopuli_probe_top TO sopuli_probe_noinh",
-            "GRANT sopuli_probe_top TO sopuli_probe_set"
-            + (" WITH INHERIT FALSE" if has_option else ""),
             f"CREATE SCHEMA {SCHEMA}",
             f"CREATE TABLE {SCHEMA}.t (n int)",
             f"GRANT USAGE ON SCHEMA {SCHEMA} TO sopuli_probe_top",
@@ -278,21 +304,23 @@ def _setup(version: int) -> bool:
             f"CREATE FUNCTION {SCHEMA}.f() RETURNS int LANGUAGE sql AS 'SELECT 1'",
             f"REVOKE EXECUTE ON FUNCTION {SCHEMA}.f() FROM PUBLIC",
             f"GRANT EXECUTE ON FUNCTION {SCHEMA}.f() TO sopuli_probe_app",
+            f"CREATE FUNCTION {SCHEMA}.g() RETURNS int LANGUAGE sql AS 'SELECT 1'",
             f"ALTER DEFAULT PRIVILEGES IN SCHEMA {SCHEMA} GRANT SELECT ON TABLES"
             " TO sopuli_probe_top",
             f"CREATE DATABASE {DB2}",
         ]
         for statement in statements:
             su.execute(statement)
-    with _superuser(version, DB2) as su2:
+        _grant_without_inherit(su, "sopuli_probe_set")
+        _grant_without_inherit(su, "sopuli_probe_two")
+    with _connect(version, dbname=DB2) as su2:
         su2.execute("CREATE TABLE t2 (n int)")
         su2.execute("GRANT SELECT ON t2 TO sopuli_probe_app")
-    return has_option
 
 
 def _bulk(version: int) -> None:
     """PR5's estate: chains of five roles, and tables each granted to one."""
-    with _superuser(version) as su, su.transaction():
+    with _connect(version) as su, su.transaction():
         for n in range(BULK_ROLES):
             su.execute(sql.SQL("CREATE ROLE {} NOLOGIN").format(_bulk_role(n)))
             if n % CHAIN:
@@ -309,19 +337,29 @@ def _bulk_role(n: int) -> sql.Identifier:
     return sql.Identifier(f"sopuli_probe_r{n}")
 
 
-def _pr0(conn: psycopg.Connection) -> None:
-    readable = []
-    for column in PG_ROLES_COLUMNS:
+def _pr0(conn: psycopg.Connection[Any]) -> None:
+    columns = [
+        row[0]
+        for row in conn.execute(
+            "SELECT attname::text FROM pg_attribute WHERE attrelid = 'pg_roles'::regclass"
+            " AND attnum > 0 AND NOT attisdropped ORDER BY attnum"
+        ).fetchall()
+    ]
+    refused = []
+    for column in columns:
         try:
             conn.execute(sql.SQL("SELECT {} FROM pg_roles LIMIT 1").format(sql.Identifier(column)))
-            readable.append(column)
         except psycopg.Error as error:
+            refused.append(column)
             print(f"  PR0  pg_roles.{column}: {error.sqlstate} {error.diag.message_primary}")
-    print(f"  PR0  pg_roles readable: {len(readable)} of {len(PG_ROLES_COLUMNS)} columns")
-    masked = conn.execute(
-        "SELECT rolpassword = '********' FROM pg_roles WHERE rolname = %s", (ADMIN,)
-    ).fetchone()
-    print(f"  PR0  pg_roles.rolpassword is the mask for a role with a password: {masked[0]}")
+    print(
+        f"  PR0  pg_roles columns: {len(columns)}, read {len(columns) - len(refused)}:"
+        f" {', '.join(columns)}"
+    )
+    masked = _one(
+        conn, "SELECT rolpassword = '********' FROM pg_roles WHERE rolname = %s", (ADMIN,)
+    )
+    print(f"  PR0  pg_roles.rolpassword is the mask for a role with a password: {masked}")
     try:
         conn.execute("SELECT rolname FROM pg_authid LIMIT 1")
         print("  PR0  pg_authid: READ")
@@ -336,7 +374,7 @@ def _pr0(conn: psycopg.Connection) -> None:
         print(f"  PR0  {name}: rolcanlogin={can_login} rolvaliduntil={valid_until}")
 
 
-def _pr1(conn: psycopg.Connection) -> None:
+def _pr1(conn: psycopg.Connection[Any]) -> None:
     rows = conn.execute(
         """
         SELECT c.relname::text || '.' || a.attname::text
@@ -358,47 +396,50 @@ def _pr1(conn: psycopg.Connection) -> None:
     print(f"  PR1  pg_catalog columns: {', '.join(row[0] for row in rows)}")
 
 
-def _pr2(conn: psycopg.Connection) -> None:
+def _pr2(conn: psycopg.Connection[Any]) -> None:
     columns = conn.execute(
         "SELECT attname::text FROM pg_attribute WHERE attrelid = 'pg_auth_members'::regclass"
         " AND attnum > 0 AND NOT attisdropped ORDER BY attnum"
     ).fetchall()
     print(f"  PR2  pg_auth_members columns: {', '.join(row[0] for row in columns)}")
-    has_option = _has_column(conn, "pg_auth_members", "inherit_option")
-    inherit = INHERIT_BY_OPTION if has_option else INHERIT_BY_MEMBER
+    inherit = _inherit(conn)
     print(f"  PR2  inheritance read from: {inherit}")
     rows = conn.execute(
-        sql.SQL(MEMBERSHIP_QUERY.format(inherit=inherit))  # type: ignore[arg-type]
-        + sql.SQL(" WHERE r.rolname = ANY(%s) ORDER BY 1, 2"),
+        MEMBERSHIP_QUERY.format(inherit=inherit) + " WHERE r.rolname = ANY(%s) ORDER BY 1, 2, 3",
         (list(FIXTURE),),
     ).fetchall()
-    disagree = 0
+    # pg_has_role() answers per role pair. A pair is inherited when any one
+    # of its paths is.
+    pairs: dict[tuple[str, str], bool] = {}
     for member, role, path, inherited in rows:
+        pairs[(member, role)] = pairs.get((member, role), False) or inherited
+        print(f"  PR2  {' -> '.join(path)}: inherited={inherited}")
+    disagree = []
+    for (member, role), inherited in sorted(pairs.items()):
         usage, is_member = conn.execute(
             "SELECT pg_has_role(%s, %s, 'USAGE'), pg_has_role(%s, %s, 'MEMBER')",
             (member, role, member, role),
-        ).fetchone()
-        agrees = is_member and usage == inherited
-        disagree += not agrees
+        ).fetchone() or (None, None)
+        if not (is_member and usage == inherited):
+            disagree.append((member, role))
         print(
-            f"  PR2  {' -> '.join(path)}: inherited={inherited}"
-            f" pg_has_role USAGE={usage} MEMBER={is_member}" + ("" if agrees else "  DISAGREES")
+            f"  PR2  pair {member} in {role}: inherited={inherited}"
+            f" pg_has_role USAGE={usage} MEMBER={is_member}"
         )
     # The other direction: a membership pg_has_role knows and the query does not.
-    found = {(member, role) for member, role, _, _ in rows}
-    missed = conn.execute(
+    known = conn.execute(
         "SELECT r.rolname::text, g.rolname::text FROM pg_roles r CROSS JOIN pg_roles g"
         " WHERE r.rolname = ANY(%s) AND r.oid <> g.oid AND pg_has_role(r.oid, g.oid, 'MEMBER')",
         (list(FIXTURE),),
     ).fetchall()
-    missing = [pair for pair in missed if pair not in found]
+    missing = [pair for pair in known if pair not in pairs]
     print(
-        f"  PR2  {len(rows)} paths, {disagree} disagree with pg_has_role,"
-        f" {len(missing)} memberships missing: {missing}"
+        f"  PR2  {len(rows)} paths, {len(pairs)} pairs, {len(disagree)} disagree with"
+        f" pg_has_role {disagree}, {len(missing)} memberships missing {missing}"
     )
 
 
-def _pr3(conn: psycopg.Connection) -> None:
+def _pr3(conn: psycopg.Connection[Any]) -> None:
     sources = {
         "pg_database": "SELECT datname::text, datacl FROM pg_database",
         "pg_namespace": "SELECT nspname::text, nspacl FROM pg_namespace",
@@ -414,8 +455,8 @@ def _pr3(conn: psycopg.Connection) -> None:
                   FROM ({query}) AS o(name, acl)
                   CROSS JOIN LATERAL aclexplode(o.acl) x
                   JOIN pg_roles g ON g.oid = x.grantee
-                 WHERE g.rolname LIKE 'sopuli\\_probe\\_%%'
-                   AND g.rolname NOT LIKE 'sopuli\\_probe\\_r%%'
+                 WHERE g.rolname LIKE 'sopuli\\_probe\\_%'
+                   AND g.rolname NOT LIKE 'sopuli\\_probe\\_r%'
                  ORDER BY 1, 2, 3
                 """
             ).fetchall()
@@ -423,8 +464,8 @@ def _pr3(conn: psycopg.Connection) -> None:
             print(f"  PR3  {name}: {shown or 'no fixture grant'}")
         except psycopg.Error as error:
             print(f"  PR3  {name}: {error.sqlstate} {error.diag.message_primary}")
-    visible = conn.execute("SELECT count(*) FROM pg_class WHERE relname = 't2'").fetchone()
-    print(f"  PR3  from postgres, pg_class rows for {DB2}'s t2: {visible[0]}")
+    visible = _one(conn, "SELECT count(*) FROM pg_class WHERE relname = 't2'")
+    print(f"  PR3  from postgres, pg_class rows for {DB2}'s t2: {visible}")
     try:
         conn.execute(f"SELECT has_table_privilege('sopuli_probe_app', '{DB2}.public.t2', 'SELECT')")
         print(f"  PR3  has_table_privilege on {DB2}.public.t2 from postgres: answered")
@@ -442,29 +483,52 @@ def _pr3(conn: psycopg.Connection) -> None:
             f" {error.sqlstate} {error.diag.message_primary}"
         )
     for role in ("sopuli_probe_app", "sopuli_probe_noinh", "sopuli_probe_set"):
-        answer = conn.execute(
+        answer = _one(
+            conn,
             "SELECT has_table_privilege(%s, c.oid, 'SELECT') FROM pg_class c"
             " JOIN pg_namespace n ON n.oid = c.relnamespace"
             " WHERE n.nspname = %s AND c.relname = 't'",
             (role, SCHEMA),
-        ).fetchone()
-        print(f"  PR3  has_table_privilege({role}, oid of {SCHEMA}.t, SELECT): {answer[0]}")
+        )
+        print(f"  PR3  has_table_privilege({role}, oid of {SCHEMA}.t, SELECT): {answer}")
+    # g() keeps its default ACL, which the catalog stores as NULL.
+    acl, stored, defaults = conn.execute(
+        """
+        SELECT p.proacl IS NULL,
+               (SELECT count(*) FROM aclexplode(p.proacl)),
+               (SELECT string_agg(
+                         CASE x.grantee WHEN 0 THEN 'PUBLIC'
+                              ELSE (SELECT rolname::text FROM pg_roles WHERE oid = x.grantee)
+                         END || ' ' || x.privilege_type, '; ' ORDER BY 1)
+                  FROM aclexplode(acldefault('f', p.proowner)) x)
+          FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+         WHERE n.nspname = %s AND p.proname = 'g'
+        """,
+        (SCHEMA,),
+    ).fetchone() or (None, None, None)
+    print(
+        f"  PR3  g() with its default ACL: proacl is NULL={acl}; aclexplode(proacl) rows"
+        f" {stored}; aclexplode(acldefault('f', owner)): {defaults}"
+    )
+    public = _one(conn, "SELECT count(*) FROM pg_roles WHERE oid = 0")
+    print(f"  PR3  pg_roles rows for grantee 0 (PUBLIC): {public}")
 
 
-def _pr5(conn: psycopg.Connection) -> None:
-    has_option = _has_column(conn, "pg_auth_members", "inherit_option")
-    inherit = INHERIT_BY_OPTION if has_option else INHERIT_BY_MEMBER
-    roles = conn.execute("SELECT count(*) FROM pg_roles").fetchone()[0]
+def _pr5(conn: psycopg.Connection[Any]) -> None:
+    inherit = _inherit(conn)
+    roles = _one(conn, "SELECT count(*) FROM pg_roles")
     started = time.perf_counter()
-    paths = conn.execute(MEMBERSHIP_QUERY.format(inherit=inherit)).fetchall()  # type: ignore[call-overload]
+    paths = conn.execute(MEMBERSHIP_QUERY.format(inherit=inherit)).fetchall()
     membership = time.perf_counter() - started
-    tables = conn.execute(
+    tables = _one(
+        conn,
         "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace"
         " WHERE n.nspname = %s AND c.relkind = 'r'",
         (SCHEMA,),
-    ).fetchone()[0]
+    )
     started = time.perf_counter()
-    granted = conn.execute(
+    granted = _one(
+        conn,
         """
         SELECT count(*)
           FROM pg_roles r
@@ -474,7 +538,7 @@ def _pr5(conn: psycopg.Connection) -> None:
            AND has_table_privilege(r.oid, c.oid, 'SELECT')
         """,
         (SCHEMA,),
-    ).fetchone()[0]
+    )
     privilege = time.perf_counter() - started
     print(
         f"  PR5  {roles} roles: membership query {len(paths)} paths in {membership:.2f} s;"
@@ -484,8 +548,8 @@ def _pr5(conn: psycopg.Connection) -> None:
 
 
 def probe(version: int) -> None:
-    with _superuser(version) as su:
-        release = su.execute("SHOW server_version").fetchone()[0]
+    with _connect(version) as su:
+        release = _one(su, "SHOW server_version")
     print(f"PostgreSQL {release} (port {_port(version)})")
     _clean(version)
     try:
@@ -507,7 +571,7 @@ def main() -> int:
     for version in VERSIONS:
         try:
             probe(version)
-        except (psycopg.Error, StepError) as error:
+        except (psycopg.Error, RuntimeError) as error:
             failed += 1
             print(f"PostgreSQL {version}: FAILED: {error}")
     return 1 if failed else 0

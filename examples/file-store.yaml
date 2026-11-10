@@ -5,19 +5,22 @@
 # It is not for production, and the tool says so: every run that opens a file
 # store warns with SOPULI-W070. Three more limits follow from what it is:
 #
-#   - only this machine can read it. An application on another machine, or
-#     External Secrets Operator, cannot fetch a password from it;
+#   - it is a file on this machine. No application elsewhere, and not
+#     External Secrets Operator, can fetch a password from it;
 #   - the personal-account commands (UC-2) refuse it, because those passwords
 #     belong to real people;
-#   - it has no compare-and-set, so two runs at once could overwrite each
-#     other. A command that changes it needs `locking: advisory-only`, which
-#     says you know that.
+#   - it has no compare-and-set, so it cannot hold a lock. Before it replaces
+#     its file it checks that nobody else changed it, which turns most
+#     clashes between two runs into a refusal, but that is not a lock. A
+#     command that changes it needs `locking: advisory-only`, which says you
+#     know that.
 #
 # It needs the file extra:  pip install "sopuli-dba[file]"
-# The identity is an age key. Make one with
+# The identity is an age key. Make the directory, then the key:
+#     mkdir ~/sopuli-file
 #     age-keygen -o ~/sopuli-file/identity.txt
-# and keep it readable only by you. ../docs/local-testing.md has a first run
-# with a file store.
+# (In Windows PowerShell 5.1, write the full path in place of `~`.) Keep the
+# key readable only by you.
 #
 # Check it before you use it:
 #     sopuli --config file-store.yaml config validate
@@ -45,7 +48,9 @@ vaults:
     # Absent means the identity's key alone.
     recipients:
       - age13ew8qgf5ustm9t0ckerem09e928n33pzdlfccmdr343msctm5c5s4esmd5
-    # How many versions of each password the file keeps. Absent means 10.
+    # How many versions of each path the file keeps. Absent means 10. Here
+    # both accounts share one path per target, so a change to either one
+    # uses up a version.
     max_versions: 5
     locking: advisory-only
     # A file store must never hold a production password. With this, the tool

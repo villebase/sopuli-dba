@@ -675,9 +675,10 @@ These properties of the object are decisions:
   field that is almost always empty.
 - **`auth:` is not in `settings`.** A layer replaces it whole; it is not
   resolved key by key, so no layer won a key and there is no `resolved_setting`
-  to emit. It is also the part of a store entry that addresses credentials, and
-  §4's redaction rule is easier to keep by structure: there is nowhere here for
-  it to go.
+  to emit. A file store's `identity` is in `settings` although it also names
+  where a secret comes from: it is one key that only the declaration sets, and
+  a MaterialRef holds a source and a location, never a value, so §4's redaction
+  rule still holds by structure.
 
 The JSON carries the provenance whether or not `--explain` was passed, unlike the
 text table. There is nothing to filter: no `vaults.*` setting has a built-in

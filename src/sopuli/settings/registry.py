@@ -593,11 +593,10 @@ SETTINGS: MappingProxyType[str, Setting] = MappingProxyType(
             # will be: a layer may not write them at all, so there is nothing to
             # merge and an entry here would advertise one.
             #
-            # `auth:` is absent for a different reason -- it is a block, not a
-            # scalar, and `SETTING_TYPES` has no shape for it. It is replaced
-            # whole by the highest layer that wrote one, which needs no merge
-            # rule; `sopuli/config/vault_layers.py` says why whole rather than
-            # key by key.
+            # `auth:` is absent for a different reason: it is replaced whole by
+            # the highest layer that wrote one, so no key of it is merged and
+            # there is nothing to register; `sopuli/config/vault_layers.py` says
+            # why whole rather than key by key.
             # The environment layers are §6's table, key by key.
             # `addr` is the only one with a `SOPULI_*` variable of its own --
             # both the named form and the unnamed one are layer 2 -- while

@@ -96,6 +96,13 @@ PERMITTED = {
     ),
     "store/credentials.py": "the vault write -- invariant 2's first exception",
     "store/hashicorp/_auth.py": "the vault login, which is the write's other half",
+    "os_keyring.py": (
+        "`keyring set` (decision #1417): the tool's own credential, such as a vault "
+        "token, which the operator typed or piped in, passed to the OS keyring that "
+        "the tool reads it back from -- the vault login's class, not a numbered "
+        "exception, as no managed password takes this path; and the comparison with "
+        "the entry's old value, made in the process for `passwords.py`'s reason"
+    ),
     "store/hashicorp/_transport.py": "the token on the wire, for the same reason",
     "store/file/_crypto.py": (
         "the file store's age identity, given to pyrage in the process to decrypt the "

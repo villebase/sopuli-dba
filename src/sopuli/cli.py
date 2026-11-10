@@ -60,7 +60,9 @@ gates, the confirmation, and the document.
 
 from __future__ import annotations
 
+import getpass
 import importlib
+import io
 import os
 import re
 import sys
@@ -74,7 +76,7 @@ from typing import Any, TypeVar
 
 import click
 
-from sopuli import account_list, expire, preflight, reset, reset_record, suspend
+from sopuli import account_list, expire, os_keyring, preflight, reset, reset_record, suspend
 from sopuli import apply as apply_states
 from sopuli import check as check_states
 from sopuli import constraints as constraint_source
@@ -250,8 +252,17 @@ from sopuli.invocation import (
     all_options,
     check_vault_token,
     global_options,
+    global_options_config_optional,
     group_options,
     show_warnings,
+)
+from sopuli.keyring_change import (
+    WHERE_SET,
+    Change,
+    check_name,
+    delete_entry,
+    read_value,
+    set_entry,
 )
 from sopuli.keyring_survey import survey as keyring_survey
 from sopuli.lock.errors import LockDeniedError, LockError, LockStolenError
@@ -5628,6 +5639,107 @@ def _confirm(question: str, **options: Any) -> bool:
     would overwrite the question being answered.
     """
     return bool(click.confirm(printable(question, colour=False), **options))
+
+
+@cli.group("keyring")
+def keyring_group() -> None:
+    """Write and remove the tool's own credentials in the OS keyring."""
+
+
+@keyring_group.command("set")
+@click.argument("entry", metavar="NAME")
+@click.option(
+    "--replace",
+    is_flag=True,
+    default=False,
+    help="Replace an entry that holds a different value.",
+)
+@global_options_config_optional
+def keyring_set(entry: str, replace: bool, run: Invocation) -> str:
+    """Store a credential the tool reads, such as a vault token, in the OS keyring.
+
+    The entry is NAME under the service `sopuli`, which a config reads with
+    `{ keyring: NAME }` or an admin credential's `method: keyring` and
+    `entry: NAME`. The keyring is Windows Credential Manager, the macOS
+    Keychain, or the Secret Service or KWallet on Linux, as the user who runs
+    the command. Install the extra `sopuli-dba[keyring]` first.
+
+    The value is read from stdin when it is piped or redirected, with one
+    trailing newline removed. At a terminal the command asks for it twice and
+    does not show it. It is never an option, because the process list shows
+    the command line. Git Bash's terminal (mintty) without `winpty` looks
+    like a pipe, so there the command reads stdin without asking: pipe the
+    value in, or use Windows Terminal.
+
+    The command needs no config, so it can run on a new machine before the
+    config can authenticate. When a config is loaded and names no such entry,
+    the output says so. `--dry-run` shows what would change and writes
+    nothing.
+
+    Running it again with the same value changes nothing and reports
+    `unchanged`. Replacing an entry that holds a different value needs
+    `--replace`: every run that reads the entry will use the new value.
+    Without it, the command exits 8.
+    """
+    _refuse_vault_options(run, WHERE_SET)
+    name = check_name(entry)
+    # The backend first: a machine with no keyring refuses before anybody is
+    # asked to type a value it cannot store.
+    os_keyring.backend(where=WHERE_SET)
+    # No stdin at all, under a service launcher, reads as empty and is refused
+    # as an empty value, with its hint.
+    stdin = getattr(sys.stdin, "buffer", None) or io.BytesIO()
+    value = read_value(name, stdin=stdin, terminal=is_a_terminal(sys.stdin), ask=getpass.getpass)
+    change = set_entry(name, value, config=run.loaded_config, replace=replace, dry_run=run.dry_run)
+    return _keyring_done(run, change)
+
+
+@keyring_group.command("delete")
+@click.argument("entry", metavar="NAME")
+@global_options_config_optional
+def keyring_delete(entry: str, run: Invocation) -> str:
+    """Remove a credential the tool reads from the OS keyring.
+
+    The entry is NAME under the service `sopuli`, as `keyring set` writes it.
+    The command needs no config. An entry that is not there is reported as
+    `absent` and the command exits 0, so running it twice is safe.
+    `--dry-run` shows what would change and deletes nothing.
+    """
+    _refuse_vault_options(run, "keyring delete")
+    change = delete_entry(check_name(entry), config=run.loaded_config, dry_run=run.dry_run)
+    return _keyring_done(run, change)
+
+
+def _refuse_vault_options(run: Invocation, where: str) -> None:
+    """Refuse a vault option the `keyring` verbs would ignore.
+
+    They open no vault, so a token file or an address would do nothing, and a
+    run that ignores an option looks as though it used it.
+    """
+    given = (("--vault-token-file", run.vault_token_file), (ADDR_FLAG, run.vault_addr))
+    written = [flag for flag, value in given if value is not None]
+    if written:
+        raise click.UsageError(
+            f"{', '.join(written)} cannot be honoured by `{where}`, which opens no vault"
+        )
+
+
+def _keyring_done(run: Invocation, change: Change) -> str:
+    """Fill the run document and the text from what a `keyring` verb did."""
+    document = run.document
+    document.keyring = build_keyring(change.report)
+    lines = render_keyring(change.report)
+    for one in change.diagnostics:
+        if one.level == "warning":
+            # Printed with every other verb's warnings.
+            document.warn_in_text(one)
+        else:
+            # A note about this entry, so it closes the section, as `lock
+            # break`'s "nothing to break" does.
+            document.diagnostics.append(one)
+            lines.append(f"note: {one.message}")
+    document.finish(ExitCode.SUCCESS, Summary(total=1, ok=1, changed=int(change.changed), failed=0))
+    return "\n".join(lines).rstrip("\n")
 
 
 @cli.group("report")

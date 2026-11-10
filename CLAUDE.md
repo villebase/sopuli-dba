@@ -83,6 +83,9 @@ detail.
    ciphertext leaves. That call is its store write, as the vault write is (#445).
    `onepassword_share` passes the password to 1Password's SDK in the process,
    which writes it into an item. That call is its store write too (#446).
+   `keyring set` passes the tool's own credential, such as a vault token, which
+   the operator typed or piped in, to the OS keyring the tool reads it back
+   from. No managed password takes that path (#1417).
 
    `tests/test_reveal_sites.py` parses `src/` and fails on a `.reveal()` call in
    a module that holds none of these sites, and on a second call in the seen

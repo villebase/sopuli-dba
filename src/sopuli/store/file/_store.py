@@ -165,6 +165,12 @@ class FileStore:
             return StoreHealth(status=DEGRADED, detail=_first_line(error))
         return StoreHealth(status=OK, authenticated=True)
 
+    def leftovers(self) -> tuple[_disk.Leftover, ...]:
+        """The temporary files a stopped run left beside the store's file, for
+        ``doctor`` to report (#1430). Not in the store protocol: ``doctor``
+        finds it with ``getattr``. Removes nothing, and never raises."""
+        return _disk.leftovers(self.path, now=self.clock())
+
     def read(self, path: str, *, version: int | None = None) -> Stored | None:
         """The latest version of ``path``, or version ``version``.
 

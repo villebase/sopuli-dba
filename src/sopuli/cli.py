@@ -159,6 +159,7 @@ from sopuli.diagnostics import (
     encryption_diagnostics,
     failed_login_block_unread,
     file_store_in_use,
+    file_store_leftover,
     guardrail_diagnostics,
     guardrail_pass_ahead,
     guardrail_refuses_ahead,
@@ -1023,6 +1024,12 @@ def doctor(
     for vault in config.vaults:
         if vault.name in run.stores:
             _warn_if_file_store(vault, run)
+            # Only doctor looks for a stopped run's temporary files (#1430).
+            leftovers = getattr(run.stores[vault.name], "leftovers", None)
+            for leftover in leftovers() if leftovers is not None else ():
+                run.document.warn_in_text(
+                    file_store_leftover(vault.name, leftover.path, leftover.age)
+                )
 
     client = _client_report(config)
     examined = [

@@ -12,6 +12,7 @@ import secrets
 import subprocess
 import sys
 import threading
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -401,3 +402,87 @@ def test_the_new_file_is_owned_by_the_user_and_inherits_nothing(store_file: Path
     assert descriptor.GetSecurityDescriptorOwner() == user
     assert dacl.GetAceCount() == 1
     assert dacl.GetAce(0)[2] == user
+
+
+# --------------------------------------------------------------- leftovers ---
+
+
+def _left(directory: Path, name: str, *, age: timedelta, now: datetime) -> Path:
+    """A file named ``name`` in ``directory``, last written ``age`` before ``now``."""
+    path = directory / name
+    path.write_bytes(b"ciphertext")
+    stamp = (now - age).timestamp()
+    os.utime(path, (stamp, stamp))
+    return path
+
+
+NOW = datetime(2026, 11, 10, 12, 0, tzinfo=UTC)
+
+
+def test_leftovers_lists_old_temporary_files_oldest_first(tmp_path: Path) -> None:
+    """#1430: a run killed before the replace leaves its file behind."""
+    older = _left(tmp_path, f".sopuli-{'a' * 16}.tmp", age=timedelta(hours=3), now=NOW)
+    newer = _left(tmp_path, f".sopuli-{'b' * 16}.tmp", age=timedelta(minutes=11), now=NOW)
+
+    found = _disk.leftovers(tmp_path / "store.age", now=NOW)
+
+    assert [one.path for one in found] == [older, newer]
+    assert found[0].age == timedelta(hours=3)
+
+
+def test_leftovers_leaves_out_a_write_in_progress_and_other_names(tmp_path: Path) -> None:
+    """A young file may be another run's write, and the store has no lock to
+    tell the two apart, so it is not listed. Nor is a name the store never gives."""
+    _left(tmp_path, f".sopuli-{'c' * 16}.tmp", age=timedelta(minutes=9), now=NOW)
+    _left(tmp_path, ".sopuli-short.tmp", age=timedelta(days=1), now=NOW)
+    _left(tmp_path, f".sopuli-{'D' * 16}.tmp", age=timedelta(days=1), now=NOW)
+    _left(tmp_path, f"sopuli-{'e' * 16}.tmp", age=timedelta(days=1), now=NOW)
+    (tmp_path / f".sopuli-{'f' * 16}.tmp").mkdir()
+
+    assert _disk.leftovers(tmp_path / "store.age", now=NOW) == ()
+
+
+def test_leftovers_removes_nothing(tmp_path: Path) -> None:
+    left = _left(tmp_path, f".sopuli-{'a' * 16}.tmp", age=timedelta(days=2), now=NOW)
+
+    _disk.leftovers(tmp_path / "store.age", now=NOW)
+
+    assert left.exists()
+
+
+def test_leftovers_of_a_missing_directory_is_nothing(tmp_path: Path) -> None:
+    """The store's health reports the directory; this says nothing more."""
+    assert _disk.leftovers(tmp_path / "gone" / "store.age", now=NOW) == ()
+
+
+@posix_only
+def test_leftovers_follows_a_link_at_addr(tmp_path: Path) -> None:
+    """A write follows the link, so its file is left beside the link's target."""
+    volume = tmp_path / "volume"
+    volume.mkdir()
+    left = _left(volume, f".sopuli-{'a' * 16}.tmp", age=timedelta(hours=1), now=NOW)
+    link = tmp_path / "store.age"
+    link.symlink_to(volume / "store.age")
+
+    assert [one.path for one in _disk.leftovers(link, now=NOW)] == [left]
+
+
+def test_replace_names_its_file_as_leftovers_looks_for_it(
+    store_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The name a write gives is the name the report finds: a file kept by a
+    write that failed at the replace is listed once it is old enough."""
+    kept: list[str] = []
+
+    def refuse(source: str, destination: str) -> None:
+        kept.append(source)
+        raise OSError(5, "refused")
+
+    monkeypatch.setattr(os, "replace", refuse)
+    monkeypatch.setattr(os, "unlink", lambda path: None)
+    with pytest.raises(StoreError):
+        replace(store_file, b"ciphertext", expected=ABSENT)
+
+    (name,) = (Path(one).name for one in kept)
+    later = datetime.now(UTC) + timedelta(minutes=11)
+    assert [one.path.name for one in _disk.leftovers(store_file, now=later)] == [name]

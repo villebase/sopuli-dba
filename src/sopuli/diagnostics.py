@@ -28,6 +28,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from datetime import timedelta
+from pathlib import Path
 from types import MappingProxyType
 
 from sopuli.admin import Resolved
@@ -608,6 +609,10 @@ KEYRING_REPLACE_NEEDS_FLAG = "SOPULI-W069"
 #: not for production (#1415, decision 5).
 FILE_STORE_IN_USE = "SOPULI-W070"
 
+#: `doctor` found a temporary file that a stopped run left in a `file` store's
+#: directory (#1430).
+FILE_STORE_LEFTOVER = "SOPULI-W071"
+
 #: ``SOPULI-W004`` and ``SOPULI-W034`` to ``SOPULI-W039`` -- imported above
 #: rather than defined here. They are raised in the config layer, which cannot
 #: import this module, so they are defined in :mod:`sopuli.config.codes` and
@@ -883,6 +888,12 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "advisory only, and the file is the only copy of what it holds. One entry per "
             "file store the run "
             "opens, from every command that opens one."
+        ),
+        FILE_STORE_LEFTOVER: (
+            "`doctor` found a temporary file that a stopped run left in a `file` store's "
+            "directory, older than ten minutes. It is encrypted to the store's keys, and "
+            "may hold a password version the store has pruned since. Nothing removes it: "
+            "remove it when no run is writing the store. One entry per file."
         ),
         CONSTRAINTS_UNREAD: (
             "`creds generate` could not read a target's password constraints, so the "
@@ -1524,6 +1535,34 @@ def file_store_in_use(name: str) -> Diagnostic:
             "for production"
         ),
     )
+
+
+def file_store_leftover(name: str, path: Path, age: timedelta) -> Diagnostic:
+    """`SOPULI-W071`: a temporary file a stopped run left beside the file
+    store ``name``'s file (#1430). ``doctor`` raises one per file, and removes
+    none: a younger one may be another run's write in progress."""
+    return Diagnostic(
+        level="warning",
+        code=FILE_STORE_LEFTOVER,
+        message=(
+            f'vault "{name}": {path} is {_age(age)} old, a temporary file left by a run '
+            "that stopped while it wrote the store. It is encrypted to the store's keys, "
+            "and may hold a password version the store has pruned since. Remove it when "
+            "no run is writing the store"
+        ),
+    )
+
+
+def _age(age: timedelta) -> str:
+    """An age in the largest whole unit that is at least 2 of it: minutes,
+    hours or days."""
+    minutes = int(age.total_seconds() // 60)
+    if minutes < 120:
+        return f"{minutes} minute{'' if minutes == 1 else 's'}"
+    hours = minutes // 60
+    if hours < 48:
+        return f"{hours} hours"
+    return f"{hours // 24} days"
 
 
 def admin_diagnostics(target: str, credential: Resolved) -> list[Diagnostic]:

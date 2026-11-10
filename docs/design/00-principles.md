@@ -550,7 +550,8 @@ path, with fictional passwords, as `dumps` wrote them:
   someone other than its owner can reach is refused before it is decrypted,
   and on POSIX so is one owned by a user other than the tool's own or root,
   as for the config file. Only a regular file is
-  read: a pipe or a device at `addr` is refused, not opened.
+  read: a pipe or a device at `addr` is refused before anything is read
+  from it, without waiting for a writer.
 - **`data` is a JSON object of plain values.** A value JSON cannot hold as it
   is, such as a key that is not text, a number that is not finite, text that is
   not valid UTF-8, or a subclass of a list, a tuple or a dict, is refused at the

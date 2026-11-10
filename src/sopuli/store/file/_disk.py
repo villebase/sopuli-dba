@@ -9,7 +9,7 @@ config file's check (#1415, decision 6). On POSIX it is made on the open
 file, so the file checked is the file read, and it refuses a file owned by
 a user other than this one or root. On Windows it walks the file's DACL by path, as it does for the
 config file. Only a regular file is read: a pipe or a device at ``addr`` is
-refused, not opened.
+refused before anything is read from it, without waiting for a writer.
 
 **Owner-only from the moment it exists.** The new file is written beside the
 old one and then replaces it, so a write that fails part way leaves the old
@@ -121,21 +121,37 @@ def read(path: Path) -> Read:
 def _open_regular(path: Path) -> Iterator[tuple[BinaryIO, os.stat_result]]:
     """``path`` open for reading, with its status, if it is a regular file.
 
-    On POSIX it is opened without waiting, so a pipe at ``path`` is refused
-    rather than waited on; reading a regular file is not changed by that.
+    On POSIX it is opened without waiting and without becoming a terminal's,
+    so a pipe or a device at ``path`` is refused before anything is read
+    rather than waited on; the descriptor is made blocking again before a
+    regular file is read. On Windows an open refused while another program
+    replaces the file is tried again for up to :data:`REPLACE_WAIT`.
     """
-    flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0)
-    try:
-        descriptor = os.open(path, flags)
-    except PermissionError:
-        # Windows refuses to open a directory as a file before its type can
-        # be read; say what it is rather than that it was refused.
-        if os.path.isdir(path):
-            _require_regular(path, os.stat(path))
-        raise
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_NONBLOCK", 0)
+        | getattr(os, "O_NOCTTY", 0)
+        | getattr(os, "O_BINARY", 0)
+    )
+    deadline = time.monotonic() + REPLACE_WAIT
+    while True:
+        try:
+            descriptor = os.open(path, flags)
+            break
+        except PermissionError:
+            # Windows refuses to open a directory as a file before its type
+            # can be read; say what it is rather than that it was refused.
+            if os.path.isdir(path):
+                _require_regular(path, os.stat(path))
+            if sys.platform != "win32" or time.monotonic() >= deadline:
+                raise
+            time.sleep(0.05)
     try:
         status = os.fstat(descriptor)
         _require_regular(path, status)
+        if sys.platform != "win32":
+            # Windows has no O_NONBLOCK to undo, and refuses the call.
+            os.set_blocking(descriptor, True)
         handle = os.fdopen(descriptor, "rb")
     except BaseException:
         os.close(descriptor)
@@ -276,7 +292,8 @@ def _target(path: Path) -> Path:
         # Not strict: a link to a store whose file is not written yet is fine.
         return path.resolve()
     except (OSError, RuntimeError) as error:
-        # A link loop is RuntimeError before Python 3.13, OSError after.
+        # A link loop is RuntimeError here before Python 3.13. From 3.13 a
+        # non-strict resolve returns, and the open then fails with ELOOP.
         raise StoreError(
             f"could not follow the link at the file store's addr {path}: "
             f"{getattr(error, 'strerror', None) or error}",
@@ -306,6 +323,15 @@ def _create_owner_only(path: Path) -> BinaryIO:
         descriptor = _create_windows(path)
     else:
         descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        # The umask narrows the mode open() is given; 0600 is set outright,
+        # so a strict umask cannot make a file the tool cannot read back.
+        try:
+            os.fchmod(descriptor, 0o600)
+        except BaseException:
+            os.close(descriptor)
+            with contextlib.suppress(OSError):
+                os.unlink(path)
+            raise
     try:
         return os.fdopen(descriptor, "wb")
     except BaseException:

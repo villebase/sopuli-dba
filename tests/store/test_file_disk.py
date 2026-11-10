@@ -72,7 +72,7 @@ def test_a_directory_at_addr_is_refused(tmp_path: Path) -> None:
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="named pipes are a POSIX file type")
-def test_a_pipe_at_addr_is_refused_without_opening_it(tmp_path: Path) -> None:
+def test_a_pipe_at_addr_is_refused_without_waiting(tmp_path: Path) -> None:
     """Opening a pipe would wait for a writer, and the run would hang."""
     pipe = tmp_path / "store.age"
     # By name: Windows has no mkfifo, and mypy runs there too.
@@ -163,8 +163,13 @@ def test_read_refuses_a_file_everyone_can_read(store_file: Path) -> None:
 
 
 @posix_only
-def test_replace_creates_the_file_owner_only_whatever_the_umask(store_file: Path) -> None:
-    previous = os.umask(0)
+@pytest.mark.parametrize("umask", [0o000, 0o022, 0o277, 0o677])
+def test_replace_creates_the_file_owner_only_whatever_the_umask(
+    store_file: Path, umask: int
+) -> None:
+    """0600 outright: a strict umask must not leave a file the tool cannot
+    read back, nor a lax one a file others can."""
+    previous = os.umask(umask)
     try:
         replace(store_file, b"ciphertext", expected=ABSENT)
     finally:

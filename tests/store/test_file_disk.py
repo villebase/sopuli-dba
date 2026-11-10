@@ -17,7 +17,7 @@ import pytest
 from sopuli.config.errors import ConfigError
 from sopuli.config.permissions import check_permissions
 from sopuli.store.file import _disk
-from sopuli.store.file._disk import ABSENT, digest_of, read, replace
+from sopuli.store.file._disk import ABSENT, FileChangedError, digest_of, read, replace
 from sopuli.store.protocol import CasConflictError, StoreError
 
 posix_only = pytest.mark.skipif(
@@ -137,9 +137,11 @@ def test_replace_refuses_a_file_changed_since_the_read(store_file: Path) -> None
     seen = read(store_file)
     replace(store_file, b"another run", expected=seen.digest)
 
-    with pytest.raises(CasConflictError, match="changed after this run read it"):
+    with pytest.raises(FileChangedError, match="changed after this run read it") as caught:
         replace(store_file, b"this run", expected=seen.digest)
 
+    # Not a path's version conflict, which the lock would read as a stolen lock.
+    assert not isinstance(caught.value, CasConflictError)
     assert read(store_file).data == b"another run"
 
 
@@ -147,7 +149,7 @@ def test_replace_refuses_a_file_that_appeared_since_the_read(store_file: Path) -
     seen = read(store_file)
     replace(store_file, b"another run", expected=ABSENT)
 
-    with pytest.raises(CasConflictError):
+    with pytest.raises(FileChangedError):
         replace(store_file, b"this run", expected=seen.digest)
 
 
@@ -156,10 +158,11 @@ def test_replace_refuses_a_file_removed_since_the_read(store_file: Path) -> None
     seen = read(store_file)
     store_file.unlink()
 
-    with pytest.raises(CasConflictError):
+    with pytest.raises(FileChangedError):
         replace(store_file, b"this run", expected=seen.digest)
 
     assert not store_file.exists()
+    assert leftovers(store_file.parent) == []
 
 
 def test_replace_does_not_create_the_directory(tmp_path: Path) -> None:
@@ -181,10 +184,11 @@ def test_a_failed_replace_keeps_the_old_file_and_removes_the_temporary_one(
 
     monkeypatch.setattr(os, "replace", refuse)
 
-    with pytest.raises(OSError, match="No space left"):
+    with pytest.raises(StoreError, match="could not write the file store's file") as caught:
         replace(store_file, b"new", expected=digest_of(b"old"))
 
     monkeypatch.undo()
+    assert "nothing was written" in (caught.value.hint or "")
     assert read(store_file).data == b"old"
     assert leftovers(store_file.parent) == []
 
@@ -194,3 +198,75 @@ def test_a_replace_leaves_no_temporary_file(store_file: Path) -> None:
     replace(store_file, b"two", expected=digest_of(b"one"))
 
     assert leftovers(store_file.parent) == []
+
+
+def test_the_comparison_sees_a_write_made_while_this_one_was_flushed(
+    store_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The comparison is made after the slow part, just before the replace."""
+    replace(store_file, b"first", expected=ABSENT)
+    seen = read(store_file)
+    flush = os.fsync
+
+    def another_run_writes(descriptor: int) -> None:
+        flush(descriptor)
+        monkeypatch.setattr(os, "fsync", flush)
+        replace(store_file, b"another run", expected=seen.digest)
+
+    monkeypatch.setattr(os, "fsync", another_run_writes)
+
+    with pytest.raises(FileChangedError):
+        replace(store_file, b"this run", expected=seen.digest)
+
+    assert read(store_file).data == b"another run"
+    assert leftovers(store_file.parent) == []
+
+
+def test_a_directory_that_cannot_be_flushed_does_not_fail_a_write_that_landed(
+    store_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def refuse(directory: Path) -> None:
+        raise OSError(22, "Invalid argument")
+
+    monkeypatch.setattr(_disk, "_sync_directory", refuse)
+
+    replace(store_file, b"ciphertext", expected=ABSENT)
+
+    assert read(store_file).data == b"ciphertext"
+
+
+@posix_only
+def test_a_link_at_addr_is_followed_and_kept(tmp_path: Path) -> None:
+    target = tmp_path / "volume" / "store.age"
+    target.parent.mkdir()
+    replace(target, b"first", expected=ABSENT)
+    link = tmp_path / "store.age"
+    link.symlink_to(target)
+
+    seen = read(link)
+    replace(link, b"second", expected=seen.digest)
+
+    assert link.is_symlink()
+    assert target.read_bytes() == b"second"
+
+
+@windows_only
+def test_the_new_file_is_owned_by_the_user_and_inherits_nothing(store_file: Path) -> None:
+    """Owned by the user, not `Administrators` as under an elevated console,
+    so P4's check accepts the one grant."""
+    import win32api
+    import win32security
+
+    replace(store_file, b"ciphertext", expected=ABSENT)
+
+    descriptor = win32security.GetNamedSecurityInfo(
+        str(store_file),
+        win32security.SE_FILE_OBJECT,
+        win32security.OWNER_SECURITY_INFORMATION | win32security.DACL_SECURITY_INFORMATION,
+    )
+    token = win32security.OpenProcessToken(win32api.GetCurrentProcess(), win32security.TOKEN_QUERY)
+    user = win32security.GetTokenInformation(token, win32security.TokenUser)[0]
+    dacl = descriptor.GetSecurityDescriptorDacl()
+    assert descriptor.GetSecurityDescriptorOwner() == user
+    assert dacl.GetAceCount() == 1
+    assert dacl.GetAce(0)[2] == user

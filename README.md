@@ -418,6 +418,7 @@ How this works in practice, and what it expects of contributors:
 | [docs/scenarios/rotate-and-sync.md](https://github.com/villebase/sopuli-dba/blob/main/docs/scenarios/rotate-and-sync.md) | follow one password rotation from start to finish |
 | [docs/scenarios/kubernetes-eso.md](https://github.com/villebase/sopuli-dba/blob/main/docs/scenarios/kubernetes-eso.md) | let applications running in Kubernetes pick up the new password automatically |
 | [docs/scenarios/supabase.md](https://github.com/villebase/sopuli-dba/blob/main/docs/scenarios/supabase.md) | on Supabase, give each service its own login role instead of the shared `postgres` password |
+| [docs/scenarios/env-file-over-ssh.md](https://github.com/villebase/sopuli-dba/blob/main/docs/scenarios/env-file-over-ssh.md) | rotate a small app's PostgreSQL password on a VM over SSH, and update its `.env` file |
 | [examples/](https://github.com/villebase/sopuli-dba/tree/main/examples/) | complete config files with comments, starting with the smallest one that works |
 | [docs/reference/](https://github.com/villebase/sopuli-dba/blob/main/docs/reference/README.md) | look up a command: its usage, its help text and every option |
 | [docs/security-model.md](https://github.com/villebase/sopuli-dba/blob/main/docs/security-model.md) | decide whether to trust this with a production credential |

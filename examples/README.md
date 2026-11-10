@@ -9,7 +9,8 @@ commented for a reader who has not written one before.
 | [multiple-applications.yaml](multiple-applications.yaml) | the `applications:` shape, target groups, and per-application selection |
 | [safety-hardened.yaml](safety-hardened.yaml) | `confirm_environments`, `max_targets`, `readonly`, and profiles |
 | [target-sets.yaml](target-sets.yaml) | many pluggable databases from one `target_sets:` entry, a container root per environment, `overrides:`, and groups that keep an application off the roots |
-| [admin-credentials.yaml](admin-credentials.yaml) | the four places the password of the account the tool connects as can come from: a wallet, a vault, a prompt, or an environment variable |
+| [admin-credentials.yaml](admin-credentials.yaml) | the five places the password of the account the tool connects as can come from: a wallet, a vault, a prompt, the OS keyring, or an environment variable. A vault's token can be in the OS keyring too |
+| [file-store.yaml](file-store.yaml) | a `file` store, one age-encrypted file for local development and CI: its path, identity, recipients and `locking: advisory-only` |
 | [personal-accounts.yaml](personal-accounts.yaml) | resetting the passwords people log in with: `personal_accounts:` by name and by profile, common users on the container root, `delivery:`, and `reset_records:` |
 | [app-creds-and-personal-accounts.yaml](app-creds-and-personal-accounts.yaml) | a whole estate with both: three environments, application accounts and personal accounts, in one file |
 | [reports.yaml](reports.yaml) | the `reports:` rules `sopuli report accounts` checks: technical accounts by name and pattern, the application accounts by name with their profile from their policy, and `db_profiles` |

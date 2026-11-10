@@ -1,0 +1,119 @@
+# The rules `sopuli report accounts` checks every account against (UC-5).
+#
+# A report reads every account on each declared target, declared or not, and
+# changes nothing. It is the one kind of command that lists the accounts this
+# file does not declare. The `reports:` section at the end says what the
+# accounts on those targets should look like: which database profile they sit
+# on, and what their password limits must be.
+#
+# Only Oracle can run the reports yet.
+#
+# Check it before you use it:
+#     sopuli --config reports.yaml config validate
+# Then run the report:
+#     sopuli --config reports.yaml report accounts
+#
+# A real run, with its output: ../docs/local-testing.md section 9a.
+# Full reference: ../docs/design/01-configuration.md section 8a, and
+# ../docs/use-cases/uc-05-fleet-reports.md.
+
+# yaml-language-server: $schema=../docs/schemas/sopuli-config-4.0.schema.json
+
+version: 1
+
+vaults:
+  vault-prod:
+    type: hashicorp
+    addr: https://vault.example.com:8200
+    mount: kv
+    kv_version: 2
+    auth: { method: token }
+
+defaults:
+  vault: vault-prod
+  policy: app-standard
+
+targets:
+  - name: dev-alpha
+    type: oracle
+    environment: dev
+    dsn: "db-dev.example.com:1521/ALPHA"
+    admin: { username: C##SOPULI_SVC, auth: { method: env } }
+    labels: { env: dev }
+
+  - name: prod-alpha
+    type: oracle
+    environment: prod
+    dsn: "db-prod.example.com:1521/ALPHA"
+    admin: { username: C##SOPULI_SVC, auth: { method: env } }
+    labels: { env: prod }
+
+  - name: prod-beta
+    type: oracle
+    environment: prod
+    dsn: "db-prod.example.com:1521/BETA"
+    admin: { username: C##SOPULI_SVC, auth: { method: env } }
+    labels: { env: prod }
+
+groups:
+  prod:
+    match: { env: prod }
+
+policies:
+  app-standard:
+    password:
+      length: 24
+      charset: alnum_safe
+      first_char: alpha
+      require: { upper: 1, lower: 1, digit: 1, special: 1 }
+    # The profile the application accounts must sit on. The report checks
+    # it from here, so a `reports:` rule never names it a second time.
+    account:
+      profile: ACME_APP
+
+applications:
+  - name: acme
+    accounts: [acme_web_user, acme_batch_user]
+    secret_template: "vault-prod:acme/{target}#DB_CREDENTIALS/{account}"
+
+# ---------------------------------------------------------------------------
+# What the report checks. There are no built-in rules: an account no rule
+# covers is listed as "no rule", and a setting no rule names is not compared.
+# ---------------------------------------------------------------------------
+reports:
+  accounts:
+    # Technical accounts on the production databases, named by name and by
+    # pattern. `*` is the only wildcard, and names are compared in upper case.
+    # Oracle's own accounts, such as DBSNMP, are left out of the report unless
+    # a rule names them, as this one does. `profile:` and `settings:` both:
+    # the accounts must sit on TECH_NOEXPIRE, and their passwords must never
+    # expire.
+    - accounts: [DBSNMP, "ORDS_*", "APEX_*"]
+      targets: { group: prod }
+      profile: TECH_NOEXPIRE
+      settings: { password_lifetime: unlimited }
+
+    # The application accounts, on every target, because the rule has no
+    # `targets:`. `settings:` only: their profile comes from the policy above,
+    # and a rule may not give `profile:` to an account an application names.
+    - accounts: ["acme_*_user"]
+      settings: { failed_login_limit: 10 }
+
+    # `profile:` only: the reporting account must sit on ACME_REPORTING. What
+    # that profile's limits must be is said once, in `db_profiles` below.
+    - accounts: [acme_report_user]
+      targets: { group: prod }
+      profile: ACME_REPORTING
+
+  # What a database profile's limits must be, for every account on it.
+  # `unlimited` matches only an unlimited value, and a number is the largest
+  # value allowed. An entry here does not expect the profile to exist on
+  # every target: a rule's `profile:` above does that, on the targets the
+  # rule covers.
+  db_profiles:
+    - name: TECH_NOEXPIRE
+      settings: { password_lifetime: unlimited, failed_login_limit: 10 }
+    - name: ACME_APP
+      settings: { password_lifetime: unlimited }
+    - name: ACME_REPORTING
+      settings: { password_lifetime: 90, failed_login_limit: 5 }

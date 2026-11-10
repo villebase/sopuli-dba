@@ -3435,7 +3435,8 @@ rest need the target's limits and so cannot be known until a command runs.
 
 `sopuli report accounts` reads every account on a target and compares it with
 these rules (`../use-cases/uc-05-fleet-reports.md` §4 and §7). The section is
-optional, and absent means no rules.
+optional, and absent means no rules. A whole config with rules is in
+[`examples/reports.yaml`](../../examples/reports.yaml).
 
 ```yaml
 reports:

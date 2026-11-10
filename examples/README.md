@@ -12,6 +12,7 @@ commented for a reader who has not written one before.
 | [admin-credentials.yaml](admin-credentials.yaml) | the four places the password of the account the tool connects as can come from: a wallet, a vault, a prompt, or an environment variable |
 | [personal-accounts.yaml](personal-accounts.yaml) | resetting the passwords people log in with: `personal_accounts:` by name and by profile, common users on the container root, `delivery:`, and `reset_records:` |
 | [app-creds-and-personal-accounts.yaml](app-creds-and-personal-accounts.yaml) | a whole estate with both: three environments, application accounts and personal accounts, in one file |
+| [reports.yaml](reports.yaml) | the `reports:` rules `sopuli report accounts` checks: technical accounts by name and pattern, the application accounts' profile from their policy, and `db_profiles` |
 
 Check any of them before you use it. This opens no network connection:
 

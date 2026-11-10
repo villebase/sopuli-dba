@@ -130,7 +130,10 @@ BACKENDS: dict[str, Backend] = {
         extra="oci",
         provides=frozenset({"oci"}),
     ),
-    "file": Backend(module="sopuli.store.file"),
+    # The store module itself, not the package: the package already holds
+    # parts of the store, and the store module's absence is what says this
+    # build cannot serve `file` yet (#1372).
+    "file": Backend(module="sopuli.store.file.store"),
     "keyring": Backend(module="sopuli.store.keyring"),
 }
 

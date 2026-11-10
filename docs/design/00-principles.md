@@ -513,6 +513,53 @@ would refuse the unbuilt `file` backend, unless the store is configured as `lock
 the record is written without compare-and-set, and every run says so
 (`01-configuration.md` §3a).
 
+### The file store's file
+
+A `file` store is one file, encrypted with age to the store's recipients
+([#1415](../decisions/log.md#1415)). The store is not built yet (#1372). What
+the file decrypts to is UTF-8 JSON, compact and with sorted keys, written by
+`sopuli/store/file/_document.py` and read by nothing else. Two writes to one
+path, with fictional passwords, as `dumps` wrote them:
+
+```json
+{"format":"sopuli-file-store","format_version":1,"paths":{"acme/app":[{"created_at":"2026-11-09T10:00:00Z","data":{"current":"Pw-acme-1"},"version":1},{"created_at":"2026-11-09T11:00:00Z","data":{"current":"Pw-acme-2","previous":"Pw-acme-1"},"version":2}]}}
+```
+
+- **Each path lists its kept versions, oldest first.** A write adds the next
+  number. A write prunes the path it writes to `max_versions`, dropping only
+  the oldest, so the numbers are consecutive and the last is the path's
+  current version. Other paths are left as they are, so a write never takes
+  away a version that another path's `@version=N` pin reads. A lower
+  `max_versions` reaches each path when that path is next written. A number is not reused, so a version number names one write
+  for good, and `@version=N` never reads a later write. The one exception is a
+  restore from a backup: numbers written since the backup are used again, so
+  the restore hint says to check `@version=N` pins. The store has no
+  compare-and-set (see above).
+- **`data` is a JSON object of plain values.** A value JSON cannot hold as it
+  is, such as a key that is not text, a number that is not finite, text that is
+  not valid UTF-8, or a subclass of a list, a tuple or a dict, is refused at the
+  write. Two conversions JSON forces are made instead: a tuple is stored as a
+  list, and a value that is a subclass of a string or a number is stored as the
+  plain type. A key, and a path name, must be exactly a string, because a
+  subclass may compare or sort as it likes; a path name must also be
+  non-empty, valid UTF-8 text. One check of a version serves both the
+  writer and the reader, so the reader accepts exactly what the writer builds.
+- **`created_at`** is UTC, written as `to_rfc3339` writes it, with a `Z`.
+- **The reader is strict.** A missing or unknown field, a key named twice,
+  numbers that are not consecutive, or a timestamp in another form is refused.
+  The hint says what to check first, that `addr` names the store's file and
+  that the process runs with Python's default limits, and only then to restore
+  a backup, because restoring a store that was fine loses the passwords written
+  since. A `format_version` above this build's, up to 99, is not damage: a
+  newer build wrote it, and the hint says to upgrade instead. A higher one is
+  damage.
+- **No error, and no `repr`, shows the data**, because the data holds
+  passwords in clear. The reader names a damaged path by its position, and
+  counts unknown fields rather than naming them, because in a damaged file a
+  name may be anything.
+- `format_version` changes when the shape does. A build reads only the
+  versions it knows.
+
 ### Backends are install extras (D9, ADR-006)
 
 A backend's client is installed only by the sites that use that backend. The

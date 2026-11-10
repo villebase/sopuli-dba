@@ -47,8 +47,7 @@ the tool wrote at paths the config no longer declares (§13).
 
 There is no `sopuli admin` command. To install the Oracle service account, run
 the SQL in `sql/oracle/` by hand. The PostgreSQL tool role is created by hand in
-`psql` (§7). The store backends are `hashicorp`, `oci` (§8.8) and `file`
-(§8.9). A PostgreSQL target runs `doctor`, the
+`psql` (§7). The store backends are `hashicorp`, `oci` (§8.8) and `file`. A PostgreSQL target runs `doctor`, the
 `creds` commands (§7) and the `account` commands (§9). It refuses
 `account expire-password` and the seen reset, because PostgreSQL cannot make a
 role change its password at its next login. A MySQL target and a MariaDB target

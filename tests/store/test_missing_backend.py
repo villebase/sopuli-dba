@@ -177,8 +177,8 @@ def test_an_unwritten_backend_is_not_sent_to_pip(
     the validator quieter rather than the machine better.
 
     The warning's level and code are the same either way; what is fixed here is
-    what it says. `file` and `keyring` -- which have no client to look for at all
-    -- reach the same sentence through
+    what it says. `keyring` -- which has no client to look for at all -- reaches
+    the same sentence through
     :func:`test_a_backend_with_no_module_warns_though_pip_cannot_help`.
     """
     document = _validate_json(write_config(CONFIG))
@@ -217,10 +217,10 @@ def test_a_backend_with_no_module_warns_though_pip_cannot_help(
 ) -> None:
     """The case that no amount of installing fixes.
 
-    `file` and `keyring` have no extra -- ADR-006's named gap -- so a narrow
-    reading would find nothing to look for and say nothing, on every machine,
-    unconditionally. A file declaring only those would validate as ``0 warnings``
-    and could not work anywhere.
+    `keyring` has no extra and no module, so a narrow reading would find
+    nothing to look for and say nothing, on every machine, unconditionally. A
+    file declaring only that would validate as ``0 warnings`` and could not work
+    anywhere.
 
     Warning about it is not actionable by `pip`, and that is not the same as not
     actionable: the action is *do not deploy this yet*, and it is the fact its
@@ -232,23 +232,23 @@ def test_a_backend_with_no_module_warns_though_pip_cannot_help(
     answer does not depend on what is installed, only on what is written, so it
     is the same on a developer machine and in CI's base cell.
     """
-    document = _validate_json(write_config(f"version: 1\nvaults:\n  local:\n{FILE_STORE}"))
+    document = _validate_json(write_config("version: 1\nvaults:\n  local:\n    type: keyring\n"))
     (found,) = document["diagnostics"]
 
     assert document["exit_code"] == ExitCode.SUCCESS
     assert found["level"] == "warning"
     assert found["code"] == MISSING_BACKEND
     assert "pip install" not in found["message"]
-    assert "this build has no file backend yet" in found["message"]
+    assert "this build has no keyring backend yet" in found["message"]
 
 
 def test_every_store_this_machine_cannot_serve_is_named(write_config: WriteConfig) -> None:
     """The report `config validate` owes its reader.
 
-    Two of the four types in ``01-configuration.md`` §3a have no module, so a
-    config declaring all four is a config whose stores are half unusable. A
-    narrow reading would report **one** warning. The OCI store has a module, and
-    the tests run with its SDK installed, so it is not named.
+    One of the four types in ``01-configuration.md`` §3a, ``keyring``, has no
+    module, so a config declaring all four has a store that cannot work. The OCI
+    and file stores have modules, and the tests run with their clients installed,
+    so they are not named.
 
     Asserted as a set rather than a list: the order is the survey's, sorted by
     backend name, and pinning it here would be pinning `doctor`'s table through a
@@ -273,7 +273,7 @@ def test_every_store_this_machine_cannot_serve_is_named(write_config: WriteConfi
         if any(f'"{name}"' in entry["message"] for entry in document["diagnostics"])
     }
 
-    assert named == {"vault-local", "vault-desktop"}
+    assert named == {"vault-desktop"}
     assert document["exit_code"] == ExitCode.SUCCESS
 
 

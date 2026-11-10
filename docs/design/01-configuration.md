@@ -938,10 +938,11 @@ keys. The three `file` keys are refused on every other store, and no
 file is written. An identity that differs by machine is written as
 `identity: { env: NAME }`. HashiCorp's own variables, such as `VAULT_ADDR`,
 are not applied to a `file` store, which would otherwise take a URL as its
-path; the run warns with `SOPULI-W038`, as for an OCI store. The backend is
-not built yet (#1372): a run that reaches a `file` store is still refused
-with `SOPULI-20005`. Which keys a `keyring` store reads is decided when that
-backend is built.
+path; the run warns with `SOPULI-W038`, as for an OCI store. The store has no
+compare-and-set, so a command that changes it needs `locking: advisory-only`
+on it, and every run that opens one warns with `SOPULI-W069`: it is for local
+development and CI, not for production. It needs `sopuli-dba[file]`. Which
+keys a `keyring` store reads is decided when that backend is built.
 
 #### A declared backend that is not installed (ADR-006)
 
@@ -963,7 +964,7 @@ What changes is where it stops:
 | Moment | With the backend missing |
 |---|---|
 | load, `config validate`, `config show`, `target list` | works. `config validate` adds a **warning** (§9, §10), and exits 0 |
-| any command that resolves the store to a client | **error**, `error.category: "config"`, code `SOPULI-20001`, exit 9 (`03-json-output.md` §3). A `type` this build has no module for, today `file` and `keyring`, is `SOPULI-20005` instead, whether or not its client is installed. Its message has no install line, because installing nothing fixes it |
+| any command that resolves the store to a client | **error**, `error.category: "config"`, code `SOPULI-20001`, exit 9 (`03-json-output.md` §3). A `type` this build has no module for, today `keyring`, is `SOPULI-20005` instead, whether or not its client is installed. Its message has no install line, because installing nothing fixes it |
 | `sopuli doctor` | **failure**. Its question is "can I reach my vaults", and this is a no |
 
 ```

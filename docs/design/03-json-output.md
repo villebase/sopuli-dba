@@ -6,8 +6,8 @@ for text output that keep it consistent with both.
 `sopuli/output/` produces them, and CI validates the output against the
 published schemas.
 
-Schemas: [`../schemas/sopuli-run-1.88.schema.json`](../schemas/sopuli-run-1.88.schema.json),
-[`../schemas/sopuli-event-1.24.schema.json`](../schemas/sopuli-event-1.24.schema.json)
+Schemas: [`../schemas/sopuli-run-1.89.schema.json`](../schemas/sopuli-run-1.89.schema.json),
+[`../schemas/sopuli-event-1.25.schema.json`](../schemas/sopuli-event-1.25.schema.json)
 Examples, each from a real run:
 [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json),
 [`../schemas/example-creds-status-rollover.json`](../schemas/example-creds-status-rollover.json)
@@ -2504,6 +2504,7 @@ not contract and may improve.
 | `SOPULI-W066` | A secret document was not promoted because a row of it did not confirm, while other rows of it did (#1328). From run schema 1.79 and event schema 1.22. Invariant 7 holds the promotion until every declared target confirms. The confirmed rows carry `SOPULI-W049`, and look finished in the table; this names the document and each row that held it, with the account, the target and the state that row reported. The remedy is to fix what those rows report, then run `creds apply`: run before the fix, it holds the promotion again. It names `creds apply` after a `creds rotate` too, because a second rotate is refused while the document has a `pending` staged. Raised by `creds apply` and `creds rotate`, once per document, and printed under the text view's closing line. Not raised where no row of the document confirmed, because each row then says why |
 | `SOPULI-W067` | `creds generate` could not read the password constraints of one or more targets whose product has a fixed limit, so that limit governed the draw there (#1338). From run schema 1.80 and event schema 1.23. PostgreSQL, MySQL and MariaDB have one, and it holds without a connection, so the draw was checked against it. This is apart from `SOPULI-W015`, which says the policy's declared length governed: a run where an Oracle target was not read either gets both. **One entry per run**, naming the targets. Not printed in the text view, whose `constraints:` line names the product limits. `--offline` emits nothing, as with W015 |
 | `SOPULI-W068` | A target's session claimed less than it could, so the check that refuses two targets on one set of accounts (`SOPULI-20008`) may have let two through (#1363). From run schema 1.81 and event schema 1.24. On PostgreSQL, the admin role may not run `pg_control_system()`, so `system_identifier` was not read. On MariaDB, a Galera node was not `Synced`, such as `Donor/Desynced` while a backup runs, so only its server was claimed and not its cluster. The message says which. It is a **warning**, not a refusal: a desynced node is normal, and refusing would fail every scheduled run during a backup. **One entry per target**, from every command that connects, so a scheduled run that skipped the check says so. Printed in the text view, except by `doctor`, whose note on the target says the same |
+| `SOPULI-W069` | The run opened a `file` store, which is one age-encrypted file for local development and CI, and not for production (#1372, [#1415](../decisions/log.md#1415), decision 5). From run schema 1.89 and event schema 1.25. It has no compare-and-set and no lock, and the file is the only copy of what it holds. **One entry per file store the run opens**, from every command that opens one, `doctor` included, so each run's record shows the store, as `SOPULI-W001` shows `locking: advisory-only`. Printed in the text view |
 
 `sopuli/diagnostics.py` is the registry. `tests/test_lock_view.py` asserts that
 nothing emits a code the registry does not describe.

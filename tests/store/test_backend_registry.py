@@ -107,14 +107,23 @@ def test_a_backend_whose_client_is_absent_is_not_installed() -> None:
 
 
 def test_a_backend_with_no_extra_is_vacuously_installed() -> None:
-    """`file` and `keyring` have no client to look for (ADR-006's named gap).
+    """`keyring` has no client to look for.
 
     Vacuously true rather than false, so `config validate` stays quiet about
-    them instead of warning that something unnamed is missing. Their real state
+    it instead of warning that something unnamed is missing. Its real state
     -- no module in this build -- is `resolve`'s to report.
     """
-    assert installed(BACKENDS["file"])
     assert installed(BACKENDS["keyring"])
+
+
+def test_the_file_store_names_its_extra_and_client() -> None:
+    """Built (#1372), so a machine without `pyrage` is told what to install."""
+    backend = BACKENDS["file"]
+
+    # Not `provides`: conftest empties it for every test, so the suite's
+    # output does not depend on what is installed.
+    assert backend.extra == "file"
+    assert backend.install_command == 'pip install "sopuli-dba[file]"'
 
 
 def test_installed_does_not_import_the_client(monkeypatch: pytest.MonkeyPatch) -> None:

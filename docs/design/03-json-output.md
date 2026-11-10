@@ -6,7 +6,7 @@ for text output that keep it consistent with both.
 `sopuli/output/` produces them, and CI validates the output against the
 published schemas.
 
-Schemas: [`../schemas/sopuli-run-1.91.schema.json`](../schemas/sopuli-run-1.91.schema.json),
+Schemas: [`../schemas/sopuli-run-1.92.schema.json`](../schemas/sopuli-run-1.92.schema.json),
 [`../schemas/sopuli-event-1.25.schema.json`](../schemas/sopuli-event-1.25.schema.json)
 Examples, each from a real run:
 [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json),
@@ -637,15 +637,16 @@ An OCI store has no `addr`. From run schema 1.65, its `settings` carry
 `source` is always `object`. The text view prints them whole under the table,
 one to a line, because an OCID is longer than the `ADDRESS` column.
 
-A `file` store's `settings` carry `addr`, its file. Its `identity`,
-`recipients` and `max_versions` are not in `settings`: the resolver takes
-values that are a boolean, a number, a string or a list, and `identity` is an
-object, a MaterialRef. They are in `config.declared`, as written, which
-`config show --resolved` does not carry. The text view
-prints them under the table as the OCI keys are: the identity as where it
-comes from (`env SOPULI_FILE_IDENTITY`), never a value, each recipient on a
-line of its own, and `max_versions` with `(default)` when the file does not
-set it (#1372).
+A `file` store's `settings` carry `addr`, its file. From run schema 1.91, they
+also carry `identity`, `recipients` and `max_versions` where the store's entry
+writes them (#1429). Only the declaration can set these, so their `source` is
+always `object`. `identity` is an object, as the config file writes it, such as
+`{"env": "SOPULI_FILE_IDENTITY"}`: it names where the identity comes from,
+never its value. `recipients` is an array. An unwritten `max_versions` is
+absent, as any key no layer wrote is, and the store keeps 10. The text view
+prints these keys under the table as the OCI keys are: the identity as where it
+comes from (`env SOPULI_FILE_IDENTITY`), each recipient on a line of its own,
+and `max_versions` with `(default)` when the file does not set it (#1372).
 
 A `settings` entry has the **same shape** as an `invocation.options` entry. The
 schema has one `$defs/resolved_setting` that both use: it is one question about
@@ -674,9 +675,10 @@ These properties of the object are decisions:
   field that is almost always empty.
 - **`auth:` is not in `settings`.** A layer replaces it whole; it is not
   resolved key by key, so no layer won a key and there is no `resolved_setting`
-  to emit. It is also the part of a store entry that addresses credentials, and
-  §4's redaction rule is easier to keep by structure: there is nowhere here for
-  it to go.
+  to emit. A file store's `identity` is in `settings` although it also names
+  where a secret comes from: it is one key that only the declaration sets, and
+  a MaterialRef holds a source and a location, never a value, so §4's redaction
+  rule still holds by structure.
 
 The JSON carries the provenance whether or not `--explain` was passed, unlike the
 text table. There is nothing to filter: no `vaults.*` setting has a built-in
@@ -2548,7 +2550,7 @@ not contract and may improve.
 | `SOPULI-W068` | A target's session claimed less than it could, so the check that refuses two targets on one set of accounts (`SOPULI-20008`) may have let two through (#1363). From run schema 1.81 and event schema 1.24. On PostgreSQL, the admin role may not run `pg_control_system()`, so `system_identifier` was not read. On MariaDB, a Galera node was not `Synced`, such as `Donor/Desynced` while a backup runs, so only its server was claimed and not its cluster. The message says which. It is a **warning**, not a refusal: a desynced node is normal, and refusing would fail every scheduled run during a backup. **One entry per target**, from every command that connects, so a scheduled run that skipped the check says so. Printed in the text view, except by `doctor`, whose note on the target says the same |
 | `SOPULI-W069` | A dry run of `keyring set` found a different value in the entry, so the same run without `--dry-run` is refused with exit 8 unless `--replace` is given (#1417). From run schema 1.89. Only on a dry run: the real run refuses instead of warning |
 | `SOPULI-W070` | The run opened a `file` store, which is one age-encrypted file for local development and CI, and not for production (#1372, [#1415](../decisions/log.md#1415), decision 5). From run schema 1.90 and event schema 1.25. It has no compare-and-set, so its lock is advisory only (`locking: advisory-only`), and the file is the only copy of what it holds. **One entry per file store the run opens**, from every command that opens one, `doctor` included, so each run's record shows the store, as `SOPULI-W001` shows `locking: advisory-only`. Printed in the text view |
-| `SOPULI-W071` | `doctor` found a temporary file that a write left in a `file` store's directory (#1430). From run schema 1.91. A write makes `.sopuli-<16 hex>.tmp` beside the store's file and then replaces the file with it. A run killed between the two, by SIGKILL or a power loss, leaves the temporary file behind, and so does a replace that fails when the file cannot then be removed, as when another program holds it open on Windows. Only a file older than ten minutes is listed, because a younger one may be another run's write in progress, and the store has no lock to tell the two apart ([#1415](../decisions/log.md#1415), decision 4). The age is the local clock less the time the file system gave the file, so on a network file system whose server clock runs behind this host's, a write in progress can look older than it is. The file is owner-only and encrypted to the store's keys, but it may hold a password version that `max_versions` has pruned from the store since. **One entry per file**, naming the store, the file and its age. Where one directory holds more than one file store, however their `addr` spells it, the file is reported once and the message names each of them, because its name does not say which store wrote it. The directory is read from the config, so a store `doctor` could not open, such as one whose identity is not set, is looked at too. Nothing removes the file: the message says to remove it when no run is writing the store. Only `doctor` looks. Printed in the text view |
+| `SOPULI-W071` | `doctor` found a temporary file that a write left in a `file` store's directory (#1430). From run schema 1.92. A write makes `.sopuli-<16 hex>.tmp` beside the store's file and then replaces the file with it. A run killed between the two, by SIGKILL or a power loss, leaves the temporary file behind, and so does a replace that fails when the file cannot then be removed, as when another program holds it open on Windows. Only a file older than ten minutes is listed, because a younger one may be another run's write in progress, and the store has no lock to tell the two apart ([#1415](../decisions/log.md#1415), decision 4). The age is the local clock less the time the file system gave the file, so on a network file system whose server clock runs behind this host's, a write in progress can look older than it is. The file is owner-only and encrypted to the store's keys, but it may hold a password version that `max_versions` has pruned from the store since. **One entry per file**, naming the store, the file and its age. Where one directory holds more than one file store, however their `addr` spells it, the file is reported once and the message names each of them, because its name does not say which store wrote it. The directory is read from the config, so a store `doctor` could not open, such as one whose identity is not set, is looked at too. Nothing removes the file: the message says to remove it when no run is writing the store. Only `doctor` looks. Printed in the text view |
 
 `sopuli/diagnostics.py` is the registry. `tests/test_lock_view.py` asserts that
 nothing emits a code the registry does not describe.

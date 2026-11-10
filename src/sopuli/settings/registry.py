@@ -215,8 +215,11 @@ SAFETY_SETTINGS = frozenset(
 
 #: The types a setting may hold, and what "safest" means for each. ``tuple`` is
 #: the list shape -- ``confirm_environments`` -- kept immutable for the same
-#: reason the config model is (see :mod:`sopuli.config.model`).
-SETTING_TYPES = (bool, int, str, tuple)
+#: reason the config model is (see :mod:`sopuli.config.model`). ``object`` is
+#: any other value, such as a file store's ``identity``, a MaterialRef (#1429).
+#: Only the declaration may supply one, so it is never merged and has no safe
+#: direction.
+SETTING_TYPES = (bool, int, str, tuple, object)
 
 
 @dataclass(frozen=True)
@@ -290,6 +293,13 @@ class Setting:
             )
         if not self.layers:
             raise ValueError(f"setting {self.name!r} declares no layers; nothing could supply it")
+        if self.type is object and (
+            self.layers != {Layer.OBJECT} or self.policy is not MergePolicy.OVERRIDE
+        ):
+            raise ValueError(
+                f"setting {self.name!r} is an object; only the declaration may supply "
+                f"one, with MergePolicy.OVERRIDE, because no rule merges two of them"
+            )
         if self.inert_reason is not None and not self.inert_reason.strip():
             raise ValueError(
                 f"setting {self.name!r} is marked inert with no reason; the reason is the "
@@ -362,6 +372,8 @@ class Setting:
             return isinstance(value, tuple) and all(isinstance(item, str) for item in value)
         if self.type is int and isinstance(value, bool):
             return False
+        if self.type is object:
+            return value is not None
         return isinstance(value, self.type)
 
 
@@ -581,11 +593,10 @@ SETTINGS: MappingProxyType[str, Setting] = MappingProxyType(
             # will be: a layer may not write them at all, so there is nothing to
             # merge and an entry here would advertise one.
             #
-            # `auth:` is absent for a different reason -- it is a block, not a
-            # scalar, and `SETTING_TYPES` has no shape for it. It is replaced
-            # whole by the highest layer that wrote one, which needs no merge
-            # rule; `sopuli/config/vault_layers.py` says why whole rather than
-            # key by key.
+            # `auth:` is absent for a different reason: it is replaced whole by
+            # the highest layer that wrote one, so no key of it is merged and
+            # there is nothing to register; `sopuli/config/vault_layers.py` says
+            # why whole rather than key by key.
             # The environment layers are §6's table, key by key.
             # `addr` is the only one with a `SOPULI_*` variable of its own --
             # both the named form and the unnamed one are layer 2 -- while
@@ -611,6 +622,24 @@ SETTINGS: MappingProxyType[str, Setting] = MappingProxyType(
                     f"vaults.*.{key}", type=str, layers=(Layer.OBJECT,), policy=MergePolicy.OVERRIDE
                 )
                 for key in ("vault_id", "compartment_id", "key_id", "region")
+            ),
+            # A file store's keys (#1372): where its identity comes from, the
+            # recipients it encrypts to, and how many versions it keeps. The
+            # declaration is the only layer, because a layer that changed one
+            # would write the file differently from the next run. Registered so
+            # that `config show` reports them with the OCI keys (#1429).
+            *(
+                _setting(
+                    f"vaults.*.{key}",
+                    type=kind,
+                    layers=(Layer.OBJECT,),
+                    policy=MergePolicy.OVERRIDE,
+                )
+                for key, kind in (
+                    ("identity", object),
+                    ("recipients", tuple),
+                    ("max_versions", int),
+                )
             ),
             _setting(
                 # The one vault key invariant 10 governs, and the reason the

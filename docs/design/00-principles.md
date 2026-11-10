@@ -530,11 +530,22 @@ path, with fictional passwords, as `dumps` wrote them:
   the oldest, so the numbers are consecutive and the last is the path's
   current version. Other paths are left as they are, so a write never takes
   away a version that another path's `@version=N` pin reads. A lower
-  `max_versions` reaches each path when that path is next written. A number is not reused, so a version number names one write
-  for good, and `@version=N` never reads a later write. The one exception is a
-  restore from a backup: numbers written since the backup are used again, so
-  the restore hint says to check `@version=N` pins. The store has no
-  compare-and-set (see above).
+  `max_versions` reaches each path when that path is next written. A number
+  is not reused, so a version number names one write for good, and
+  `@version=N` never reads a later write. The one exception is a restore from
+  a backup: numbers written since the backup are used again, so the restore
+  hint says to check `@version=N` pins. The store has no compare-and-set (see
+  above).
+- **A write replaces the whole file.** The new file is written beside the
+  old one, readable and writable by its owner only, and then replaces it, so
+  a failed write leaves the old file as it was. On POSIX the new file is mode
+  0600; on Windows its DACL grants the current user alone and inherits
+  nothing. The directory must exist. Before the replace, the store compares
+  the file with what it read, by SHA-256, and refuses with a conflict if
+  another writer changed, created or removed it meanwhile. This is not a
+  lock: two runs that compare at the same moment can both replace.
+- **Every read gets P4's check**, as the config file does: a store file that
+  someone other than its owner can reach is refused, before it is decrypted.
 - **`data` is a JSON object of plain values.** A value JSON cannot hold as it
   is, such as a key that is not text, a number that is not finite, text that is
   not valid UTF-8, or a subclass of a list, a tuple or a dict, is refused at the

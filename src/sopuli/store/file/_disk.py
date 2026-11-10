@@ -363,56 +363,61 @@ def _sync_directory(directory: Path) -> None:
         os.close(descriptor)
 
 
-def _create_windows(path: Path) -> int:  # pragma: no cover - Windows only
-    """Create ``path`` with a DACL that grants the current user alone, as its
-    owner, inheriting nothing, and return a file descriptor open for writing.
+# Defined on Windows only, so mypy on Linux, which has no msvcrt, skips it.
+if sys.platform == "win32":  # pragma: no cover - Windows only
 
-    The security descriptor is given to ``CreateFile``, so the file has it
-    from the moment it exists.
-    """
-    # Narrows the platform, so mypy on Linux skips what follows.
-    assert sys.platform == "win32"
-    import msvcrt
+    def _create_windows(path: Path) -> int:
+        """Create ``path`` with a DACL that grants the current user alone, as
+        its owner, inheriting nothing, and return a file descriptor open for
+        writing.
 
-    import ntsecuritycon
-    import win32api
-    import win32con
-    import win32file
-    import win32security
+        The security descriptor is given to ``CreateFile``, so the file has it
+        from the moment it exists.
+        """
+        import msvcrt
 
-    token = win32security.OpenProcessToken(win32api.GetCurrentProcess(), win32security.TOKEN_QUERY)
-    user = win32security.GetTokenInformation(token, win32security.TokenUser)[0]
-    dacl = win32security.ACL()
-    dacl.AddAccessAllowedAce(win32security.ACL_REVISION, ntsecuritycon.FILE_ALL_ACCESS, user)
-    descriptor = win32security.SECURITY_DESCRIPTOR()
-    descriptor.SetSecurityDescriptorOwner(user, False)
-    descriptor.SetSecurityDescriptorDacl(True, dacl, False)
-    descriptor.SetSecurityDescriptorControl(
-        win32security.SE_DACL_PROTECTED, win32security.SE_DACL_PROTECTED
-    )
-    attributes = win32security.SECURITY_ATTRIBUTES()
-    attributes.SECURITY_DESCRIPTOR = descriptor
-    try:
-        handle = win32file.CreateFile(
-            str(path),
-            win32con.GENERIC_WRITE,
-            0,
-            attributes,
-            win32con.CREATE_NEW,
-            win32con.FILE_ATTRIBUTE_NORMAL,
-            None,
+        import ntsecuritycon
+        import win32api
+        import win32con
+        import win32file
+        import win32security
+
+        token = win32security.OpenProcessToken(
+            win32api.GetCurrentProcess(), win32security.TOKEN_QUERY
         )
-    except win32file.error as error:
-        raise OSError(error.winerror, error.strerror, str(path)) from None
-    try:
-        file_descriptor = msvcrt.open_osfhandle(int(handle), os.O_WRONLY | os.O_BINARY)
-    except BaseException:
-        # The handle is still this function's: close it, and remove the file
-        # it created, which its share mode keeps anyone else from removing.
-        handle.Close()
-        with contextlib.suppress(OSError):
-            os.unlink(path)
-        raise
-    # The descriptor owns the handle now, so the PyHANDLE must not close it.
-    handle.Detach()
-    return file_descriptor
+        user = win32security.GetTokenInformation(token, win32security.TokenUser)[0]
+        dacl = win32security.ACL()
+        dacl.AddAccessAllowedAce(win32security.ACL_REVISION, ntsecuritycon.FILE_ALL_ACCESS, user)
+        descriptor = win32security.SECURITY_DESCRIPTOR()
+        descriptor.SetSecurityDescriptorOwner(user, False)
+        descriptor.SetSecurityDescriptorDacl(True, dacl, False)
+        descriptor.SetSecurityDescriptorControl(
+            win32security.SE_DACL_PROTECTED, win32security.SE_DACL_PROTECTED
+        )
+        attributes = win32security.SECURITY_ATTRIBUTES()
+        attributes.SECURITY_DESCRIPTOR = descriptor
+        try:
+            handle = win32file.CreateFile(
+                str(path),
+                win32con.GENERIC_WRITE,
+                0,
+                attributes,
+                win32con.CREATE_NEW,
+                win32con.FILE_ATTRIBUTE_NORMAL,
+                None,
+            )
+        except win32file.error as error:
+            raise OSError(error.winerror, error.strerror, str(path)) from None
+        try:
+            file_descriptor = msvcrt.open_osfhandle(int(handle), os.O_WRONLY | os.O_BINARY)
+        except BaseException:
+            # The handle is still this function's: close it, and remove the
+            # file it created, which its share mode keeps anyone else from
+            # removing.
+            handle.Close()
+            with contextlib.suppress(OSError):
+                os.unlink(path)
+            raise
+        # The descriptor owns the handle now, so the PyHANDLE must not close it.
+        handle.Detach()
+        return file_descriptor

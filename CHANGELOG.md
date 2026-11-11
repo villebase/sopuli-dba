@@ -1,5 +1,36 @@
 # Changelog
 
+## [0.88.0](https://github.com/villebase/sopuli-dba/compare/v0.87.0...v0.88.0) (2026-11-10)
+
+
+### ⚠ BREAKING CHANGES
+
+* **config:** `vaults.<name>.type: keyring` is refused. No build could connect to such a store. Keep those passwords in another store, such as `hashicorp`.
+
+### Features
+
+* **config:** put a file store's keys in config show's resolved settings ([#1429](https://github.com/villebase/sopuli-dba/issues/1429)) ([#1441](https://github.com/villebase/sopuli-dba/issues/1441)) ([213e4f6](https://github.com/villebase/sopuli-dba/commit/213e4f60ec35be6cd6f27a35ac29ef26f62c6915))
+* **config:** read the file store's keys ([#1372](https://github.com/villebase/sopuli-dba/issues/1372)) ([#1418](https://github.com/villebase/sopuli-dba/issues/1418)) ([0735671](https://github.com/villebase/sopuli-dba/commit/07356714b3c66b49c70f4fef5acd70b275e04364))
+* **config:** read the tool's own credentials from the OS keyring ([#1417](https://github.com/villebase/sopuli-dba/issues/1417)) ([#1419](https://github.com/villebase/sopuli-dba/issues/1419)) ([6c9c759](https://github.com/villebase/sopuli-dba/commit/6c9c759de80c6ccd33c5d8ac5dee25cfc86e42f6))
+* **config:** remove the keyring store type ([#1373](https://github.com/villebase/sopuli-dba/issues/1373)) ([#1427](https://github.com/villebase/sopuli-dba/issues/1427)) ([2f1fa1b](https://github.com/villebase/sopuli-dba/commit/2f1fa1b55538be83bac2e3c1fc965af89b641213))
+* **config:** show a file store's keys, and guide a first run with one ([#1428](https://github.com/villebase/sopuli-dba/issues/1428)) ([9f9d509](https://github.com/villebase/sopuli-dba/commit/9f9d5095f454341c591244507d8365dd7615b563))
+* **doctor:** report a file store's leftover temporary files ([#1430](https://github.com/villebase/sopuli-dba/issues/1430)) ([#1442](https://github.com/villebase/sopuli-dba/issues/1442)) ([90053f0](https://github.com/villebase/sopuli-dba/commit/90053f0bd3356f30ff7da491589bf104589debc9))
+* **doctor:** show the OS keyring and each entry the config names ([#1417](https://github.com/villebase/sopuli-dba/issues/1417)) ([#1422](https://github.com/villebase/sopuli-dba/issues/1422)) ([a0f1f9c](https://github.com/villebase/sopuli-dba/commit/a0f1f9c71bb9fa46cd39ef6c423b4a93b57f2037))
+* **keyring:** add keyring set and keyring delete ([#1417](https://github.com/villebase/sopuli-dba/issues/1417)) ([#1423](https://github.com/villebase/sopuli-dba/issues/1423)) ([c97e1aa](https://github.com/villebase/sopuli-dba/commit/c97e1aa11cd33bcd4d862abc421d89f731b1cbce))
+* **report:** leave common accounts out of a PDB target's report ([#1438](https://github.com/villebase/sopuli-dba/issues/1438)) ([#1439](https://github.com/villebase/sopuli-dba/issues/1439)) ([d4a4d43](https://github.com/villebase/sopuli-dba/commit/d4a4d4382d4e66a5615cb14620f2ff68f204d137))
+* **store:** add the file store class ([#1425](https://github.com/villebase/sopuli-dba/issues/1425)) ([861efe8](https://github.com/villebase/sopuli-dba/commit/861efe897d340381912064f6018ddc4300d4e6ab))
+* **store:** add the file store's age encryption and the file extra ([#1421](https://github.com/villebase/sopuli-dba/issues/1421)) ([2bf5ba2](https://github.com/villebase/sopuli-dba/commit/2bf5ba286ffb59f35040d21cb44181af1cef1a1a))
+* **store:** add the file store's document format ([#1420](https://github.com/villebase/sopuli-dba/issues/1420)) ([3890d7c](https://github.com/villebase/sopuli-dba/commit/3890d7c43a6e18a15722b28deb090505ad42e2ed))
+* **store:** make the file store reachable, and warn on every run that opens one ([#1372](https://github.com/villebase/sopuli-dba/issues/1372)) ([#1426](https://github.com/villebase/sopuli-dba/issues/1426)) ([ce84c01](https://github.com/villebase/sopuli-dba/commit/ce84c01b41ab8767fb7a09dd73c08c7d422268a3))
+* **store:** read and replace the file store's file on disk ([#1424](https://github.com/villebase/sopuli-dba/issues/1424)) ([8afcdea](https://github.com/villebase/sopuli-dba/commit/8afcdea422a850a02e1535eb6950d48333483732))
+
+
+### Bug Fixes
+
+* **config:** refuse a pipe or a device at the config path without waiting ([#1440](https://github.com/villebase/sopuli-dba/issues/1440)) ([155ac5a](https://github.com/villebase/sopuli-dba/commit/155ac5a590ca8c832469759d8c73d2e122770467)), closes [#1431](https://github.com/villebase/sopuli-dba/issues/1431)
+* **config:** refuse a prod password kept in a non_production store, wherever it was named ([#1435](https://github.com/villebase/sopuli-dba/issues/1435)) ([#1437](https://github.com/villebase/sopuli-dba/issues/1437)) ([b8a4c7f](https://github.com/villebase/sopuli-dba/commit/b8a4c7fc29490556488ef6d6c8b7c239e6d71318))
+* **mysql:** read a 1045 without TLS as unavailable in creds check ([#1410](https://github.com/villebase/sopuli-dba/issues/1410)) ([#1412](https://github.com/villebase/sopuli-dba/issues/1412)) ([00398c7](https://github.com/villebase/sopuli-dba/commit/00398c712d69628621178d4363f33e24601cc84a))
+
 ## [0.87.0](https://github.com/villebase/sopuli-dba/compare/v0.86.0...v0.87.0) (2026-11-09)
 
 

@@ -620,11 +620,26 @@ def test_an_account_the_driver_refuses_to_describe_keeps_the_target(
     assert 'database changed: unknown, account "root@localhost"' in text
 
 
-def test_a_bare_name_on_mysql_says_it_has_no_host(
+def test_a_bare_name_on_mysql_is_refused_before_connecting(
     write_config: WriteConfig, mysql_estate: MemoryStore
 ) -> None:
+    """As every other `--account` verb refuses it (invariant 4, #1470 review)."""
     result = report(write_config, "--account", "acme_app", config=MYSQL_CONFIG)
+
+    # `CliRunner` calls `cli` without `main()`'s boundary, so the refusal
+    # arrives as the exception that carries the exit code.
+    assert getattr(result.exception, "exit_code", None) == ExitCode.CONFIG_INVALID
+    assert "is not user@host" in str(result.exception)
+    assert "mysql-dev (8.4.13" not in flat(result)
+
+
+def test_a_host_written_any_is_not_the_wildcard(
+    write_config: WriteConfig, mysql_estate: MemoryStore
+) -> None:
+    """`acme_app@any` is a host named `any`, not `acme_app@%`, though a vault
+    path writes both as `any` (#1470 review)."""
+    result = report(write_config, "--account", "acme_app@any", config=MYSQL_CONFIG)
     text = flat(result)
 
-    assert result.exit_code == ExitCode.SUCCESS, result.output
-    assert 'database changed: unknown, account "acme_app" has no host' in text
+    assert "acme_app@% (application)" not in text
+    assert "acme_app@any" in text

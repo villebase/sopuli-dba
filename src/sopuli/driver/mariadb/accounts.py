@@ -94,6 +94,7 @@ class OtherPluginError(DriverError):
 
     category = "config"
     exit_code = ExitCode.CONFIG_INVALID
+    about_account = True
 
     def __init__(self, account: str, plugin: str, *, target: str) -> None:
         super().__init__(

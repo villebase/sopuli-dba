@@ -299,11 +299,12 @@ wrote, and it reads no password. It judges nothing, so it never exits 3: 1
 where a target or a store gave no answer, and 4 where a history is not
 checked.
 
-Names are matched as the target's product compares them: by `upper()` on
-Oracle and PostgreSQL, and on MySQL and MariaDB the user exactly and the host
-without case, as a reset record's path is written (UC-2 §3). Where the database
-refuses to describe one account, such as a MySQL account on another plugin or
-a name with no host, its date is `unknown` with the refusal as the reason, and
+Names are matched as the config compares them: by `upper()` on Oracle and
+PostgreSQL, and on MySQL and MariaDB the user exactly and the host without
+case. A bare `--account` where a target is MySQL or MariaDB is refused before
+anything connects, as in every other verb. Where the database refuses to
+describe one account, such as a MySQL account on a plugin the tool does not
+set passwords for, its date is `unknown` with the refusal as the reason, and
 the target's other accounts keep theirs.
 
 - **Which accounts:** each application account the config binds to the

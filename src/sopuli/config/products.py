@@ -542,16 +542,36 @@ def refuse_a_bare_mysql_account(
                 "each with its own password"
             ),
         )
-    if quoted_or_padded(split):
-        raise ConfigError(
-            f"{declared_by} declares {account!r} on {product} target {expanded.name!r}, "
-            "whose user or host starts or ends with a quote or a space",
-            at=at,
-            hint=(
-                f"write the name without SQL's quotes, as `{example}@10.%`: the tool "
-                "quotes each part itself"
-            ),
-        )
+    refuse_a_quoted_mysql_account(
+        expanded, account, split, written_by=f"{declared_by} declares", at=at, example=example
+    )
+
+
+def refuse_a_quoted_mysql_account(
+    expanded: ExpandedTarget,
+    account: str,
+    split: tuple[str, str],
+    *,
+    written_by: str,
+    at: KeyPath,
+    example: str = "acme_app",
+) -> None:
+    """A ``user@host`` name with a part in SQL's quotes, as in ``'acme_app'@'%'``,
+    or with a space at an end, is refused. It splits, but the quotes would
+    become part of the name, and no account would match. ``written_by`` begins
+    the message, such as "a report rule names"."""
+    if not quoted_or_padded(split):
+        return
+    product = _PRODUCTS[expanded.target.type].name
+    raise ConfigError(
+        f"{written_by} {account!r} on {product} target {expanded.name!r}, "
+        "whose user or host starts or ends with a quote or a space",
+        at=at,
+        hint=(
+            f"write the name without SQL's quotes, as `{example}@10.%`: the tool "
+            "quotes each part itself"
+        ),
+    )
 
 
 def typed_user(name: str, *, default: str) -> str:
@@ -645,17 +665,9 @@ def check_report_mysql_accounts(config: Config) -> None:
                 split = mysql_account(account)
                 if split is None:
                     continue
-                if quoted_or_padded(split):
-                    raise ConfigError(
-                        f"a report rule names {account!r} on {product} target "
-                        f"{expanded.name!r}, whose user or host starts or ends with a quote "
-                        "or a space",
-                        at=where,
-                        hint=(
-                            "write the name without SQL's quotes, as `acme_app@10.%`: the "
-                            "report compares the names it reads"
-                        ),
-                    )
+                refuse_a_quoted_mysql_account(
+                    expanded, account, split, written_by="a report rule names", at=where
+                )
                 if "*" in split[1]:
                     raise ConfigError(
                         f"a report rule names {account!r} on {product} target "

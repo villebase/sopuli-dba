@@ -129,7 +129,9 @@ are undeclared. Then:
   whose rule says it must not; a locked account, or an account that can log in
   where its rule says `login: refused`; the wrong profile; another
   setting that differs from the rule; a declared account missing from a target
-  it is declared for;
+  it is declared for. A missing account is named as the config spells it, and
+  in upper case on Oracle, which keeps an unquoted name that way
+  ([#1465](https://github.com/villebase/sopuli-dba/issues/1465));
 - **then the accounts not checked, with no rule, and undeclared.** An
   undeclared account is information and never sets exit 3;
 - **then a count of the accounts that passed everything.** `--all` lists them.

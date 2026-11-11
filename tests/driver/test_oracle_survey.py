@@ -55,10 +55,13 @@ class _Cursor:
         if isinstance(answer, Exception):
             raise answer
         rows = answer if isinstance(answer, list) else []
-        if self.sql in (SURVEY_USERS_QUERY, SURVEY_USERS_QUERY_LEGACY):
-            # A test writes an account's first five columns; AUTHENTICATION_TYPE
-            # is PASSWORD unless the test gives it.
+        # A test writes an account's first five columns. AUTHENTICATION_TYPE is
+        # PASSWORD in the current shape and NULL in the legacy one, as the
+        # legacy query sends it, unless the test gives it.
+        if self.sql == SURVEY_USERS_QUERY:
             return [row if len(row) > 5 else (*row, "PASSWORD") for row in rows]
+        if self.sql == SURVEY_USERS_QUERY_LEGACY:
+            return [row if len(row) > 5 else (*row, None) for row in rows]
         return rows
 
 
@@ -261,6 +264,8 @@ def test_release_without_common_or_oracle_maintained() -> None:
     assert not any(account.common for account in accounts)
     assert by_name["ACME_APP_USER"].password_lifetime == 180
     assert by_name["ACME_APP_USER"].failed_logins == 1
+    # The legacy shape sends NULL for AUTHENTICATION_TYPE: NONE is from 18c.
+    assert not any(account.no_authentication for account in accounts)
     assert SURVEY_USERS_QUERY_LEGACY in cursor.asked
     assert SURVEY_LIMITS_QUERY_LEGACY in cursor.asked
 

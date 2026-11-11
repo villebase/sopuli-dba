@@ -2445,7 +2445,8 @@ free-pdb  (23.26.3.0.0, 40 accounts read, 2 with a problem, 5 undeclared)
 ```
 
 It exits 3. The owner somebody locked passes, and so does the one with no
-authentication, though it reads `OPEN`: nobody can log in to it. A lock after
+authentication, though it reads `OPEN`: nobody can log in to it with a
+password. A lock after
 failed logins does not pass: somebody tried, and the lock ends by itself after
 the profile's `PASSWORD_LOCK_TIME`.
 

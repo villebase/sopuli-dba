@@ -1093,7 +1093,7 @@ def is_common(cursor: Cursor, name: str) -> bool | None:
 #: the shape for a release that answers ``ORA-00904`` to them.
 #: ``AUTHENTICATION_TYPE`` says how the account logs in, not what with: it is
 #: ``NONE`` for an account made ``NO AUTHENTICATION``, which nobody can log in
-#: to (18c and later, #1447).
+#: to with a password (18c and later, #1447).
 SURVEY_USERS_QUERY = (
     "select username, account_status, profile, common, oracle_maintained, "
     "authentication_type from dba_users"
@@ -1318,13 +1318,9 @@ def _lock_time_unlimited(row: Any, own_container: bool) -> bool | None:
     is simply "not unlimited". A ``DEFAULT`` that a container cannot resolve is
     unknown, as for the other limits (:func:`_limit`).
     """
-    if row is None:
+    if row is None or _default_gap(row, str(row[0]), PASSWORD_LOCK_TIME, own_container):
         return None
-    shown, value, profile_common = row[2], row[3], row[4]
-    unresolvable = profile_common is None or is_yes(profile_common)
-    if str(shown).upper() == _INHERITED and not own_container and unresolvable:
-        return None
-    return str(value or "").strip().upper() == "UNLIMITED"
+    return str(row[3] or "").strip().upper() == "UNLIMITED"
 
 
 def _locked_by_somebody(
@@ -1340,7 +1336,9 @@ def _locked_by_somebody(
     count has reached the profile's ``FAILED_LOGIN_ATTEMPTS`` is taken as a
     lockout there, and that where the count or the limit cannot be read, the
     answer is unknown. A lock time that cannot be read is treated as possibly
-    ``UNLIMITED``.
+    ``UNLIMITED``. The count is compared with the limit the profile has now: a
+    lockout whose limit was raised afterwards reads as a lock somebody set
+    (``sql/oracle/22_lock_kind_probe.sql``, KD6).
     """
     if not deliberately_locked(status):
         return False
@@ -1382,6 +1380,31 @@ def _lcounts(cursor: Cursor) -> tuple[dict[str, int | None], str | None]:
     return {str(name): None if count is None else int(count) for name, count in rows}, None
 
 
+def _default_gap(row: Any, profile: str, resource: str, own_container: bool) -> str | None:
+    """Why this container cannot resolve a limit shown as ``DEFAULT``, or ``None``.
+
+    Outside ``CDB$ROOT`` and a non-CDB, a ``DEFAULT`` on a common profile
+    follows the root's ``DEFAULT`` profile, which a PDB cannot read (§2), and so
+    does one on a profile whose ``COMMON`` the narrowed shape could not read.
+    The one rule for :func:`_limit` and :func:`_lock_time_unlimited`.
+    """
+    shown, profile_common = row[2], row[4]
+    if str(shown).upper() != _INHERITED or own_container:
+        return None
+    if profile_common is None:
+        return (
+            f"{resource} on profile {profile} is DEFAULT, and whether the profile "
+            f"is common, so that the DEFAULT profile in {_ROOT} applies, could not "
+            "be read"
+        )
+    if is_yes(profile_common):
+        return (
+            f"{resource} on common profile {profile} is DEFAULT, which follows the "
+            f"DEFAULT profile in {_ROOT}, and this container cannot read it"
+        )
+    return None
+
+
 def _limit(row: Any, profile: str, resource: str, own_container: bool) -> tuple[Limit, str | None]:
     """One limit from :data:`SURVEY_LIMITS_QUERY`'s row, or ``None`` and why.
 
@@ -1391,19 +1414,10 @@ def _limit(row: Any, profile: str, resource: str, own_container: bool) -> tuple[
     """
     if row is None:
         return None, f"DBA_PROFILES has no {resource} for profile {profile}"
-    shown, value, profile_common = row[2], row[3], row[4]
-    if str(shown).upper() == _INHERITED and not own_container:
-        if profile_common is None:
-            return None, (
-                f"{resource} on profile {profile} is DEFAULT, and whether the profile "
-                f"is common, so that the DEFAULT profile in {_ROOT} applies, could not "
-                "be read"
-            )
-        if is_yes(profile_common):
-            return None, (
-                f"{resource} on common profile {profile} is DEFAULT, which follows the "
-                f"DEFAULT profile in {_ROOT}, and this container cannot read it"
-            )
+    gap = _default_gap(row, profile, resource, own_container)
+    if gap is not None:
+        return None, gap
+    value = row[3]
     text = str(value or "").strip().upper()
     if text == "UNLIMITED":
         return "unlimited", None

@@ -519,7 +519,9 @@ def _lock(
         return Finding(
             "lock",
             NOT_CHECKED_OUTCOME,
-            f"locked: {surveyed.status}, but whether failed logins locked it cannot be read: "
+            f"locked: {surveyed.status}; the profile's PASSWORD_LOCK_TIME is UNLIMITED or "
+            "unreadable, where a lockout reads LOCKED too, and the failed-login count "
+            f"that would tell them apart cannot be read: "
             f"{count_reason}",
         )
     if not surveyed.deliberately_locked:

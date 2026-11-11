@@ -1,5 +1,5 @@
 --------------------------------------------------------------------------------
--- sopuli-dba : a lock somebody set, a lockout, and NO AUTHENTICATION   (v1)
+-- sopuli-dba : a lock somebody set, a lockout, and NO AUTHENTICATION   (v2)
 --
 -- #1447. A report rule's `login: refused` passes on a lock somebody set and
 -- not on a lockout after failed logins, and passes on an account made
@@ -19,6 +19,9 @@
 --        with a password gets
 --   KD6  KD2's lockout after its profile's FAILED_LOGIN_ATTEMPTS is raised
 --        from 1 to 10
+--   KD7  three wrong passwords and then the right one to an account locked
+--        with ACCOUNT LOCK under the UNLIMITED profile with
+--        FAILED_LOGIN_ATTEMPTS 3: does a locked account still count them?
 --
 -- For each, as SYS in the PDB: DBA_USERS.ACCOUNT_STATUS and
 -- AUTHENTICATION_TYPE, SYS.USER$.ASTATUS and LCOUNT, and the profile's
@@ -26,9 +29,10 @@
 --
 -- This MEASURES and decides nothing.
 --
--- STATUS: run 2026-11-11 on 26ai Free 23.26.3.0.0 (gvenzl/oracle-free:latest,
--- FREEPDB1), twice, with the same results apart from the lock timestamps.
--- Every other release UNRUN.
+-- STATUS: v2 run 2026-11-11 on 26ai Free 23.26.3.0.0
+-- (gvenzl/oracle-free:latest, FREEPDB1), twice, with the same results apart
+-- from the lock timestamps. v1 had KD1 to KD6, also run twice there. Every
+-- other release UNRUN.
 --
 --
 -- RESULTS -- 23.26.3.0.0, 2026-11-11
@@ -42,6 +46,7 @@
 --
 --   KD5 is on the DEFAULT profile, whose two values are the tier-1 stack's.
 --   KD6   LOCKED          PASSWORD  8        1       10                     UNLIMITED
+--   KD7   LOCKED          PASSWORD  8        0       3                      UNLIMITED
 --
 --   KD2 and KD3 read the same in every column but LCOUNT: under UNLIMITED a
 --   lockout is LOCKED, with ASTATUS 8, as a lock somebody set is. KD1 shows
@@ -51,6 +56,9 @@
 --   LCOUNT 1, now below the limit: the count is compared with the limit the
 --   profile has now, not the one in force when it locked.
 --   KD5 reads OPEN, and a login with any password gets ORA-01017.
+--   KD7: each of the four logins gets ORA-28000, the right password too, and
+--   LCOUNT stays 0. A locked account does not count failed logins, so a lock
+--   somebody set does not turn into what reads as a lockout later.
 --
 --
 -- HOW TO RUN. Against the tier-1 stack, from this directory, where the SYS
@@ -109,7 +117,8 @@ CREATE USER acme_kd3 IDENTIFIED BY "Acme_Kd3_1" PROFILE acme_kd_unl1;
 CREATE USER acme_kd4 IDENTIFIED BY "Acme_Kd4_1" PROFILE acme_kd_unl3;
 CREATE USER acme_kd5 NO AUTHENTICATION;
 CREATE USER acme_kd6 IDENTIFIED BY "Acme_Kd6_1" PROFILE acme_kd_unl6;
-GRANT CREATE SESSION TO acme_kd1, acme_kd2, acme_kd3, acme_kd4, acme_kd5, acme_kd6;
+CREATE USER acme_kd7 IDENTIFIED BY "Acme_Kd7_1" PROFILE acme_kd_unl3 ACCOUNT LOCK;
+GRANT CREATE SESSION TO acme_kd1, acme_kd2, acme_kd3, acme_kd4, acme_kd5, acme_kd6, acme_kd7;
 
 PROMPT
 PROMPT == KD1, KD2, KD6: one failed login each
@@ -123,6 +132,12 @@ CONNECT acme_kd4/"wrong-2"@&pdb
 PROMPT
 PROMPT == KD5: a login with a password to a NO AUTHENTICATION account
 CONNECT acme_kd5/"anything-1"@&pdb
+PROMPT
+PROMPT == KD7: three wrong passwords and one right one to an account locked with ACCOUNT LOCK
+CONNECT acme_kd7/"wrong-1"@&pdb
+CONNECT acme_kd7/"wrong-2"@&pdb
+CONNECT acme_kd7/"wrong-3"@&pdb
+CONNECT acme_kd7/"Acme_Kd7_1"@&pdb
 
 CONNECT sys/"&pwd"@&pdb AS SYSDBA
 ALTER USER acme_kd3 ACCOUNT LOCK;
@@ -130,7 +145,7 @@ ALTER USER acme_kd4 ACCOUNT LOCK;
 ALTER PROFILE acme_kd_unl6 LIMIT FAILED_LOGIN_ATTEMPTS 10;
 
 PROMPT
-PROMPT == the six accounts, as SYS reads them in the PDB
+PROMPT == the seven accounts, as SYS reads them in the PDB
 SELECT &state &state_from WHERE u.name LIKE 'ACME_KD%' ORDER BY u.name;
 
 BEGIN

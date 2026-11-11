@@ -807,6 +807,8 @@ matrix](../measurements.md)):
 - under `UNLIMITED` it reads `LOCKED` and `ASTATUS` 8, the same as after
   `ACCOUNT LOCK`. Only `LCOUNT` differs;
 - a lock somebody set after failed logins below the limit keeps the count;
+- a locked account does not count failed logins: a login to it gets
+  `ORA-28000`, with any password, and `LCOUNT` stays as it was;
 - raising `FAILED_LOGIN_ATTEMPTS` after a lockout leaves the account `LOCKED`,
   with its count now below the limit;
 - an account made `NO AUTHENTICATION` reads `ACCOUNT_STATUS` `OPEN` and
@@ -815,8 +817,10 @@ matrix](../measurements.md)):
 So under `UNLIMITED`, and where the profile's lock time cannot be read, the
 survey takes a `LOCKED` account whose `LCOUNT` has reached the profile's
 `FAILED_LOGIN_ATTEMPTS` as a lockout, and cannot say which it is where it has no
-count. The count is compared with the limit the profile has now: a lockout
-whose profile's limit was raised afterwards reads as a lock somebody set.
+count. The count is compared with the limit the profile has now. A lockout
+whose profile's limit was raised afterwards reads as a lock somebody set, and
+a lock somebody set after failed logins reads as a lockout once the limit is
+lowered to the count or below, or the account moves to such a profile.
 `NO AUTHENTICATION` stops a login with a password, not a proxy login: a user
 granted `CONNECT THROUGH` the account can still connect as it. The survey does
 not read proxy grants.

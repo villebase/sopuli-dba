@@ -226,7 +226,9 @@ def test_login_refused_names_why_a_lock_cannot_be_classified() -> None:
     )
     assert lock_of(rows(cfg, surveyed)["ACME_OWNER"]) == (
         "not_checked",
-        "locked: LOCKED, but whether failed logins locked it cannot be read: "
+        "locked: LOCKED; the profile's PASSWORD_LOCK_TIME is UNLIMITED or unreadable, "
+        "where a lockout reads LOCKED too, and the failed-login count that would tell "
+        "them apart cannot be read: "
         "GRANT SELECT ON SYS.USER$ to read it",
     )
 

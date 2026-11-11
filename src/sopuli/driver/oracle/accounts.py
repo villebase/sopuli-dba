@@ -1285,7 +1285,7 @@ def survey_with_profiles(
             lock_time = limits.get((profile, PASSWORD_LOCK_TIME))
             deliberate = _locked_by_somebody(
                 status,
-                lock_time_unlimited=_lock_time_unlimited(lock_time, own_container),
+                lock_time_unlimited=_lock_time_unlimited(lock_time, profile, own_container),
                 limit=resolved[FAILED_LOGIN_ATTEMPTS],
                 failed=failed,
             )
@@ -1311,14 +1311,14 @@ def survey_with_profiles(
     return accounts, frozenset(str(row[0]) for row in limit_rows)
 
 
-def _lock_time_unlimited(row: Any, own_container: bool) -> bool | None:
+def _lock_time_unlimited(row: Any, profile: str, own_container: bool) -> bool | None:
     """Whether a profile's ``PASSWORD_LOCK_TIME`` is ``UNLIMITED``; ``None`` if unknown.
 
     Only ``UNLIMITED`` matters here, so a fraction of a day, the usual value,
     is simply "not unlimited". A ``DEFAULT`` that a container cannot resolve is
     unknown, as for the other limits (:func:`_limit`).
     """
-    if row is None or _default_gap(row, str(row[0]), PASSWORD_LOCK_TIME, own_container):
+    if row is None or _default_gap(row, profile, PASSWORD_LOCK_TIME, own_container):
         return None
     return str(row[3] or "").strip().upper() == "UNLIMITED"
 
@@ -1338,7 +1338,10 @@ def _locked_by_somebody(
     answer is unknown. A lock time that cannot be read is treated as possibly
     ``UNLIMITED``. The count is compared with the limit the profile has now: a
     lockout whose limit was raised afterwards reads as a lock somebody set
-    (``sql/oracle/22_lock_kind_probe.sql``, KD6).
+    (``sql/oracle/22_lock_kind_probe.sql``, KD6), and a lock somebody set after
+    failed logins reads as a lockout once the limit is lowered to the count. A
+    locked account does not count further failed logins (KD7), so the count
+    cannot grow past the limit after somebody locks it.
     """
     if not deliberately_locked(status):
         return False

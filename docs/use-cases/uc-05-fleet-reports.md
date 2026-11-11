@@ -293,10 +293,18 @@ Grants to `PUBLIC` are left out unless a flag asks for them.
 
 **Built, on Oracle, PostgreSQL, MySQL and MariaDB**
 ([#1460](https://github.com/villebase/sopuli-dba/issues/1460)):
-`sopuli report history [--account NAME]`, with the usual target selectors. `docs/local-testing.md` §9a has a run. The history
-comes from what the tool wrote, and it reads no password. It judges nothing,
-so it never exits 3: 1 where a target or a store gave no answer, and 4 where a
-history is not checked.
+`sopuli report history [--account NAME]`, with the usual target selectors.
+`docs/local-testing.md` §9a has a run. The history comes from what the tool
+wrote, and it reads no password. It judges nothing, so it never exits 3: 1
+where a target or a store gave no answer, and 4 where a history is not
+checked.
+
+Names are matched as the target's product compares them: by `upper()` on
+Oracle and PostgreSQL, and on MySQL and MariaDB the user exactly and the host
+without case, as a reset record's path is written (UC-2 §3). Where the database
+refuses to describe one account, such as a MySQL account on another plugin or
+a name with no host, its date is `unknown` with the refusal as the reason, and
+the target's other accounts keep theirs.
 
 - **Which accounts:** each application account the config binds to the
   target, and each personal account with a reset record under the target in

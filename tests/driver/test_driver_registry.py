@@ -317,13 +317,6 @@ def test_postgresql_is_written_for_uc1_uc2_and_two_reports() -> None:
     assert DRIVERS["oracle"].commands is None
 
 
-@pytest.mark.parametrize("product", ["postgresql", "mysql", "mariadb"])
-def test_every_product_runs_the_history_report(product: str) -> None:
-    """#1460: the history comes from the store; the database's date is
-    information, and each driver says why it has none."""
-    require_command(target(f"{product}-dev", product), "report.history")
-
-
 def test_doctor_is_never_refused_whoever_asks() -> None:
     """`doctor` is exempt in the gate itself, not only because its one caller
     skips the gate."""

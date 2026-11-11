@@ -60,6 +60,7 @@ __all__ = [
     "native",
     "personal",
     "with_database",
+    "without_database",
 ]
 
 APPLICATION, PERSONAL = "application", "personal"
@@ -298,6 +299,15 @@ def with_database(found: AccountHistory, user: UserState | None) -> AccountHisto
         # never as this machine's local time (`clock.as_utc`).
         return replace(found, db_changed_at=as_utc(user.password_changed_at), db_unknown=None)
     return replace(found, db_changed_at=None, db_unknown=user.password_changed_unknown or NO_DATE)
+
+
+def without_database(found: AccountHistory, reason: str) -> AccountHistory:
+    """``found`` where the database refused to describe this account, with why.
+
+    Information, as the date is: it does not change whether the history is
+    complete, and it is not the target's failure.
+    """
+    return replace(found, db_changed_at=None, db_unknown=reason)
 
 
 def exit_code(

@@ -51,12 +51,11 @@ class SurveyedAccount:
     ``LOCKED(TIMED)``. It is the same fact as
     :attr:`~sopuli.driver.protocol.UserState.deliberately_locked`, read from
     the same status. A rule's ``login: refused`` is met only by a deliberate
-    lock (#1447). ``None`` where ``locked`` is ``None``, or where the product
-    cannot tell the two apart. Oracle cannot always: under a profile whose
-    ``PASSWORD_LOCK_TIME`` is ``UNLIMITED``, a lockout reads ``LOCKED``, and
-    ``SYS.USER$.ASTATUS`` is 8 as for a lock somebody set (measured on
-    23.26.3.0.0). That lock never ends by itself, so the account still cannot
-    log in.
+    lock (#1447). ``None`` where ``locked`` is ``None``. The Oracle survey
+    reads it from the status alone, so it is true for a lockout under a
+    profile whose ``PASSWORD_LOCK_TIME`` is ``UNLIMITED``: Oracle shows that
+    lockout as ``LOCKED``, and ``SYS.USER$.ASTATUS`` is 8, as for a lock
+    somebody set (measured on 23.26.3.0.0).
     """
 
     name: str

@@ -398,7 +398,10 @@ def _expectation(
     lifetimes = {s.password_lifetime for s in sources if s.password_lifetime is not None}
     limits = {s.failed_login_limit for s in sources if s.failed_login_limit is not None}
     profiles = {rule.profile.upper() for rule in matching if rule.profile is not None}
-    logins = {rule.login for rule in matching if rule.login is not None}
+    # An application logs in as its account, so a pattern's `login:` does not
+    # reach it, as a rule's profile does not: the config refuses both for an
+    # application account named by name.
+    logins = set() if application else {rule.login for rule in matching if rule.login is not None}
     conflicts = frozenset(
         check
         for check, values in (
@@ -444,7 +447,7 @@ def _check(surveyed: SurveyedAccount, expectation: _Expectation) -> tuple[Findin
     if expectation.profile is None and settings.is_empty and expectation.login is None:
         return (
             lock,
-            Finding("profile", NO_RULE_OUTCOME, "no rule states a profile or a setting"),
+            Finding("profile", NO_RULE_OUTCOME, "no rule states a login, a profile or a setting"),
         )
     findings = [lock]
     # A field two sources set two ways is not checked; the account's other

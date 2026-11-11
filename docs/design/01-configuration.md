@@ -3493,7 +3493,9 @@ read the lock, as for a common account on a PDB target, the check is *not
 checked*. `login:` is a neutral word, so it stays outside the product blocks.
 A rule may not give `login: refused` to an account an application declares by
 name, because the application logs in as it. A pattern that reaches one is
-matched against a database, so the report applies the rule there.
+matched against a database, so the config cannot refuse it: the report does
+not apply the pattern's `login:` to an application account, as it does not
+apply a rule's profile, and the lock is checked as without the key.
 
 **A key that only one product has goes in that product's block.**
 `settings:` holds the words that more than one product has. A rule's

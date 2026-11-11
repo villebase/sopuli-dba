@@ -19,7 +19,7 @@ the report check an account; it does not let any changing command touch it.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from sopuli.config.applications import account_owners, build_target_selector
 from sopuli.config.errors import ROOT, ConfigError, KeyPath
@@ -215,8 +215,10 @@ def _build_account_rule(raw: Any, *, at: KeyPath) -> ReportAccountRule:
         settings = _build_settings(entry["settings"], at=at.key("settings"))
     login: Login | None = None
     if "login" in entry:
-        chosen = choice(entry["login"], allowed=LOGIN_VALUES, at=at.key("login"), noun="login")
-        login = LOGIN_REFUSED if chosen == LOGIN_REFUSED else LOGIN_ALLOWED
+        # `choice` has checked the value against LOGIN_VALUES; the cast only says so.
+        login = cast(
+            Login, choice(entry["login"], allowed=LOGIN_VALUES, at=at.key("login"), noun="login")
+        )
     if login is None and profile is None and settings.is_empty:
         raise ConfigError(
             "must declare `login:`, `settings:` or `oracle.profile`",
@@ -330,7 +332,7 @@ def reject_rules_an_application_account_cannot_meet(
 
     Only names are checked. A pattern is matched against a database, so the
     report is where a pattern that reaches an application account is handled:
-    there the policy's profile wins, and the rule's `login:` applies.
+    there the policy's profile wins, and the rule's `login:` is not applied.
     """
     owners = account_owners(applications)
 
@@ -348,7 +350,7 @@ def reject_rules_an_application_account_cannot_meet(
                     at=at,
                     hint=(
                         "set `account.profile` in the application's policy, "
-                        "or drop `oracle.profile` here"
+                        "or drop `profile:` from this rule's `oracle:` block"
                     ),
                 )
             raise ConfigError(

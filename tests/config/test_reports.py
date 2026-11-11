@@ -312,7 +312,7 @@ def test_a_rule_may_not_set_the_profile_of_an_application_account() -> None:
     message = str(caught.value)
     assert "acme_app_user" in message
     assert "policy" in message
-    assert "drop `oracle.profile` here" in message
+    assert "drop `profile:` from this rule's `oracle:` block" in message
 
 
 def test_a_rule_may_give_settings_to_an_application_account() -> None:

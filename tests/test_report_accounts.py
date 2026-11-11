@@ -266,6 +266,17 @@ def test_a_login_rule_beside_a_settings_rule_both_apply() -> None:
     assert {f.check for f in row.findings} == {"lock", "password_lifetime"}
 
 
+def test_a_patterns_login_refused_does_not_reach_an_application_account() -> None:
+    """An application logs in as its account, so the pattern's `login:` is not
+    applied there, as a rule's profile is not (review of #1451)."""
+    cfg = config(
+        **APPLICATION,
+        reports={"accounts": [{"accounts": ["ACME_*"], "login": "refused"}]},
+    )
+    row = rows(cfg, account("ACME_APP_USER", locked=False, status="OPEN"))["ACME_APP_USER"]
+    assert lock_of(row) == ("ok", "OPEN")
+
+
 def test_a_declared_name_that_is_not_there_is_missing() -> None:
     cfg = config(**rule(accounts=["ACME_GONE_USER"], profile="P"))
     row = rows(cfg)["ACME_GONE_USER"]

@@ -326,3 +326,43 @@ def test_a_rule_may_give_settings_to_an_application_account() -> None:
         }
     )
     assert config.reports.accounts[0].settings.password_lifetime == 90
+
+
+def test_a_rule_may_not_refuse_login_to_an_application_account() -> None:
+    """An application logs in as its account, so `login: refused` could only
+    report a problem (review of #1451)."""
+    with pytest.raises(ConfigError) as caught:
+        build_config(
+            {
+                "version": 1,
+                "applications": [{"name": "acme", "accounts": ["ACME_APP_USER"]}],
+                "reports": {"accounts": [{"accounts": ["acme_app_user"], "login": "refused"}]},
+            }
+        )
+    message = str(caught.value)
+    assert "reports.accounts[0].accounts[0]" in message
+    assert "which logs in as it" in message
+    assert "drop `login: refused`" in message
+
+
+def test_a_rule_may_allow_login_to_an_application_account() -> None:
+    config = build_config(
+        {
+            "version": 1,
+            "applications": [{"name": "acme", "accounts": ["ACME_APP_USER"]}],
+            "reports": {"accounts": [{"accounts": ["acme_app_user"], "login": "allowed"}]},
+        }
+    )
+    assert config.reports.accounts[0].login == "allowed"
+
+
+def test_a_pattern_with_login_refused_may_reach_an_application_account() -> None:
+    """A pattern is matched against a database, so the config cannot refuse it."""
+    config = build_config(
+        {
+            "version": 1,
+            "applications": [{"name": "acme", "accounts": ["ACME_APP_USER"]}],
+            "reports": {"accounts": [{"accounts": ["ACME_*"], "login": "refused"}]},
+        }
+    )
+    assert config.reports.accounts[0].login == "refused"

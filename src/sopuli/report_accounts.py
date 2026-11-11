@@ -25,6 +25,7 @@ from sopuli.config.model import (
     Config,
     DbProfileRule,
     Limit,
+    Login,
     Policy,
     ReportAccountRule,
     Settings,
@@ -145,7 +146,7 @@ class _Expectation:
     #: The checks two sources set two ways, which are not checked.
     conflicts: frozenset[str] = frozenset()
     #: A rule's `login:`, ``refused`` or ``allowed``, or ``None`` where no rule says.
-    login: str | None = None
+    login: Login | None = None
 
 
 def evaluate(
@@ -482,12 +483,15 @@ def _check(surveyed: SurveyedAccount, expectation: _Expectation) -> tuple[Findin
     return tuple(findings)
 
 
-def _lock(surveyed: SurveyedAccount, reason: str, login: str | None) -> Finding:
+def _lock(surveyed: SurveyedAccount, reason: str, login: Login | None) -> Finding:
     """The lock against the rule's `login:`, or against "not locked" where none says.
 
     `login: refused` passes only on a lock somebody set (#1447). A lockout after
-    failed logins does not pass: somebody tried to log in, and on Oracle the
-    lock ends by itself after `PASSWORD_LOCK_TIME`.
+    failed logins does not pass: somebody tried to log in, and the lock ends by
+    itself after the profile's `PASSWORD_LOCK_TIME`. Where that is `UNLIMITED`,
+    Oracle reads the lockout as `LOCKED`, the same as a lock somebody set, so it
+    passes; that lock never ends, so the account still cannot log in
+    (:class:`~sopuli.driver.survey.SurveyedAccount`).
     """
     if surveyed.locked is None:
         return Finding("lock", NOT_CHECKED_OUTCOME, reason)
@@ -497,13 +501,13 @@ def _lock(surveyed: SurveyedAccount, reason: str, login: str | None) -> Finding:
         return Finding("lock", OK, surveyed.status)
     if not surveyed.locked:
         return Finding("lock", PROBLEM, f"can log in: {surveyed.status}, rule says login refused")
-    if surveyed.locked_on_purpose is None:
+    if surveyed.deliberately_locked is None:
         return Finding(
             "lock",
             NOT_CHECKED_OUTCOME,
             f"locked: {surveyed.status}, but whether on purpose cannot be read on this target",
         )
-    if not surveyed.locked_on_purpose:
+    if not surveyed.deliberately_locked:
         return Finding(
             "lock",
             PROBLEM,

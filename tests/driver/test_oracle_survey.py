@@ -118,7 +118,7 @@ def test_local_account_in_a_pdb_reads_everything() -> None:
             failed_login_limit=5,
             failed_logins=2,
             unreadable=(),
-            locked_on_purpose=False,
+            deliberately_locked=False,
         ),
     )
 
@@ -133,7 +133,7 @@ def test_common_account_in_a_pdb_has_no_lock_limits_or_count() -> None:
     assert account.common is True
     assert account.kept_in_root is True
     assert account.locked is None
-    assert account.locked_on_purpose is None
+    assert account.deliberately_locked is None
     assert account.password_lifetime is None
     assert account.failed_login_limit is None
     assert account.failed_logins is None
@@ -354,7 +354,7 @@ def test_locked_statuses(status: str, locked: bool, on_purpose: bool) -> None:
         own_container=True,
     )
     assert accounts[0].locked is locked
-    assert accounts[0].locked_on_purpose is on_purpose
+    assert accounts[0].deliberately_locked is on_purpose
 
 
 def test_a_limit_that_is_not_a_whole_number_is_unreadable() -> None:

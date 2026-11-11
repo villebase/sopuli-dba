@@ -38,6 +38,7 @@ from sopuli.config.model import (
     Application,
     DbProfileRule,
     Limit,
+    Login,
     ReportAccountRule,
     Reports,
     Settings,
@@ -49,9 +50,9 @@ REPORT_ACCOUNT_KEYS = ("accounts", "targets", "login", "settings", "oracle")
 #: What a rule's `login:` takes (#1447). `refused`: the account must not be able
 #: to log in, so only a lock somebody set passes, and a lockout after failed
 #: logins does not. `allowed`: any lock is a problem, as it is with no `login:`.
-LOGIN_REFUSED = "refused"
-LOGIN_ALLOWED = "allowed"
-LOGIN_VALUES = (LOGIN_REFUSED, LOGIN_ALLOWED)
+LOGIN_REFUSED: Login = "refused"
+LOGIN_ALLOWED: Login = "allowed"
+LOGIN_VALUES: tuple[Login, ...] = (LOGIN_REFUSED, LOGIN_ALLOWED)
 #: `reports.oracle`: what only Oracle has, for the whole section.
 ORACLE_REPORTS_KEYS = ("profiles",)
 #: `reports.accounts[].oracle`: what only Oracle has, for one rule.
@@ -212,9 +213,10 @@ def _build_account_rule(raw: Any, *, at: KeyPath) -> ReportAccountRule:
     settings = Settings()
     if "settings" in entry:
         settings = _build_settings(entry["settings"], at=at.key("settings"))
-    login = None
+    login: Login | None = None
     if "login" in entry:
-        login = choice(entry["login"], allowed=LOGIN_VALUES, at=at.key("login"), noun="login")
+        chosen = choice(entry["login"], allowed=LOGIN_VALUES, at=at.key("login"), noun="login")
+        login = LOGIN_REFUSED if chosen == LOGIN_REFUSED else LOGIN_ALLOWED
     if login is None and profile is None and settings.is_empty:
         raise ConfigError(
             "must declare `login:`, `settings:` or `oracle.profile`",
@@ -314,34 +316,43 @@ def _reject_duplicate_profiles(profiles: tuple[DbProfileRule, ...], *, at: KeyPa
         seen[spelled] = where
 
 
-def reject_profile_on_application_accounts(
+def reject_rules_an_application_account_cannot_meet(
     applications: tuple[Application, ...], reports: Reports
 ) -> None:
-    """A rule may not give an application account an `oracle.profile`.
+    """A rule may not give an application account an `oracle.profile` or `login: refused`.
 
     An application account's expected profile is its policy's
     `account.profile` (UC-5 §4). A second source could disagree with the first,
-    and the report would have to pick one. A rule may still give such an
-    account `settings:`.
+    and the report would have to pick one. An application logs in as its
+    account, so `login: refused` could only ever report a problem, or pass on
+    an application that is down. A rule may still give such an account
+    `settings:` and `login: allowed`.
 
     Only names are checked. A pattern is matched against a database, so the
     report is where a pattern that reaches an application account is handled:
-    there the policy's profile wins.
+    there the policy's profile wins, and the rule's `login:` applies.
     """
     owners = account_owners(applications)
 
     for index, rule in enumerate(reports.accounts):
-        if rule.profile is None:
+        if rule.profile is None and rule.login != LOGIN_REFUSED:
             continue
         for position, name in enumerate(rule.accounts):
             owner = owners.get(name.upper())
             if owner is None or is_pattern(name):
                 continue
+            at = ROOT.key("reports").key("accounts").index(index).key("accounts").index(position)
+            if rule.profile is not None:
+                raise ConfigError(
+                    f"account {name!r} belongs to {owner}, so its profile comes from its policy",
+                    at=at,
+                    hint=(
+                        "set `account.profile` in the application's policy, "
+                        "or drop `oracle.profile` here"
+                    ),
+                )
             raise ConfigError(
-                f"account {name!r} belongs to {owner}, so its profile comes from its policy",
-                at=ROOT.key("reports").key("accounts").index(index).key("accounts").index(position),
-                hint=(
-                    "set `account.profile` in the application's policy, "
-                    "or drop `oracle.profile` here"
-                ),
+                f"account {name!r} belongs to {owner}, which logs in as it",
+                at=at,
+                hint="drop the account from this rule, or drop `login: refused`",
             )

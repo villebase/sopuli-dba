@@ -112,7 +112,9 @@ reports:
     # The schema owners: nobody logs in as them, so their lock is the point.
     # `login: refused` passes only where somebody locked the account. An open
     # owner is a problem, and so is one locked by failed logins, because
-    # somebody tried, and that lock ends by itself.
+    # somebody tried, and that lock ends by itself after the profile's
+    # PASSWORD_LOCK_TIME. An application account cannot be named here: the
+    # application logs in as it.
     - accounts: ["ACME_OWNER*"]
       login: refused
 

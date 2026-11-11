@@ -3481,11 +3481,19 @@ has its lock checked. Without `login:`, and with `login: allowed`, any lock is
 a problem. `login: refused` is for an account nobody should log in as, such as
 a schema owner: the lock passes only where somebody set it, and an open
 account is a problem. A lockout after failed logins does not pass either. On
-Oracle that is `LOCKED(TIMED)`: somebody tried to log in, and the lock ends by
-itself after the profile's `PASSWORD_LOCK_TIME`. `LOCKED` and
-`EXPIRED & LOCKED` pass. Where the target cannot read the lock, as for a
-common account on a PDB target, the check is *not checked*. `login:` is a
-neutral word, so it stays outside the product blocks.
+Oracle that is a status with a `LOCKED(TIMED)` component: somebody tried to log
+in, and the lock ends by itself after the profile's `PASSWORD_LOCK_TIME`. A
+status with a `LOCKED` component passes, such as `LOCKED`, `EXPIRED & LOCKED`
+or `LOCKED & IN ROLLOVER`. Where the profile's `PASSWORD_LOCK_TIME` is
+`UNLIMITED`, Oracle shows a lockout as `LOCKED` too, and `SYS.USER$` holds the
+same value as for a lock somebody set (measured on 23.26.3.0.0), so it passes.
+That lock never ends by itself, so the account still cannot log in, and the
+report's failed-login count shows that somebody tried. Where the target cannot
+read the lock, as for a common account on a PDB target, the check is *not
+checked*. `login:` is a neutral word, so it stays outside the product blocks.
+A rule may not give `login: refused` to an account an application declares by
+name, because the application logs in as it. A pattern that reaches one is
+matched against a database, so the report applies the rule there.
 
 **A key that only one product has goes in that product's block.**
 `settings:` holds the words that more than one product has. A rule's
@@ -4012,7 +4020,8 @@ notices until a rotation.
   `allowed`, an empty `settings:` or `oracle:`, a setting that is neither
   `unlimited` nor a whole number above 0, a pattern using a wildcard other than
   `*`, an account named twice (in one rule or across rules), an `oracle.profile`
-  given to an account an application declares, a `reports.oracle.profiles` name
+  or `login: refused` given by name to an account an application declares, a
+  `reports.oracle.profiles` name
   written twice, and a rule's `targets:` naming a group, target or label key the
   file does not have → error
 - a key that moved → error, naming the key and its new place (§8a). A

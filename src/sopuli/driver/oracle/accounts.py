@@ -1279,7 +1279,7 @@ def survey_with_profiles(
                 failed_logins=failed,
                 unreadable=tuple(reasons),
                 kept_in_root=held_elsewhere and not application,
-                locked_on_purpose=None if locked is None else deliberately_locked(status),
+                deliberately_locked=None if locked is None else deliberately_locked(status),
             )
         )
     accounts = tuple(sorted(surveyed, key=lambda account: account.name))

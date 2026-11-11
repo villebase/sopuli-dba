@@ -169,7 +169,7 @@ def lock_of(row: AccountRow) -> tuple[str, str]:
 def test_login_refused_passes_on_a_lock_set_on_purpose() -> None:
     """An owner account locked on purpose is what `login: refused` is for (#1447)."""
     cfg = config(**rule(accounts=["ACME_OWNER"], login="refused"))
-    surveyed = account("ACME_OWNER", locked=True, locked_on_purpose=True, status="LOCKED")
+    surveyed = account("ACME_OWNER", locked=True, deliberately_locked=True, status="LOCKED")
     row = rows(cfg, surveyed)["ACME_OWNER"]
     assert lock_of(row) == ("ok", "locked on purpose: LOCKED")
     assert row.state == REPORT_OK
@@ -178,7 +178,9 @@ def test_login_refused_passes_on_a_lock_set_on_purpose() -> None:
 
 def test_login_refused_passes_on_a_compound_status_with_a_lock_set_on_purpose() -> None:
     cfg = config(**rule(accounts=["ACME_OWNER"], login="refused"))
-    surveyed = account("ACME_OWNER", locked=True, locked_on_purpose=True, status="EXPIRED & LOCKED")
+    surveyed = account(
+        "ACME_OWNER", locked=True, deliberately_locked=True, status="EXPIRED & LOCKED"
+    )
     assert rows(cfg, surveyed)["ACME_OWNER"].state == REPORT_OK
 
 
@@ -193,7 +195,7 @@ def test_login_refused_on_an_open_account_is_a_problem() -> None:
 def test_login_refused_is_not_met_by_a_lockout_after_failed_logins() -> None:
     """`LOCKED(TIMED)` is a lockout: somebody tried, and it ends by itself."""
     cfg = config(**rule(accounts=["ACME_OWNER"], login="refused"))
-    surveyed = account("ACME_OWNER", locked=True, locked_on_purpose=False, status="LOCKED(TIMED)")
+    surveyed = account("ACME_OWNER", locked=True, deliberately_locked=False, status="LOCKED(TIMED)")
     row = rows(cfg, surveyed)["ACME_OWNER"]
     assert lock_of(row) == (
         "problem",
@@ -205,7 +207,7 @@ def test_login_refused_is_not_met_by_a_lockout_after_failed_logins() -> None:
 def test_login_refused_where_the_purpose_cannot_be_read_is_not_checked() -> None:
     """Never OK without proof: a lock the target cannot classify is not checked."""
     cfg = config(**rule(accounts=["ACME_OWNER"], login="refused"))
-    surveyed = account("ACME_OWNER", locked=True, locked_on_purpose=None, status="LOCKED")
+    surveyed = account("ACME_OWNER", locked=True, deliberately_locked=None, status="LOCKED")
     row = rows(cfg, surveyed)["ACME_OWNER"]
     assert lock_of(row)[0] == "not_checked"
     assert row.state == NOT_CHECKED
@@ -220,7 +222,7 @@ def test_login_refused_where_the_lock_cannot_be_read_is_not_checked() -> None:
 
 def test_login_allowed_reads_any_lock_as_a_problem() -> None:
     cfg = config(**rule(accounts=["ACME_SVC"], login="allowed"))
-    surveyed = account("ACME_SVC", locked=True, locked_on_purpose=True, status="LOCKED")
+    surveyed = account("ACME_SVC", locked=True, deliberately_locked=True, status="LOCKED")
     row = rows(cfg, surveyed)["ACME_SVC"]
     assert lock_of(row) == ("problem", "locked: LOCKED")
 
@@ -257,7 +259,7 @@ def test_a_login_rule_beside_a_settings_rule_both_apply() -> None:
         }
     )
     surveyed = account(
-        "ACME_OWNER", locked=True, locked_on_purpose=True, status="LOCKED", password_lifetime=60
+        "ACME_OWNER", locked=True, deliberately_locked=True, status="LOCKED", password_lifetime=60
     )
     row = rows(cfg, surveyed)["ACME_OWNER"]
     assert row.state == REPORT_OK

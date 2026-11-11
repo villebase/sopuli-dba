@@ -963,6 +963,10 @@ class PersonalAccountRule:
 #: failed logins that the database's value must not exceed.
 Limit = int | Literal["unlimited"]
 
+#: What a report rule's `login:` says: whether the accounts must be able to
+#: log in (#1447).
+Login = Literal["refused", "allowed"]
+
 
 @dataclass(frozen=True)
 class Settings:
@@ -1000,7 +1004,7 @@ class ReportAccountRule:
     targets: TargetSelector = field(default_factory=TargetSelector)
     profile: str | None = None
     settings: Settings = field(default_factory=Settings)
-    login: str | None = None
+    login: Login | None = None
 
 
 @dataclass(frozen=True)

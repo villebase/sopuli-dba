@@ -2442,7 +2442,8 @@ free-pdb  (23.26.3.0.0, 39 accounts read, 2 with a problem, 5 undeclared)
 ```
 
 It exits 3. Only the owner somebody locked passes. A lock after failed logins
-does not: somebody tried, and the lock ends by itself.
+does not: somebody tried, and the lock ends by itself after the profile's
+`PASSWORD_LOCK_TIME`.
 
 `report privileges` shows each account's effective privileges, through every
 role, for the same accounts. The service account needs `SELECT` on

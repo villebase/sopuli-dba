@@ -144,6 +144,19 @@ def test_the_default_view_shows_the_report_rules() -> None:
     assert "all" not in profiles.splitlines()[1]
 
 
+def test_the_default_view_shows_a_rules_login() -> None:
+    """A rule with only `login:` must not look like a rule that checks nothing
+    (review of #1451)."""
+    config = build_config(
+        {"version": 1, "reports": {"accounts": [{"accounts": ["ACME_OWNER*"], "login": "refused"}]}}
+    )
+    text = click.unstyle(render_text(PATHS, config, resolved=False))
+    header = next(line for line in text.splitlines() if line.startswith("ACCOUNTS"))
+    row = next(line for line in text.splitlines() if line.startswith("ACME_OWNER*"))
+    assert "LOGIN" in header
+    assert row.split() == ["ACME_OWNER*", "all", "refused", "-", "-"]
+
+
 def test_a_non_production_store_is_marked(config: Config) -> None:
     """The marking exists so a development store is obviously one (P2), which
     only works if the view says so."""

@@ -296,6 +296,7 @@ def _report_rows(config: Config) -> list[str]:
         [
             Column("ACCOUNTS", _NAME),
             Column("TARGETS", _NAME),
+            Column("LOGIN", _NAME),
             Column("PROFILE", _NAME),
             Column("SETTINGS"),
         ],
@@ -303,6 +304,7 @@ def _report_rows(config: Config) -> list[str]:
             [
                 ", ".join(rule.accounts),
                 _selector(rule),
+                _or_dash(rule.login),
                 _or_dash(rule.profile),
                 _or_dash(_settings_text(rule.settings)),
             ]

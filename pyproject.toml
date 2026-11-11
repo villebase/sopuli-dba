@@ -167,6 +167,11 @@ dev = [
   "pytest>=8.1",
   # Off by default (`addopts`); one CI cell runs the suite shuffled (#510).
   "pytest-randomly>=3.15",
+  # Coverage is reported, never required (#1453, option A). 7.0 is the first
+  # coverage release with `report --format=markdown`, which the tier-1 lane
+  # writes to its job summary.
+  "pytest-cov>=5.0",
+  "coverage>=7.0",
   "jsonschema>=4.20",
   "types-jsonschema>=4.20",
   "types-pyyaml>=6.0",
@@ -204,6 +209,15 @@ addopts = "-q -p no:randomly"
 # ahead of the removal (#951). Matched on the message, because a
 # DeprecationWarning is attributed to its caller, not to the `click` module.
 filterwarnings = ["error:.*removed in Click:DeprecationWarning"]
+
+# Read only when a run asks for coverage, with `pytest --cov` (`04-testing.md`
+# §4). No `fail_under`: the figure is reported, not enforced (#1453).
+[tool.coverage.run]
+source = ["sopuli"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
 
 [tool.ruff]
 line-length = 100

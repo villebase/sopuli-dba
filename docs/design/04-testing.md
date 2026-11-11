@@ -318,6 +318,18 @@ stack running, the same tests skip with a reason, as §1 requires.
 [`../maintainer-environments.md`](../maintainer-environments.md) §1 lists the
 variables the suite reads for Oracle, and their defaults.
 
+**Coverage is reported, not required** (#1453). `pytest --cov` measures which
+lines and branches of `src/sopuli` the run executed, and prints them with the
+missing line numbers. The settings are in `pyproject.toml`. Tier 0 alone leaves
+much of the code that talks to a server unrun, such as each driver's
+`session.py`, because it starts no database. A run with the tier-1 stack up
+runs that code too. The tier-1 lane runs `pytest --cov` and writes the
+table to its job summary. No threshold fails a run: a minimum invites tests
+written for the number, and the point of a test here is the behaviour it
+asserts. Code run in a child process, such as `python -m sopuli` in
+`tests/test_main_module.py`, is not counted. For line counts by language, run
+`scc` or `cloc` on the checkout.
+
 Tier 0 needs no containers, and it must stay that way: it is what makes the
 inner development loop fast. Every pure-logic concern above (precedence,
 templating, charsets, redaction) can be tested without a database. That is a

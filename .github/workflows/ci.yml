@@ -571,7 +571,13 @@ jobs:
           # worse than no lane, because it would be quoted as evidence.
           SOPULI_TEST_TIER1: required
           SOPULI_TEST_ORACLE_NAME: 23ai Free
-        run: pytest
+        run: pytest --cov
+
+      # This lane runs tiers 0 and 1 together, so it is the one place the
+      # figure includes the driver code. It is reported and never fails the
+      # job (#1453): a minimum invites tests written for the number.
+      - name: coverage
+        run: coverage report --format=markdown --sort=cover >> "$GITHUB_STEP_SUMMARY"
 
       # Runs on failure too: when Oracle did not come up, its log is the whole
       # diagnosis and the alternative is re-running the job with a debug step

@@ -31,7 +31,7 @@ the intended division.
 
 Regenerate the committed artefact with::
 
-    python -m sopuli.config.schema > docs/schemas/sopuli-config-5.1.schema.json
+    python -m sopuli.config.schema > docs/schemas/sopuli-config-5.2.schema.json
 """
 
 from __future__ import annotations
@@ -65,7 +65,7 @@ from sopuli.config import (
 #: `01-configuration.md` §9b says when it changes. What each shape accepts and
 #: refuses, and why, is in the function that builds it: its docstring or its
 #: ``description``.
-SCHEMA_VERSION = "5.1"
+SCHEMA_VERSION = "5.2"
 
 SCHEMA_FILENAME = f"sopuli-config-{SCHEMA_VERSION}.schema.json"
 
@@ -1086,10 +1086,30 @@ def _report_account_oracle() -> Schema:
     )
 
 
+def _report_account_postgresql() -> Schema:
+    """`reports.accounts[].postgresql`: what only PostgreSQL has, for one rule."""
+    return _object(
+        keys=reports.POSTGRESQL_RULE_KEYS,
+        types={
+            "valid_until": _enum(
+                reports.VALID_UNTIL_VALUES,
+                description=(
+                    "`required`: the role's `VALID UNTIL` must be set and in the future. "
+                    "`forbidden`: it must be unset, or `infinity`. Without the key, a date "
+                    "in the past is still a problem."
+                ),
+            ),
+        },
+        min_properties=1,
+        description="What this rule checks that only PostgreSQL has. Added in 5.2.",
+    )
+
+
 def _report_account_rule() -> Schema:
     """One `reports.accounts` entry.
 
-    Needing `login:`, `settings:` or `oracle.profile` stays with the builder.
+    Needing `login:`, `settings:`, `oracle.profile` or `postgresql.valid_until`
+    stays with the builder.
     """
     return _object(
         keys=reports.REPORT_ACCOUNT_KEYS,
@@ -1105,11 +1125,13 @@ def _report_account_rule() -> Schema:
                 description=(
                     "`refused`: the accounts must not be able to log in, so only a lock "
                     "somebody set passes. `allowed`: any lock is a problem, as without "
-                    "the key. Added in 5.1."
+                    "the key. On PostgreSQL, `NOLOGIN` is judged only against this key. "
+                    "Added in 5.1."
                 ),
             ),
             "settings": _ref("report_settings"),
             "oracle": _ref("report_account_oracle"),
+            "postgresql": _ref("report_account_postgresql"),
         },
         required=("accounts",),
         description="Accounts the report checks, and what it expects of them.",
@@ -1425,7 +1447,8 @@ specials a charset does not have; `allow:` belongs to `charset: custom`; an \
 policy, group, profile and target name written anywhere must be declared in the \
 section that declares it; a `for_each` must use one inner dimension throughout; \
 a profile may not set a key that would change scope; a `reports.accounts` rule \
-needs `login:`, `settings:` or `oracle.profile`, names each account once across \
+needs `login:`, `settings:`, `oracle.profile` or `postgresql.valid_until`, names \
+each account once across \
 the rules, and may not give an application account an `oracle.profile`; and a \
 `reports.oracle.profiles` name appears once. A file this \
 schema accepts may still be refused there.\
@@ -1524,6 +1547,7 @@ def build_schema() -> Schema:
             "reports_oracle": _reports_oracle(),
             "report_account_rule": _report_account_rule(),
             "report_account_oracle": _report_account_oracle(),
+            "report_account_postgresql": _report_account_postgresql(),
             "db_profile_rule": _db_profile_rule(),
             "report_settings": _report_settings(),
             "policy": _policy(),

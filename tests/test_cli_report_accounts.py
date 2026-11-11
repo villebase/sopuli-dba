@@ -300,15 +300,14 @@ def test_only_not_checked_exits_4(
     assert result.exit_code == ExitCode.PARTIAL, result.output
 
 
-def test_a_postgres_target_is_refused_before_connecting(write_config: WriteConfig) -> None:
-    """The driver registry lists `report.accounts` for Oracle only."""
+def test_a_mysql_target_is_refused_before_connecting(write_config: WriteConfig) -> None:
+    """The driver registry lists `report.accounts` for Oracle and PostgreSQL only."""
     config = write_config(
         "version: 1\n"
         "targets:\n"
-        "  - name: pg-dev\n"
-        "    type: postgresql\n"
-        "    dsn: pg-dev.example.com:5432\n"
-        "    postgres: { database: acme }\n"
+        "  - name: mysql-dev\n"
+        "    type: mysql\n"
+        "    dsn: mysql-dev.example.com:3306\n"
         "    admin: { username: sopuli_svc, auth: { method: env } }\n"
     )
     result = CliRunner().invoke(
@@ -323,7 +322,7 @@ def test_a_postgres_target_is_refused_before_connecting(write_config: WriteConfi
     text = click.unstyle(
         CliRunner().invoke(cli, ["--config", str(config), "report", "accounts"]).output
     )
-    assert text.startswith("pg-dev  not supported: ")
+    assert text.startswith("mysql-dev  not supported: ")
 
 
 def test_an_unsupported_target_beside_a_reached_one_is_not_checked(

@@ -121,7 +121,10 @@ def test_the_only_wildcard_is_a_star() -> None:
 def test_a_rule_needs_a_profile_or_settings() -> None:
     with pytest.raises(ConfigError) as caught:
         build_reports(document(accounts=[{"accounts": ["X"]}]))
-    assert "must declare `login:`, `settings:` or `oracle.profile`" in str(caught.value)
+    assert (
+        "must declare `login:`, `settings:`, `oracle.profile` or `postgresql.valid_until`"
+        in str(caught.value)
+    )
 
 
 @pytest.mark.parametrize("login", ["refused", "allowed"])

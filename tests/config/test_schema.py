@@ -103,6 +103,7 @@ KEY_SETS: dict[str, tuple[str, ...]] = {
     "reports_oracle": reports.ORACLE_REPORTS_KEYS,
     "report_account_rule": reports.REPORT_ACCOUNT_KEYS,
     "report_account_oracle": reports.ORACLE_RULE_KEYS,
+    "report_account_postgresql": reports.POSTGRESQL_RULE_KEYS,
     "db_profile_rule": reports.DB_PROFILE_KEYS,
     "report_settings": reports.SETTINGS_KEYS,
 }

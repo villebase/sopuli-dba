@@ -967,6 +967,10 @@ Limit = int | Literal["unlimited"]
 #: log in (#1447).
 Login = Literal["refused", "allowed"]
 
+#: What a report rule's `postgresql.valid_until` says (#1459): `required`, a
+#: date in the future, or `forbidden`, no date.
+ValidUntilRule = Literal["required", "forbidden"]
+
 
 @dataclass(frozen=True)
 class Settings:
@@ -998,6 +1002,8 @@ class ReportAccountRule:
     accounts must be on, written ``oracle.profile`` because only Oracle has
     one; ``settings`` is what their password limits must be. ``login`` is
     ``refused`` or ``allowed``, or ``None`` where the rule does not say.
+    ``valid_until`` is the rule's `postgresql.valid_until`, written in the
+    `postgresql:` block because only PostgreSQL has one.
     """
 
     accounts: tuple[str, ...]
@@ -1005,6 +1011,7 @@ class ReportAccountRule:
     profile: str | None = None
     settings: Settings = field(default_factory=Settings)
     login: Login | None = None
+    valid_until: ValidUntilRule | None = None
 
 
 @dataclass(frozen=True)

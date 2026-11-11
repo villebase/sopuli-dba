@@ -3479,18 +3479,23 @@ An `accounts` entry needs at least one of `login:`, `settings:` and
 **`login:` says what the lock must be** (#1447). Every account a rule covers
 has its lock checked. Without `login:`, and with `login: allowed`, any lock is
 a problem. `login: refused` is for an account nobody should log in as, such as
-a schema owner: the lock passes only where somebody set it, and an open
-account is a problem. A lockout after failed logins does not pass either. On
-Oracle that is a status with a `LOCKED(TIMED)` component: somebody tried to log
-in, and the lock ends by itself after the profile's `PASSWORD_LOCK_TIME`. A
-status with a `LOCKED` component passes, such as `LOCKED`, `EXPIRED & LOCKED`
-or `LOCKED & IN ROLLOVER`. Where the profile's `PASSWORD_LOCK_TIME` is
-`UNLIMITED`, Oracle shows a lockout as `LOCKED` too, and `SYS.USER$` holds the
-same value as for a lock somebody set (measured on 23.26.3.0.0), so it passes.
-That lock never ends by itself, so the account still cannot log in, and the
-report's failed-login count shows that somebody tried. Where the target cannot
-read the lock, as for a common account on a PDB target, the check is *not
-checked*. `login:` is a neutral word, so it stays outside the product blocks.
+a schema owner: it passes where nobody can log in with a password, and
+otherwise only where somebody set the lock. An open account is a problem. On
+Oracle an account made `NO AUTHENTICATION` passes, though its status reads
+`OPEN`. A lockout after failed logins does not pass: somebody tried to log in.
+On Oracle that is a status with a `LOCKED(TIMED)` component, and the lock ends
+by itself after the profile's `PASSWORD_LOCK_TIME`. A status with a `LOCKED`
+component passes, such as `LOCKED`, `EXPIRED & LOCKED` or
+`LOCKED & IN ROLLOVER`, with one exception. Where the profile's
+`PASSWORD_LOCK_TIME` is `UNLIMITED`, Oracle shows a lockout as `LOCKED` too,
+and `SYS.USER$` holds the same value as for a lock somebody set (measured on
+23.26.3.0.0). There a `LOCKED` account whose failed-login count has reached the
+profile's `FAILED_LOGIN_ATTEMPTS` is taken as a lockout, and is a problem. The
+count needs the optional `SELECT ON SYS.USER$` grant; without it, such a lock
+is *not checked*, never OK. So is a lock whose profile's lock time or limit the
+target cannot read. Where the target cannot read the lock, as for a common
+account on a PDB target, the check is *not checked*. `login:` is a neutral
+word, so it stays outside the product blocks.
 A rule may not give `login: refused` to an account an application declares by
 name, because the application logs in as it. A pattern that reaches one is
 matched against a database, so the config cannot refuse it: the report does

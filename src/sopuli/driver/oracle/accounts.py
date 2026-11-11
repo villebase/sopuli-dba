@@ -1091,29 +1091,38 @@ def is_common(cursor: Cursor, name: str) -> bool | None:
 #: column that holds or describes a password is read. ``COMMON`` and
 #: ``ORACLE_MAINTAINED`` exist from 12.1; :data:`SURVEY_USERS_QUERY_LEGACY` is
 #: the shape for a release that answers ``ORA-00904`` to them.
+#: ``AUTHENTICATION_TYPE`` says how the account logs in, not what with: it is
+#: ``NONE`` for an account made ``NO AUTHENTICATION``, which nobody can log in
+#: to (18c and later, #1447).
 SURVEY_USERS_QUERY = (
-    "select username, account_status, profile, common, oracle_maintained from dba_users"
+    "select username, account_status, profile, common, oracle_maintained, "
+    "authentication_type from dba_users"
 )
 
-#: :data:`SURVEY_USERS_QUERY` with ``NULL`` in place of the two columns, in the
-#: same positions. Measured on 11.2.0.2.0, which has neither.
+#: :data:`SURVEY_USERS_QUERY` with ``NULL`` in place of ``COMMON`` and
+#: ``ORACLE_MAINTAINED``, in the same positions. Measured on 11.2.0.2.0, which
+#: has neither. ``AUTHENTICATION_TYPE`` is ``NULL`` too: ``NONE`` is from 18c,
+#: and this shape is for a release older than 12.1.
 SURVEY_USERS_QUERY_LEGACY = (
     "select username, account_status, profile, "
-    "cast(null as varchar2(3)), cast(null as varchar2(1)) "
+    "cast(null as varchar2(3)), cast(null as varchar2(1)), cast(null as varchar2(8)) "
     "from dba_users"
 )
 
-#: The two limits UC-5 checks, for every profile. Each row has the limit as
-#: ``DBA_PROFILES`` shows it, the limit resolved through the ``DEFAULT`` profile
-#: of this container, and whether the profile is common. The raw value is kept
-#: because a ``DEFAULT`` on a common profile follows the root's ``DEFAULT``
-#: profile, and a PDB cannot read that (§2).
+#: The two limits UC-5 checks, and ``PASSWORD_LOCK_TIME``, for every profile.
+#: Each row has the limit as ``DBA_PROFILES`` shows it, the limit resolved
+#: through the ``DEFAULT`` profile of this container, and whether the profile
+#: is common. The raw value is kept because a ``DEFAULT`` on a common profile
+#: follows the root's ``DEFAULT`` profile, and a PDB cannot read that (§2).
+#: ``PASSWORD_LOCK_TIME`` tells whether a ``LOCKED`` status can be a lockout
+#: after failed logins: only where it is ``UNLIMITED`` (#1447).
 SURVEY_LIMITS_QUERY = (
     "select p.profile, p.resource_name, p.limit, "
     "case when p.limit = 'DEFAULT' then d.limit else p.limit end, p.common "
     "from dba_profiles p "
     "join dba_profiles d on d.profile = 'DEFAULT' and d.resource_name = p.resource_name "
-    "where p.resource_name in ('PASSWORD_LIFE_TIME', 'FAILED_LOGIN_ATTEMPTS')"
+    "where p.resource_name in "
+    "('PASSWORD_LIFE_TIME', 'FAILED_LOGIN_ATTEMPTS', 'PASSWORD_LOCK_TIME')"
 )
 
 #: :data:`SURVEY_LIMITS_QUERY` for a release with no ``DBA_PROFILES.COMMON``.
@@ -1123,7 +1132,8 @@ SURVEY_LIMITS_QUERY_LEGACY = (
     "cast(null as varchar2(3)) "
     "from dba_profiles p "
     "join dba_profiles d on d.profile = 'DEFAULT' and d.resource_name = p.resource_name "
-    "where p.resource_name in ('PASSWORD_LIFE_TIME', 'FAILED_LOGIN_ATTEMPTS')"
+    "where p.resource_name in "
+    "('PASSWORD_LIFE_TIME', 'FAILED_LOGIN_ATTEMPTS', 'PASSWORD_LOCK_TIME')"
 )
 
 #: Every account's failed-login count, behind the optional ``SELECT ON
@@ -1132,6 +1142,10 @@ SURVEY_LIMITS_QUERY_LEGACY = (
 SURVEY_LCOUNT_QUERY = "select name, lcount from sys.user$ where type# = 1"
 
 PASSWORD_LIFE_TIME = "PASSWORD_LIFE_TIME"
+PASSWORD_LOCK_TIME = "PASSWORD_LOCK_TIME"
+
+#: ``DBA_USERS.AUTHENTICATION_TYPE`` of an account made ``NO AUTHENTICATION``.
+NO_AUTHENTICATION = "NONE"
 
 #: What ``DBA_PROFILES`` shows for a limit that the profile inherits.
 _INHERITED = "DEFAULT"
@@ -1266,6 +1280,16 @@ def survey_with_profiles(
         else:
             failed = counts[name]
 
+        deliberate: bool | None = None
+        if locked is not None:
+            lock_time = limits.get((profile, PASSWORD_LOCK_TIME))
+            deliberate = _locked_by_somebody(
+                status,
+                lock_time_unlimited=_lock_time_unlimited(lock_time, own_container),
+                limit=resolved[FAILED_LOGIN_ATTEMPTS],
+                failed=failed,
+            )
+
         surveyed.append(
             SurveyedAccount(
                 name=name,
@@ -1279,11 +1303,52 @@ def survey_with_profiles(
                 failed_logins=failed,
                 unreadable=tuple(reasons),
                 kept_in_root=held_elsewhere and not application,
-                deliberately_locked=None if locked is None else deliberately_locked(status),
+                deliberately_locked=deliberate,
+                no_authentication=str(row[5] or "").upper() == NO_AUTHENTICATION,
             )
         )
     accounts = tuple(sorted(surveyed, key=lambda account: account.name))
     return accounts, frozenset(str(row[0]) for row in limit_rows)
+
+
+def _lock_time_unlimited(row: Any, own_container: bool) -> bool | None:
+    """Whether a profile's ``PASSWORD_LOCK_TIME`` is ``UNLIMITED``; ``None`` if unknown.
+
+    Only ``UNLIMITED`` matters here, so a fraction of a day, the usual value,
+    is simply "not unlimited". A ``DEFAULT`` that a container cannot resolve is
+    unknown, as for the other limits (:func:`_limit`).
+    """
+    if row is None:
+        return None
+    shown, value, profile_common = row[2], row[3], row[4]
+    unresolvable = profile_common is None or is_yes(profile_common)
+    if str(shown).upper() == _INHERITED and not own_container and unresolvable:
+        return None
+    return str(value or "").strip().upper() == "UNLIMITED"
+
+
+def _locked_by_somebody(
+    status: str, *, lock_time_unlimited: bool | None, limit: Limit, failed: int | None
+) -> bool | None:
+    """Whether somebody set the lock this status shows; ``None`` where Oracle cannot say.
+
+    A lockout after failed logins reads ``LOCKED(TIMED)``, so a ``LOCKED``
+    component is a lock somebody set, except under a ``PASSWORD_LOCK_TIME`` of
+    ``UNLIMITED``. There Oracle shows the lockout as ``LOCKED``, and
+    ``SYS.USER$.ASTATUS`` is 8 for both (measured on 23.26.3.0.0). The
+    maintainer decided (#1447) that a ``LOCKED`` account whose failed-login
+    count has reached the profile's ``FAILED_LOGIN_ATTEMPTS`` is taken as a
+    lockout there, and that where the count or the limit cannot be read, the
+    answer is unknown. A lock time that cannot be read is treated as possibly
+    ``UNLIMITED``.
+    """
+    if not deliberately_locked(status):
+        return False
+    if lock_time_unlimited is False or limit == "unlimited":
+        return True
+    if limit is None or failed is None:
+        return None
+    return failed < limit
 
 
 #: Why no failed-login count was read, where the optional grant was not made.

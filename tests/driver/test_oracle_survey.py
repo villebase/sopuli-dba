@@ -54,7 +54,12 @@ class _Cursor:
         answer = self.answers.get(self.sql)
         if isinstance(answer, Exception):
             raise answer
-        return answer if isinstance(answer, list) else []
+        rows = answer if isinstance(answer, list) else []
+        if self.sql in (SURVEY_USERS_QUERY, SURVEY_USERS_QUERY_LEGACY):
+            # A test writes an account's first five columns; AUTHENTICATION_TYPE
+            # is PASSWORD unless the test gives it.
+            return [row if len(row) > 5 else (*row, "PASSWORD") for row in rows]
+        return rows
 
 
 def _ora(code: str, message: str = "") -> RuntimeError:
@@ -68,12 +73,15 @@ def _limits(
     lifetime_resolved: str = "UNLIMITED",
     attempts: str = "5",
     attempts_resolved: str | None = None,
+    lock_time: str = "1",
+    lock_time_resolved: str | None = None,
     common: str | None = "NO",
 ) -> list[tuple[Any, ...]]:
     """``SURVEY_LIMITS_QUERY``'s rows for one profile."""
     return [
         (profile, "PASSWORD_LIFE_TIME", lifetime, lifetime_resolved, common),
         (profile, "FAILED_LOGIN_ATTEMPTS", attempts, attempts_resolved or attempts, common),
+        (profile, "PASSWORD_LOCK_TIME", lock_time, lock_time_resolved or lock_time, common),
     ]
 
 
@@ -357,6 +365,78 @@ def test_locked_statuses(status: str, locked: bool, on_purpose: bool) -> None:
     assert accounts[0].deliberately_locked is on_purpose
 
 
+@pytest.mark.parametrize(
+    ("lcount", "attempts", "expected"),
+    [
+        (3, "3", False),  # the count reached the limit: taken as a lockout
+        (5, "3", False),
+        (2, "3", True),  # below the limit: somebody set the lock
+        (0, "3", True),
+        (7, "UNLIMITED", True),  # no limit, so no lockout
+    ],
+)
+def test_locked_under_an_unlimited_lock_time_is_judged_by_the_count(
+    lcount: int, attempts: str, expected: bool
+) -> None:
+    """Under `PASSWORD_LOCK_TIME UNLIMITED` Oracle shows a lockout as `LOCKED`, as
+    it does a lock somebody set (measured on 23.26.3.0.0). The maintainer decided
+    that a count at the profile's limit makes it a lockout (#1447)."""
+    accounts, _ = _run(
+        [("ACME_OWNER", "LOCKED", "ACME_PROF", "NO", "N")],
+        _limits("ACME_PROF", attempts=attempts, lock_time="UNLIMITED"),
+        own_container=True,
+        lcount=[("ACME_OWNER", lcount)],
+    )
+    assert accounts[0].deliberately_locked is expected
+
+
+def test_locked_under_an_unlimited_lock_time_without_the_count_is_unknown() -> None:
+    """Never OK without proof: no `SYS.USER$` grant, no count, no answer."""
+    accounts, _ = _run(
+        [("ACME_OWNER", "LOCKED", "ACME_PROF", "NO", "N")],
+        _limits("ACME_PROF", lock_time="UNLIMITED"),
+        own_container=True,
+        user_dollar=False,
+    )
+    assert accounts[0].deliberately_locked is None
+
+
+def test_locked_under_a_finite_lock_time_needs_no_count() -> None:
+    """A lockout there reads `LOCKED(TIMED)`, so `LOCKED` is a lock somebody set."""
+    accounts, _ = _run(
+        [("ACME_OWNER", "LOCKED", "ACME_PROF", "NO", "N")],
+        _limits("ACME_PROF", lock_time=".0416"),
+        own_container=True,
+        user_dollar=False,
+    )
+    assert accounts[0].deliberately_locked is True
+
+
+@pytest.mark.parametrize(("lcount", "expected"), [(0, True), (5, False)])
+def test_a_lock_time_a_pdb_cannot_resolve_is_treated_as_possibly_unlimited(
+    lcount: int, expected: bool
+) -> None:
+    """A common profile's `DEFAULT` follows the root's, which a PDB cannot read,
+    so the count decides, as it does under `UNLIMITED`."""
+    accounts, _ = _run(
+        [("ACME_OWNER", "LOCKED", "ACME_PROF", "NO", "N")],
+        _limits("ACME_PROF", lock_time="DEFAULT", lock_time_resolved="1", common="YES"),
+        lcount=[("ACME_OWNER", lcount)],
+    )
+    assert accounts[0].deliberately_locked is expected
+
+
+@pytest.mark.parametrize(("authentication", "expected"), [("NONE", True), ("PASSWORD", False)])
+def test_no_authentication_is_read(authentication: str, expected: bool) -> None:
+    """`CREATE USER … NO AUTHENTICATION` reads `AUTHENTICATION_TYPE` NONE (#1447)."""
+    accounts, _ = _run(
+        [("ACME_OWNER", "OPEN", "ACME_PROF", "NO", "N", authentication)],
+        _limits("ACME_PROF"),
+        own_container=True,
+    )
+    assert accounts[0].no_authentication is expected
+
+
 def test_a_limit_that_is_not_a_whole_number_is_unreadable() -> None:
     accounts, _ = _run(
         [("ACME_APP_USER", "OPEN", "ACME_PROF", "NO", "N")],
@@ -389,7 +469,9 @@ def test_no_statement_reads_a_verifier_and_none_binds_anything() -> None:
     )
     for statement in cursor.asked:
         lowered = statement.lower()
-        assert "password" not in lowered.replace("password_life_time", "")
+        # The two profile resource names are limits, not password columns.
+        names_removed = lowered.replace("password_life_time", "").replace("password_lock_time", "")
+        assert "password" not in names_removed
         assert "spare4" not in lowered
     assert all(parameters in (None, {}) for parameters in cursor.binds)
     user_dollar = [statement for statement in cursor.asked if "user$" in statement.lower()]

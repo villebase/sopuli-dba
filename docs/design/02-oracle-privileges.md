@@ -785,13 +785,26 @@ account, so none binds anything, and none reads a password or verifier column.
 
 | Statement | Reads | Needs |
 |---|---|---|
-| every account: `USERNAME`, `ACCOUNT_STATUS`, `PROFILE`, `COMMON`, `ORACLE_MAINTAINED` | `DBA_USERS` | the grants above |
-| `PASSWORD_LIFE_TIME` and `FAILED_LOGIN_ATTEMPTS` for every profile, as shown, resolved through this container's `DEFAULT` profile, and the profile's `COMMON`. Every profile has these rows, so they also give the target's profile names, which `report accounts` compares with the profiles the config expects (`survey_with_profiles`, #1390) | `DBA_PROFILES` | the grants above |
+| every account: `USERNAME`, `ACCOUNT_STATUS`, `PROFILE`, `COMMON`, `ORACLE_MAINTAINED`, `AUTHENTICATION_TYPE` | `DBA_USERS` | the grants above |
+| `PASSWORD_LIFE_TIME`, `FAILED_LOGIN_ATTEMPTS` and `PASSWORD_LOCK_TIME` for every profile, as shown, resolved through this container's `DEFAULT` profile, and the profile's `COMMON`. Every profile has these rows, so they also give the target's profile names, which `report accounts` compares with the profiles the config expects (`survey_with_profiles`, #1390) | `DBA_PROFILES` | the grants above |
 | `NAME` and `LCOUNT` for every user | `SYS.USER$` | the optional grant; sent only with `offline_verify` |
 
 On a release that answers `ORA-00904` to `COMMON` or `ORACLE_MAINTAINED`, as
 11.2.0.2.0 does, the first two statements are sent again with `NULL` in those
-positions. Then an account is vendor-maintained when its name is on check 5's
+positions, and in place of `AUTHENTICATION_TYPE`: its value `NONE`, for an
+account made `NO AUTHENTICATION`, exists from 18c.
+
+**A lock somebody set, or a lockout** (#1447). A lockout after failed logins
+reads `LOCKED(TIMED)`, except under a profile whose `PASSWORD_LOCK_TIME` is
+`UNLIMITED`. Measured on 23.26.3.0.0 with `FAILED_LOGIN_ATTEMPTS 1`: one failed
+login gives `LOCKED(TIMED)` and `SYS.USER$.ASTATUS` 4 under a lock time of 1,
+and `LOCKED` and `ASTATUS` 8 under `UNLIMITED`, the same as after
+`ACCOUNT LOCK`. Only `LCOUNT` differs. So under `UNLIMITED`, and where the
+profile's lock time cannot be read, the survey takes a `LOCKED` account whose
+`LCOUNT` has reached the profile's `FAILED_LOGIN_ATTEMPTS` as a lockout, and
+cannot say which it is where it has no count. An account made
+`NO AUTHENTICATION` reads `ACCOUNT_STATUS` `OPEN` and `AUTHENTICATION_TYPE`
+`NONE` (measured on 23.26.3.0.0). Then an account is vendor-maintained when its name is on check 5's
 list (§4). In a non-CDB no account is common. In any other container an account
 named with the `C##` prefix is taken as common, as the lockout guard does, and
 every profile is taken as common.

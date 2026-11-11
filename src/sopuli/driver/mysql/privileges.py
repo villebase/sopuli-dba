@@ -10,7 +10,9 @@ no grant of its own. It reports and never refuses: over-granting warns (P5).
 **Everything outside §2 is over-granted.** The tool account needs
 ``CREATE USER``, ``SELECT`` on the columns of ``mysql.user`` in
 :data:`COLUMNS`, and ``SELECT`` on the grant tables in
-:data:`~sopuli.driver.mysql.admin.TABLES_READ`, and nothing else. So the audit
+:data:`~sopuli.driver.mysql.admin.TABLES_READ`, and nothing else. ``SELECT`` on
+a table in :data:`~sopuli.driver.mysql.admin.OPTIONAL_TABLES_READ` is held
+where granted and never missing. So the audit
 has no list of dangerous privileges to keep current as MySQL adds dynamic ones:
 any privilege it does not need is reported, also one that comes through a role.
 §3 explains the ones that matter most.
@@ -20,7 +22,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from sopuli.driver.mysql.admin import PRIV_COLUMNS, TABLES_READ
+from sopuli.driver.mysql.admin import OPTIONAL_TABLES_READ, PRIV_COLUMNS, TABLES_READ
 from sopuli.driver.mysql.grants import ALL_PRIVILEGES, GLOBAL, Grant, Grants
 from sopuli.driver.mysql.grants import read as read_grants
 from sopuli.driver.mysql_family.accounts import Principal, current_user
@@ -157,6 +159,13 @@ def _sort(grant: Grant, held: set[str], over: set[str], *, broad: bool = True) -
                     held.add(_column(needed))
             continue
         if grant.on in TABLES_READ and privilege.name == "SELECT" and not privilege.columns:
+            held.add(_table(grant.on))
+            continue
+        if (
+            grant.on in OPTIONAL_TABLES_READ
+            and privilege.name == "SELECT"
+            and not privilege.columns
+        ):
             held.add(_table(grant.on))
             continue
         if broad and grant.on in TABLES_READ and privilege.name == ALL_PRIVILEGES:

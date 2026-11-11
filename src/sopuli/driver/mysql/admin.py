@@ -132,6 +132,12 @@ TABLES_READ = (
     "mysql.role_edges",
 )
 
+#: Tables the tool account may also read, with ``SELECT`` on the table, and
+#: does without: held where granted, never missing (§2.1). ``report accounts``
+#: reads the failed-login count from this one on 9.7.4 (#1411, M2); without
+#: it the count is unknown. It holds no hash.
+OPTIONAL_TABLES_READ = ("performance_schema.temporary_account_locks",)
+
 
 def mandatory_roles(setting: str | None) -> tuple[Principal, ...]:
     """``@@global.mandatory_roles`` as roles. The server accepts ``r``,

@@ -1055,8 +1055,8 @@ and built on Oracle: `report accounts`, `report privileges` and
 only place that lists the accounts the config does not declare
 ([#1376](decisions/log.md#1376)).
 
-On PostgreSQL, MySQL and MariaDB the reports are not built. #1411 tracks that
-work, and lists the questions to decide before each report is specified there.
+On MySQL, `report accounts` is built (#1461). The other two reports there, and
+all three on PostgreSQL and MariaDB, are not built. #1411 tracks that work, and lists the questions to decide before each report is specified there.
 PostgreSQL is next: what it can read is measured (`pg-report-reads`). What
 MySQL and MariaDB can read is measured too (`mysql-report-reads`,
 `mariadb-report-reads`).

@@ -227,8 +227,9 @@ DRIVERS: dict[str, DatabaseDriver] = {
     # `profile:` rule is refused by capability, because MySQL has no profiles
     # (#1225); `account reset-password`, which refuses `--keep-rollover` by
     # capability; `account suspend`, by `ACCOUNT LOCK`; and `account
-    # expire-password`, which discards a retained password first. That is every
-    # command that connects to a target.
+    # expire-password`, which discards a retained password first. UC-5 (#1461):
+    # `report accounts`, one row per `user@host`. `report privileges` and
+    # `report history` are not written for it yet.
     "mysql": DatabaseDriver(
         module="sopuli.driver.mysql.session",
         extra="mysql",
@@ -241,6 +242,7 @@ DRIVERS: dict[str, DatabaseDriver] = {
         not_applicable=frozenset({"profile"}),
         commands=frozenset(
             {
+                "report.accounts",
                 "account.list",
                 "account.reset-password",
                 "account.suspend",

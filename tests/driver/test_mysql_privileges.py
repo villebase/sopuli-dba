@@ -78,6 +78,18 @@ def test_the_grants_of_section_2_are_held_and_nothing_is_missing() -> None:
     )
 
 
+def test_the_optional_failed_login_read_is_held_and_never_missing() -> None:
+    """#1411, M2: `report accounts` reads the count with it on 9.7.4."""
+    locks = "performance_schema.temporary_account_locks"
+    found = _classify(
+        [*INSTALL, f"GRANT SELECT ON `performance_schema`.`temporary_account_locks` TO {TOOL}"]
+    )
+
+    assert found.over_granted == ()
+    assert f"SELECT ON {locks}" in found.held
+    assert f"SELECT ON {locks}" not in _classify(INSTALL).missing
+
+
 def test_what_is_not_granted_is_missing() -> None:
     found = _classify([f"GRANT USAGE ON *.* TO {TOOL}"])
 

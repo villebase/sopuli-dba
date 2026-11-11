@@ -11,6 +11,7 @@ import pytest
 
 from sopuli.driver.mysql import survey
 from sopuli.driver.mysql.accounts import DEFAULT_LIFETIME
+from sopuli.driver.mysql.admin import MANDATORY_ROLES
 from sopuli.driver.mysql.session import MysqlSession
 from sopuli.driver.protocol import DriverError
 from sopuli.driver.survey import AccountSurvey
@@ -26,7 +27,9 @@ class _Cursor:
         roles: list[tuple[str, str]] | None = None,
         default_lifetime: int = 0,
         locks: list[tuple[Any, ...]] | None = None,
+        mandatory: str = "",
     ) -> None:
+        self.mandatory = mandatory
         self.answers = {
             survey.ACCOUNTS: list(users),
             survey.ROLES: list(roles or []),
@@ -40,6 +43,8 @@ class _Cursor:
         self.queries.append(query)
 
     def fetchone(self) -> Any:
+        if self.queries[-1] == MANDATORY_ROLES:
+            return (self.mandatory,)
         assert self.queries[-1] == DEFAULT_LIFETIME
         return (self.default_lifetime,)
 
@@ -82,6 +87,22 @@ def test_a_role_is_left_out() -> None:
     assert "acme_role@%" not in found
     # A role nobody holds cannot be told from a locked account.
     assert found["acme_unheld@%"].locked is True
+
+
+def test_a_mandatory_role_is_left_out() -> None:
+    """It goes to every account and has no row in `role_edges`."""
+    cursor = _Cursor(
+        [APP, ("acme_reader", "%", "Y", "Y", None), ("acme_audit", "10.%", "Y", "Y", None)],
+        mandatory="acme_reader,`acme_audit`@`10.%`",
+    )
+    assert list(surveyed(cursor)) == ["acme_app@%"]
+
+
+def test_the_accounts_come_ordered_by_name() -> None:
+    """The contract's order, not the server's collation: `.` sorts before `@`."""
+    cursor = _Cursor([("acme", "%", "N", "N", None), ("acme.x", "%", "N", "N", None)])
+    read = survey.survey(cursor, survey.Locks(None, survey.NO_GRANT))
+    assert [one.name for one in read] == ["acme.x@%", "acme@%"]
 
 
 def test_a_role_is_matched_by_host_without_case() -> None:

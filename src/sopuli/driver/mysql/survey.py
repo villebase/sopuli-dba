@@ -8,8 +8,9 @@ columns of ``mysql.user``, which hold no hash, ``mysql.role_edges`` and
 report matches names in the tool.
 
 - **A role is left out.** It reads as a locked account with an expired
-  password, and only a row in ``mysql.role_edges`` tells it apart (#1411, M3).
-  A role nobody holds has no such row, so it shows as an undeclared account.
+  password, and only a row in ``mysql.role_edges`` tells it apart (#1411, M3),
+  or its place in ``@@global.mandatory_roles``, which any account reads. A role
+  nobody holds has neither, so it shows as an undeclared account.
 - **The lock** is ``account_locked``, which only ``ACCOUNT LOCK`` sets. A block
   after failed logins is not in it: the server answers ``3955`` and changes no
   column the tool account reads (RE1). On a server with
@@ -36,14 +37,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from sopuli.config.products import fold_mysql_host
-from sopuli.driver.mysql.accounts import (
-    DEFAULT_LIFETIME,
-    EXPIRED,
-    EXPIRED_AND_LOCKED,
-    LOCKED,
-    OPEN,
-    SYSTEM_ACCOUNTS,
-)
+from sopuli.driver.mysql.accounts import DEFAULT_LIFETIME, EXPIRED, SYSTEM_ACCOUNTS, status
+from sopuli.driver.mysql.admin import read_mandatory_roles
 from sopuli.driver.mysql_family.accounts import text
 from sopuli.driver.survey import Limit, SurveyedAccount
 
@@ -98,11 +93,13 @@ def read_locks(cursor: Any) -> Locks:
 
 
 def survey(cursor: Any, locks: Locks) -> tuple[SurveyedAccount, ...]:
-    """Every account, roles left out, ordered by user and host."""
+    """Every account, roles left out, ordered by name, ``user@host``."""
     cursor.execute(DEFAULT_LIFETIME)
     (default,) = cursor.fetchone()
     cursor.execute(ROLES)
     roles = {(text(user), fold_mysql_host(text(host))) for user, host in cursor.fetchall()}
+    # A mandatory role goes to every account and has no row in role_edges.
+    roles.update((role.user, fold_mysql_host(role.host)) for role in read_mandatory_roles(cursor))
     cursor.execute(ACCOUNTS)
     surveyed = []
     for user, host, account_locked, expired, lifetime in cursor.fetchall():
@@ -121,7 +118,8 @@ def survey(cursor: Any, locks: Locks) -> tuple[SurveyedAccount, ...]:
                 key=key,
             )
         )
-    return tuple(surveyed)
+    # The server sorts by its column collations; the contract is by name.
+    return tuple(sorted(surveyed, key=lambda account: account.name))
 
 
 def _lifetime(days: Any) -> Limit:
@@ -167,8 +165,8 @@ def _account(
 
 
 def _status(*, locked: bool, blocked: bool, expired: bool) -> str:
-    if locked:
-        return EXPIRED_AND_LOCKED if expired else LOCKED
-    if blocked:
+    """The verbs' words (:func:`~sopuli.driver.mysql.accounts.status`), and
+    ``LOCKED(TIMED)`` for a block nobody set."""
+    if blocked and not locked:
         return f"{EXPIRED} & {LOCKED_TIMED}" if expired else LOCKED_TIMED
-    return EXPIRED if expired else OPEN
+    return status(locked=locked, expired=expired)

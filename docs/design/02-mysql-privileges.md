@@ -142,8 +142,7 @@ GRANT SELECT ON mysql.default_roles TO 'sopuli_admin'@'192.0.2.10';
 
 Neither table holds a hash. Without the first, or on a server that has no
 such table, such as 8.0 and 8.4, the count is `unknown` (§2.4). No command
-reads `mysql.default_roles` yet, so `doctor --check-privileges` still lists
-that grant as over-granted.
+reads `mysql.default_roles` yet.
 
 Give the account no other privilege, and no role.
 

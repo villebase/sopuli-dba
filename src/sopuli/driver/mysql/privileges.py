@@ -158,14 +158,8 @@ def _sort(grant: Grant, held: set[str], over: set[str], *, broad: bool = True) -
                 else:
                     held.add(_column(needed))
             continue
-        if grant.on in TABLES_READ and privilege.name == "SELECT" and not privilege.columns:
-            held.add(_table(grant.on))
-            continue
-        if (
-            grant.on in OPTIONAL_TABLES_READ
-            and privilege.name == "SELECT"
-            and not privilege.columns
-        ):
+        readable = grant.on in TABLES_READ or grant.on in OPTIONAL_TABLES_READ
+        if readable and privilege.name == "SELECT" and not privilege.columns:
             held.add(_table(grant.on))
             continue
         if broad and grant.on in TABLES_READ and privilege.name == ALL_PRIVILEGES:

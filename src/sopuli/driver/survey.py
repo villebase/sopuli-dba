@@ -1,11 +1,19 @@
 """Every account on a target, as a report reads it (UC-5).
 
 Product-neutral types. A driver that can survey its accounts returns
-:class:`SurveyedAccount` values. Only Oracle can, through
-``OracleSession.survey_accounts``, and ``OracleSession.survey_with_profiles``,
-which adds the target's profile names for ``report accounts``. A caller finds
-them with ``getattr``: the :class:`~sopuli.driver.protocol.Session` protocol
-does not list them.
+:class:`SurveyedAccount` values through :class:`AccountSurvey`, which
+``report accounts`` asks for. Only Oracle's session implements it yet. The
+:class:`~sopuli.driver.protocol.Session` protocol does not list it, so a
+session that lacks it is a target the report does not check (UC-5 §3). The
+privilege report also needs ``survey_accounts`` and ``survey_privileges``,
+which a caller finds with ``getattr``.
+
+**For a new product** (#1458): implement :class:`AccountSurvey`, fill each
+field the product reads, set a field it cannot read truthfully to ``None``
+with a reason, and list ``report.accounts`` in the driver registry's
+``commands``. A check the product has no concept of is the registry's
+``not_applicable``, not a ``None`` here: ``None`` means a gap somebody could
+close, such as a missing grant.
 
 A field the target cannot read truthfully is ``None``, never a guess, and
 :attr:`SurveyedAccount.unreadable` says why. On an Oracle PDB, for example, a
@@ -16,7 +24,7 @@ in the root (``02-oracle-privileges.md`` §2), so its ``locked`` is ``None``.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, Protocol, runtime_checkable
 
 #: A password limit: a whole number, ``"unlimited"``, or ``None`` where the
 #: target cannot read the limit that applies.
@@ -81,3 +89,19 @@ class SurveyedAccount:
     kept_in_root: bool = False
     deliberately_locked: bool | None = None
     no_authentication: bool = False
+
+
+@runtime_checkable
+class AccountSurvey(Protocol):
+    """A session that can survey every account on its target, for `report accounts`.
+
+    One read of the target, with nothing bound and no password or verifier
+    column. The accounts come ordered by name. The second value is every
+    profile the target has, by name, which `report accounts` compares with the
+    profiles the config expects (#1390); a product with no profiles returns an
+    empty set, and its profile check is *not applicable* (#1458).
+    """
+
+    def survey_with_profiles(self) -> tuple[tuple[SurveyedAccount, ...], frozenset[str]]:
+        """Every account on the target, and every profile it has."""
+        ...

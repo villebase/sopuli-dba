@@ -32,6 +32,7 @@ from sopuli.config.model import (
 )
 from sopuli.config.reports import LOGIN_REFUSED, UNLIMITED, is_pattern
 from sopuli.config.selection import select
+from sopuli.driver.registry import DRIVERS
 from sopuli.driver.survey import SurveyedAccount
 from sopuli.personal import rules_for
 from sopuli.report_exit import exit_code_for
@@ -57,6 +58,11 @@ BY_POLICY = "policies."
 STATES = (REPORT_PROBLEM, ACCOUNT_MISSING, NOT_CHECKED, NO_RULE, UNDECLARED, REPORT_OK)
 
 OK, PROBLEM, NOT_CHECKED_OUTCOME, NO_RULE_OUTCOME = "ok", "problem", "not_checked", "no_rule"
+#: A check the target's product has no concept of, such as `password_lifetime`
+#: on PostgreSQL (#1458). Never a gap: it is counted apart from `not_checked`
+#: and never sets the exit code.
+NOT_APPLICABLE_OUTCOME = "not_applicable"
+OUTCOMES = (OK, PROBLEM, NOT_CHECKED_OUTCOME, NO_RULE_OUTCOME, NOT_APPLICABLE_OUTCOME)
 
 APPLICATION, PERSONAL, TECHNICAL, UNDECLARED_KIND = (
     "application",
@@ -169,6 +175,7 @@ def evaluate(
     rules = _rules_on(config, target)
     applications = _application_profiles(config, target)
     personal_names, personal_profiles = _personal_on(config, target)
+    not_applicable = not_applicable_on(config, target)
 
     built: list[AccountRow] = []
     found: set[str] = set()
@@ -204,7 +211,7 @@ def evaluate(
             surveyed.profile,
             application=kind == APPLICATION,
         )
-        findings = _check(surveyed, expectation)
+        findings = _check(surveyed, expectation, not_applicable)
         built.append(_row(target, surveyed, kind, findings, _state(findings)))
 
     for name in _declared_names(rules, applications, personal_names):
@@ -241,8 +248,11 @@ def missing_profiles(
     on the target matches it, as the maintainer decided for #1390: the rule says
     what the target must have. A rule cannot name an application account by name
     with an ``oracle.profile``; the config refuses that. Names are compared by
-    ``upper()``.
+    ``upper()``. A target whose product has no profiles expects none: there the
+    profile is *not applicable* (#1458), never missing.
     """
+    if "profile" in not_applicable_on(config, target):
+        return ()
     present = {name.upper() for name in profiles}
     expected: dict[str, tuple[str, list[str]]] = {}
 
@@ -291,6 +301,18 @@ def exit_code(
 
 
 # ---------------------------------------------------------------- the file ---
+
+
+def not_applicable_on(config: Config, target: str) -> frozenset[str]:
+    """The checks ``target``'s product has no concept of (the driver registry).
+
+    Pure: the registry says it from the target's `type:`, with no connection.
+    A name the config does not have gives none, so nothing is hidden by a typo.
+    """
+    for expanded in config.expanded_targets:
+        if expanded.name == target:
+            return DRIVERS[expanded.target.type].not_applicable
+    return frozenset()
 
 
 def _rules_on(config: Config, target: str) -> tuple[ReportAccountRule, ...]:
@@ -430,7 +452,45 @@ def _expectation(
 # ---------------------------------------------------------------- the checks ---
 
 
-def _check(surveyed: SurveyedAccount, expectation: _Expectation) -> tuple[Finding, ...]:
+def _check(
+    surveyed: SurveyedAccount, expectation: _Expectation, not_applicable: frozenset[str]
+) -> tuple[Finding, ...]:
+    """:func:`_stated`, with each check the product has no concept of made *not applicable*.
+
+    A stated check the product lacks, such as `password_lifetime` on
+    PostgreSQL or an `oracle.profile` on any product but Oracle, is
+    `not_applicable` (#1458). Where every check the file states is one of
+    those, and it states no `login:`, the file says nothing this product can
+    compare: the account is `no rule`, and the detail names the checks.
+    """
+    findings = _stated(surveyed, expectation)
+    if not not_applicable:
+        return findings
+    marked = tuple(
+        Finding(f.check, NOT_APPLICABLE_OUTCOME, f"this product has no {f.check}")
+        if f.check in not_applicable and f.outcome != NO_RULE_OUTCOME
+        else f
+        for f in findings
+    )
+    stated = [f for f in marked if f.check != "lock"]
+    if (
+        stated
+        and expectation.login is None
+        and all(f.outcome == NOT_APPLICABLE_OUTCOME for f in stated)
+    ):
+        lacking = ", ".join(f.check for f in stated)
+        return (
+            marked[0],
+            Finding(
+                "profile",
+                NO_RULE_OUTCOME,
+                f"no rule states a check this product has ({lacking}: not applicable)",
+            ),
+        )
+    return marked
+
+
+def _stated(surveyed: SurveyedAccount, expectation: _Expectation) -> tuple[Finding, ...]:
     """The lock, and each thing the file expects. A setting nobody names is not a check.
 
     `01-configuration.md` §8a: a setting a rule does not name is not compared.

@@ -62,7 +62,7 @@ needs the same care as the tool's other output.
 
 ## 3. Never fine when it is not
 
-**Each check on an account ends in one of four states:**
+**Each check on an account ends in one of five states:**
 
 | State | Meaning |
 |---|---|
@@ -70,10 +70,18 @@ needs the same care as the tool's other output.
 | OK | the check ran and the account passes it |
 | not checked | the check could not run: the service account cannot read a view, the release lacks a capability, or the target could not be reached. The reason is shown |
 | no rule | the config states nothing the check could compare against. Shown, not a problem, and not OK |
+| not applicable | the target's product has no concept of the check, such as a password lifetime on PostgreSQL, or a database profile on any product but Oracle ([#1458](https://github.com/villebase/sopuli-dba/issues/1458)). Shown, and counted apart from *not checked* |
 
 An account counts as OK only when every check that applies to it had a rule,
 ran, and passed. A target that could not be reached is reported as a target
 that could not be reached, never as a target with no problems.
+
+*Not checked* is a gap somebody could close, with a grant, a release or a
+reachable target. *Not applicable* is not: no grant gives PostgreSQL a
+password lifetime. So it never sets the exit code, and an account whose rules
+state only checks its product lacks, with no `login:`, has no rule there. The
+driver registry says which checks each product lacks, from the target's
+`type:`, with no connection.
 
 **Exit codes**, from the existing set in `00-principles.md`:
 
@@ -334,8 +342,9 @@ profile. A key that only one product has goes in that product's block, on a
 rule or on the section ([#1447](../decisions/log.md#1447)). Oracle's block
 holds a rule's `profile:`, the check of an account's profile by name, and the
 section's `profiles:`, a list of database profiles and their expected
-settings. On another product, a rule reports *not checked* until that
-product's driver reads the settings.
+settings. On a product that has no concept of a setting or of a profile, the
+check is *not applicable* (§3). Until a product's driver can survey its
+accounts, its targets are *not checked*.
 
 - `reports.accounts` rules name accounts by name or `*` pattern, give them
   their expected login, settings or profile, and select targets as `applications:`

@@ -6,7 +6,7 @@ for text output that keep it consistent with both.
 `sopuli/output/` produces them, and CI validates the output against the
 published schemas.
 
-Schemas: [`../schemas/sopuli-run-1.92.schema.json`](../schemas/sopuli-run-1.92.schema.json),
+Schemas: [`../schemas/sopuli-run-1.93.schema.json`](../schemas/sopuli-run-1.93.schema.json),
 [`../schemas/sopuli-event-1.25.schema.json`](../schemas/sopuli-event-1.25.schema.json)
 Examples, each from a real run:
 [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json),
@@ -2369,13 +2369,22 @@ or renaming one is major.
 **`report accounts` has six states of its own** (UC-5 §3): every check had a
 rule, ran and passed (`REPORT_OK`); a check found a problem
 (`REPORT_PROBLEM`); a check could not run truthfully on this target
-(`NOT_CHECKED`); nothing in the file states a profile or a setting for the
-account (`NO_RULE`); the file does not declare the account (`UNDECLARED`); a
+(`NOT_CHECKED`); nothing in the file states a login, a profile or a setting
+that the target's product has, for the account (`NO_RULE`); the file does not
+declare the account (`UNDECLARED`); a
 profile the file expects is not on the target (`PROFILE_MISSING`). An
 undeclared account is information and never changes the exit code. A missing
 account is `ACCOUNT_MISSING`, as in the other verbs. `REPORT_OK` is not
 `IN_SYNC`: it says the rules found nothing wrong, not that a credential is
 healthy.
+
+**A check's `outcome`** is `ok`, `problem`, `not_checked` or `no_rule`, and,
+from run schema 1.93, `not_applicable`: the target's product has no concept of
+the check, such as `password_lifetime` on PostgreSQL or an `oracle.profile` on
+any product but Oracle (#1458). It is never a gap, so it never sets the exit
+code and never makes an account `NOT_CHECKED`. An account whose every stated
+check is `not_applicable`, with no `login:`, is `NO_RULE`, and its finding's
+detail names the checks.
 
 `PROFILE_MISSING`, from run schema 1.86, is about a target, not an account, so
 its `account` is `-`. A profile that a `reports.accounts` rule or an

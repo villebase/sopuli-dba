@@ -453,9 +453,10 @@ class OracleSession(ClosesConnection):
     def survey_with_profiles(self) -> tuple[tuple[SurveyedAccount, ...], frozenset[str]]:
         """:meth:`survey_accounts`, and every profile on this target (#1390).
 
-        Oracle only, and not in the protocol, like :meth:`survey_accounts`. The
-        same statements: the names come from the rows the limits statement
-        already reads (:func:`~sopuli.driver.oracle.accounts.survey_with_profiles`).
+        :class:`~sopuli.driver.survey.AccountSurvey`, for `report accounts`. The
+        same statements as :meth:`survey_accounts`: the names come from the
+        rows the limits statement already reads
+        (:func:`~sopuli.driver.oracle.accounts.survey_with_profiles`).
         """
         with traced_cursor(self.connection) as cursor:
             return survey_with_profiles(cursor, **self._survey_scope())

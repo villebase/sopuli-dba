@@ -5336,3 +5336,57 @@ the register.
   where the config declares the root as a target. A config with PDB targets
   alone no longer lists it in any accounts report, though the privilege
   report still does.
+
+## #1447
+
+- **Decided:** 2026-11-11, #1447
+- **Question:** `reports:` rules wrote every setting in words that are not
+  one product's (U11 of #1375), and a rule's `profile:` and the section's
+  `db_profiles:` were Oracle-only without saying so. PostgreSQL has no
+  password lifetime, only a `VALID UNTIL` date, and no lock, only `NOLOGIN`.
+  How should the rules say what differs between products? Decided on #1411,
+  built in #1447.
+- **Decision:** the maintainer's, in five parts.
+  1. Hybrid rules. `settings:` keeps the words that more than one product
+     has: `password_lifetime` (Oracle, MySQL and MariaDB all keep a lifetime
+     in days) and `failed_login_limit`. A key that only one product has goes
+     in that product's block, on a rule or on the section.
+  2. Config schema 5.0 moves a rule's `profile:` to `oracle.profile`, and
+     `reports.db_profiles` to `reports.oracle.profiles`. The old places are
+     refused, and the message names the new place.
+  3. A new outcome, *not applicable*, for a setting the target's product has
+     no concept of. It is not counted as *not checked* and never sets the
+     exit code.
+  4. `login: refused | allowed` on a rule. It is read from Oracle's
+     `ACCOUNT_STATUS`, MySQL's `account_locked` and PostgreSQL's `NOLOGIN`.
+     On MariaDB it is *not checked*, because the lock cannot be read there.
+     On Oracle only `LOCKED` and `EXPIRED & LOCKED` satisfy `refused`:
+     `LOCKED(TIMED)` is a lockout after failed logins, not a decision.
+     Without the key, a lock on an account a rule names stays a problem.
+  5. `postgresql.valid_until: required | forbidden`. Where it is absent, a
+     date in the past is still reported as an expired password.
+
+  Not decided yet: whether MariaDB's server-wide `max_password_errors`
+  counts as an account's `failed_login_limit`, or the setting is *not
+  applicable* there. It waits for the MariaDB measurement.
+- **Why:** one neutral word for a concept only one product has leaves every
+  other product with a check that is *not checked* forever, and that reads
+  the same as a missing grant, which is a gap to fix. Splitting every setting
+  by product would make a DBA with a mixed fleet write the same lifetime rule
+  once per product. A key that sits in a product's block says where it
+  applies without any prose. An owner account locked on purpose was a
+  problem in the report as soon as a rule named it, and the config had no way
+  to say the lock was meant.
+- **Rejected:**
+  1. Neutral words only, with *not applicable* where a product lacks the
+     concept. Oracle's profile would stay Oracle-only without saying so, and
+     a PostgreSQL-only check would have no place.
+  2. One rule per product (`type: oracle` on a rule). Clear, but a mixed
+     fleet writes the shared rules several times.
+  3. Reading the old keys with a warning, so that a 4.x file keeps working.
+     The maintainer chose the break: a file would then have two ways to say
+     one thing.
+  4. `locked: true`. PostgreSQL has no lock, and `NOLOGIN` is also how a
+     group role is written, so most `NOLOGIN` roles are not locked accounts.
+  5. A maximum number of days for `valid_until`. It punishes a DBA who set a
+     long date once.

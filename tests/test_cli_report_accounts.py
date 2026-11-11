@@ -48,9 +48,9 @@ reports:
     - accounts: [DBSNMP]
       settings: { password_lifetime: unlimited }
     - accounts: [ACME_BATCH_USER]
-      profile: APP_USERS
+      oracle: { profile: APP_USERS }
     - accounts: ["ORDS_*"]
-      profile: TECH_NOEXP
+      oracle: { profile: TECH_NOEXP }
 """
 
 
@@ -392,9 +392,9 @@ reports:
     - accounts: [acme_rptt_user]
       settings: {{ password_lifetime: unlimited }}
     - accounts: [acme_rptt_gone]
-      profile: ACME_RPTT_PROF
+      oracle: {{ profile: ACME_RPTT_PROF }}
     - accounts: ["ACME_RPTT_NONE_*"]
-      profile: ACME_RPTT_NOPROF
+      oracle: {{ profile: ACME_RPTT_NOPROF }}
 """
 
 

@@ -22,6 +22,11 @@ def document(**section: Any) -> dict[str, Any]:
     return {"version": 1, "reports": section}
 
 
+def on(profile: str) -> dict[str, Any]:
+    """A rule's `oracle:` block that names a profile."""
+    return {"profile": profile}
+
+
 def test_an_absent_section_is_empty() -> None:
     assert build_reports({"version": 1}) == Reports()
 
@@ -32,7 +37,7 @@ def test_a_rule_with_names_patterns_and_settings() -> None:
             accounts=[
                 {
                     "accounts": ["DBSNMP", "ORDS_*"],
-                    "profile": "TECH_NOEXPIRE",
+                    "oracle": on("TECH_NOEXPIRE"),
                     "settings": {"password_lifetime": "unlimited"},
                 }
             ]
@@ -47,23 +52,27 @@ def test_a_rule_with_names_patterns_and_settings() -> None:
 
 def test_a_rule_may_select_targets() -> None:
     built = build_reports(
-        document(accounts=[{"accounts": ["DBSNMP"], "targets": {"group": "prod"}, "profile": "P"}])
+        document(
+            accounts=[{"accounts": ["DBSNMP"], "targets": {"group": "prod"}, "oracle": on("P")}]
+        )
     )
     assert built.accounts[0].targets.group == "prod"
 
 
 def test_a_db_profile() -> None:
     built = build_reports(
-        document(db_profiles=[{"name": "TECH_NOEXPIRE", "settings": {"failed_login_limit": 10}}])
+        document(
+            oracle={"profiles": [{"name": "TECH_NOEXPIRE", "settings": {"failed_login_limit": 10}}]}
+        )
     )
-    assert built.db_profiles[0].name == "TECH_NOEXPIRE"
-    assert built.db_profiles[0].settings == Settings(failed_login_limit=10)
+    assert built.oracle_profiles[0].name == "TECH_NOEXPIRE"
+    assert built.oracle_profiles[0].settings == Settings(failed_login_limit=10)
 
 
 def test_an_empty_section_is_refused() -> None:
     with pytest.raises(ConfigError) as caught:
         build_reports({"version": 1, "reports": {}})
-    assert "must declare `accounts:` or `db_profiles:`" in str(caught.value)
+    assert "must declare `accounts:` or `oracle:`" in str(caught.value)
 
 
 def test_an_empty_list_is_refused() -> None:
@@ -74,7 +83,9 @@ def test_an_empty_list_is_refused() -> None:
 
 def test_an_unknown_key_is_refused() -> None:
     with pytest.raises(ConfigError) as caught:
-        build_reports(document(accounts=[{"accounts": ["X"], "kind": "technical", "profile": "P"}]))
+        build_reports(
+            document(accounts=[{"accounts": ["X"], "kind": "technical", "oracle": on("P")}])
+        )
     assert "kind" in str(caught.value)
 
 
@@ -103,33 +114,78 @@ def test_the_values_a_setting_accepts(value: Any) -> None:
 
 def test_the_only_wildcard_is_a_star() -> None:
     with pytest.raises(ConfigError) as caught:
-        build_reports(document(accounts=[{"accounts": ["ORDS_?"], "profile": "P"}]))
+        build_reports(document(accounts=[{"accounts": ["ORDS_?"], "oracle": on("P")}]))
     assert "ORDS_?" in str(caught.value)
 
 
 def test_a_rule_needs_a_profile_or_settings() -> None:
     with pytest.raises(ConfigError) as caught:
         build_reports(document(accounts=[{"accounts": ["X"]}]))
-    assert "must declare `profile:` or `settings:`" in str(caught.value)
+    assert "must declare `settings:` or `oracle.profile:`" in str(caught.value)
 
 
 def test_a_rule_needs_accounts() -> None:
     with pytest.raises(ConfigError) as caught:
-        build_reports(document(accounts=[{"profile": "P"}]))
+        build_reports(document(accounts=[{"oracle": on("P")}]))
     assert "must declare `accounts:`" in str(caught.value)
 
 
 def test_a_db_profile_needs_settings() -> None:
     with pytest.raises(ConfigError) as caught:
-        build_reports(document(db_profiles=[{"name": "P"}]))
+        build_reports(document(oracle={"profiles": [{"name": "P"}]}))
     assert "must declare `settings:`" in str(caught.value)
 
 
 def test_empty_settings_are_refused_even_beside_a_profile() -> None:
     """The published schema refuses `settings: {}` too; builder and schema agree."""
     with pytest.raises(ConfigError) as caught:
-        build_reports(document(accounts=[{"accounts": ["X"], "profile": "P", "settings": {}}]))
+        build_reports(document(accounts=[{"accounts": ["X"], "oracle": on("P"), "settings": {}}]))
     assert "must declare at least one setting" in str(caught.value)
+
+
+def test_an_empty_oracle_block_on_a_rule_is_refused() -> None:
+    """Present and empty means somebody meant to write a profile; the schema agrees."""
+    with pytest.raises(ConfigError) as caught:
+        build_reports(
+            document(
+                accounts=[{"accounts": ["X"], "oracle": {}, "settings": {"password_lifetime": 90}}]
+            )
+        )
+    assert "reports.accounts[0].oracle" in str(caught.value)
+    assert "must declare `profile:`" in str(caught.value)
+
+
+def test_an_empty_oracle_block_on_the_section_is_refused() -> None:
+    with pytest.raises(ConfigError) as caught:
+        build_reports(document(oracle={}))
+    assert "must declare `profiles:`" in str(caught.value)
+
+
+def test_an_unknown_key_in_a_rule_oracle_block_is_refused() -> None:
+    with pytest.raises(ConfigError) as caught:
+        build_reports(document(accounts=[{"accounts": ["X"], "oracle": {"profiel": "P"}}]))
+    assert "profiel" in str(caught.value)
+
+
+def test_a_rule_profile_in_the_old_place_names_the_new_one() -> None:
+    """Config schema 5.0 moved a rule's `profile:` into `oracle:` (#1447).
+
+    A file written for 4.x is told where the key went, not that it has a typo,
+    and the old place is not read as well.
+    """
+    with pytest.raises(ConfigError) as caught:
+        build_reports(document(accounts=[{"accounts": ["X"], "profile": "P"}]))
+    message = str(caught.value)
+    assert "reports.accounts[0].profile" in message
+    assert "`profile:` moved to `oracle.profile` in config schema 5.0" in message
+
+
+def test_db_profiles_in_the_old_place_names_the_new_one() -> None:
+    with pytest.raises(ConfigError) as caught:
+        build_reports(document(db_profiles=[{"name": "P", "settings": {"password_lifetime": 90}}]))
+    message = str(caught.value)
+    assert "reports.db_profiles" in message
+    assert "`db_profiles:` moved to `reports.oracle.profiles` in config schema 5.0" in message
 
 
 def test_an_account_is_named_by_one_rule() -> None:
@@ -137,8 +193,8 @@ def test_an_account_is_named_by_one_rule() -> None:
         build_reports(
             document(
                 accounts=[
-                    {"accounts": ["dbsnmp"], "profile": "P"},
-                    {"accounts": ["DBSNMP"], "profile": "Q"},
+                    {"accounts": ["dbsnmp"], "oracle": on("P")},
+                    {"accounts": ["DBSNMP"], "oracle": on("Q")},
                 ]
             )
         )
@@ -147,7 +203,7 @@ def test_an_account_is_named_by_one_rule() -> None:
 
 def test_a_name_twice_in_one_rule_says_so() -> None:
     with pytest.raises(ConfigError) as caught:
-        build_reports(document(accounts=[{"accounts": ["dbsnmp", "DBSNMP"], "profile": "P"}]))
+        build_reports(document(accounts=[{"accounts": ["dbsnmp", "DBSNMP"], "oracle": on("P")}]))
     assert "'DBSNMP' is named twice in one rule" in str(caught.value)
 
 
@@ -156,8 +212,8 @@ def test_two_patterns_may_overlap() -> None:
     built = build_reports(
         document(
             accounts=[
-                {"accounts": ["ORDS_*"], "profile": "P"},
-                {"accounts": ["ORDS_PUBLIC*"], "profile": "Q"},
+                {"accounts": ["ORDS_*"], "oracle": on("P")},
+                {"accounts": ["ORDS_PUBLIC*"], "oracle": on("Q")},
             ]
         )
     )
@@ -179,7 +235,9 @@ def test_a_misspelt_group_in_a_rule_is_refused() -> None:
                     }
                 ],
                 "reports": {
-                    "accounts": [{"accounts": ["X"], "targets": {"group": "prdo"}, "profile": "P"}]
+                    "accounts": [
+                        {"accounts": ["X"], "targets": {"group": "prdo"}, "oracle": on("P")}
+                    ]
                 },
             }
         )
@@ -195,7 +253,7 @@ def test_an_unknown_target_in_a_rule_is_refused() -> None:
                     {"name": "free-pdb", "type": "oracle", "dsn": "localhost:1521/FREEPDB1"}
                 ],
                 "reports": {
-                    "accounts": [{"accounts": ["X"], "targets": ["nosuch"], "profile": "P"}]
+                    "accounts": [{"accounts": ["X"], "targets": ["nosuch"], "oracle": on("P")}]
                 },
             }
         )
@@ -206,13 +264,16 @@ def test_a_db_profile_name_appears_once() -> None:
     with pytest.raises(ConfigError) as caught:
         build_reports(
             document(
-                db_profiles=[
-                    {"name": "tech", "settings": {"password_lifetime": "unlimited"}},
-                    {"name": "TECH", "settings": {"password_lifetime": 90}},
-                ]
+                oracle={
+                    "profiles": [
+                        {"name": "tech", "settings": {"password_lifetime": "unlimited"}},
+                        {"name": "TECH", "settings": {"password_lifetime": 90}},
+                    ]
+                }
             )
         )
     assert "duplicate" in str(caught.value)
+    assert "reports.oracle.profiles[1].name" in str(caught.value)
 
 
 def test_a_rule_may_not_set_the_profile_of_an_application_account() -> None:
@@ -222,12 +283,13 @@ def test_a_rule_may_not_set_the_profile_of_an_application_account() -> None:
             {
                 "version": 1,
                 "applications": [{"name": "acme", "accounts": ["ACME_APP_USER"]}],
-                "reports": {"accounts": [{"accounts": ["acme_app_user"], "profile": "OTHER"}]},
+                "reports": {"accounts": [{"accounts": ["acme_app_user"], "oracle": on("OTHER")}]},
             }
         )
     message = str(caught.value)
     assert "acme_app_user" in message
     assert "policy" in message
+    assert "drop `oracle.profile` here" in message
 
 
 def test_a_rule_may_give_settings_to_an_application_account() -> None:

@@ -396,7 +396,7 @@ def account_owners(applications: tuple[Application, ...]) -> dict[str, str]:
 
     ``upper()`` because that is how a name is matched everywhere it is used
     (invariant 5). The sections that may not reuse an application account's
-    name, `personal_accounts:` and a `reports:` rule's `profile:`, ask this.
+    name, `personal_accounts:` and a `reports:` rule's `oracle.profile`, ask this.
     """
     owners: dict[str, str] = {}
     for application in applications:

@@ -315,7 +315,7 @@ def _report_rows(config: Config) -> list[str]:
         [Column("DB PROFILE", _NAME), Column("SETTINGS")],
         [
             [profile.name, _or_dash(_settings_text(profile.settings))]
-            for profile in config.reports.db_profiles
+            for profile in config.reports.oracle_profiles
         ],
     )
     return [*rules, *([""] if rules and profiles else []), *profiles]

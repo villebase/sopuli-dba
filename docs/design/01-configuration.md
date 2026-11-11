@@ -11,7 +11,7 @@ Put the binding keys at the top level and the file reads like a straightforward
 target list. This is the shape most users will ever need.
 
 ```yaml
-# yaml-language-server: $schema=./sopuli-config-4.0.schema.json
+# yaml-language-server: $schema=./sopuli-config-5.0.schema.json
 version: 1
 
 vaults: {}          # named secret stores
@@ -487,7 +487,7 @@ PDB per tenant across three environments, HashiCorp Vault as master. It needs no
 `applications:` section.
 
 ```yaml
-# yaml-language-server: $schema=./sopuli-config-4.0.schema.json
+# yaml-language-server: $schema=./sopuli-config-5.0.schema.json
 version: 1
 
 runtime:
@@ -3449,27 +3449,37 @@ reports:
   accounts:
     - accounts: [DBSNMP, "ACME_SVC_*"]
       targets: { group: prod }
-      profile: TECH_NOEXPIRE
       settings: { password_lifetime: unlimited }
+      oracle: { profile: TECH_NOEXPIRE }
     - accounts: [acme_app_user]
       settings: { password_lifetime: 90 }
-  db_profiles:
-    - name: TECH_NOEXPIRE
-      settings: { password_lifetime: unlimited, failed_login_limit: 10 }
+  oracle:
+    profiles:
+      - name: TECH_NOEXPIRE
+        settings: { password_lifetime: unlimited, failed_login_limit: 10 }
 ```
 
 | Key | Meaning |
 |---|---|
 | `accounts[].accounts` | account names, or patterns whose only wildcard is `*`. Names are compared by `upper()` |
 | `accounts[].targets` | the same selector an application entry takes; absent means every target |
-| `accounts[].profile` | the database profile the accounts must be on (Oracle) |
 | `accounts[].settings` | what the accounts' password limits must be |
-| `db_profiles[].name` | a database profile |
-| `db_profiles[].settings` | what that profile's limits must be, for every account on it |
+| `accounts[].oracle.profile` | the database profile the accounts must be on |
+| `oracle.profiles[].name` | a database profile |
+| `oracle.profiles[].settings` | what that profile's limits must be, for every account on it |
 
-An `accounts` entry needs `profile:`, `settings:` or both, because one with
-neither has nothing to check. A `db_profiles` entry needs `settings:`. A
-profile name appears once in `db_profiles`.
+An `accounts` entry needs `settings:`, `oracle.profile` or both, because one
+with neither has nothing to check. An `oracle.profiles` entry needs
+`settings:`. A profile name appears once in `oracle.profiles`.
+
+**A key that only one product has goes in that product's block.**
+`settings:` holds the words that more than one product has. A rule's
+`oracle:` block holds `profile:`, and the section's `oracle:` block holds
+`profiles:`, because only Oracle has database profiles. Config schema 5.0 moved
+both there from a rule's `profile:` and the section's `db_profiles:`. A file
+that still has them in the old place is refused, and the message names the new
+place. The tool does not read both places, because the file could then say two
+things and nobody could tell which one the run read.
 
 **The settings are not Oracle's words** (UC-5 §7). Each takes `unlimited`, or a
 whole number above 0 that the database's value must not exceed:
@@ -3490,7 +3500,8 @@ target is undeclared.
 
 **An application account's profile comes from its policy.** Its expected
 profile is `account.profile` in its policy (§8), so a rule that names an
-application account may give it `settings:` and may not give it `profile:`.
+application account may give it `settings:` and may not give it
+`oracle.profile`.
 That is refused when the file is read. A pattern that reaches an application
 account is matched against a database, so the report applies the policy's
 profile there.
@@ -3753,7 +3764,7 @@ error message for a file this long.
 ## 9b. The published schema
 
 P3 requires a published JSON Schema. It is
-[`docs/schemas/sopuli-config-4.0.schema.json`](../schemas/sopuli-config-4.0.schema.json),
+[`docs/schemas/sopuli-config-5.0.schema.json`](../schemas/sopuli-config-5.0.schema.json),
 Draft 2020-12, and it exists for the editor rather than for the tool: pointed at
 from a YAML language server, it gives completion and inline errors while somebody
 is editing a 130-line file, which is worth more than the validation itself.
@@ -3764,7 +3775,7 @@ the same constants the builders validate with — `TARGET_KEYS`, `VAULT_TYPES`,
 a section's keys and its type table disagree. Regenerate with:
 
 ```
-python -m sopuli.config.schema > docs/schemas/sopuli-config-4.0.schema.json
+python -m sopuli.config.schema > docs/schemas/sopuli-config-5.0.schema.json
 ```
 
 `tests/config/test_schema.py` fails when the committed file is not what the model
@@ -3781,7 +3792,9 @@ because a file that used it no longer validates.
 format that needs migrating, and a file without the key needs no migration.
 The tool refuses a removed key by name and says why it was removed, so the
 refusal does not read as a typo. The changelog lists the removal as a breaking
-change.
+change. A key that moved is a major bump too, and `version:` stays: the tool
+refuses the old place by name and says where the key went, and the operator
+moves it by hand.
 
 **What it says.** Key names, JSON types, the closed sets, which keys are
 required, and `additionalProperties: false` — P3's "exits non-zero on unknown
@@ -3847,7 +3860,7 @@ A schema nothing is pointed at is a file in a directory. The association is made
 from the config file itself, with a comment on the first line:
 
 ```yaml
-# yaml-language-server: $schema=./sopuli-config-4.0.schema.json
+# yaml-language-server: $schema=./sopuli-config-5.0.schema.json
 version: 1
 ```
 
@@ -3858,7 +3871,7 @@ description the generator wrote for it, and an unknown key is underlined where i
 was typed.
 
 **The path is relative to the YAML file**, not to the repository. Copy the schema
-next to the config, or point at it where it lives — `$schema=../sopuli-dba/docs/schemas/sopuli-config-4.0.schema.json`
+next to the config, or point at it where it lives — `$schema=../sopuli-dba/docs/schemas/sopuli-config-5.0.schema.json`
 is as valid as the form above.
 
 **The `$id` inside the schema is an identifier, not an address.** It reads like a
@@ -3979,12 +3992,16 @@ notices until a rotation.
   store comes only from a profile or `SOPULI_VAULT`, the file cannot show the
   pair: a run that draws both accounts refuses the write, and a run whose
   selectors leave one out does not see it ([#841](../decisions/log.md#841))
-- in `reports:` (§8a): a `reports.accounts` rule with neither `profile:` nor
-  `settings:`, an empty `settings:`, a setting that is neither `unlimited` nor a
-  whole number above 0, a pattern using a wildcard other than `*`, an account
-  named twice (in one rule or across rules), a `profile:` given to an account an
-  application declares, a `db_profiles` name written twice, and a rule's
-  `targets:` naming a group, target or label key the file does not have → error
+- in `reports:` (§8a): a `reports.accounts` rule with neither `settings:` nor
+  `oracle.profile`, an empty `settings:` or `oracle:`, a setting that is neither
+  `unlimited` nor a whole number above 0, a pattern using a wildcard other than
+  `*`, an account named twice (in one rule or across rules), an `oracle.profile`
+  given to an account an application declares, a `reports.oracle.profiles` name
+  written twice, and a rule's `targets:` naming a group, target or label key the
+  file does not have → error
+- a key that moved → error, naming the key and its new place (§8a). A
+  `reports.accounts` rule's `profile:` moved to `oracle.profile`, and
+  `reports.db_profiles` to `reports.oracle.profiles`, in config schema 5.0
 - a `personal_accounts:` entry naming none of `accounts:`, `profile:` and `role:`,
   or more than one of them → error. None declares nothing, which invariant 5 says
   is the default anyway and is not worth an entry; two would mean either the union

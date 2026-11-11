@@ -122,11 +122,13 @@ def test_the_default_view_shows_the_report_rules() -> None:
                 "accounts": [
                     {
                         "accounts": ["DBSNMP", "ORDS_*"],
-                        "profile": "TECH_NOEXPIRE",
+                        "oracle": {"profile": "TECH_NOEXPIRE"},
                         "settings": {"password_lifetime": "unlimited"},
                     }
                 ],
-                "db_profiles": [{"name": "TECH_NOEXPIRE", "settings": {"failed_login_limit": 10}}],
+                "oracle": {
+                    "profiles": [{"name": "TECH_NOEXPIRE", "settings": {"failed_login_limit": 10}}]
+                },
             },
         }
     )

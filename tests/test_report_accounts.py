@@ -74,6 +74,9 @@ def rows(cfg: Config, *survey: SurveyedAccount) -> dict[str, AccountRow]:
 
 
 def rule(**fields: Any) -> dict[str, Any]:
+    """One `reports.accounts` rule. A ``profile`` goes in its `oracle:` block."""
+    if "profile" in fields:
+        fields["oracle"] = {"profile": fields.pop("profile")}
     return {"reports": {"accounts": [fields]}}
 
 
@@ -274,8 +277,10 @@ def test_an_application_profile_comes_from_its_policy() -> None:
 def test_a_db_profile_rule_states_settings_for_every_account_on_it() -> None:
     cfg = config(
         reports={
-            "accounts": [{"accounts": ["X"], "profile": "TECH"}],
-            "db_profiles": [{"name": "tech", "settings": {"password_lifetime": "unlimited"}}],
+            "accounts": [{"accounts": ["X"], "oracle": {"profile": "TECH"}}],
+            "oracle": {
+                "profiles": [{"name": "tech", "settings": {"password_lifetime": "unlimited"}}]
+            },
         }
     )
     row = rows(cfg, account("X", profile="TECH", password_lifetime=180))["X"]
@@ -286,8 +291,8 @@ def test_two_patterns_that_disagree_are_not_checked() -> None:
     cfg = config(
         reports={
             "accounts": [
-                {"accounts": ["ORDS_*"], "profile": "P"},
-                {"accounts": ["ORDS_PUBLIC*"], "profile": "Q"},
+                {"accounts": ["ORDS_*"], "oracle": {"profile": "P"}},
+                {"accounts": ["ORDS_PUBLIC*"], "oracle": {"profile": "Q"}},
             ]
         }
     )
@@ -306,10 +311,10 @@ def test_problems_come_first_in_the_order_the_spec_gives() -> None:
     cfg = config(
         reports={
             "accounts": [
-                {"accounts": ["A_OK"], "profile": "DEFAULT"},
-                {"accounts": ["B_LOCKED"], "profile": "DEFAULT"},
+                {"accounts": ["A_OK"], "oracle": {"profile": "DEFAULT"}},
+                {"accounts": ["B_LOCKED"], "oracle": {"profile": "DEFAULT"}},
                 {"accounts": ["C_EXPIRES"], "settings": {"password_lifetime": "unlimited"}},
-                {"accounts": ["D_GONE"], "profile": "DEFAULT"},
+                {"accounts": ["D_GONE"], "oracle": {"profile": "DEFAULT"}},
             ]
         }
     )
@@ -350,7 +355,7 @@ def test_two_rules_setting_different_fields_combine() -> None:
     cfg = config(
         reports={
             "accounts": [
-                {"accounts": ["ACME_*"], "profile": "P"},
+                {"accounts": ["ACME_*"], "oracle": {"profile": "P"}},
                 {"accounts": ["acme_batch_user"], "settings": {"password_lifetime": "unlimited"}},
             ]
         }
@@ -370,7 +375,7 @@ def test_an_application_account_never_takes_a_rules_profile() -> None:
         ],
         vaults={"vault-dev": {"type": "hashicorp", "addr": "http://127.0.0.1:8200"}},
         defaults={"vault": "vault-dev"},
-        reports={"accounts": [{"accounts": ["ACME_*"], "profile": "P"}]},
+        reports={"accounts": [{"accounts": ["ACME_*"], "oracle": {"profile": "P"}}]},
     )
     row = rows(cfg, account("ACME_APP_USER", profile="DEFAULT"))["ACME_APP_USER"]
     assert row.state == NO_RULE
@@ -418,7 +423,7 @@ def test_a_rule_and_its_db_profile_that_disagree_are_not_checked() -> None:
     cfg = config(
         reports={
             "accounts": [{"accounts": ["X"], "settings": {"password_lifetime": "unlimited"}}],
-            "db_profiles": [{"name": "APP_PROF", "settings": {"password_lifetime": 90}}],
+            "oracle": {"profiles": [{"name": "APP_PROF", "settings": {"password_lifetime": 90}}]},
         }
     )
     row = rows(cfg, account("X", profile="APP_PROF", password_lifetime="unlimited"))["X"]
@@ -431,7 +436,11 @@ def test_a_conflict_is_on_its_own_check_and_the_others_still_run() -> None:
     cfg = config(
         reports={
             "accounts": [
-                {"accounts": ["ORDS_*"], "profile": "P", "settings": {"password_lifetime": 90}},
+                {
+                    "accounts": ["ORDS_*"],
+                    "oracle": {"profile": "P"},
+                    "settings": {"password_lifetime": 90},
+                },
                 {"accounts": ["ORDS_PUBLIC*"], "settings": {"password_lifetime": 30}},
             ]
         }
@@ -493,8 +502,8 @@ def test_one_finding_names_every_source_that_expects_the_profile() -> None:
         **APPLICATION,
         reports={
             "accounts": [
-                {"accounts": ["X"], "profile": "ACME_APP_PROF"},
-                {"accounts": ["Y"], "profile": "acme_app_prof"},
+                {"accounts": ["X"], "oracle": {"profile": "ACME_APP_PROF"}},
+                {"accounts": ["Y"], "oracle": {"profile": "acme_app_prof"}},
             ]
         },
     )
@@ -504,7 +513,7 @@ def test_one_finding_names_every_source_that_expects_the_profile() -> None:
 
 
 def test_a_rules_profile_never_names_an_application_account() -> None:
-    """From the review of #1402. The config refuses a rule's `profile:` on an
+    """From the review of #1402. The config refuses a rule's `oracle.profile` on an
     application account named by name, so every rule profile that
     `missing_profiles` counts is one some non-application account may need."""
     with pytest.raises(ConfigError, match="its profile comes from its policy"):
@@ -530,11 +539,16 @@ def test_a_binding_without_a_policy_expects_no_profile() -> None:
     assert missing_profiles(TARGET, cfg, {"DEFAULT"}) == ()
 
 
-def test_a_db_profiles_entry_alone_never_requires_the_profile() -> None:
-    """The maintainer's narrowing of #1390: `db_profiles` sets the limits where
-    the profile is; it does not say the profile must be on every target."""
+def test_an_oracle_profiles_entry_alone_never_requires_the_profile() -> None:
+    """The maintainer's narrowing of #1390: `reports.oracle.profiles` sets the
+    limits where the profile is; it does not say the profile must be on every
+    target."""
     cfg = config(
-        reports={"db_profiles": [{"name": "TECH", "settings": {"password_lifetime": "unlimited"}}]}
+        reports={
+            "oracle": {
+                "profiles": [{"name": "TECH", "settings": {"password_lifetime": "unlimited"}}]
+            }
+        }
     )
     assert missing_profiles(TARGET, cfg, {"DEFAULT"}) == ()
 

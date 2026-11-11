@@ -1,9 +1,9 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/villebase/sopuli-dba/schemas/sopuli-config-4.0.schema.json",
+  "$id": "https://github.com/villebase/sopuli-dba/schemas/sopuli-config-5.0.schema.json",
   "title": "sopuli-dba configuration",
   "type": "object",
-  "description": "A sopuli-dba configuration file (docs/design/01-configuration.md).\n\nStructural only, and deliberately so. It describes key names, types, closed sets, required keys, and rejects unknown keys -- which is what makes editor completion and P3's \"a typo in a credential tool must never be silently ignored\" work while somebody is typing.\n\nThe rules it does not express are enforced by `sopuli config validate`, whose errors name the offending key: the inline form and `applications:` are mutually exclusive; `secret` and `secret_template` are mutually exclusive; two accounts may not resolve to one secret ref; `require:` may not exceed `length:` or ask for specials a charset does not have; `allow:` belongs to `charset: custom`; an `auth:` block may carry only the keys its own `method:` takes; every vault, policy, group, profile and target name written anywhere must be declared in the section that declares it; a `for_each` must use one inner dimension throughout; a profile may not set a key that would change scope; a `reports.accounts` rule needs `profile:` or `settings:`, names each account once across the rules, and may not give an application account a `profile:`; and a `reports.db_profiles` name appears once. A file this schema accepts may still be refused there.",
+  "description": "A sopuli-dba configuration file (docs/design/01-configuration.md).\n\nStructural only, and deliberately so. It describes key names, types, closed sets, required keys, and rejects unknown keys -- which is what makes editor completion and P3's \"a typo in a credential tool must never be silently ignored\" work while somebody is typing.\n\nThe rules it does not express are enforced by `sopuli config validate`, whose errors name the offending key: the inline form and `applications:` are mutually exclusive; `secret` and `secret_template` are mutually exclusive; two accounts may not resolve to one secret ref; `require:` may not exceed `length:` or ask for specials a charset does not have; `allow:` belongs to `charset: custom`; an `auth:` block may carry only the keys its own `method:` takes; every vault, policy, group, profile and target name written anywhere must be declared in the section that declares it; a `for_each` must use one inner dimension throughout; a profile may not set a key that would change scope; a `reports.accounts` rule needs `settings:` or `oracle.profile`, names each account once across the rules, and may not give an application account an `oracle.profile`; and a `reports.oracle.profiles` name appears once. A file this schema accepts may still be refused there.",
   "additionalProperties": false,
   "required": [
     "version"
@@ -1021,7 +1021,18 @@
           "description": "Accounts the report checks, by name or `*` pattern.",
           "minItems": 1
         },
-        "db_profiles": {
+        "oracle": {
+          "$ref": "#/$defs/reports_oracle"
+        }
+      }
+    },
+    "reports_oracle": {
+      "type": "object",
+      "description": "Report rules that only Oracle has. Moved here from `reports.db_profiles` in 5.0.",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "profiles": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/db_profile_rule"
@@ -1051,13 +1062,24 @@
         "targets": {
           "$ref": "#/$defs/application_targets"
         },
+        "settings": {
+          "$ref": "#/$defs/report_settings"
+        },
+        "oracle": {
+          "$ref": "#/$defs/report_account_oracle"
+        }
+      }
+    },
+    "report_account_oracle": {
+      "type": "object",
+      "description": "What this rule checks that only Oracle has. Moved here from `profile:` in 5.0.",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
         "profile": {
           "type": "string",
           "minLength": 1,
-          "description": "The database profile these accounts must be on (Oracle). Not allowed for an application account, whose profile comes from its policy."
-        },
-        "settings": {
-          "$ref": "#/$defs/report_settings"
+          "description": "The database profile these accounts must be on. Not allowed for an application account, whose profile comes from its policy."
         }
       }
     },

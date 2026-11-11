@@ -15,7 +15,8 @@ application's `oracle: container_clause`, and an account on a MySQL target that
 does not name its host, are checked where the application binds to its targets
 (:mod:`sopuli.config.bindings`), with :func:`refuse_a_container_clause` and
 :func:`refuse_a_bare_mysql_account`. A personal account names its host too,
-checked by :func:`check_personal_mysql_accounts`.
+checked by :func:`check_personal_mysql_accounts`. A report rule's
+``user@host`` names are checked by :func:`check_report_mysql_accounts`.
 """
 
 from __future__ import annotations
@@ -616,3 +617,53 @@ def check_personal_mysql_accounts(config: Config) -> None:
                     declared_by="a personal account rule",
                     at=at.key("accounts").index(position),
                 )
+
+
+def check_report_mysql_accounts(config: Config) -> None:
+    """A `reports.accounts` rule's ``user@host`` name is one the report can match.
+
+    A rule names a MySQL or MariaDB account as UC-1 does, ``user@host``
+    (#1461), because one user name at two hosts is two accounts, each with its
+    own lock and limits. A name without a host is not refused: it is a name for
+    the rule's other targets, and on these it reaches no account, so a rule
+    written for Oracle can cover every target (decided on #1461). A
+    ``user@host`` name is checked as an application's is: no part in SQL's
+    quotes or with a space at an end. The wildcard ``*`` stands in the user
+    part only. A host is the server's own pattern, such as ``10.%``, compared
+    with the host each account was created with, so ``*`` there would match no
+    account. Run after references are resolved, so the rule's ``targets:``
+    names exist.
+    """
+    for index, rule in enumerate(config.reports.accounts):
+        at = ROOT.key("reports").key("accounts").index(index)
+        for expanded in select(config, rule.targets):
+            if expanded.target.type not in USER_AT_HOST_TYPES:
+                continue
+            product = _PRODUCTS[expanded.target.type].name
+            for position, account in enumerate(rule.accounts):
+                where = at.key("accounts").index(position)
+                split = mysql_account(account)
+                if split is None:
+                    continue
+                if quoted_or_padded(split):
+                    raise ConfigError(
+                        f"a report rule names {account!r} on {product} target "
+                        f"{expanded.name!r}, whose user or host starts or ends with a quote "
+                        "or a space",
+                        at=where,
+                        hint=(
+                            "write the name without SQL's quotes, as `acme_app@10.%`: the "
+                            "report compares the names it reads"
+                        ),
+                    )
+                if "*" in split[1]:
+                    raise ConfigError(
+                        f"a report rule names {account!r} on {product} target "
+                        f"{expanded.name!r}, with `*` in the host",
+                        at=where,
+                        hint=(
+                            f"`*` stands in the user part only; write the host as the "
+                            f"account has it, such as `{typed_user(account, default='acme_app')}"
+                            "@10.%`, and one name per host"
+                        ),
+                    )

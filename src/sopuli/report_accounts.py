@@ -13,6 +13,10 @@ rule: never report an account as fine when it is not.
 **Names are matched in the tool.** A rule's names and `*` patterns are compared
 with the names the survey read, by `upper()`. No pattern is ever sent to the
 database, so `_` and `%` are plain characters, as they are in an Oracle name.
+On MySQL and MariaDB a name is `user@host`, compared as UC-1 compares it: the
+user exactly and the host without ASCII case, so `jdoe@%` and `JDOE@%` are two
+accounts (#1461). A pattern's `*` is in the user part, and its host is compared
+as a name's is.
 """
 
 from __future__ import annotations
@@ -30,8 +34,10 @@ from sopuli.config.model import (
     ReportAccountRule,
     Settings,
 )
+from sopuli.config.products import fold_mysql_host, mysql_account, same_mysql_host
 from sopuli.config.reports import LOGIN_REFUSED, UNLIMITED, is_pattern
 from sopuli.config.selection import select
+from sopuli.config.targets import USER_AT_HOST_TYPES
 from sopuli.driver.registry import DRIVERS
 from sopuli.driver.survey import SurveyedAccount
 from sopuli.personal import rules_for
@@ -172,17 +178,18 @@ def evaluate(
     ``keep_kept_in_root``: the privilege report keeps it, because its grants
     made in the PDB are read there, though its lock and limits are not.
     """
+    naming = _naming(config, target)
     rules = _rules_on(config, target)
-    applications = _application_profiles(config, target)
-    personal_names, personal_profiles = _personal_on(config, target)
+    applications = _application_profiles(config, target, naming)
+    personal_names, personal_profiles = _personal_on(config, target, naming)
     not_applicable = not_applicable_on(config, target)
 
     built: list[AccountRow] = []
-    found: set[str] = set()
+    found: set[object] = set()
     for surveyed in survey:
-        name = surveyed.name.upper()
+        name = naming.key(surveyed.name)
         found.add(name)
-        matching = [rule for rule in rules if _names(rule, name)]
+        matching = [rule for rule in rules if _names(rule, surveyed.name, naming)]
         named = bool(matching) or name in applications or name in personal_names
         left_out = surveyed.vendor_maintained or (surveyed.kept_in_root and not keep_kept_in_root)
         if left_out and not named:
@@ -215,14 +222,14 @@ def evaluate(
         state = _state(findings, login_stated=expectation.login is not None)
         built.append(_row(target, surveyed, kind, findings, state))
 
-    for name in _declared_names(rules, applications, personal_names):
+    for name, shown in _declared_names(config, target, rules, naming):
         if name in found:
             continue
         missing = Finding("present", PROBLEM, "not on this target")
         built.append(
             AccountRow(
                 target,
-                name,
+                shown,
                 _kind_of(name, applications, personal_names),
                 None,
                 None,
@@ -265,7 +272,7 @@ def missing_profiles(
     for rule in _rules_on(config, target):
         if rule.profile is not None:
             expect(rule.profile, BY_RULE)
-    for policy in _bound_policies(config, target).values():
+    for policy in _bound_policies(config, target, _naming(config, target)).values():
         if policy is not None and policy.account.profile is not None:
             expect(policy.account.profile, f"{BY_POLICY}{policy.name}")
     return tuple(
@@ -324,8 +331,57 @@ def _rules_on(config: Config, target: str) -> tuple[ReportAccountRule, ...]:
     )
 
 
-def _bound_policies(config: Config, target: str) -> dict[str, Policy | None]:
-    """Each application account on ``target``, by ``upper()``, with its policy.
+@dataclass(frozen=True)
+class _Naming:
+    """How names compare on one target: by ``upper()``, or as ``user@host``.
+
+    On MySQL and MariaDB the user part compares exactly and the host without
+    ASCII case, as UC-1 compares them (#1202, decision 3). ``key`` is equal for
+    two names that are one account, and ``shown`` is how a name the file
+    declares is spelled in a row: upper case where names compare by
+    ``upper()``, as written where case tells two accounts apart.
+
+    A rule's name without a host reaches no account on such a target, and is
+    never reported missing there (decided on #1461): it names an account on
+    the rule's other targets. The config refuses one in an application or a
+    personal rule on these targets, so only a report rule can hold one.
+    """
+
+    user_at_host: bool
+
+    def reaches(self, name: str) -> bool:
+        """Whether a name the file writes can name an account on this target."""
+        return not self.user_at_host or mysql_account(name) is not None
+
+    def key(self, name: str) -> object:
+        if not self.user_at_host:
+            return name.upper()
+        split = mysql_account(name)
+        # A name without a host keys as itself and is equal to no account's.
+        return name if split is None else (split[0], fold_mysql_host(split[1]))
+
+    def shown(self, name: str) -> str:
+        return name if self.user_at_host else name.upper()
+
+    def matches(self, pattern: str, name: str) -> bool:
+        """Whether a rule's ``*`` pattern reaches the account ``name``."""
+        if not self.user_at_host:
+            return fnmatchcase(name.upper(), pattern.upper())
+        wanted, actual = mysql_account(pattern), mysql_account(name)
+        if wanted is None or actual is None:
+            return False
+        return fnmatchcase(actual[0], wanted[0]) and same_mysql_host(actual[1], wanted[1])
+
+
+def _naming(config: Config, target: str) -> _Naming:
+    for expanded in config.expanded_targets:
+        if expanded.name == target:
+            return _Naming(user_at_host=expanded.target.type in USER_AT_HOST_TYPES)
+    return _Naming(user_at_host=False)
+
+
+def _bound_policies(config: Config, target: str, naming: _Naming) -> dict[object, Policy | None]:
+    """Each application account on ``target``, by its name key, with its policy.
 
     ``None`` where the binding names no policy, or one the config lacks. The
     one walk of the bindings that :func:`evaluate` and :func:`missing_profiles`
@@ -333,7 +389,7 @@ def _bound_policies(config: Config, target: str) -> dict[str, Policy | None]:
     """
     policies = {policy.name: policy for policy in config.policies}
     return {
-        binding.account.upper(): (
+        naming.key(binding.account): (
             policies.get(binding.policy) if binding.policy is not None else None
         )
         for binding in config.bindings
@@ -341,49 +397,58 @@ def _bound_policies(config: Config, target: str) -> dict[str, Policy | None]:
     }
 
 
-def _application_profiles(config: Config, target: str) -> dict[str, str | None]:
+def _application_profiles(config: Config, target: str, naming: _Naming) -> dict[object, str | None]:
     """Each application account on ``target``, with its policy's expected profile."""
     return {
         account: policy.account.profile if policy is not None else None
-        for account, policy in _bound_policies(config, target).items()
+        for account, policy in _bound_policies(config, target, naming).items()
     }
 
 
-def _personal_on(config: Config, target: str) -> tuple[set[str], set[str]]:
-    """Personal accounts on ``target``: names, and the profiles a predicate names.
+def _personal_on(config: Config, target: str, naming: _Naming) -> tuple[set[object], set[str]]:
+    """Personal accounts on ``target``: name keys, and the profiles a predicate names.
 
     A predicate over a **role** is not resolved here: the survey reads no roles,
     so such an account shows as undeclared until the report reads them.
     """
-    names: set[str] = set()
+    names: set[object] = set()
     profiles: set[str] = set()
     for rule in rules_for(config, target):
-        names.update(account.upper() for account in rule.accounts)
+        names.update(naming.key(account) for account in rule.accounts)
         if rule.profile is not None:
             profiles.add(rule.profile.upper())
     return names, profiles
 
 
-def _names(rule: ReportAccountRule, name: str) -> bool:
+def _names(rule: ReportAccountRule, name: str, naming: _Naming) -> bool:
     return any(
-        fnmatchcase(name, written.upper()) if is_pattern(written) else written.upper() == name
+        naming.matches(written, name)
+        if is_pattern(written)
+        else naming.key(written) == naming.key(name)
         for written in rule.accounts
     )
 
 
 def _declared_names(
-    rules: Sequence[ReportAccountRule],
-    applications: dict[str, str | None],
-    personal_names: set[str],
-) -> list[str]:
-    """Every account the file names on this target by name, not by pattern."""
-    names = set(applications) | personal_names
-    for rule in rules:
-        names.update(written.upper() for written in rule.accounts if not is_pattern(written))
-    return sorted(names)
+    config: Config, target: str, rules: Sequence[ReportAccountRule], naming: _Naming
+) -> list[tuple[object, str]]:
+    """Every account the file names on this target by name, not by pattern.
+
+    Each as its key and as a row spells it (:meth:`_Naming.shown`), first as
+    an application binds it, then as a personal rule or a report rule writes
+    it.
+    """
+    written = [binding.account for binding in config.bindings if binding.target == target]
+    written += [account for rule in rules_for(config, target) for account in rule.accounts]
+    written += [name for rule in rules for name in rule.accounts if not is_pattern(name)]
+    shown: dict[object, str] = {}
+    for name in written:
+        if naming.reaches(name):
+            shown.setdefault(naming.key(name), naming.shown(name))
+    return sorted(shown.items(), key=lambda pair: pair[1])
 
 
-def _kind_of(name: str, applications: dict[str, str | None], personal: set[str]) -> str:
+def _kind_of(name: object, applications: dict[object, str | None], personal: set[object]) -> str:
     if name in applications:
         return APPLICATION
     if name in personal:

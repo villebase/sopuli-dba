@@ -23,10 +23,24 @@ name: ci
 # `main` ruleset requires `ci ok` without requiring branches to be up to date
 # (see workflow.md). One PR at a time is the working pattern; `workflow_dispatch`
 # is the escape hatch when `main` needs checking by hand.
+#
+# Test coverage is measured weekly and on request, never on a pull request
+# (#1453). Tier 1's pytest took 730 s and 512 s in two runs with coverage,
+# against 452-534 s without, and every code pull request waits on it. The weekly
+# run checks `main` as a side effect. To measure by hand: Actions, `ci`, Run
+# workflow, tick `coverage`; or `gh workflow run ci -f coverage=true`.
 
 on:
   pull_request:
   workflow_dispatch:
+    inputs:
+      coverage:
+        description: Measure test coverage in the tier-1 lane
+        type: boolean
+        default: false
+  # Monday morning, after CodeQL and Scorecard.
+  schedule:
+    - cron: "11 6 * * 1"
 
 # Read-only. This workflow reports; it never writes to the repository.
 # `pull-requests: read` is for the `changes` job below, which asks the API which
@@ -448,8 +462,14 @@ jobs:
     # which is Docker Hub's day, not ours -- indistinguishable from an Oracle
     # that never reaches healthy, and it would fail the pull rather than report
     # it. Oracle reaches healthy in 30-60 s and the suite is seconds; anything
-    # near 20 minutes is stuck, not slow.
-    timeout-minutes: 20
+    # near 20 minutes is stuck, not slow. A coverage run is slower by design, so
+    # it gets ten minutes more.
+    # The same test as `COVERAGE` below, because `timeout-minutes` cannot read
+    # the job's `env`.
+    timeout-minutes: ${{ (github.event_name == 'schedule' || inputs.coverage == true) && 30 || 20 }}
+    env:
+      # The weekly run and a run by hand with `coverage` ticked (see `on:`).
+      COVERAGE: ${{ github.event_name == 'schedule' || inputs.coverage == true }}
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -571,7 +591,33 @@ jobs:
           # worse than no lane, because it would be quoted as evidence.
           SOPULI_TEST_TIER1: required
           SOPULI_TEST_ORACLE_NAME: 23ai Free
-        run: pytest
+        run: |
+          if [ "$COVERAGE" = true ]; then
+            pytest --cov
+          else
+            pytest
+          fi
+
+      # This lane runs tiers 0 and 1 together, so it is the one place the
+      # figure includes the driver code. It is reported and never fails the
+      # job (#1453): a minimum invites tests written for the number. It runs
+      # after a failed pytest too, because the data from every other test is
+      # still there, and that run is the one someone is looking at. The table
+      # goes to the run's summary page, least-covered files first; the HTML
+      # report, with each file's unrun lines marked, is the run's artifact.
+      - name: coverage
+        if: ${{ !cancelled() && env.COVERAGE == 'true' && hashFiles('.coverage') != '' }}
+        run: |
+          coverage report --format=markdown --sort=cover >> "$GITHUB_STEP_SUMMARY"
+          coverage html --directory=htmlcov
+
+      - name: upload the coverage report
+        if: ${{ !cancelled() && env.COVERAGE == 'true' && hashFiles('htmlcov/index.html') != '' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-html
+          path: htmlcov/
+          retention-days: 30
 
       # Runs on failure too: when Oracle did not come up, its log is the whole
       # diagnosis and the alternative is re-running the job with a debug step

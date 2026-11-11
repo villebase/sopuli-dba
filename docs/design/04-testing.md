@@ -318,6 +318,26 @@ stack running, the same tests skip with a reason, as §1 requires.
 [`../maintainer-environments.md`](../maintainer-environments.md) §1 lists the
 variables the suite reads for Oracle, and their defaults.
 
+**Coverage is reported, not required** (#1453). `pytest --cov
+--cov-report=term-missing` measures which lines and branches of `src/sopuli` the
+run executed, and prints them with the missing line numbers. The settings are
+in `pyproject.toml`. Code run in a child process counts too, such as the real
+CLI that the fault-injection and lock-concurrency suites start. Tier 0 alone leaves
+much of the code that talks to a server unrun, such as each driver's
+`session.py`, because it starts no database. A run with the tier-1 stack up
+runs that code too.
+
+CI measures coverage in the tier-1 lane every Monday, and when the `ci`
+workflow is run by hand with `coverage` ticked (`gh workflow run ci -f
+coverage=true`). Pull requests do not measure it, because tracing slows the
+lane: its pytest took 730 s and 512 s in two runs with coverage, against 452 to
+534 s without. The run's summary page in the Actions tab has the
+table, least-covered files first, and its `coverage-html` artifact has the HTML
+report, with each file's unrun lines marked. No threshold fails a run: a
+minimum invites tests written for the number, and the point of a test here is
+the behaviour it asserts. The suite does not count lines of code. For counts by language, run
+`scc` or `cloc` on the checkout.
+
 Tier 0 needs no containers, and it must stay that way: it is what makes the
 inner development loop fast. Every pure-logic concern above (precedence,
 templating, charsets, redaction) can be tested without a database. That is a

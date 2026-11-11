@@ -991,8 +991,8 @@ class ReportAccountRule:
     ``accounts`` holds names and patterns whose only wildcard is ``*``. A rule
     declares nothing a changing command may act on: a name here is not a
     declaration for invariant 5 (UC-5 §7). ``profile`` is the profile the
-    accounts must be on, an Oracle addition; ``settings`` is what their
-    password limits must be.
+    accounts must be on, written ``oracle.profile`` because only Oracle has
+    one; ``settings`` is what their password limits must be.
     """
 
     accounts: tuple[str, ...]
@@ -1003,7 +1003,7 @@ class ReportAccountRule:
 
 @dataclass(frozen=True)
 class DbProfileRule:
-    """One entry in ``reports.db_profiles``: the settings a database profile must have."""
+    """One entry in ``reports.oracle.profiles``: the settings a database profile must have."""
 
     name: str
     settings: Settings
@@ -1014,7 +1014,7 @@ class Reports:
     """The ``reports:`` section: the rules of UC-5's reports. Absent means none."""
 
     accounts: tuple[ReportAccountRule, ...] = ()
-    db_profiles: tuple[DbProfileRule, ...] = ()
+    oracle_profiles: tuple[DbProfileRule, ...] = ()
 
 
 @dataclass(frozen=True)

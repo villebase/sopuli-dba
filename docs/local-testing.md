@@ -2372,10 +2372,10 @@ reports:
     - accounts: [acme_rpt_user]
       settings: { password_lifetime: unlimited }
     - accounts: [acme_rpt_ok]
-      profile: ACME_RPT_PROF
       settings: { password_lifetime: 365 }
+      oracle: { profile: ACME_RPT_PROF }
     - accounts: [acme_rpt_gone]
-      profile: ACME_RPT_PROF
+      oracle: { profile: ACME_RPT_PROF }
 ```
 
 ```

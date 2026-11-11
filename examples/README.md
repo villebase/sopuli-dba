@@ -13,7 +13,7 @@ commented for a reader who has not written one before.
 | [file-store.yaml](file-store.yaml) | a `file` store, one age-encrypted file for local development and CI: its path, identity, recipients and `locking: advisory-only` |
 | [personal-accounts.yaml](personal-accounts.yaml) | resetting the passwords people log in with: `personal_accounts:` by name and by profile, common users on the container root, `delivery:`, and `reset_records:` |
 | [app-creds-and-personal-accounts.yaml](app-creds-and-personal-accounts.yaml) | a whole estate with both: three environments, application accounts and personal accounts, in one file |
-| [reports.yaml](reports.yaml) | the `reports:` rules `sopuli report accounts` checks: technical accounts by name and pattern, the application accounts by name with their profile from their policy, and `db_profiles` |
+| [reports.yaml](reports.yaml) | the `reports:` rules `sopuli report accounts` checks: technical accounts by name and pattern, the application accounts by name with their profile from their policy, and the Oracle-only `oracle:` block with its database profiles |
 
 Check any of them before you use it. This opens no network connection:
 
@@ -129,7 +129,7 @@ settings
 - [../docs/design/01-configuration.md](../docs/design/01-configuration.md) — the
   full reference: every key, every rule, and the validation errors worth causing
   on purpose.
-- [../docs/schemas/sopuli-config-4.0.schema.json](../docs/schemas/sopuli-config-4.0.schema.json)
+- [../docs/schemas/sopuli-config-5.0.schema.json](../docs/schemas/sopuli-config-5.0.schema.json)
   — the JSON Schema. Put
   `# yaml-language-server: $schema=<path to it>` on the first line of your config
   to get completion and inline errors in an editor, as these examples do.

@@ -187,11 +187,12 @@ To expect a profile only on some targets, give the rule `targets:`. Where it
 is expected and absent, the report says
 so once, under the target's head line, and it is a problem: the run exits 3.
 Each account expected on it still shows its own wrong-profile problem, because
-it is on another profile. A `db_profiles` entry alone expects nothing: it says
-what a profile's limits must be where the profile is, not that every target
-has it. Nor does a personal rule's `profile:`, which only selects accounts.
-A rule cannot give `profile:` to an application account it names by name: the
-config refuses that, because the account's profile is its policy's. The
+it is on another profile. A `reports.oracle.profiles` entry alone expects
+nothing: it says what a profile's limits must be where the profile is, not that
+every target has it. Nor does a personal rule's `profile:`, which only selects
+accounts. A rule cannot give `oracle.profile` to an application account it
+names by name: the config refuses that, because the account's profile is its
+policy's. The
 profile names come from the `DBA_PROFILES` rows the survey
 already reads, so no statement is added (#1390).
 
@@ -305,25 +306,27 @@ For an account the tool does not manage, only the database's date is shown.
 ## 7. Rules in the config
 
 **Built.** The rules are the `reports:` section (`01-configuration.md` §8a),
-and `report accounts` (§4) reads them. Where a rule and a `db_profiles` entry,
-or two rules, set one setting two ways, that check is *not checked* on the
-account, and its other checks still run.
+and `report accounts` (§4) reads them. Where a rule and a
+`reports.oracle.profiles` entry, or two rules, set one setting two ways, that
+check is *not checked* on the account, and its other checks still run.
 
-The settings are written in words that are not specific to one database
-product: `password_lifetime` and `failed_login_limit`, each `unlimited` or a
+A setting that more than one product has is written in words that are not one
+product's: `password_lifetime` and `failed_login_limit`, each `unlimited` or a
 largest allowed value. On Oracle the values are read through the account's
-profile. `reports.db_profiles`, a list of database profiles and their expected
-settings, and a rule's `profile:`, the check of an account's profile by name,
-are an addition for Oracle on top of that. On another product, a rule reports
-*not checked* until that product's driver reads the settings. The format does
-not change when it does.
+profile. A key that only one product has goes in that product's block, on a
+rule or on the section ([#1447](../decisions/log.md#1447)). Oracle's block
+holds a rule's `profile:`, the check of an account's profile by name, and the
+section's `profiles:`, a list of database profiles and their expected
+settings. On another product, a rule reports *not checked* until that
+product's driver reads the settings.
 
 - `reports.accounts` rules name accounts by name or `*` pattern, give them
   their expected settings or profile, and select targets as `applications:`
   and `personal_accounts:` do. A rule does not write a kind: the report
   derives it from where the file declares the account.
-- The list of database profiles is `db_profiles`, not `profiles:`, because
-  that key already means run profiles (`01-configuration.md`, C10).
+- The list of database profiles is `reports.oracle.profiles`. Inside the
+  product block it cannot be read as the top-level `profiles:`, which means run
+  profiles (`01-configuration.md`, C10).
 - An application account's profile comes from its policy, so a rule may give
   it settings and not a profile.
 - **There are no built-in rules.** Nothing is assumed about any kind of

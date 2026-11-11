@@ -42,7 +42,7 @@ targets:
 reports:
   accounts:
     - accounts: [ACME_RR_APP]
-      profile: DEFAULT
+      oracle: { profile: DEFAULT }
 """
 
 APP = "ACME_RR_APP"

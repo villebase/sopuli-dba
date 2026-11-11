@@ -17,7 +17,7 @@
 # Full reference: ../docs/design/01-configuration.md section 8a, and
 # ../docs/use-cases/uc-05-fleet-reports.md.
 
-# yaml-language-server: $schema=../docs/schemas/sopuli-config-4.0.schema.json
+# yaml-language-server: $schema=../docs/schemas/sopuli-config-5.0.schema.json
 
 version: 1
 
@@ -82,47 +82,52 @@ applications:
 # which never changes the exit code. A declared account that no
 # rule gives a profile or a setting is listed as "no rule". A setting no rule
 # names is not compared. Every account's lock is checked.
+#
+# `settings:` uses words that are not one product's. A key that only one
+# product has goes in that product's block: here `oracle:`, which holds a
+# rule's database profile and the list of profiles at the end.
 # ---------------------------------------------------------------------------
 reports:
   accounts:
     # Technical accounts on the production databases, named by name and by
     # pattern. `*` is the only wildcard, and names are compared in upper case.
     # Oracle's own accounts, such as DBSNMP, are left out of the report unless
-    # a rule names them, as this one does. `profile:` and `settings:` both:
+    # a rule names them, as this one does. A profile and a setting both:
     # the accounts must sit on TECH_NOEXPIRE, and their passwords must never
     # expire. A pattern covers every account it matches, locked ones too, so
     # keep it to accounts that should all pass.
     - accounts: [DBSNMP, "ACME_SVC_*"]
       targets: { group: prod }
-      profile: TECH_NOEXPIRE
       settings: { password_lifetime: unlimited }
+      oracle: { profile: TECH_NOEXPIRE }
 
     # The application accounts, by name, on every target, because the rule
     # has no `targets:`. By name rather than `acme_*_user`, so that a leftover
     # account nobody declares still shows as undeclared. `settings:` only:
     # their profile comes from the policy above, and a rule may not give
-    # `profile:` to an account an application names.
+    # `oracle.profile` to an account an application names.
     - accounts: [acme_web_user, acme_batch_user]
       settings: { failed_login_limit: 10 }
 
-    # `profile:` only: the reporting account must sit on ACME_REPORTING. What
-    # that profile's limits must be is said once, in `db_profiles` below.
+    # A profile only: the reporting account must sit on ACME_REPORTING. What
+    # that profile's limits must be is said once, in `oracle.profiles` below.
     - accounts: [acme_report_user]
       targets: { group: prod }
-      profile: ACME_REPORTING
+      oracle: { profile: ACME_REPORTING }
 
   # What a database profile's limits must be, for every account on it.
   # `unlimited` matches only an unlimited value, and a number is the largest
   # value allowed. Where a rule and an entry here set one setting to two
   # values, that check reports "not checked". An entry here does not expect
-  # the profile to exist on every target. A rule's `profile:` does, on the
-  # targets the rule covers, and so does a policy's `account.profile`, on
+  # the profile to exist on every target. A rule's `oracle.profile` does, on
+  # the targets the rule covers, and so does a policy's `account.profile`, on
   # every target its accounts are bound to: ACME_APP must exist on all three
   # targets above.
-  db_profiles:
-    - name: TECH_NOEXPIRE
-      settings: { password_lifetime: unlimited, failed_login_limit: 10 }
-    - name: ACME_APP
-      settings: { password_lifetime: unlimited }
-    - name: ACME_REPORTING
-      settings: { password_lifetime: 90, failed_login_limit: 5 }
+  oracle:
+    profiles:
+      - name: TECH_NOEXPIRE
+        settings: { password_lifetime: unlimited, failed_login_limit: 10 }
+      - name: ACME_APP
+        settings: { password_lifetime: unlimited }
+      - name: ACME_REPORTING
+        settings: { password_lifetime: 90, failed_login_limit: 5 }

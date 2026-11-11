@@ -31,7 +31,7 @@ the intended division.
 
 Regenerate the committed artefact with::
 
-    python -m sopuli.config.schema > docs/schemas/sopuli-config-4.0.schema.json
+    python -m sopuli.config.schema > docs/schemas/sopuli-config-5.0.schema.json
 """
 
 from __future__ import annotations
@@ -65,7 +65,7 @@ from sopuli.config import (
 #: `01-configuration.md` §9b says when it changes. What each shape accepts and
 #: refuses, and why, is in the function that builds it: its docstring or its
 #: ``description``.
-SCHEMA_VERSION = "4.0"
+SCHEMA_VERSION = "5.0"
 
 SCHEMA_FILENAME = f"sopuli-config-{SCHEMA_VERSION}.schema.json"
 
@@ -1038,11 +1038,7 @@ def _reports() -> Schema:
                 minItems=1,
                 description="Accounts the report checks, by name or `*` pattern.",
             ),
-            "db_profiles": _array(
-                _ref("db_profile_rule"),
-                minItems=1,
-                description="The settings a database profile must have.",
-            ),
+            "oracle": _ref("reports_oracle"),
         },
         min_properties=1,
         description=(
@@ -1052,8 +1048,49 @@ def _reports() -> Schema:
     )
 
 
+def _reports_oracle() -> Schema:
+    """`reports.oracle`: what only Oracle has, for the whole section."""
+    return _object(
+        keys=reports.ORACLE_REPORTS_KEYS,
+        types={
+            "profiles": _array(
+                _ref("db_profile_rule"),
+                minItems=1,
+                description="The settings a database profile must have.",
+            ),
+        },
+        min_properties=1,
+        description=(
+            "Report rules that only Oracle has. Moved here from `reports.db_profiles` in 5.0."
+        ),
+    )
+
+
+def _report_account_oracle() -> Schema:
+    """`reports.accounts[].oracle`: what only Oracle has, for one rule."""
+    return _object(
+        keys=reports.ORACLE_RULE_KEYS,
+        types={
+            "profile": {
+                **STRING,
+                "description": (
+                    "The database profile these accounts must be on. Not allowed for an "
+                    "application account, whose profile comes from its policy."
+                ),
+            },
+        },
+        min_properties=1,
+        description=(
+            "What this rule checks that only Oracle has. Moved here from `profile:` in 5.0."
+        ),
+    )
+
+
 def _report_account_rule() -> Schema:
-    """One `reports.accounts` entry. Needing `profile:` or `settings:` stays with the builder."""
+    """One `reports.accounts` entry.
+
+    Needing `settings:` or `oracle.profile` stays with the builder.
+    """
     return _object(
         keys=reports.REPORT_ACCOUNT_KEYS,
         types={
@@ -1063,14 +1100,8 @@ def _report_account_rule() -> Schema:
                 description="Account names, or patterns whose only wildcard is `*`.",
             ),
             "targets": _ref("application_targets"),
-            "profile": {
-                **STRING,
-                "description": (
-                    "The database profile these accounts must be on (Oracle). Not allowed "
-                    "for an application account, whose profile comes from its policy."
-                ),
-            },
             "settings": _ref("report_settings"),
+            "oracle": _ref("report_account_oracle"),
         },
         required=("accounts",),
         description="Accounts the report checks, and what it expects of them.",
@@ -1078,7 +1109,7 @@ def _report_account_rule() -> Schema:
 
 
 def _db_profile_rule() -> Schema:
-    """One `reports.db_profiles` entry."""
+    """One `reports.oracle.profiles` entry."""
     return _object(
         keys=reports.DB_PROFILE_KEYS,
         types={
@@ -1386,9 +1417,9 @@ specials a charset does not have; `allow:` belongs to `charset: custom`; an \
 policy, group, profile and target name written anywhere must be declared in the \
 section that declares it; a `for_each` must use one inner dimension throughout; \
 a profile may not set a key that would change scope; a `reports.accounts` rule \
-needs `profile:` or `settings:`, names each account once across the rules, and may \
-not give an application account a `profile:`; and a `reports.db_profiles` name \
-appears once. A file this \
+needs `settings:` or `oracle.profile`, names each account once across the rules, \
+and may not give an application account an `oracle.profile`; and a \
+`reports.oracle.profiles` name appears once. A file this \
 schema accepts may still be refused there.\
 """
 
@@ -1482,7 +1513,9 @@ def build_schema() -> Schema:
             "reset_records": _reset_records(),
             "delivery": _delivery(),
             "reports": _reports(),
+            "reports_oracle": _reports_oracle(),
             "report_account_rule": _report_account_rule(),
+            "report_account_oracle": _report_account_oracle(),
             "db_profile_rule": _db_profile_rule(),
             "report_settings": _report_settings(),
             "policy": _policy(),

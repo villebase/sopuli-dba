@@ -2383,7 +2383,7 @@ application's policy expects on the target does not exist there. It is one
 result for the target, however many accounts are expected on the profile, and
 it is a problem: the run exits 3. `missing_profile` names the profile, and
 `expected_by` says what expects it as config paths, `reports.accounts` or
-`policies.<name>`. A `db_profiles` entry alone never expects a profile to
+`policies.<name>`. A `reports.oracle.profiles` entry alone never expects a profile to
 exist ([#1390](../use-cases/uc-05-fleet-reports.md#4-the-accounts-report)).
 
 **`VAULT_ONLY` is what `creds generate --promote` reports**: the vault holds this

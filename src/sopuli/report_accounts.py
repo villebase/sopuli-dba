@@ -197,7 +197,7 @@ def evaluate(
         expectation = _expectation(
             matching,
             applications.get(name),
-            config.reports.db_profiles,
+            config.reports.oracle_profiles,
             surveyed.profile,
             application=kind == APPLICATION,
         )
@@ -230,14 +230,15 @@ def missing_profiles(
 
     ``profiles`` is every profile the target has. A profile is expected where a
     ``reports.accounts`` rule that covers the target names it, or where an
-    application's policy names it for an account bound there. A ``db_profiles``
-    entry alone expects nothing: it says what a profile's limits must be where
-    the profile is, not that every target has it (#1390). Nor does a personal
-    rule's ``profile:``, which selects accounts. A rule that covers the target
-    expects its profile there even where no account on the target matches it,
-    as the maintainer decided for #1390: the rule says what the target must
-    have. A rule cannot name an application account by name with a
-    ``profile:``; the config refuses that. Names are compared by ``upper()``.
+    application's policy names it for an account bound there. A
+    ``reports.oracle.profiles`` entry alone expects nothing: it says what a
+    profile's limits must be where the profile is, not that every target has it
+    (#1390). Nor does a personal rule's ``profile:``, which selects accounts. A
+    rule that covers the target expects its profile there even where no account
+    on the target matches it, as the maintainer decided for #1390: the rule says
+    what the target must have. A rule cannot name an application account by name
+    with an ``oracle.profile``; the config refuses that. Names are compared by
+    ``upper()``.
     """
     present = {name.upper() for name in profiles}
     expected: dict[str, tuple[str, list[str]]] = {}
@@ -367,7 +368,7 @@ def _kind_of(name: str, applications: dict[str, str | None], personal: set[str])
 def _expectation(
     matching: Sequence[ReportAccountRule],
     application_profile: str | None,
-    db_profiles: Sequence[DbProfileRule],
+    oracle_profiles: Sequence[DbProfileRule],
     actual_profile: str,
     *,
     application: bool,
@@ -379,11 +380,15 @@ def _expectation(
     An application account's profile is its policy's, and never a rule's, also
     when its policy names none (`01-configuration.md` §8a).
     """
-    # A `db_profiles` entry for the account's profile states settings too, so it
-    # takes part as one more source: a rule and the profile entry that disagree
-    # are a conflict, never a silent precedence.
+    # A `reports.oracle.profiles` entry for the account's profile states
+    # settings too, so it takes part as one more source: a rule and the profile
+    # entry that disagree are a conflict, never a silent precedence.
     profile_settings = next(
-        (entry.settings for entry in db_profiles if entry.name.upper() == actual_profile.upper()),
+        (
+            entry.settings
+            for entry in oracle_profiles
+            if entry.name.upper() == actual_profile.upper()
+        ),
         Settings(),
     )
     sources = [rule.settings for rule in matching] + [profile_settings]

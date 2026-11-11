@@ -271,3 +271,28 @@ def reject_removed_keys(
                 at=at.key(key),
                 hint=f"delete it; {removed[key]}",
             )
+
+
+def reject_moved_keys(
+    container: dict[str, Any],
+    *,
+    moved: dict[str, tuple[str, str]],
+    since: str,
+    at: KeyPath,
+) -> None:
+    """§9b: a key an older build accepted here and a newer one reads elsewhere.
+
+    Called before :func:`reject_unknown_keys`, for the reason
+    :func:`reject_removed_keys` is. ``moved`` maps each key to its new place and
+    to how to write it there, and ``since`` is the config schema version that
+    moved it. The tool does not read the old place as well: a file could then
+    say one thing in two places, and nobody could tell which one the run read.
+    """
+    for key in sorted(container):
+        if key in moved:
+            place, how = moved[key]
+            raise ConfigError(
+                f"`{key}:` moved to {place} in config schema {since}",
+                at=at.key(key),
+                hint=how,
+            )

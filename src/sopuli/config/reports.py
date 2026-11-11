@@ -9,7 +9,9 @@ rules, and the report decides what a database's answer means
 **The settings are not Oracle's words.** `password_lifetime` and
 `failed_login_limit` say what is expected, and each product reads them from
 where it keeps them (UC-5 §7). A value is `unlimited` or a whole number that the
-database's value must not exceed.
+database's value must not exceed. A key that only one product has goes in that
+product's block: `oracle:` on a rule holds `profile:`, and `oracle:` on the
+section holds `profiles:`, the list of database profiles.
 
 **A rule declares nothing for invariant 5.** A name in `reports.accounts` lets
 the report check an account; it does not let any changing command touch it.
@@ -25,6 +27,7 @@ from sopuli.config.fields import (
     describe,
     mapping,
     optional_string,
+    reject_moved_keys,
     reject_unknown_keys,
     required_string,
     sequence,
@@ -39,10 +42,30 @@ from sopuli.config.model import (
     Settings,
 )
 
-REPORTS_KEYS = ("accounts", "db_profiles")
-REPORT_ACCOUNT_KEYS = ("accounts", "targets", "profile", "settings")
+REPORTS_KEYS = ("accounts", "oracle")
+REPORT_ACCOUNT_KEYS = ("accounts", "targets", "settings", "oracle")
+#: `reports.oracle`: what only Oracle has, for the whole section.
+ORACLE_REPORTS_KEYS = ("profiles",)
+#: `reports.accounts[].oracle`: what only Oracle has, for one rule.
+ORACLE_RULE_KEYS = ("profile",)
 DB_PROFILE_KEYS = ("name", "settings")
 SETTINGS_KEYS = ("password_lifetime", "failed_login_limit")
+
+#: Keys that config schema 5.0 moved into a product block (#1447). The old
+#: place is refused by name, so a file written for 4.x is told where the key
+#: went rather than that it has a typo. Each maps to its new place and how to
+#: write it there, because a dotted path such as `oracle.profile` reads like
+#: one YAML key with a dot in its name.
+MOVED_SINCE = "5.0"
+MOVED_REPORTS_KEYS = {
+    "db_profiles": (
+        "`reports.oracle.profiles`",
+        "write `oracle: { profiles: [...] }` under `reports:`",
+    ),
+}
+MOVED_RULE_KEYS = {
+    "profile": ("the rule's `oracle:` block", "write `oracle: { profile: <name> }` on the rule"),
+}
 
 #: The one value a limit takes that is not a number.
 UNLIMITED = "unlimited"
@@ -63,27 +86,60 @@ def build_reports(document: dict[str, Any]) -> Reports:
 
     at = ROOT.key("reports")
     section = mapping(document["reports"], at=at)
+    reject_moved_keys(section, moved=MOVED_REPORTS_KEYS, since=MOVED_SINCE, at=at)
     reject_unknown_keys(section, allowed=REPORTS_KEYS, at=at)
     if not section:
         raise ConfigError(
-            "must declare `accounts:` or `db_profiles:`",
+            "must declare `accounts:` or `oracle:`",
             at=at,
             hint="delete the section to declare no report rules",
         )
 
     accounts = _entries(section, "accounts", at=at)
-    profiles = _entries(section, "db_profiles", at=at)
+    profiles_at = at.key("oracle").key("profiles")
+    profiles = _oracle_profiles(section, at=at)
     built_profiles = tuple(
-        _build_db_profile(raw, at=at.key("db_profiles").index(index))
-        for index, raw in enumerate(profiles)
+        _build_db_profile(raw, at=profiles_at.index(index)) for index, raw in enumerate(profiles)
     )
-    _reject_duplicate_profiles(built_profiles, at=at.key("db_profiles"))
+    _reject_duplicate_profiles(built_profiles, at=profiles_at)
     built_rules = tuple(
         _build_account_rule(raw, at=at.key("accounts").index(index))
         for index, raw in enumerate(accounts)
     )
     _reject_duplicate_accounts(built_rules, at=at.key("accounts"))
-    return Reports(accounts=built_rules, db_profiles=built_profiles)
+    return Reports(accounts=built_rules, oracle_profiles=built_profiles)
+
+
+def _product_block(
+    container: dict[str, Any], product: str, *, allowed: tuple[str, ...], at: KeyPath
+) -> dict[str, Any] | None:
+    """A product's block, such as `oracle:`, checked for its keys; ``None`` if absent.
+
+    Present and empty is refused: somebody meant to write something, and a
+    silent "nothing" would look like it took. The published schema agrees
+    (`minProperties: 1`).
+    """
+    if product not in container:
+        return None
+    block_at = at.key(product)
+    block = mapping(container[product], at=block_at)
+    reject_unknown_keys(block, allowed=allowed, at=block_at)
+    if not block:
+        keys = " or ".join(f"`{key}:`" for key in allowed)
+        raise ConfigError(
+            f"must declare {keys}",
+            at=block_at,
+            hint=f"delete `{product}:` to declare nothing for {product}",
+        )
+    return block
+
+
+def _oracle_profiles(section: dict[str, Any], *, at: KeyPath) -> list[Any]:
+    """`reports.oracle.profiles`, the entries as written. Absent means none."""
+    block = _product_block(section, "oracle", allowed=ORACLE_REPORTS_KEYS, at=at)
+    if block is None:
+        return []
+    return _entries(block, "profiles", at=at.key("oracle"))
 
 
 def _reject_duplicate_accounts(rules: tuple[ReportAccountRule, ...], *, at: KeyPath) -> None:
@@ -134,6 +190,7 @@ def _entries(section: dict[str, Any], key: str, *, at: KeyPath) -> list[Any]:
 
 def _build_account_rule(raw: Any, *, at: KeyPath) -> ReportAccountRule:
     entry = mapping(raw, at=at)
+    reject_moved_keys(entry, moved=MOVED_RULE_KEYS, since=MOVED_SINCE, at=at)
     reject_unknown_keys(entry, allowed=REPORT_ACCOUNT_KEYS, at=at)
     if "accounts" not in entry:
         raise ConfigError("must declare `accounts:`", at=at)
@@ -143,13 +200,13 @@ def _build_account_rule(raw: Any, *, at: KeyPath) -> ReportAccountRule:
     for position, name in enumerate(accounts):
         _check_pattern(name, at=at.key("accounts").index(position))
 
-    profile = optional_string(entry, "profile", at=at)
+    profile = _oracle_rule_profile(entry, at=at)
     settings = Settings()
     if "settings" in entry:
         settings = _build_settings(entry["settings"], at=at.key("settings"))
     if profile is None and settings.is_empty:
         raise ConfigError(
-            "must declare `profile:` or `settings:`",
+            "must declare `settings:` or `oracle.profile`",
             at=at,
             hint="a rule with neither has nothing to check",
         )
@@ -159,6 +216,14 @@ def _build_account_rule(raw: Any, *, at: KeyPath) -> ReportAccountRule:
         profile=profile,
         settings=settings,
     )
+
+
+def _oracle_rule_profile(entry: dict[str, Any], *, at: KeyPath) -> str | None:
+    """A rule's `oracle.profile`, or ``None`` where the rule has no `oracle:` block."""
+    block = _product_block(entry, "oracle", allowed=ORACLE_RULE_KEYS, at=at)
+    if block is None:
+        return None
+    return optional_string(block, "profile", at=at.key("oracle"))
 
 
 def _build_db_profile(raw: Any, *, at: KeyPath) -> DbProfileRule:
@@ -240,7 +305,7 @@ def _reject_duplicate_profiles(profiles: tuple[DbProfileRule, ...], *, at: KeyPa
 def reject_profile_on_application_accounts(
     applications: tuple[Application, ...], reports: Reports
 ) -> None:
-    """A rule may not give an application account a profile.
+    """A rule may not give an application account an `oracle.profile`.
 
     An application account's expected profile is its policy's
     `account.profile` (UC-5 §4). A second source could disagree with the first,
@@ -263,5 +328,8 @@ def reject_profile_on_application_accounts(
             raise ConfigError(
                 f"account {name!r} belongs to {owner}, so its profile comes from its policy",
                 at=ROOT.key("reports").key("accounts").index(index).key("accounts").index(position),
-                hint="set `account.profile` in the application's policy, or drop `profile:` here",
+                hint=(
+                    "set `account.profile` in the application's policy, "
+                    "or drop `oracle.profile` here"
+                ),
             )

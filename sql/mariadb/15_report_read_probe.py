@@ -15,9 +15,11 @@ server, as that account unless a step says otherwise:
   RE1  the settings: @@max_password_errors and @@default_password_lifetime,
        as the tool account reads them. Whether CREATE USER takes
        FAILED_LOGIN_ATTEMPTS. Then, with max_password_errors = 2, set by root
-       and put back: three wrong passwords and then the right one, for an
-       account with no privilege, one with CONNECTION ADMIN and one with
-       SUPER, and what the tool account reads that would tell them apart.
+       and put back: three wrong passwords and then the right one, for
+       sopuli_probe_app@'%', which holds no global privilege, for one with
+       CONNECTION ADMIN and for one with SUPER, each login's CURRENT_USER()
+       where it succeeds, and what the tool account reads that would tell the
+       accounts apart.
        Then a view that root creates, with SQL SECURITY DEFINER, over the
        keys account_locked, password_lifetime and password_last_changed of
        mysql.global_priv, and whether the tool account reads it when granted
@@ -66,11 +68,17 @@ It MEASURES and decides nothing. It reads no hash: the definer view selects
 three keys of mysql.global_priv, and SHOW CREATE USER, whose text holds the
 value, is tried by the tool account only for whether it answers.
 
+It prints each result and checks none against RESULTS below, as
+sql/postgres/10_report_read_probe.py does: compare a new run with RESULTS by
+eye. It exits 1 only when a step fails.
+
 STATUS: run on 10.11.19, 11.4.13, 11.8.9 and 12.3.3, the mariadb:10.11,
 mariadb:11.4, mariadb:11.8 and mariadb:12.3 images of test/compose.yaml
 profile mariadb-matrix, on 2026-11-11 (#1448), with Python 3.13.12 on Windows
 11 AMD64. Twice, exit 0, the same result both times but for the times of the
-last change and the timings, which are the ranges below.
+last change and the timings, which are the ranges below. Earlier versions
+are not counted: they did not print the account each login in RE1 reached,
+and dropped the roles one statement at a time.
 
 RESULTS -- the same on every release, except where noted
 
@@ -85,7 +93,8 @@ RESULTS -- the same on every release, except where noted
        account only its own row
   RE1  max_password_errors reads 4294967295 and default_password_lifetime 0.
        CREATE USER ... FAILED_LOGIN_ATTEMPTS 3 is refused, 1064 (42000).
-       With max_password_errors = 2, each of the three accounts answers 1045
+       With max_password_errors = 2, each of the three logs in at its %
+       account, as CURRENT_USER() says, and then answers 1045
        (28000), 1045 (28000) and 4150 (HY000), and the right password then
        4150 (HY000): CONNECTION ADMIN and SUPER exempt neither. On 11.8.9 and
        12.3.3 root reads PASSWORD_ERRORS 2 for each, and 0 for the others.
@@ -108,8 +117,12 @@ RESULTS -- the same on every release, except where noted
   RE4  the time of the last change, in seconds, moves with the change by
        value and with the rollover by OR. ACCOUNT LOCK leaves it. PASSWORD
        EXPIRE sets it to 0
-  RE5  517 accounts and roles: the role query gives 3025 rows in 0.059 to
-       0.249 s, and the table grants reached 6011 rows in 1.325 to 2.853 s.
+  RE5  517 accounts and roles: the role query gives 3025 rows, and the
+       table grants reached 6011 rows. Over both runs, the role query took
+       0.074 to 0.101 s on 10.11.19, 0.072 to 0.080 s on 11.4.13, 0.075 to
+       0.156 s on 11.8.9 and 0.073 to 0.136 s on 12.3.3; the table grants
+       1.791 to 2.888 s, 1.594 to 2.767 s, 1.534 to 2.360 s and 2.199 to
+       3.161 s.
        The rows are about twice MySQL's: CREATE ROLE grants each role to
        root, which created it, so root reaches every chain
 
@@ -225,9 +238,10 @@ def clean(service: str) -> None:
         "SELECT GROUP_CONCAT(QUOTE(User)) FROM mysql.user"
         f" WHERE User LIKE {FIXTURE_LIKE} AND is_role = 'Y'",
     )
-    for role in [] if roles in ("", "NULL") else roles.split(","):
-        root(service, f"DROP ROLE {role}")
-    root(service, f"REVOKE SELECT ON {SCHEMA}.t FROM PUBLIC") if has_public_grant(service) else None
+    if roles not in ("", "NULL"):
+        root(service, f"DROP ROLE {roles}")
+    if has_public_grant(service):
+        root(service, f"REVOKE SELECT ON {SCHEMA}.t FROM PUBLIC")
     root(service, f"DROP DATABASE IF EXISTS {SCHEMA}")
 
 
@@ -322,9 +336,11 @@ def has_users(service: str) -> bool:
 
 
 def logins(service: str, account: str) -> str:
-    """Three wrong passwords and then the right one, as answered."""
+    """The account a right login reaches, then three wrong passwords and the right one."""
+    ok, reached = ch.mysql(service, account, PASSWORD, "SELECT CURRENT_USER()")
+    who = reached if ok else ch.code(reached)
     answers = [ch.login(service, ch.WRONG, account) for _ in range(3)]
-    return f"{', '.join(answers)}; right: {ch.login(service, PASSWORD, account)}"
+    return f"logs in as {who}; {', '.join(answers)}; right: {ch.login(service, PASSWORD, account)}"
 
 
 def re1(service: str) -> None:
@@ -529,9 +545,16 @@ def probe(service: str) -> None:
 
 
 def main() -> int:
-    # probe() cleans up after itself; 02's teardown drops 02's own accounts.
-    ch.base.teardown = lambda service: None
-    return int(ch.run(probe))
+    """Run the probe on each server. Exit 1 when a step fails on any."""
+    failed = False
+    for service in ch.base.SERVICES:
+        try:
+            probe(service)
+        except (ch.StepError, ValueError) as exc:
+            print(f"STEP FAILED: {service}: {type(exc).__name__}: {exc}")
+            failed = True
+    print("\nA STEP FAILED" if failed else "\nevery step ran; no result is checked")
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":

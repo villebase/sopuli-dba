@@ -680,8 +680,8 @@ The probes are in `sql/mysql/`, and the matrix of 8.0, 8.4 and 9 is the
   Each account, a user name at a host, with its `account_locked`,
   `password_expired`, `password_lifetime` and `password_last_changed`. A role
   reads as a locked account with an expired password. Every privilege level,
-  and each account's roles with the path through nested ones, agreeing with
-  `SHOW GRANTS … USING`. Not `FAILED_LOGIN_ATTEMPTS` or `PASSWORD_LOCK_TIME`,
+  and each account's roles with the path through nested ones; the fixture's
+  six grants reached through roles are each in `SHOW GRANTS … USING`. Not `FAILED_LOGIN_ATTEMPTS` or `PASSWORD_LOCK_TIME`,
   which are only in `User_attributes` and `SHOW CREATE USER`, beside a hash;
   not a partial revoke, which reads as the global grant alone; not the default
   role without `SELECT` on `mysql.default_roles`. The count of failed logins
@@ -809,14 +809,14 @@ in `sql/mariadb/`, and the matrix of 10.11, 11.4, 11.8 and 12.3 is the
   a row with an empty host and `is_role = 'Y'`. Every privilege level the
   view's columns and the five grant tables hold, `PUBLIC`'s included, and
   each account's roles with the path. Not the lock, the lifetime or the date
-  of the last change, on any release (LK2): they are only in
+  of the last change, on any release: they are only in
   `mysql.global_priv` and `SHOW CREATE USER`, beside the value. A view a DBA
   creates with `SQL SECURITY DEFINER` over those keys reads them; `PASSWORD
   EXPIRE` sets the date to `0`. Not the default role without a column grant
   on `default_role`. There is no failed-login limit per account:
   `FAILED_LOGIN_ATTEMPTS` is a syntax error, and the server's
   `max_password_errors` blocked an account with `CONNECTION ADMIN` or `SUPER`
-  as it blocked one without. `02-mariadb-privileges.md` §2.4 has the details.
+  as it blocked one with no global privilege. `02-mariadb-privileges.md` §2.4 has the details.
   `sql/mariadb/15_report_read_probe.py` measures it.
 
 ### Vault

@@ -235,9 +235,10 @@ read would cost. It was measured on 8.0.46, 8.4.13 and 9.7.4
   hash, as the driver sends it, sets it, and so does a change with `RETAIN
   CURRENT PASSWORD`. `ACCOUNT LOCK` and `PASSWORD EXPIRE` do not.
 - **Roles.** A recursive query over `role_edges` gives each account's roles,
-  nested ones included, with the path and `WITH_ADMIN_OPTION`. The privileges
-  it reaches through them, read from the tables of §2.1, agree with root's
-  `SHOW GRANTS … USING` the role. Which role is a default role is in
+  nested ones included, with the path and `WITH_ADMIN_OPTION`. The fixture's
+  six grants, reached through two nested roles and read from the tables of
+  §2.1, are each in root's `SHOW GRANTS … USING` the role, which shows no
+  other privilege. Only those six were compared. Which role is a default role is in
   `mysql.default_roles`, which §2.1 does not grant, `1142`. Its four columns
   are names only. `@@mandatory_roles` and `@@activate_all_roles_on_login`
   read without a grant.
@@ -252,8 +253,8 @@ read would cost. It was measured on 8.0.46, 8.4.13 and 9.7.4
   *.*` and then a revoke on one schema reads as `Select_priv = 'Y'`, with no
   row in `db`, and nothing else the tool account reads shows the revoke.
 - **Cost.** With about 510 accounts and roles and 1000 tables, after one
-  untimed run, the role query took 0.043 s or less, and the table grants
-  every account reaches through its roles 0.12 s or less.
+  untimed run, the role query took 0.04 s or less, and the table grants
+  every account reaches through its roles 0.06 s or less.
 
 ---
 

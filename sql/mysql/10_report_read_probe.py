@@ -72,10 +72,16 @@ The fixture, which root creates on each server:
 It MEASURES and decides nothing. It reads no hash: SHOW CREATE USER, whose
 text holds one, is tried by the tool account only for whether it answers.
 
+It prints each result and checks none against RESULTS below, as
+sql/postgres/10_report_read_probe.py does: compare a new run with RESULTS by
+eye. It exits 1 only when a step fails.
+
 STATUS: run on 8.0.46, 8.4.13 and 9.7.4, the mysql:8.0, mysql:8.4 and mysql:9
 images of test/compose.yaml profile mysql-matrix, on 2026-11-11 (#1448), with
 Python 3.13.12 on Windows 11 AMD64. Twice, exit 0, the same result both times
-but for the dates and the timings, which are the ranges below.
+but for the dates and the timings, which are the ranges below. Earlier
+versions are not counted: they put partial_revokes back before dropping the
+account that holds a partial revoke, and ended with 02's check message.
 
 RESULTS -- the same on every release, except where noted
 
@@ -124,8 +130,11 @@ RESULTS -- the same on every release, except where noted
   RE4  password_last_changed moves with the change by hash and with the
        change with RETAIN CURRENT PASSWORD; ACCOUNT LOCK and PASSWORD EXPIRE
        leave it
-  RE5  513 accounts and roles: the role query gives 1517 rows in 0.005 to
-       0.043 s, and the table grants reached 3012 rows in 0.012 to 0.119 s
+  RE5  513 accounts and roles: the role query gives 1517 rows, and the
+       table grants reached 3012 rows. Over both runs, the role query took
+       0.005 to 0.031 s on 8.0.46, 0.006 to 0.039 s on 8.4.13 and 0.005 to
+       0.024 s on 9.7.4; the table grants 0.020 to 0.041 s, 0.011 to 0.037 s
+       and 0.011 to 0.055 s
 
   So the tool account reads each account's lock, expiry, lifetime and last
   change, and every privilege with its role path. It cannot read the
@@ -491,8 +500,10 @@ def re3(service: str) -> None:
             ok, out = ch.mysql(service, ch.TOOL, ch.TOOL_PASSWORD, f"SHOW GRANTS FOR {account}")
             shown = "; ".join(lines(out.replace("`", ""))) if ok else ch.code(out)
             print(f"  RE3  SHOW GRANTS FOR {account}, as the tool account: {shown}")
-        root(service, "DROP USER 'sopuli_probe_part'@'%'")
     finally:
+        # The server refuses to turn partial_revokes off while a partial
+        # revoke exists, so the account goes first, also after a failed step.
+        root(service, "DROP USER IF EXISTS 'sopuli_probe_part'@'%'")
         root(service, f"SET GLOBAL partial_revokes = {was}")
     for view in ("USER_PRIVILEGES", "SCHEMA_PRIVILEGES", "TABLE_PRIVILEGES", "COLUMN_PRIVILEGES"):
         count = tool(
@@ -595,9 +606,16 @@ def probe(service: str) -> None:
 
 
 def main() -> int:
-    # probe() cleans up after itself; 02's teardown drops 02's own accounts.
-    setattr(ch, "teardown", lambda service: None)  # noqa: B010 -- a loaded module
-    return int(ch.run(probe))
+    """Run the probe on each server. Exit 1 when a step fails on any."""
+    failed = False
+    for service in ch.SERVICES:
+        try:
+            probe(service)
+        except (ch.StepError, ValueError) as exc:
+            print(f"STEP FAILED: {service}: {type(exc).__name__}: {exc}")
+            failed = True
+    print("\nA STEP FAILED" if failed else "\nevery step ran; no result is checked")
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":

@@ -208,7 +208,8 @@ read would cost. It was measured on 10.11.19, 11.4.13, 11.8.9 and 12.3.3
   rows of the `mysql.user` view. A role is a row with an empty host and
   `is_role = 'Y'`, so a role is never mistaken for an account.
 - **The lock, the lifetime and the date of the last change cannot be read
-  with §2.1** (LK2, on every release). They are kept only in
+  with §2.1**, on every release, as `04_lock_expiry_probe.py` (LK2) found
+  for the lock. They are kept only in
   `mysql.global_priv`, beside the hash, and in `SHOW CREATE USER`, which
   prints the value. The view has no `account_locked` column, `1143`;
   `global_priv` is refused, `1142`, and `SHOW CREATE USER` for another
@@ -224,10 +225,10 @@ read would cost. It was measured on 10.11.19, 11.4.13, 11.8.9 and 12.3.3
 - **There is no failed-login limit per account.** `FAILED_LOGIN_ATTEMPTS` is a
   syntax error, `1064`. The limit is the server's `max_password_errors`,
   which the tool account reads; its default, 4294967295, means no limit.
-  With the limit at 2, an account with no privilege, one with `CONNECTION
-  ADMIN` and one with `SUPER` were all blocked, `4150`, the right password
-  too. The count is `PASSWORD_ERRORS` in `information_schema.USERS`, per
-  account, from 11.8; it shows the tool account only its own row (RD1).
+  With the limit at 2, an account with no global privilege, one with
+  `CONNECTION ADMIN` and one with `SUPER` were all blocked, `4150`, the right
+  password too. The count is `PASSWORD_ERRORS` in `information_schema.USERS`,
+  per account, from 11.8; it shows the tool account only its own row.
 - **The date of the last change, through the view**, moves with a change by
   value, as the driver sends it, and with a rollover by `OR`. `ACCOUNT LOCK`
   leaves it. `PASSWORD EXPIRE` sets it to `0`.
@@ -246,8 +247,8 @@ read would cost. It was measured on 10.11.19, 11.4.13, 11.8.9 and 12.3.3
   `information_schema`'s `*_PRIVILEGES` views show the tool account none of
   another account's grants.
 - **Cost.** With about 510 accounts and roles and 1000 tables, after one
-  untimed run, the role query took 0.25 s or less, and the table grants every
-  account reaches through its roles 1.3 to 2.9 s.
+  untimed run, the role query took 0.16 s or less, and the table grants every
+  account reaches through its roles 1.5 to 3.2 s.
 
 ---
 

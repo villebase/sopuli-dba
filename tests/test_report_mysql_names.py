@@ -27,6 +27,7 @@ from sopuli.report_accounts import (
 
 MYSQL = "mysql-dev"
 ORACLE = "free-pdb"
+PG = "pg-dev"
 
 
 def config(*rules: dict[str, Any], applications: list[dict[str, Any]] | None = None) -> Config:
@@ -35,6 +36,7 @@ def config(*rules: dict[str, Any], applications: list[dict[str, Any]] | None = N
         "targets": [
             {"name": ORACLE, "type": "oracle", "dsn": "localhost:1521/FREEPDB1"},
             {"name": MYSQL, "type": "mysql", "dsn": "mysql-dev.example.com:3306"},
+            {"name": PG, "type": "postgresql", "dsn": "pg-dev.example.com:5432"},
         ],
     }
     if rules:
@@ -98,6 +100,16 @@ def test_a_missing_account_is_spelled_as_the_rule_writes_it() -> None:
     cfg = config({"accounts": ["acme_App@%"], **LIFETIME})
     (only,) = evaluate(MYSQL, cfg, [])
     assert (only.account, only.state) == ("acme_App@%", ACCOUNT_MISSING)
+
+
+@pytest.mark.parametrize(("target", "shown"), [(PG, "acme_Gone"), (ORACLE, "ACME_GONE")])
+def test_a_missing_account_keeps_the_files_spelling_except_on_oracle(
+    target: str, shown: str
+) -> None:
+    """#1465, option B: Oracle keeps an unquoted name in upper case."""
+    cfg = config({"accounts": ["acme_Gone"], **LIFETIME, "targets": [target]})
+    (only,) = evaluate(target, cfg, [])
+    assert (only.account, only.state) == (shown, ACCOUNT_MISSING)
 
 
 def test_a_pattern_matches_the_user_by_case_and_the_host_as_a_name() -> None:

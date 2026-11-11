@@ -372,6 +372,20 @@ def test_two_rules_that_disagree_leave_valid_until_not_checked() -> None:
     assert found.state == NOT_CHECKED
 
 
+def test_a_conflict_between_rules_never_hides_a_past_date() -> None:
+    """A date in the past is a problem whatever the rules say (#1464 review)."""
+    cfg = config(
+        {"accounts": ["acme_web_*"], "postgresql": {"valid_until": "required"}},
+        {"accounts": ["acme_*_user"], "postgresql": {"valid_until": "forbidden"}},
+    )
+    found = row(cfg, role("acme_web_user", until=PAST, expired=True))
+    assert outcome(found, "valid_until") == (
+        "problem",
+        "password expired: VALID UNTIL 2001-01-01T00:00:00Z",
+    )
+    assert found.state == REPORT_PROBLEM
+
+
 def test_valid_until_is_not_applicable_on_oracle() -> None:
     """A `postgresql:` block on a rule that covers an Oracle target."""
     cfg = config({"accounts": ["ACME_SVC"], "postgresql": {"valid_until": "required"}})

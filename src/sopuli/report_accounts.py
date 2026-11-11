@@ -637,16 +637,20 @@ def _valid_until(surveyed: SurveyedAccount, expectation: _Expectation) -> Findin
     (:class:`~sopuli.driver.survey.ValidUntil`). On a product with no such
     date, a rule's key is a finding that the registry makes *not applicable*.
     """
-    if "valid_until" in expectation.conflicts:
-        return Finding("valid_until", NOT_CHECKED_OUTCOME, "two rules expect different things")
-    wanted = expectation.valid_until
+    conflict = "valid_until" in expectation.conflicts
+    wanted = None if conflict else expectation.valid_until
     read = surveyed.valid_until
+    # A date in the past is a problem whatever the rules say, so it is read
+    # before a conflict between them can leave the check not checked.
+    if read is not None and read.expired:
+        says = "" if wanted is None else f", rule says {wanted}"
+        return Finding("valid_until", PROBLEM, f"password expired: VALID UNTIL {read.text}{says}")
+    if conflict:
+        return Finding("valid_until", NOT_CHECKED_OUTCOME, "two rules expect different things")
     if read is None:
         return None if wanted is None else Finding("valid_until", NOT_CHECKED_OUTCOME, _UNREAD)
     shown = "no VALID UNTIL" if read.text is None else f"VALID UNTIL {read.text}"
     says = "" if wanted is None else f", rule says {wanted}"
-    if read.expired:
-        return Finding("valid_until", PROBLEM, f"password expired: {shown}{says}")
     if wanted is None:
         return None
     # `required` wants a date that will pass; `forbidden` wants none.

@@ -5,9 +5,10 @@ Depends on: `../design/00-principles.md`, `../design/01-configuration.md`,
 
 This document specifies `sopuli report accounts`, `sopuli report privileges`
 and `sopuli report history`. **All three are built, on Oracle**, with the
-`reports:` rules (§4, §5, §7). **`report accounts` is built on PostgreSQL**
-too (§4). The rest come later on PostgreSQL, and all three on MySQL and
-MariaDB: there they are refused before they connect. §9 lists the decisions.
+`reports:` rules (§4, §5, §7). **`report history` is built on PostgreSQL,
+MySQL and MariaDB** too (§6), and **`report accounts` on PostgreSQL** (§4).
+The rest come later: until then they are refused before they connect. §9
+lists the decisions.
 
 ---
 
@@ -290,8 +291,9 @@ Grants to `PUBLIC` are left out unless a flag asks for them.
 
 ## 6. Rotation history
 
-**Built, on Oracle:** `sopuli report history [--account NAME]`, with the
-usual target selectors. `docs/local-testing.md` §9a has a run. The history
+**Built, on Oracle, PostgreSQL, MySQL and MariaDB**
+([#1460](https://github.com/villebase/sopuli-dba/issues/1460)):
+`sopuli report history [--account NAME]`, with the usual target selectors. `docs/local-testing.md` §9a has a run. The history
 comes from what the tool wrote, and it reads no password. It judges nothing,
 so it never exits 3: 1 where a target or a store gave no answer, and 4 where a
 history is not checked.
@@ -347,7 +349,13 @@ The database's own date of the last password change is shown beside the last
 rotation, as information, and never compared with it
 ([#1398](../decisions/log.md#1398)). The two often differ for good reasons:
 `apply` changes the target before the promotion, and after
-`creds generate --promote` it changes the target after it.
+`creds generate --promote` it changes the target after it. Oracle reads it from
+`DBA_USERS.PASSWORD_CHANGE_DATE` or `SYS.USER$.PTIME` (§8), and MySQL from
+`mysql.user.password_last_changed`, which a change by hash sets, and `ACCOUNT
+LOCK` and `PASSWORD EXPIRE` do not. PostgreSQL keeps no such date. MariaDB
+keeps it only beside the stored value, in `mysql.global_priv`, which the tool
+does not read (#1457 decides whether a view would expose it). On those two the
+date is `unknown`, with the reason, and the history is complete without it.
 
 A store version does not carry the run's correlation id, so a version is tied
 to its run only through its stamps ([#1374](https://github.com/villebase/sopuli-dba/issues/1374)).
@@ -424,14 +432,14 @@ report that cannot read a view says *not checked* for what it needed.
 On PostgreSQL the tool account reads what the reports need with the grants it
 already has: `report accounts` reads only `pg_roles`. PostgreSQL keeps no date
 of a role's last password change, no last login and no failed logins, so the
-failed-login count is `unknown` there, and `report history` would show only
-the store's records. Object privileges are per database: a session can read
-only the grants of the database it connects to. The privilege report and the
-history on PostgreSQL are not built yet; #1411 lists what to decide first, such
-as what the privilege report does about a cluster's other databases. Measured
-on 13.23 to 18.6 (`02-postgres-privileges.md` §2.5, #1443).
+failed-login count is `unknown` there, and `report history` shows only the
+store's records. Object privileges are per database: a session can read only
+the grants of the database it connects to. The privilege report on PostgreSQL
+is not built yet; #1411 lists what to decide first, such as what it does about
+a cluster's other databases. Measured on 13.23 to 18.6
+(`02-postgres-privileges.md` §2.5, #1443).
 
-On MySQL and MariaDB the reports are not built either. An account is a user
+On MySQL and MariaDB only `report history` is built (§6). An account is a user
 name at a host, so one name can be several accounts, each with its own
 state. With the grants the tool account holds today, MySQL reads each
 account's lock, expiry, lifetime and date of the last change, and every

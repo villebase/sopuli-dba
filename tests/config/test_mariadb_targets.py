@@ -200,9 +200,10 @@ def test_a_role_names_no_host_on_mariadb() -> None:
 
 
 def test_the_driver_serves_exactly_doctor_uc1_and_uc2() -> None:
-    """`doctor` connects (#1268), and UC-1's (#1270, #1271) and UC-2's
-    (#1272) commands run. The exact set is pinned, so a merge cannot add a
-    command whose session methods still refuse during the run. Which commands
+    """`doctor` connects (#1268), and UC-1's (#1270, #1271), UC-2's (#1272)
+    and UC-5's `report history` (#1460) commands run. The exact set is
+    pinned, so a merge cannot add a command whose session methods still refuse
+    during the run. Which commands
     are refused is `tests/driver/test_driver_registry.py`'s."""
     target = loaded(targets=[SERVER]).expanded_targets[0].target
 
@@ -218,6 +219,7 @@ def test_the_driver_serves_exactly_doctor_uc1_and_uc2() -> None:
             "creds.generate",
             "creds.status",
             "creds.finish-rollover",
+            "report.history",
         }
     )
     assert DRIVERS["mariadb"].extra == "mariadb"

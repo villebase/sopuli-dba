@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Mapping
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -25,6 +26,7 @@ from sopuli.cli import cli
 from sopuli.config.model import Vault
 from sopuli.config.targets import EXTERNAL
 from sopuli.driver.protocol import Credential, Scope, UserState
+from sopuli.driver.registry import DRIVERS
 from sopuli.exit_codes import ExitCode
 from sopuli.output.document import SCHEMA_VERSION
 from sopuli.store import MemoryStore, SecretStore
@@ -284,7 +286,16 @@ def test_an_unreachable_target_still_shows_the_store_history_and_exits_1(
     assert "2026-11-02T03:00:00Z rotation v2" in text
 
 
-def test_another_product_is_refused_and_exits_5(write_config: WriteConfig) -> None:
+def test_a_product_not_written_for_the_report_is_refused_and_exits_5(
+    write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every product runs it now (#1460); a driver that does not list it is
+    still refused before anything is read."""
+    monkeypatch.setitem(
+        DRIVERS,
+        "postgresql",
+        replace(DRIVERS["postgresql"], commands=frozenset({"creds.check"})),
+    )
     result = report(write_config, config=PG_CONFIG)
 
     assert result.exit_code == ExitCode.UNSUPPORTED_CAPABILITY, result.output

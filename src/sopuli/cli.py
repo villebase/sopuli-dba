@@ -6054,7 +6054,9 @@ def report_history_command(
 
     Exit 0 when every history was read, 1 when a target or a store gave no
     answer, and 4 when a history has a gap or the store keeps no versions.
-    Only Oracle can run this report yet.
+    Oracle, PostgreSQL, MySQL and MariaDB can run it. The database's date comes
+    from Oracle and MySQL; PostgreSQL keeps none, and MariaDB keeps it where the
+    tool does not read it, so there the report says why it is unknown.
     """
     document = run.document
     selection = selected(selectors, targets, (), groups, ())

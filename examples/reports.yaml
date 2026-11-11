@@ -17,7 +17,7 @@
 # Full reference: ../docs/design/01-configuration.md section 8a, and
 # ../docs/use-cases/uc-05-fleet-reports.md.
 
-# yaml-language-server: $schema=../docs/schemas/sopuli-config-5.0.schema.json
+# yaml-language-server: $schema=../docs/schemas/sopuli-config-5.1.schema.json
 
 version: 1
 
@@ -108,6 +108,15 @@ reports:
     # `oracle.profile` to an account an application names.
     - accounts: [acme_web_user, acme_batch_user]
       settings: { failed_login_limit: 10 }
+
+    # The schema owners: nobody logs in as them, so their lock is the point.
+    # `login: refused` passes only where somebody locked the account. An open
+    # owner is a problem, and so is one locked by failed logins, because
+    # somebody tried, and that lock ends by itself after the profile's
+    # PASSWORD_LOCK_TIME. An application account cannot be named here: the
+    # application logs in as it.
+    - accounts: ["ACME_OWNER*"]
+      login: refused
 
     # A profile only: the reporting account must sit on ACME_REPORTING. What
     # that profile's limits must be is said once, in `oracle.profiles` below.

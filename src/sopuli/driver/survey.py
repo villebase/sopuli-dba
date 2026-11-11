@@ -45,6 +45,17 @@ class SurveyedAccount:
     a rule names it (UC-5 §4, #1438). In an application container it is false:
     where the values are kept there was not measured, and an
     application-common user's own container may be the target itself.
+
+    ``deliberately_locked`` is whether somebody set the lock, as against a
+    lockout after failed logins: on Oracle, ``LOCKED`` rather than
+    ``LOCKED(TIMED)``. It is the same fact as
+    :attr:`~sopuli.driver.protocol.UserState.deliberately_locked`, read from
+    the same status. A rule's ``login: refused`` is met only by a deliberate
+    lock (#1447). ``None`` where ``locked`` is ``None``. The Oracle survey
+    reads it from the status alone, so it is true for a lockout under a
+    profile whose ``PASSWORD_LOCK_TIME`` is ``UNLIMITED``: Oracle shows that
+    lockout as ``LOCKED``, and ``SYS.USER$.ASTATUS`` is 8, as for a lock
+    somebody set (measured on 23.26.3.0.0).
     """
 
     name: str
@@ -58,3 +69,4 @@ class SurveyedAccount:
     failed_logins: int | None
     unreadable: tuple[str, ...] = ()
     kept_in_root: bool = False
+    deliberately_locked: bool | None = None

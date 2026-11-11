@@ -129,7 +129,7 @@ settings
 - [../docs/design/01-configuration.md](../docs/design/01-configuration.md) — the
   full reference: every key, every rule, and the validation errors worth causing
   on purpose.
-- [../docs/schemas/sopuli-config-5.0.schema.json](../docs/schemas/sopuli-config-5.0.schema.json)
+- [../docs/schemas/sopuli-config-5.1.schema.json](../docs/schemas/sopuli-config-5.1.schema.json)
   — the JSON Schema. Put
   `# yaml-language-server: $schema=<path to it>` on the first line of your config
   to get completion and inline errors in an editor, as these examples do.

@@ -25,11 +25,12 @@ from sopuli.config.model import (
     Config,
     DbProfileRule,
     Limit,
+    Login,
     Policy,
     ReportAccountRule,
     Settings,
 )
-from sopuli.config.reports import UNLIMITED, is_pattern
+from sopuli.config.reports import LOGIN_REFUSED, UNLIMITED, is_pattern
 from sopuli.config.selection import select
 from sopuli.driver.survey import SurveyedAccount
 from sopuli.personal import rules_for
@@ -144,6 +145,8 @@ class _Expectation:
     settings: Settings
     #: The checks two sources set two ways, which are not checked.
     conflicts: frozenset[str] = frozenset()
+    #: A rule's `login:`, ``refused`` or ``allowed``, or ``None`` where no rule says.
+    login: Login | None = None
 
 
 def evaluate(
@@ -395,12 +398,17 @@ def _expectation(
     lifetimes = {s.password_lifetime for s in sources if s.password_lifetime is not None}
     limits = {s.failed_login_limit for s in sources if s.failed_login_limit is not None}
     profiles = {rule.profile.upper() for rule in matching if rule.profile is not None}
+    # An application logs in as its account, so a pattern's `login:` does not
+    # reach it, as a rule's profile does not: the config refuses both for an
+    # application account named by name.
+    logins = set() if application else {rule.login for rule in matching if rule.login is not None}
     conflicts = frozenset(
         check
         for check, values in (
             ("password_lifetime", lifetimes),
             ("failed_login_limit", limits),
             ("profile", set() if application else profiles),
+            ("lock", logins),
         )
         if len(values) > 1
     )
@@ -415,6 +423,7 @@ def _expectation(
             failed_login_limit=next(iter(limits), None),
         ),
         conflicts=conflicts,
+        login=next(iter(logins), None),
     )
 
 
@@ -426,15 +435,19 @@ def _check(surveyed: SurveyedAccount, expectation: _Expectation) -> tuple[Findin
 
     `01-configuration.md` §8a: a setting a rule does not name is not compared.
     So the checks that apply are the lock and whatever the file states. Where it
-    states nothing at all, the account is in the `no rule` state (U8).
+    states nothing at all, the account is in the `no rule` state (U8). A rule's
+    `login:` is something stated: it says what the lock must be.
     """
     reasons = _reasons(surveyed)
-    lock = _lock(surveyed, reasons.get("locked", _UNREAD))
+    if "lock" in expectation.conflicts:
+        lock = Finding("lock", NOT_CHECKED_OUTCOME, "two rules expect different things")
+    else:
+        lock = _lock(surveyed, reasons.get("locked", _UNREAD), expectation.login)
     settings = expectation.settings
-    if expectation.profile is None and settings.is_empty:
+    if expectation.profile is None and settings.is_empty and expectation.login is None:
         return (
             lock,
-            Finding("profile", NO_RULE_OUTCOME, "no rule states a profile or a setting"),
+            Finding("profile", NO_RULE_OUTCOME, "no rule states a login, a profile or a setting"),
         )
     findings = [lock]
     # A field two sources set two ways is not checked; the account's other
@@ -473,12 +486,37 @@ def _check(surveyed: SurveyedAccount, expectation: _Expectation) -> tuple[Findin
     return tuple(findings)
 
 
-def _lock(surveyed: SurveyedAccount, reason: str) -> Finding:
+def _lock(surveyed: SurveyedAccount, reason: str, login: Login | None) -> Finding:
+    """The lock against the rule's `login:`, or against "not locked" where none says.
+
+    `login: refused` passes only on a lock somebody set (#1447). A lockout after
+    failed logins does not pass: somebody tried to log in, and the lock ends by
+    itself after the profile's `PASSWORD_LOCK_TIME`. Where that is `UNLIMITED`,
+    Oracle reads the lockout as `LOCKED`, the same as a lock somebody set, so it
+    passes; that lock never ends, so the account still cannot log in
+    (:class:`~sopuli.driver.survey.SurveyedAccount`).
+    """
     if surveyed.locked is None:
         return Finding("lock", NOT_CHECKED_OUTCOME, reason)
-    if surveyed.locked:
-        return Finding("lock", PROBLEM, f"locked: {surveyed.status}")
-    return Finding("lock", OK, surveyed.status)
+    if login != LOGIN_REFUSED:
+        if surveyed.locked:
+            return Finding("lock", PROBLEM, f"locked: {surveyed.status}")
+        return Finding("lock", OK, surveyed.status)
+    if not surveyed.locked:
+        return Finding("lock", PROBLEM, f"can log in: {surveyed.status}, rule says login refused")
+    if surveyed.deliberately_locked is None:
+        return Finding(
+            "lock",
+            NOT_CHECKED_OUTCOME,
+            f"locked: {surveyed.status}, but whether on purpose cannot be read on this target",
+        )
+    if not surveyed.deliberately_locked:
+        return Finding(
+            "lock",
+            PROBLEM,
+            f"locked by failed logins: {surveyed.status}, rule says login refused",
+        )
+    return Finding("lock", OK, f"locked on purpose: {surveyed.status}")
 
 
 def _profile(surveyed: SurveyedAccount, expected: str) -> Finding:

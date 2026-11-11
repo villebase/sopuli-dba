@@ -31,7 +31,7 @@ the intended division.
 
 Regenerate the committed artefact with::
 
-    python -m sopuli.config.schema > docs/schemas/sopuli-config-5.0.schema.json
+    python -m sopuli.config.schema > docs/schemas/sopuli-config-5.1.schema.json
 """
 
 from __future__ import annotations
@@ -65,7 +65,7 @@ from sopuli.config import (
 #: `01-configuration.md` §9b says when it changes. What each shape accepts and
 #: refuses, and why, is in the function that builds it: its docstring or its
 #: ``description``.
-SCHEMA_VERSION = "5.0"
+SCHEMA_VERSION = "5.1"
 
 SCHEMA_FILENAME = f"sopuli-config-{SCHEMA_VERSION}.schema.json"
 
@@ -1089,7 +1089,7 @@ def _report_account_oracle() -> Schema:
 def _report_account_rule() -> Schema:
     """One `reports.accounts` entry.
 
-    Needing `settings:` or `oracle.profile` stays with the builder.
+    Needing `login:`, `settings:` or `oracle.profile` stays with the builder.
     """
     return _object(
         keys=reports.REPORT_ACCOUNT_KEYS,
@@ -1100,6 +1100,14 @@ def _report_account_rule() -> Schema:
                 description="Account names, or patterns whose only wildcard is `*`.",
             ),
             "targets": _ref("application_targets"),
+            "login": _enum(
+                reports.LOGIN_VALUES,
+                description=(
+                    "`refused`: the accounts must not be able to log in, so only a lock "
+                    "somebody set passes. `allowed`: any lock is a problem, as without "
+                    "the key. Added in 5.1."
+                ),
+            ),
             "settings": _ref("report_settings"),
             "oracle": _ref("report_account_oracle"),
         },
@@ -1417,8 +1425,8 @@ specials a charset does not have; `allow:` belongs to `charset: custom`; an \
 policy, group, profile and target name written anywhere must be declared in the \
 section that declares it; a `for_each` must use one inner dimension throughout; \
 a profile may not set a key that would change scope; a `reports.accounts` rule \
-needs `settings:` or `oracle.profile`, names each account once across the rules, \
-and may not give an application account an `oracle.profile`; and a \
+needs `login:`, `settings:` or `oracle.profile`, names each account once across \
+the rules, and may not give an application account an `oracle.profile`; and a \
 `reports.oracle.profiles` name appears once. A file this \
 schema accepts may still be refused there.\
 """

@@ -963,6 +963,10 @@ class PersonalAccountRule:
 #: failed logins that the database's value must not exceed.
 Limit = int | Literal["unlimited"]
 
+#: What a report rule's `login:` says: whether the accounts must be able to
+#: log in (#1447).
+Login = Literal["refused", "allowed"]
+
 
 @dataclass(frozen=True)
 class Settings:
@@ -992,13 +996,15 @@ class ReportAccountRule:
     declares nothing a changing command may act on: a name here is not a
     declaration for invariant 5 (UC-5 §7). ``profile`` is the profile the
     accounts must be on, written ``oracle.profile`` because only Oracle has
-    one; ``settings`` is what their password limits must be.
+    one; ``settings`` is what their password limits must be. ``login`` is
+    ``refused`` or ``allowed``, or ``None`` where the rule does not say.
     """
 
     accounts: tuple[str, ...]
     targets: TargetSelector = field(default_factory=TargetSelector)
     profile: str | None = None
     settings: Settings = field(default_factory=Settings)
+    login: Login | None = None
 
 
 @dataclass(frozen=True)

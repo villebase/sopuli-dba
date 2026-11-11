@@ -325,10 +325,16 @@ in `pyproject.toml`. Code run in a child process counts too, such as the real
 CLI that the fault-injection and lock-concurrency suites start. Tier 0 alone leaves
 much of the code that talks to a server unrun, such as each driver's
 `session.py`, because it starts no database. A run with the tier-1 stack up
-runs that code too. The tier-1 lane runs `pytest --cov` and writes the
-table to its job summary. No threshold fails a run: a minimum invites tests
-written for the number, and the point of a test here is the behaviour it
-asserts. The suite does not count lines of code. For counts by language, run
+runs that code too.
+
+CI measures coverage in the tier-1 lane every Monday, and when the `ci`
+workflow is run by hand with `coverage` ticked (`gh workflow run ci -f
+coverage=true`). Pull requests do not measure it: tracing made the lane's
+pytest about 40% slower. The run's summary page in the Actions tab has the
+table, least-covered files first, and its `coverage-html` artifact has the HTML
+report, with each file's unrun lines marked. No threshold fails a run: a
+minimum invites tests written for the number, and the point of a test here is
+the behaviour it asserts. The suite does not count lines of code. For counts by language, run
 `scc` or `cloc` on the checkout.
 
 Tier 0 needs no containers, and it must stay that way: it is what makes the

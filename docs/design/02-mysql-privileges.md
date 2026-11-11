@@ -201,6 +201,61 @@ statements that grant it.
 
 `USAGE` is not reported. It means no privilege, and every account has it.
 
+### 2.4 What the reports can read
+
+The UC-5 `report` commands are not built on MySQL yet (#1411). This is what
+the tool account can read for them with §2.1's grants, and what each further
+read would cost. It was measured on 8.0.46, 8.4.13 and 9.7.4
+(`10_report_read_probe.py`, #1448).
+
+- **An account is a user name at a host.** One name at three hosts is three
+  rows of `mysql.user`, each with its own lock, expiry, lifetime and date of
+  the last change. A role is a row too, and reads as locked and expired, as a
+  locked account with an expired password does. A role that no account holds
+  reads the same. Only `mysql.role_edges` tells them apart, and only for a
+  role that is granted to someone.
+- **Lock, expiry and lifetime.** `account_locked`, `password_expired` and
+  `password_lifetime` read per account: `password_lifetime` is the days,
+  `0` for `PASSWORD EXPIRE NEVER`, and NULL for the server's default.
+  The tool account reads the default, `@@default_password_lifetime`.
+- **The failed-login limit cannot be read with §2.1.** `FAILED_LOGIN_ATTEMPTS`
+  and `PASSWORD_LOCK_TIME` are kept only in `User_attributes`, which also
+  holds a retained password's hash, and in `SHOW CREATE USER`, which prints
+  the hash. The tool account is refused both, `1143` and `1044`.
+  `INFORMATION_SCHEMA.USER_ATTRIBUTES` shows `ATTRIBUTE` NULL for an account
+  with a limit. A view that a DBA creates with `SQL SECURITY DEFINER`, over the
+  two keys alone, is read with `SELECT` on the view.
+- **The count of failed logins** is in no table on 8.0.46 and 8.4.13. A block
+  answers `3955` to every password and changes nothing the tool account
+  reads. 9.7.4 has `performance_schema.temporary_account_locks`, with the
+  limit, the attempts left and whether the account is blocked, per account
+  with a limit. The tool account reads it with `SELECT` on the table, which
+  holds no hash; without it, `1142`. `ACCOUNT UNLOCK` resets the row.
+- **The date of the last change** is `password_last_changed`. A change by
+  hash, as the driver sends it, sets it, and so does a change with `RETAIN
+  CURRENT PASSWORD`. `ACCOUNT LOCK` and `PASSWORD EXPIRE` do not.
+- **Roles.** A recursive query over `role_edges` gives each account's roles,
+  nested ones included, with the path and `WITH_ADMIN_OPTION`. The fixture's
+  six grants, reached through two nested roles and read from the tables of
+  §2.1, are each in root's `SHOW GRANTS … USING` the role, which shows no
+  other privilege. Only those six were compared. Which role is a default role is in
+  `mysql.default_roles`, which §2.1 does not grant, `1142`. Its four columns
+  are names only. `@@mandatory_roles` and `@@activate_all_roles_on_login`
+  read without a grant.
+- **Privilege levels.** Each level has its table, and §2.1 reads them all:
+  static global privileges in the `*_priv` columns, dynamic ones in
+  `global_grants`, schema grants in `db`, table grants in `tables_priv`,
+  column grants in `columns_priv`, routine grants in `procs_priv` and proxy
+  grants in `proxies_priv`. `information_schema`'s `*_PRIVILEGES` views show
+  the tool account none of another account's grants, and `SHOW GRANTS FOR`
+  another account is refused, `1142`.
+- **A partial revoke cannot be read.** With `partial_revokes` on, `SELECT ON
+  *.*` and then a revoke on one schema reads as `Select_priv = 'Y'`, with no
+  row in `db`, and nothing else the tool account reads shows the revoke.
+- **Cost.** With about 510 accounts and roles and 1000 tables, after one
+  untimed run, the role query took 0.04 s or less, and the table grants
+  every account reaches through its roles 0.06 s or less.
+
 ---
 
 ## 3. What must not be granted

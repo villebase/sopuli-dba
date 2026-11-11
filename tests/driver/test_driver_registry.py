@@ -217,7 +217,8 @@ def test_a_command_the_driver_is_not_written_for_is_refused() -> None:
     assert (
         "can run only `doctor`, `account expire-password`, `account list`, "
         "`account reset-password`, `account suspend`, `creds apply`, `creds check`, "
-        "`creds finish-rollover`, `creds generate`, `creds rotate`, `creds status` there yet"
+        "`creds finish-rollover`, `creds generate`, `creds rotate`, `creds status`, "
+        "`report accounts` there yet"
     ) in refused.value.message
     assert "`account unlock` is not written for it" in str(refused.value.hint)
 
@@ -293,9 +294,9 @@ def test_a_command_the_driver_lists_is_not_refused(monkeypatch: pytest.MonkeyPat
     assert "can run only `doctor`, `creds apply` there yet" in refused.value.message
 
 
-def test_postgresql_is_written_for_uc1_and_uc2() -> None:
-    """Pinned so that adding a command is a deliberate, reviewed line. It is
-    every command that connects to a target (#1201)."""
+def test_postgresql_is_written_for_uc1_uc2_and_the_accounts_report() -> None:
+    """Pinned so that adding a command is a deliberate, reviewed line: UC-1 and
+    UC-2 (#1201), and UC-5's `report accounts` (#1459)."""
     assert DRIVERS["postgresql"].commands == frozenset(
         {
             "account.list",
@@ -308,6 +309,7 @@ def test_postgresql_is_written_for_uc1_and_uc2() -> None:
             "creds.generate",
             "creds.status",
             "creds.finish-rollover",
+            "report.accounts",
         }
     )
     assert DRIVERS["oracle"].commands is None

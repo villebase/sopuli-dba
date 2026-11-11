@@ -56,6 +56,7 @@ from sopuli.driver.postgres.password import (
 from sopuli.driver.postgres.privileges import audit
 from sopuli.driver.postgres.roles import describe, members_of
 from sopuli.driver.postgres.scope import SYSTEM_IDENTIFIER, observe, require_read_write
+from sopuli.driver.postgres.survey import survey
 from sopuli.driver.postgres.verification import REQUIRED_METHOD, login_outcome
 from sopuli.driver.protocol import (
     ACCOUNT_LOCK,
@@ -93,6 +94,7 @@ from sopuli.driver.protocol import (
     require_capability,
 )
 from sopuli.driver.registry import NotWrittenError as NotWrittenError
+from sopuli.driver.survey import SurveyedAccount
 from sopuli.output.debug import logger
 from sopuli.passwords import ByteLimit
 from sopuli.secrets import Secret
@@ -222,6 +224,16 @@ class PostgresSession(ClosesConnection):
         (:mod:`sopuli.driver.postgres.roles`)."""
         with self._cursor() as cursor:
             return describe(cursor, account, target=self.target.name)
+
+    def survey_with_profiles(self) -> tuple[tuple[SurveyedAccount, ...], frozenset[str]]:
+        """Every role on the cluster, and no profiles: a cluster has none.
+
+        :class:`~sopuli.driver.survey.AccountSurvey`, for `report accounts`
+        (:mod:`sopuli.driver.postgres.survey`). The registry makes the profile
+        check *not applicable* here, so the empty set reports nothing missing.
+        """
+        with self._cursor() as cursor:
+            return survey(cursor), frozenset()
 
     def byte_limit(self) -> ByteLimit:
         """1024 bytes of UTF-8, whatever the server: the limit is libpq 13's, on

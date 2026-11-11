@@ -29,8 +29,14 @@ from sopuli.config.model import (
     Policy,
     ReportAccountRule,
     Settings,
+    ValidUntilRule,
 )
-from sopuli.config.reports import LOGIN_REFUSED, UNLIMITED, is_pattern
+from sopuli.config.reports import (
+    LOGIN_REFUSED,
+    UNLIMITED,
+    VALID_UNTIL_REQUIRED,
+    is_pattern,
+)
 from sopuli.config.selection import select
 from sopuli.driver.registry import DRIVERS
 from sopuli.driver.survey import SurveyedAccount
@@ -73,8 +79,9 @@ APPLICATION, PERSONAL, TECHNICAL, UNDECLARED_KIND = (
 KINDS = (APPLICATION, PERSONAL, TECHNICAL, UNDECLARED_KIND)
 
 #: The checks, in the order a problem is listed (UC-5 §4): a password that will
-#: expire, a lock, the wrong profile, another setting, then a missing account.
-CHECKS = ("password_lifetime", "lock", "profile", "failed_login_limit", "present")
+#: expire, or has, a lock, the wrong profile, another setting, then a missing
+#: account. `valid_until` is PostgreSQL's `VALID UNTIL` (#1459).
+CHECKS = ("password_lifetime", "valid_until", "lock", "profile", "failed_login_limit", "present")
 
 _ORDER = {state: rank for rank, state in enumerate(STATES)}
 _CHECK_ORDER = {check: rank for rank, check in enumerate(CHECKS)}
@@ -153,6 +160,8 @@ class _Expectation:
     conflicts: frozenset[str] = frozenset()
     #: A rule's `login:`, ``refused`` or ``allowed``, or ``None`` where no rule says.
     login: Login | None = None
+    #: A rule's `postgresql.valid_until`, or ``None`` where no rule says.
+    valid_until: ValidUntilRule | None = None
 
 
 def evaluate(
@@ -425,6 +434,7 @@ def _expectation(
     # reach it, as a rule's profile does not: the config refuses both for an
     # application account named by name.
     logins = set() if application else {rule.login for rule in matching if rule.login is not None}
+    valid_untils = {rule.valid_until for rule in matching if rule.valid_until is not None}
     conflicts = frozenset(
         check
         for check, values in (
@@ -432,6 +442,7 @@ def _expectation(
             ("failed_login_limit", limits),
             ("profile", set() if application else profiles),
             ("lock", logins),
+            ("valid_until", valid_untils),
         )
         if len(values) > 1
     )
@@ -447,6 +458,7 @@ def _expectation(
         ),
         conflicts=conflicts,
         login=next(iter(logins), None),
+        valid_until=next(iter(valid_untils), None),
     )
 
 
@@ -481,7 +493,8 @@ def _stated(surveyed: SurveyedAccount, expectation: _Expectation) -> tuple[Findi
     `01-configuration.md` §8a: a setting a rule does not name is not compared.
     So the checks that apply are the lock and whatever the file states. Where it
     states nothing at all, the account is in the `no rule` state (U8). A rule's
-    `login:` is something stated: it says what the lock must be.
+    `login:` is something stated: it says what the lock must be. A PostgreSQL
+    `VALID UNTIL` in the past is a problem whatever the file states (#1459).
     """
     reasons = _reasons(surveyed)
     if "lock" in expectation.conflicts:
@@ -496,12 +509,18 @@ def _stated(surveyed: SurveyedAccount, expectation: _Expectation) -> tuple[Findi
             or _UNREAD,
         )
     settings = expectation.settings
-    if expectation.profile is None and settings.is_empty and expectation.login is None:
-        return (
-            lock,
-            Finding("profile", NO_RULE_OUTCOME, "no rule states a login, a profile or a setting"),
+    expiry = _valid_until(surveyed, expectation)
+    findings = [lock] if expiry is None else [lock, expiry]
+    if (
+        expectation.profile is None
+        and settings.is_empty
+        and expectation.login is None
+        and expectation.valid_until is None
+    ):
+        findings.append(
+            Finding("profile", NO_RULE_OUTCOME, "no rule states a login, a profile or a setting")
         )
-    findings = [lock]
+        return tuple(findings)
     # A field two sources set two ways is not checked; the account's other
     # checks still run.
     conflicted = [
@@ -552,6 +571,16 @@ def _lock(
     """
     if surveyed.locked is None:
         return Finding("lock", NOT_CHECKED_OUTCOME, reason)
+    if surveyed.lock_is_login_attribute and surveyed.locked:
+        # PostgreSQL's NOLOGIN, which is also how a group role is written: only
+        # a rule's `login:` judges it (#1459).
+        if login is None:
+            return Finding("lock", OK, f"{surveyed.status}, which only a rule's login: judges")
+        if login == LOGIN_REFUSED:
+            return Finding("lock", OK, f"cannot log in: {surveyed.status}")
+        return Finding(
+            "lock", PROBLEM, f"cannot log in: {surveyed.status}, rule says login allowed"
+        )
     if login != LOGIN_REFUSED:
         if surveyed.locked:
             return Finding("lock", PROBLEM, f"locked: {surveyed.status}")
@@ -581,6 +610,35 @@ def _lock(
             f"locked by failed logins: {surveyed.status}{counted}, rule says login refused",
         )
     return Finding("lock", OK, f"locked on purpose: {surveyed.status}")
+
+
+def _valid_until(surveyed: SurveyedAccount, expectation: _Expectation) -> Finding | None:
+    """PostgreSQL's ``VALID UNTIL`` against a rule's `postgresql.valid_until` (#1459).
+
+    A date in the past is a problem with or without the key: no password logs
+    the role in until somebody moves it. Without the key, any other date is not
+    compared, so there is no finding. `required` wants a date in the future,
+    and `forbidden` none, where ``infinity`` counts as none
+    (:class:`~sopuli.driver.survey.ValidUntil`). On a product with no such
+    date, a rule's key is a finding that the registry makes *not applicable*.
+    """
+    if "valid_until" in expectation.conflicts:
+        return Finding("valid_until", NOT_CHECKED_OUTCOME, "two rules expect different things")
+    wanted = expectation.valid_until
+    read = surveyed.valid_until
+    if read is None:
+        return None if wanted is None else Finding("valid_until", NOT_CHECKED_OUTCOME, _UNREAD)
+    shown = "no VALID UNTIL" if read.text is None else f"VALID UNTIL {read.text}"
+    says = "" if wanted is None else f", rule says {wanted}"
+    if read.expired:
+        return Finding("valid_until", PROBLEM, f"password expired: {shown}{says}")
+    if wanted is None:
+        return None
+    # `required` wants a date that will pass; `forbidden` wants none.
+    met = not read.never if wanted == VALID_UNTIL_REQUIRED else read.never
+    if met:
+        return Finding("valid_until", OK, shown)
+    return Finding("valid_until", PROBLEM, f"{shown}{says}")
 
 
 def _profile(surveyed: SurveyedAccount, expected: str) -> Finding:

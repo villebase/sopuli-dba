@@ -6,7 +6,7 @@
 # accounts on those targets should look like: which database profile they sit
 # on, and what their password limits must be.
 #
-# Only Oracle can run the reports yet.
+# Oracle can run all three reports, and PostgreSQL `report accounts`.
 #
 # Check it before you use it:
 #     sopuli --config reports.yaml config validate
@@ -17,7 +17,7 @@
 # Full reference: ../docs/design/01-configuration.md section 8a, and
 # ../docs/use-cases/uc-05-fleet-reports.md.
 
-# yaml-language-server: $schema=../docs/schemas/sopuli-config-5.1.schema.json
+# yaml-language-server: $schema=../docs/schemas/sopuli-config-5.2.schema.json
 
 version: 1
 
@@ -54,6 +54,15 @@ targets:
     dsn: "db-prod.example.com:1521/BETA"
     admin: { username: C##SOPULI_SVC, auth: { method: env } }
     labels: { env: prod }
+
+  # A PostgreSQL cluster. It has no profiles, no password lifetime and no
+  # failed-login limit, so those checks are "not applicable" here.
+  - name: prod-pg
+    type: postgresql
+    environment: prod
+    dsn: "pg-prod.example.com:5432"
+    admin: { username: sopuli_admin, auth: { method: env } }
+    labels: { db: postgres }
 
 groups:
   prod:
@@ -124,14 +133,25 @@ reports:
       targets: { group: prod }
       oracle: { profile: ACME_REPORTING }
 
+    # PostgreSQL roles. A role's `VALID UNTIL` is the only expiry PostgreSQL
+    # has: `required` wants a date in the future, `forbidden` none, or
+    # `infinity`. A date in the past is a problem with or without the key.
+    # `NOLOGIN` is also how a group role is written, so it is judged only
+    # against `login:`: here the role must be able to log in.
+    - accounts: ["acme_etl_*"]
+      targets: { match: { db: postgres } }
+      login: allowed
+      postgresql: { valid_until: forbidden }
+
   # What a database profile's limits must be, for every account on it.
   # `unlimited` matches only an unlimited value, and a number is the largest
   # value allowed. Where a rule and an entry here set one setting to two
   # values, that check reports "not checked". An entry here does not expect
   # the profile to exist on every target. A rule's `oracle.profile` does, on
   # the targets the rule covers, and so does a policy's `account.profile`, on
-  # every target its accounts are bound to: ACME_APP must exist on all three
-  # targets above.
+  # every target its accounts are bound to: ACME_APP must exist on the three
+  # Oracle targets above. A PostgreSQL cluster has no profiles, so there the
+  # profile check is "not applicable".
   oracle:
     profiles:
       - name: TECH_NOEXPIRE

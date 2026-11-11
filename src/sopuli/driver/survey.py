@@ -2,7 +2,7 @@
 
 Product-neutral types. A driver that can survey its accounts returns
 :class:`SurveyedAccount` values through :class:`AccountSurvey`, which
-``report accounts`` asks for. Only Oracle's session implements it yet. The
+``report accounts`` asks for. Oracle's and PostgreSQL's sessions implement it. The
 :class:`~sopuli.driver.protocol.Session` protocol does not list it, so a
 session that lacks it is a target the report does not check (UC-5 §3). The
 privilege report also needs ``survey_accounts`` and ``survey_privileges``,
@@ -74,6 +74,15 @@ class SurveyedAccount:
     AUTHENTICATION`` (18c and later), the usual way to make a schema owner. A
     proxy login (``GRANT CONNECT THROUGH``) can still reach such an account;
     the survey does not read proxy grants.
+
+    ``lock_is_login_attribute`` is whether ``locked`` is an attribute that says
+    the account cannot log in, rather than a lock: PostgreSQL's ``NOLOGIN``.
+    ``NOLOGIN`` is also how a group role is written, so most such roles are
+    not locked accounts. It is judged only against a rule's ``login:``, and
+    without one it is not a problem (#1459).
+
+    ``valid_until`` is PostgreSQL's ``VALID UNTIL``, and ``None`` on a product
+    that has no such date.
     """
 
     name: str
@@ -89,6 +98,31 @@ class SurveyedAccount:
     kept_in_root: bool = False
     deliberately_locked: bool | None = None
     no_authentication: bool = False
+    lock_is_login_attribute: bool = False
+    valid_until: ValidUntil | None = None
+
+
+@dataclass(frozen=True)
+class ValidUntil:
+    """A PostgreSQL role's ``VALID UNTIL``, as read (#1459).
+
+    ``text`` is the date as the report shows it, ``infinity`` or
+    ``-infinity``, and ``None`` where the role has none. ``expired`` is whether
+    it is in the past by the server's clock: no password logs the role in
+    then. ``-infinity`` is expired.
+
+    ``never`` is whether the password never expires: no date, or
+    ``infinity``. ``ALTER ROLE`` cannot remove a date, so ``VALID UNTIL
+    'infinity'`` is how a DBA removes one, and it counts as unset.
+    """
+
+    text: str | None
+    expired: bool
+
+    @property
+    def never(self) -> bool:
+        """No date, or ``infinity``."""
+        return self.text is None or self.text == "infinity"
 
 
 @runtime_checkable

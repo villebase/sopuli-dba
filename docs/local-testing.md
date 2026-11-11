@@ -2344,8 +2344,9 @@ suspended acme_dev_bob@localhost on 1 of 1 targets
 ## 9a. Reports (UC-5)
 
 `report accounts` reads every account on each target and checks it against the
-`reports:` rules (`design/01-configuration.md` §8a). It changes nothing. Only
-Oracle can run it yet.
+`reports:` rules (`design/01-configuration.md` §8a). It changes nothing. It
+runs on Oracle and PostgreSQL. `report privileges` and `report history` run on
+Oracle only.
 
 Make two accounts on a profile whose passwords expire after 180 days, and one
 locked account that nothing declares. As SYS in the PDB:
@@ -2449,6 +2450,65 @@ authentication, though it reads `OPEN`: nobody can log in to it with a
 password. A lock after
 failed logins does not pass: somebody tried, and the lock ends by itself after
 the profile's `PASSWORD_LOCK_TIME`.
+
+On PostgreSQL the report reads `pg_roles`, with the tool account from §7's
+*A PostgreSQL cluster*. Make six roles as `postgres`:
+
+```sql
+CREATE ROLE acme_rpt_app LOGIN;
+CREATE ROLE acme_rpt_expired LOGIN VALID UNTIL '2001-01-01 00:00:00+00';
+CREATE ROLE acme_rpt_temp LOGIN VALID UNTIL '2099-01-01 00:00:00+00';
+CREATE ROLE acme_rpt_readers NOLOGIN;
+CREATE ROLE acme_rpt_owner NOLOGIN;
+CREATE ROLE acme_rpt_batch NOLOGIN;
+```
+
+And a config whose rules say no role may have a `VALID UNTIL` date, the owner
+must not log in, and two roles must:
+
+```yaml
+version: 1
+targets:
+  - name: pg-dev
+    type: postgresql
+    environment: dev
+    dsn: "127.0.0.1:5432"
+    admin: { username: sopuli_admin, auth: { method: env } }
+    postgres: { sslmode: disable }
+reports:
+  accounts:
+    - accounts: ["acme_rpt_*"]
+      postgresql: { valid_until: forbidden }
+    - accounts: [acme_rpt_owner]
+      login: refused
+    - accounts: [acme_rpt_app, acme_rpt_batch]
+      login: allowed
+    - accounts: [acme_rpt_gone]
+      login: allowed
+```
+
+```
+$ sopuli --config pg-report.yaml report accounts --all
+pg-dev  (16.15, 22 accounts read, 4 with a problem, 1 undeclared)
+  ACCOUNT           KIND        PROFILE  STATUS   FAILED LOGINS  STATE            FINDING
+  acme_rpt_expired  technical   -        EXPIRED  unknown        REPORT_PROBLEM   valid_until: password expired: VALID UNTIL 2001-01-01 00:00:00+00:00, rule says forbidden
+  acme_rpt_temp     technical   -        OPEN     unknown        REPORT_PROBLEM   valid_until: VALID UNTIL 2099-01-01 00:00:00+00:00, rule says forbidden
+  acme_rpt_batch    technical   -        NOLOGIN  unknown        REPORT_PROBLEM   lock: cannot log in: NOLOGIN, rule says login allowed
+  ACME_RPT_GONE     technical   -        -        -              ACCOUNT_MISSING  present: not on this target
+  sopuli_admin      undeclared  -        OPEN     unknown        UNDECLARED       not in config
+  acme_rpt_app      technical   -        OPEN     unknown        REPORT_OK        -
+  acme_rpt_owner    technical   -        NOLOGIN  unknown        REPORT_OK        -
+  acme_rpt_readers  technical   -        NOLOGIN  unknown        REPORT_OK        -
+  failed logins unknown: PostgreSQL keeps no failed-login count
+```
+
+It exits 3. `acme_rpt_readers` is `NOLOGIN` and passes, because no rule gives
+it a `login:`: `NOLOGIN` is also how a group role is written. A date in the
+past is a problem with or without `valid_until:`. The roles `initdb` made, such
+as `postgres` and the `pg_*` roles, are counted in the head line and left out
+unless a rule names them. PostgreSQL has no profile and keeps no failed-login
+count, so both read `-` and `unknown`. A rule's `password_lifetime`,
+`failed_login_limit` or `oracle.profile` is *not applicable* there.
 
 `report privileges` shows each account's effective privileges, through every
 role, for the same accounts. The service account needs `SELECT` on

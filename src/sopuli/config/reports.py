@@ -53,10 +53,19 @@ SETTINGS_KEYS = ("password_lifetime", "failed_login_limit")
 
 #: Keys that config schema 5.0 moved into a product block (#1447). The old
 #: place is refused by name, so a file written for 4.x is told where the key
-#: went rather than that it has a typo.
+#: went rather than that it has a typo. Each maps to its new place and how to
+#: write it there, because a dotted path such as `oracle.profile` reads like
+#: one YAML key with a dot in its name.
 MOVED_SINCE = "5.0"
-MOVED_REPORTS_KEYS = {"db_profiles": "reports.oracle.profiles"}
-MOVED_RULE_KEYS = {"profile": "oracle.profile"}
+MOVED_REPORTS_KEYS = {
+    "db_profiles": (
+        "`reports.oracle.profiles`",
+        "write `oracle: { profiles: [...] }` under `reports:`",
+    ),
+}
+MOVED_RULE_KEYS = {
+    "profile": ("the rule's `oracle:` block", "write `oracle: { profile: <name> }` on the rule"),
+}
 
 #: The one value a limit takes that is not a number.
 UNLIMITED = "unlimited"
@@ -101,21 +110,36 @@ def build_reports(document: dict[str, Any]) -> Reports:
     return Reports(accounts=built_rules, oracle_profiles=built_profiles)
 
 
+def _product_block(
+    container: dict[str, Any], product: str, *, allowed: tuple[str, ...], at: KeyPath
+) -> dict[str, Any] | None:
+    """A product's block, such as `oracle:`, checked for its keys; ``None`` if absent.
+
+    Present and empty is refused: somebody meant to write something, and a
+    silent "nothing" would look like it took. The published schema agrees
+    (`minProperties: 1`).
+    """
+    if product not in container:
+        return None
+    block_at = at.key(product)
+    block = mapping(container[product], at=block_at)
+    reject_unknown_keys(block, allowed=allowed, at=block_at)
+    if not block:
+        keys = " or ".join(f"`{key}:`" for key in allowed)
+        raise ConfigError(
+            f"must declare {keys}",
+            at=block_at,
+            hint=f"delete `{product}:` to declare nothing for {product}",
+        )
+    return block
+
+
 def _oracle_profiles(section: dict[str, Any], *, at: KeyPath) -> list[Any]:
     """`reports.oracle.profiles`, the entries as written. Absent means none."""
-    if "oracle" not in section:
+    block = _product_block(section, "oracle", allowed=ORACLE_REPORTS_KEYS, at=at)
+    if block is None:
         return []
-    block_at = at.key("oracle")
-    block = mapping(section["oracle"], at=block_at)
-    reject_unknown_keys(block, allowed=ORACLE_REPORTS_KEYS, at=block_at)
-    if not block:
-        # Present and empty means somebody meant to write something.
-        raise ConfigError(
-            "must declare `profiles:`",
-            at=block_at,
-            hint="delete `oracle:` to declare no database profiles",
-        )
-    return _entries(block, "profiles", at=block_at)
+    return _entries(block, "profiles", at=at.key("oracle"))
 
 
 def _reject_duplicate_accounts(rules: tuple[ReportAccountRule, ...], *, at: KeyPath) -> None:
@@ -182,7 +206,7 @@ def _build_account_rule(raw: Any, *, at: KeyPath) -> ReportAccountRule:
         settings = _build_settings(entry["settings"], at=at.key("settings"))
     if profile is None and settings.is_empty:
         raise ConfigError(
-            "must declare `settings:` or `oracle.profile:`",
+            "must declare `settings:` or `oracle.profile`",
             at=at,
             hint="a rule with neither has nothing to check",
         )
@@ -196,18 +220,10 @@ def _build_account_rule(raw: Any, *, at: KeyPath) -> ReportAccountRule:
 
 def _oracle_rule_profile(entry: dict[str, Any], *, at: KeyPath) -> str | None:
     """A rule's `oracle.profile`, or ``None`` where the rule has no `oracle:` block."""
-    if "oracle" not in entry:
+    block = _product_block(entry, "oracle", allowed=ORACLE_RULE_KEYS, at=at)
+    if block is None:
         return None
-    block_at = at.key("oracle")
-    block = mapping(entry["oracle"], at=block_at)
-    reject_unknown_keys(block, allowed=ORACLE_RULE_KEYS, at=block_at)
-    if not block:
-        raise ConfigError(
-            "must declare `profile:`",
-            at=block_at,
-            hint="delete `oracle:` to check no profile",
-        )
-    return optional_string(block, "profile", at=block_at)
+    return optional_string(block, "profile", at=at.key("oracle"))
 
 
 def _build_db_profile(raw: Any, *, at: KeyPath) -> DbProfileRule:

@@ -2380,13 +2380,15 @@ reports:
 
 ```
 $ sopuli --config report.yaml report accounts
-free-pdb  (23.26.3.0.0, 36 accounts read, 2 with a problem, 3 undeclared)
-  ACCOUNT         KIND        PROFILE        STATUS  FAILED LOGINS  STATE            FINDING
-  ACME_RPT_USER   technical   ACME_RPT_PROF  OPEN    0              REPORT_PROBLEM   password_lifetime: 180 days, rule says unlimited
-  ACME_RPT_GONE   technical   -              -       -              ACCOUNT_MISSING  present: not on this target
-  ACME_RPT_STRAY  undeclared  DEFAULT        LOCKED  0              UNDECLARED       not in config
-  PDBADMIN        undeclared  DEFAULT        OPEN    0              UNDECLARED       not in config
-  SOPULI_PROBE    undeclared  DEFAULT        OPEN    0              UNDECLARED       not in config
+free-pdb  (23.26.3.0.0, 38 accounts read, 2 with a problem, 5 undeclared)
+  ACCOUNT          KIND        PROFILE          STATUS              FAILED LOGINS  STATE            FINDING
+  ACME_RPT_USER    technical   ACME_RPT_PROF    OPEN                0              REPORT_PROBLEM   password_lifetime: 180 days, rule says unlimited
+  ACME_RPT_GONE    technical   -                -                   -              ACCOUNT_MISSING  present: not on this target
+  ACME_APP_USER    undeclared  DEFAULT          OPEN                0              UNDECLARED       not in config
+  ACME_BATCH_USER  undeclared  SOPULI_ROLLOVER  OPEN & IN ROLLOVER  0              UNDECLARED       not in config
+  ACME_RPT_STRAY   undeclared  DEFAULT          LOCKED              0              UNDECLARED       not in config
+  PDBADMIN         undeclared  DEFAULT          OPEN                0              UNDECLARED       not in config
+  SOPULI_PROBE     undeclared  DEFAULT          OPEN                0              UNDECLARED       not in config
   1 account OK
 ```
 

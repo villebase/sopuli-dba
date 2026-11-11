@@ -121,7 +121,7 @@ def test_the_only_wildcard_is_a_star() -> None:
 def test_a_rule_needs_a_profile_or_settings() -> None:
     with pytest.raises(ConfigError) as caught:
         build_reports(document(accounts=[{"accounts": ["X"]}]))
-    assert "must declare `settings:` or `oracle.profile:`" in str(caught.value)
+    assert "must declare `settings:` or `oracle.profile`" in str(caught.value)
 
 
 def test_a_rule_needs_accounts() -> None:
@@ -171,13 +171,16 @@ def test_a_rule_profile_in_the_old_place_names_the_new_one() -> None:
     """Config schema 5.0 moved a rule's `profile:` into `oracle:` (#1447).
 
     A file written for 4.x is told where the key went, not that it has a typo,
-    and the old place is not read as well.
+    and the old place is not read as well. The hint shows the nested form,
+    because a dotted path such as `oracle.profile` reads like one YAML key with
+    a dot in its name (review of #1449).
     """
     with pytest.raises(ConfigError) as caught:
         build_reports(document(accounts=[{"accounts": ["X"], "profile": "P"}]))
     message = str(caught.value)
     assert "reports.accounts[0].profile" in message
-    assert "`profile:` moved to `oracle.profile` in config schema 5.0" in message
+    assert "`profile:` moved to the rule's `oracle:` block in config schema 5.0" in message
+    assert caught.value.hint == "write `oracle: { profile: <name> }` on the rule"
 
 
 def test_db_profiles_in_the_old_place_names_the_new_one() -> None:
@@ -186,6 +189,7 @@ def test_db_profiles_in_the_old_place_names_the_new_one() -> None:
     message = str(caught.value)
     assert "reports.db_profiles" in message
     assert "`db_profiles:` moved to `reports.oracle.profiles` in config schema 5.0" in message
+    assert caught.value.hint == "write `oracle: { profiles: [...] }` under `reports:`"
 
 
 def test_an_account_is_named_by_one_rule() -> None:

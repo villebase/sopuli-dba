@@ -2017,7 +2017,7 @@
             "type": "string",
             "pattern": "^(reports\\.accounts|policies\\..+)$"
           },
-          "description": "What expects the profile of a `PROFILE_MISSING` result (added in 1.86), as config paths: `reports.accounts` for a rule that covers the target, whether or not an account there matches it, then `policies.<name>` for each application policy that names it for an account bound there. A `db_profiles` entry alone never expects a profile to exist."
+          "description": "What expects the profile of a `PROFILE_MISSING` result (added in 1.86), as config paths: `reports.accounts` for a rule that covers the target, whether or not an account there matches it, then `policies.<name>` for each application policy that names it for an account bound there. A `reports.oracle.profiles` entry alone never expects a profile to exist."
         },
         "declared_by": {
           "type": [

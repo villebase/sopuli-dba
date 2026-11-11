@@ -64,8 +64,8 @@ on which Oracle release, and what it showed.
 
 | File | Purpose |
 |---|---|
-| [schemas/sopuli-config-5.1.schema.json](schemas/sopuli-config-5.1.schema.json) | JSON Schema (2020-12) for the config file (P3). Generated from the config layer by `python -m sopuli.config.schema` — never edited by hand |
-| [schemas/sopuli-run-1.92.schema.json](schemas/sopuli-run-1.92.schema.json) | JSON Schema (2020-12) for the `--output json` document — the current one; earlier minors stay published beside it, with the exceptions that `design/03-json-output.md` §8 names, because a build emitting `schema_version: "1.20"` has to be able to fetch what it validates against |
+| [schemas/sopuli-config-5.2.schema.json](schemas/sopuli-config-5.2.schema.json) | JSON Schema (2020-12) for the config file (P3). Generated from the config layer by `python -m sopuli.config.schema` — never edited by hand |
+| [schemas/sopuli-run-1.94.schema.json](schemas/sopuli-run-1.94.schema.json) | JSON Schema (2020-12) for the `--output json` document — the current one; earlier minors stay published beside it, with the exceptions that `design/03-json-output.md` §8 names, because a build emitting `schema_version: "1.20"` has to be able to fetch what it validates against |
 | [schemas/sopuli-event-1.25.schema.json](schemas/sopuli-event-1.25.schema.json) | JSON Schema for `--output jsonl` events |
 | [schemas/example-creds-check-drift.json](schemas/example-creds-check-drift.json) | Worked example: a scheduled check finding drift in one of two PDBs |
 | [schemas/example-creds-status-rollover.json](schemas/example-creds-status-rollover.json) | Worked example: `creds status` with a rollover window open, a password in its grace period, and a run-level warning |
@@ -86,7 +86,7 @@ the run schema. `tests/test_schemas.py` checks this on every push and pull
 request (invariant 12).
 
 To get completion and inline errors while you edit a config, put
-`# yaml-language-server: $schema=./sopuli-config-5.1.schema.json` on the file's
+`# yaml-language-server: $schema=./sopuli-config-5.2.schema.json` on the file's
 first line. [design/01-configuration.md](design/01-configuration.md) §9b says
 why the schema's `$id` is not a URL to paste there.
 
@@ -1055,10 +1055,11 @@ and built on Oracle: `report accounts`, `report privileges` and
 only place that lists the accounts the config does not declare
 ([#1376](decisions/log.md#1376)).
 
-On MySQL, `report accounts` is built (#1461). The other two reports there, and
-all three on PostgreSQL and MariaDB, are not built. #1411 tracks that work, and lists the questions to decide before each report is specified there.
-PostgreSQL is next: what it can read is measured (`pg-report-reads`). What
-MySQL and MariaDB can read is measured too (`mysql-report-reads`,
+On PostgreSQL and MySQL `report accounts` is built (#1459, #1461); the
+privilege report and the history are not. On MariaDB none is built. #1411
+tracks that work, and lists the questions to decide before each report is
+specified there. What each product can read is measured (`pg-report-reads`,
+`mysql-report-reads`,
 `mariadb-report-reads`).
 
 ### UC-1b — self-rotation, where there is no admin credential

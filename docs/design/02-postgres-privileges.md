@@ -245,8 +245,10 @@ missing grant, because it reports what the tool account holds.
 
 ### 2.5 What the reports can read
 
-The UC-5 `report` commands are not built on PostgreSQL yet (#1411). This is
-what the tool account, `LOGIN CREATEROLE` and nothing else, can read for them.
+Of the UC-5 `report` commands, `report accounts` is built on PostgreSQL
+(#1459), and reads only `pg_roles`. The other two are not built yet (#1411).
+This is what the tool account, `LOGIN CREATEROLE` and nothing else, can read
+for them.
 It was measured on 13.23 to 18.6 (`10_report_read_probe.py`, #1443). Each
 catalog below is readable with §2.1's grants alone.
 

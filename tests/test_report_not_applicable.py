@@ -98,16 +98,16 @@ def test_each_products_set_names_only_checks_the_report_has() -> None:
         assert not driver.not_applicable & {"lock", "present"}, name
 
 
-def test_oracle_has_every_check() -> None:
-    assert DRIVERS["oracle"].not_applicable == frozenset()
-    assert not_applicable_on(config(), ORACLE) == frozenset()
+def test_oracle_lacks_only_postgresqls_valid_until() -> None:
+    assert DRIVERS["oracle"].not_applicable == frozenset({"valid_until"})
+    assert not_applicable_on(config(), ORACLE) == {"valid_until"}
 
 
 @pytest.mark.parametrize(
     ("target", "expected"),
     [
         (PG, {"password_lifetime", "failed_login_limit", "profile"}),
-        (MARIADB, {"failed_login_limit", "profile"}),
+        (MARIADB, {"failed_login_limit", "profile", "valid_until"}),
     ],
 )
 def test_the_registry_says_what_each_product_lacks(target: str, expected: set[str]) -> None:

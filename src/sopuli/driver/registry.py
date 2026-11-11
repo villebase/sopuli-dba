@@ -177,6 +177,8 @@ DRIVERS: dict[str, DatabaseDriver] = {
         password_limit="30 below 23, 128 from 23",
         # `"` too: a quoted identifier has no escape for it (invariant 11).
         refuses=frozenset({CONTROL, FORBIDDEN, ENCODING, BYTE_LENGTH}),
+        # A rule's `postgresql.valid_until` (#1459).
+        not_applicable=frozenset({"valid_until"}),
     ),
     # The module that imports psycopg, for the reason the Oracle entry names
     # `session`. `psycopg` is the module the `postgres` extra installs.
@@ -200,7 +202,8 @@ DRIVERS: dict[str, DatabaseDriver] = {
         # reset-password`, whose seen path is refused by capability, because a
         # role cannot be made to change its password at login; `account
         # suspend`, which sets NOLOGIN; and `account expire-password`, which is
-        # refused by the same capability at plan time (#1201).
+        # refused by the same capability at plan time (#1201). UC-5: `report
+        # accounts`, from `pg_roles` (#1459).
         commands=frozenset(
             {
                 "account.list",
@@ -213,6 +216,7 @@ DRIVERS: dict[str, DatabaseDriver] = {
                 "creds.generate",
                 "creds.status",
                 "creds.finish-rollover",
+                "report.accounts",
             }
         ),
     ),
@@ -238,8 +242,8 @@ DRIVERS: dict[str, DatabaseDriver] = {
         refuses=frozenset({CONTROL, ENCODING, BYTE_LENGTH}),
         fixed_limit=MYSQL_LIMIT,
         # MySQL has a lifetime and a failed-login limit per account, but no
-        # profile (#1448).
-        not_applicable=frozenset({"profile"}),
+        # profile (#1448), and no `VALID UNTIL` (#1459).
+        not_applicable=frozenset({"profile", "valid_until"}),
         commands=frozenset(
             {
                 "report.accounts",
@@ -283,8 +287,9 @@ DRIVERS: dict[str, DatabaseDriver] = {
         refuses=frozenset({CONTROL, ENCODING, BYTE_LENGTH}),
         fixed_limit=MARIADB_LIMIT,
         # No failed-login limit per account, only the server's
-        # `max_password_errors` (#1411, R1), and no profile (#1448).
-        not_applicable=frozenset({"failed_login_limit", "profile"}),
+        # `max_password_errors` (#1411, R1), no profile (#1448), and no `VALID
+        # UNTIL` (#1459).
+        not_applicable=frozenset({"failed_login_limit", "profile", "valid_until"}),
         commands=frozenset(
             {
                 "account.list",

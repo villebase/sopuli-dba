@@ -5798,14 +5798,16 @@ def report_accounts_command(
 
     One table per target, problems first. A check ends as a problem, OK, not
     checked (the target cannot read the value truthfully, such as a common
-    account's lock on a PDB), or no rule (the config states nothing to compare).
-    An account counts as OK only when every check had a rule and passed.
+    account's lock on a PDB), no rule (the config states nothing to compare), or
+    not applicable (the product has no such thing, such as a profile on
+    PostgreSQL). An account counts as OK only when every check had a rule and
+    passed.
 
     Exit 0 when nothing is wrong, 1 when a target could not be reached, 3 when a
     check found a problem or a profile a rule or policy expects is missing on a
     target, and 4 when something could not be checked. An account
     the config does not declare is listed as information and never changes the
-    exit code. Only Oracle and MySQL can run this report yet.
+    exit code. Only Oracle, PostgreSQL and MySQL can run this report yet.
     """
     document = run.document
     selection = selected(selectors, targets, (), groups, ())
@@ -5839,7 +5841,7 @@ def _report_target(
     A target that cannot be reached is one unreachable section and not a failed
     run: the report still covers the others (UC-5 §3). A product whose driver
     does not list this command in the registry never gets here: ``_open_session``
-    refuses it first, and it is not checked. Oracle and MySQL list it yet.
+    refuses it first, and it is not checked. Oracle, PostgreSQL and MySQL list it.
     """
     session = None
     try:

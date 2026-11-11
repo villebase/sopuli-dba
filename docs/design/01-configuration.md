@@ -11,7 +11,7 @@ Put the binding keys at the top level and the file reads like a straightforward
 target list. This is the shape most users will ever need.
 
 ```yaml
-# yaml-language-server: $schema=./sopuli-config-5.1.schema.json
+# yaml-language-server: $schema=./sopuli-config-5.2.schema.json
 version: 1
 
 vaults: {}          # named secret stores
@@ -487,7 +487,7 @@ PDB per tenant across three environments, HashiCorp Vault as master. It needs no
 `applications:` section.
 
 ```yaml
-# yaml-language-server: $schema=./sopuli-config-5.1.schema.json
+# yaml-language-server: $schema=./sopuli-config-5.2.schema.json
 version: 1
 
 runtime:
@@ -3455,6 +3455,8 @@ reports:
       settings: { password_lifetime: 90 }
     - accounts: [acme_owner]
       login: refused
+    - accounts: ["acme_etl_*"]
+      postgresql: { valid_until: forbidden }
   oracle:
     profiles:
       - name: TECH_NOEXPIRE
@@ -3468,11 +3470,13 @@ reports:
 | `accounts[].login` | `refused` or `allowed`: whether the accounts must be able to log in |
 | `accounts[].settings` | what the accounts' password limits must be |
 | `accounts[].oracle.profile` | the database profile the accounts must be on |
+| `accounts[].postgresql.valid_until` | `required` or `forbidden`: whether a PostgreSQL role must have a `VALID UNTIL` date in the future, or none. Added in config schema 5.2 (#1459) |
 | `oracle.profiles[].name` | a database profile |
 | `oracle.profiles[].settings` | what that profile's limits must be, for every account on it |
 
-An `accounts` entry needs at least one of `login:`, `settings:` and
-`oracle.profile`, because one with none of them has nothing to check. An
+An `accounts` entry needs at least one of `login:`, `settings:`,
+`oracle.profile` and `postgresql.valid_until`, because one with none of them
+has nothing to check. An
 `oracle.profiles` entry needs `settings:`. A profile name appears once in
 `oracle.profiles`.
 
@@ -3499,7 +3503,10 @@ count needs the optional `SELECT ON SYS.USER$` grant; without it, such a lock
 is *not checked*, never OK. So is a lock whose profile's lock time or limit the
 target cannot read. Where the target cannot read the lock, as for a common
 account on a PDB target, the check is *not checked*. `login:` is a neutral
-word, so it stays outside the product blocks.
+word, so it stays outside the product blocks. On PostgreSQL, which has no
+lock, `login:` is compared with `NOLOGIN`, and only `login:` judges it:
+without the key a `NOLOGIN` role is not a problem, because `NOLOGIN` is also
+how a group role is written (UC-5 §4, #1459).
 A rule may not give `login: refused` to an account an application declares by
 name, because the application logs in as it. A pattern that reaches one is
 matched against a database, so the config cannot refuse it: the report does
@@ -3509,10 +3516,14 @@ apply a rule's profile, and the lock is checked as without the key.
 **A key that only one product has goes in that product's block.**
 `settings:` holds the words that more than one product has. A rule's
 `oracle:` block holds `profile:`, and the section's `oracle:` block holds
-`profiles:`, because only Oracle has database profiles. Config schema 5.0 moved
-both there from a rule's `profile:` and the section's `db_profiles:`. A file
-that still has them in the old place is refused, and the message names the new
-place. The tool does not read both places, because the file could then say two
+`profiles:`, because only Oracle has database profiles. A rule's `postgresql:`
+block holds `valid_until:`, because only PostgreSQL has a `VALID UNTIL` date:
+`required` wants a date in the future, and `forbidden` wants none, where
+`infinity` counts as none. A date in the past is a problem with or without the
+key (UC-5 §4). On another product the check is *not applicable*. Config schema
+5.0 moved the two Oracle keys there from a rule's `profile:` and the section's
+`db_profiles:`. A file that still has them in the old place is refused, and the
+message names the new place. The tool does not read both places, because the file could then say two
 things and nobody could tell which one the run read.
 
 **The settings are not Oracle's words** (UC-5 §7). Each takes `unlimited`, or a
@@ -3818,7 +3829,7 @@ error message for a file this long.
 ## 9b. The published schema
 
 P3 requires a published JSON Schema. It is
-[`docs/schemas/sopuli-config-5.1.schema.json`](../schemas/sopuli-config-5.1.schema.json),
+[`docs/schemas/sopuli-config-5.2.schema.json`](../schemas/sopuli-config-5.2.schema.json),
 Draft 2020-12, and it exists for the editor rather than for the tool: pointed at
 from a YAML language server, it gives completion and inline errors while somebody
 is editing a 130-line file, which is worth more than the validation itself.
@@ -3829,7 +3840,7 @@ the same constants the builders validate with — `TARGET_KEYS`, `VAULT_TYPES`,
 a section's keys and its type table disagree. Regenerate with:
 
 ```
-python -m sopuli.config.schema > docs/schemas/sopuli-config-5.1.schema.json
+python -m sopuli.config.schema > docs/schemas/sopuli-config-5.2.schema.json
 ```
 
 `tests/config/test_schema.py` fails when the committed file is not what the model
@@ -3914,7 +3925,7 @@ A schema nothing is pointed at is a file in a directory. The association is made
 from the config file itself, with a comment on the first line:
 
 ```yaml
-# yaml-language-server: $schema=./sopuli-config-5.1.schema.json
+# yaml-language-server: $schema=./sopuli-config-5.2.schema.json
 version: 1
 ```
 
@@ -3925,7 +3936,7 @@ description the generator wrote for it, and an unknown key is underlined where i
 was typed.
 
 **The path is relative to the YAML file**, not to the repository. Copy the schema
-next to the config, or point at it where it lives — `$schema=../sopuli-dba/docs/schemas/sopuli-config-5.1.schema.json`
+next to the config, or point at it where it lives — `$schema=../sopuli-dba/docs/schemas/sopuli-config-5.2.schema.json`
 is as valid as the form above.
 
 **The `$id` inside the schema is an identifier, not an address.** It reads like a

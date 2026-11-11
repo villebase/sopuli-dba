@@ -5,9 +5,9 @@ Depends on: `../design/00-principles.md`, `../design/01-configuration.md`,
 
 This document specifies `sopuli report accounts`, `sopuli report privileges`
 and `sopuli report history`. **All three are built, on Oracle**, with the
-`reports:` rules (§4, §5, §7). `report accounts` runs on MySQL too (§8,
-#1461). The other reports on MySQL, and all three on PostgreSQL and MariaDB,
-come later: on them the reports are refused before they connect. §9 lists the
+`reports:` rules (§4, §5, §7). **`report accounts` is built on PostgreSQL**
+(§4) **and MySQL** (§8, #1461) too. The rest come later on both, and all three
+on MariaDB: there they are refused before they connect. §9 lists the
 decisions.
 
 ---
@@ -223,6 +223,32 @@ policy's. The
 profile names come from the `DBA_PROFILES` rows the survey
 already reads, so no statement is added (#1390).
 
+**On PostgreSQL** ([#1459](https://github.com/villebase/sopuli-dba/issues/1459)),
+the survey is one read of `pg_roles`, which any role can read. The head line's
+release is `server_version`. Every role is listed, and the roles `initdb`
+made, the bootstrap superuser and every `pg_*` role, are left out unless a
+rule names them, as Oracle's own accounts are. PostgreSQL has no lock, no
+profile, no password lifetime, no failed-login limit and no failed-login
+count:
+
+- **`NOLOGIN` is judged only against a rule's `login:`.** `NOLOGIN` is also
+  how a group role is written, so most such roles are not locked accounts.
+  Without `login:`, a `NOLOGIN` role is not a problem. With `login: refused`
+  it passes, and a role that can log in is the problem. With `login: allowed`,
+  `NOLOGIN` is the problem. A role an application logs in as must be able to
+  log in, so there `NOLOGIN` is a problem whatever a pattern's `login:` says.
+  The status column shows `NOLOGIN`, `EXPIRED` or `OPEN`, as `creds status`
+  does.
+- **A `VALID UNTIL` in the past is an expired password**, and a problem on
+  every declared role, with or without a rule's key: no password logs the role
+  in until somebody moves the date. A rule's `postgresql.valid_until` compares
+  the date: `required` wants one in the future, and `forbidden` wants none.
+  `ALTER ROLE` cannot remove a date, so `VALID UNTIL 'infinity'` is how a DBA
+  removes one, and it counts as none. The date is compared on the server,
+  `rolvaliduntil < now()`, as `creds status` compares it, and shown in UTC.
+- **A rule's `password_lifetime`, `failed_login_limit` and `oracle.profile` are
+  *not applicable*.** The failed-login count is `unknown` on every role.
+
 ---
 
 ## 5. The privilege report
@@ -344,9 +370,10 @@ profile. A key that only one product has goes in that product's block, on a
 rule or on the section ([#1447](../decisions/log.md#1447)). Oracle's block
 holds a rule's `profile:`, the check of an account's profile by name, and the
 section's `profiles:`, a list of database profiles and their expected
-settings. On a product that has no concept of a setting or of a profile, the
-check is *not applicable* (§3). Until a product's driver can survey its
-accounts, its targets are *not checked*.
+settings. PostgreSQL's block holds a rule's `valid_until:`, `required` or
+`forbidden` (§4). On a product that has no concept of a setting, a profile or
+a `VALID UNTIL`, the check is *not applicable* (§3). Until a product's driver
+can survey its accounts, its targets are *not checked*.
 
 - `reports.accounts` rules name accounts by name or `*` pattern, give them
   their expected login, settings or profile, and select targets as `applications:`
@@ -397,15 +424,15 @@ Measured on 23.26.3.0.0 (`02-oracle-privileges.md` §2, #1377):
 Each extra grant is `SELECT` only and optional, and the tool probes for it. A
 report that cannot read a view says *not checked* for what it needed.
 
-On PostgreSQL, where the reports are not built yet, the tool account reads
-what they need with the grants it already has. PostgreSQL keeps no date of a
-role's last password change, no last login and no failed logins, so those
-would always be *not checked* there, and `report history` would show only the
-store's records. Object privileges are per database: a session can read only
-the grants of the database it connects to. The reports on PostgreSQL are not
-specified yet; #1411 lists what to decide first, such as what the privilege
-report does about a cluster's other databases. Measured on 13.23 to 18.6
-(`02-postgres-privileges.md` §2.5, #1443).
+On PostgreSQL the tool account reads what the reports need with the grants it
+already has: `report accounts` reads only `pg_roles`. PostgreSQL keeps no date
+of a role's last password change, no last login and no failed logins, so the
+failed-login count is `unknown` there, and `report history` would show only
+the store's records. Object privileges are per database: a session can read
+only the grants of the database it connects to. The privilege report and the
+history on PostgreSQL are not built yet; #1411 lists what to decide first, such
+as what the privilege report does about a cluster's other databases. Measured
+on 13.23 to 18.6 (`02-postgres-privileges.md` §2.5, #1443).
 
 On MySQL, `report accounts` is built (#1461), and the other two reports are
 not. On MariaDB none is built. An account is a user

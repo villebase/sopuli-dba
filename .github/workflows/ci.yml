@@ -25,8 +25,8 @@ name: ci
 # is the escape hatch when `main` needs checking by hand.
 #
 # Test coverage is measured weekly and on request, never on a pull request
-# (#1453). Tracing made tier 1's pytest about 40% slower (730 s against
-# 452-534 s), too much for a lane every code pull request waits on. The weekly
+# (#1453). Tier 1's pytest took 730 s and 512 s in two runs with coverage,
+# against 452-534 s without, and every code pull request waits on it. The weekly
 # run checks `main` as a side effect. To measure by hand: Actions, `ci`, Run
 # workflow, tick `coverage`; or `gh workflow run ci -f coverage=true`.
 

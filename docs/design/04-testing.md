@@ -329,8 +329,9 @@ runs that code too.
 
 CI measures coverage in the tier-1 lane every Monday, and when the `ci`
 workflow is run by hand with `coverage` ticked (`gh workflow run ci -f
-coverage=true`). Pull requests do not measure it: tracing made the lane's
-pytest about 40% slower. The run's summary page in the Actions tab has the
+coverage=true`). Pull requests do not measure it, because tracing slows the
+lane: its pytest took 730 s and 512 s in two runs with coverage, against 452 to
+534 s without. The run's summary page in the Actions tab has the
 table, least-covered files first, and its `coverage-html` artifact has the HTML
 report, with each file's unrun lines marked. No threshold fails a run: a
 minimum invites tests written for the number, and the point of a test here is

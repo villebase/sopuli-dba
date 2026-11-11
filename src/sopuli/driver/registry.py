@@ -123,6 +123,11 @@ class DatabaseDriver:
     #: hash`` is where ``offline_verify`` is absent. A mode that would reach a
     #: method not written yet keeps the command off this list.
     commands: frozenset[str] | None = None
+    #: The `report accounts` checks this product has no concept of, by check
+    #: name. Each is *not applicable* on its targets, never *not checked*: a
+    #: setting the product lacks is not a gap anybody can close (UC-5 §3,
+    #: #1458). It is a fact about the product, so it needs no connection.
+    not_applicable: frozenset[str] = frozenset()
 
     @property
     def install_command(self) -> str:
@@ -182,6 +187,9 @@ DRIVERS: dict[str, DatabaseDriver] = {
         password_limit=str(POSTGRES_LIMIT.max_bytes),
         refuses=frozenset({CONTROL, ENCODING, BYTE_LENGTH}),
         fixed_limit=POSTGRES_LIMIT,
+        # A role has a `VALID UNTIL` date, not a lifetime; no failed-login
+        # limit; and no profile (#1443, #1411).
+        not_applicable=frozenset({"password_lifetime", "failed_login_limit", "profile"}),
         # UC-1: `creds check`, by login (#1067); `creds apply`, which sets a
         # password with a verifier computed on the client (#1060); and `creds
         # rotate`, `generate`, `status` and `finish-rollover`, whose modes
@@ -228,6 +236,9 @@ DRIVERS: dict[str, DatabaseDriver] = {
         password_limit=str(MYSQL_LIMIT.max_bytes),
         refuses=frozenset({CONTROL, ENCODING, BYTE_LENGTH}),
         fixed_limit=MYSQL_LIMIT,
+        # MySQL has a lifetime and a failed-login limit per account, but no
+        # profile (#1448).
+        not_applicable=frozenset({"profile"}),
         commands=frozenset(
             {
                 "account.list",
@@ -269,6 +280,9 @@ DRIVERS: dict[str, DatabaseDriver] = {
         password_limit=str(MARIADB_LIMIT.max_bytes),
         refuses=frozenset({CONTROL, ENCODING, BYTE_LENGTH}),
         fixed_limit=MARIADB_LIMIT,
+        # No failed-login limit per account, only the server's
+        # `max_password_errors` (#1411, R1), and no profile (#1448).
+        not_applicable=frozenset({"failed_login_limit", "profile"}),
         commands=frozenset(
             {
                 "account.list",

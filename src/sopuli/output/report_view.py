@@ -20,6 +20,7 @@ from sopuli.report_accounts import (
     BY_POLICY,
     BY_RULE,
     NO_RULE,
+    NOT_APPLICABLE_OUTCOME,
     NOT_CHECKED,
     PROFILE_MISSING,
     REPORT_OK,
@@ -146,6 +147,13 @@ def _head(report: TargetReport) -> str:
         )
         if counts[state]
     )
+    # Counted apart from the states: an account whose stated check the product
+    # has no concept of is not a gap, whatever its state (#1458).
+    not_applicable = sum(
+        1 for row in report.rows if any(f.outcome == NOT_APPLICABLE_OUTCOME for f in row.findings)
+    )
+    if not_applicable:
+        parts.append(f"{not_applicable} with a check not applicable")
     return ", ".join(parts)
 
 
@@ -200,6 +208,8 @@ def _finding(row: AccountRow) -> str:
     picked += [f for f in row.findings if f.outcome == "not_checked"]
     if not picked:
         picked = [f for f in row.findings if f.outcome == "no_rule"]
+    if not picked:
+        picked = [f for f in row.findings if f.outcome == NOT_APPLICABLE_OUTCOME]
     return "; ".join(f"{finding.check}: {finding.detail}" for finding in picked) or "-"
 
 

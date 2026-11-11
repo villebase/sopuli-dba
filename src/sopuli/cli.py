@@ -242,7 +242,7 @@ from sopuli.driver.registry import (
     installed,
     require_command,
 )
-from sopuli.driver.survey import SurveyedAccount
+from sopuli.driver.survey import AccountSurvey, SurveyedAccount
 from sopuli.exit_codes import ExitCode
 from sopuli.extras import MISSING_MODULE, missing_kind
 from sopuli.generate import Candidate, DocumentWrite
@@ -5837,9 +5837,9 @@ def _report_target(
     """One target: survey its accounts on one connection, then evaluate them.
 
     A target that cannot be reached is one unreachable section and not a failed
-    run: the report still covers the others (UC-5 §3). Another product never
-    gets here, because ``_open_session`` asks the driver registry first, and
-    only Oracle lists this command.
+    run: the report still covers the others (UC-5 §3). A product whose driver
+    does not list this command in the registry never gets here: ``_open_session``
+    refuses it first, and it is not checked. Only Oracle lists it yet.
     """
     session = None
     try:
@@ -5853,10 +5853,9 @@ def _report_target(
             )
         except Exception as error:  # noqa: BLE001 -- a per-target finding
             return report_view.TargetReport(target=target.name, error=_finding(error))
-        survey = getattr(session, "survey_with_profiles", None)
-        if survey is None:
-            # No driver but Oracle's reaches this command (the registry), and
-            # Oracle's session has the method. A driver that does is not
+        if not isinstance(session, AccountSurvey):
+            # The registry lets a product reach this command only once its
+            # session implements the survey. One that does not anyway is not
             # written for this report: not checked there, never unreachable.
             missing = DriverError(
                 f"{target.name}: this driver cannot survey its accounts and profiles"
@@ -5865,7 +5864,7 @@ def _report_target(
                 target=target.name, error=_finding(missing), unsupported=True
             )
         try:
-            surveyed, profiles = survey()
+            surveyed, profiles = session.survey_with_profiles()
         except Exception as error:  # noqa: BLE001 -- a per-target finding
             # Connected, then could not read: said as such, not as "could not
             # connect", though the target still gave no answer (exit 1).

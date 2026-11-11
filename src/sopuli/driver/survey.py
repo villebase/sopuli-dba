@@ -48,14 +48,24 @@ class SurveyedAccount:
 
     ``deliberately_locked`` is whether somebody set the lock, as against a
     lockout after failed logins: on Oracle, ``LOCKED`` rather than
-    ``LOCKED(TIMED)``. It is the same fact as
-    :attr:`~sopuli.driver.protocol.UserState.deliberately_locked`, read from
-    the same status. A rule's ``login: refused`` is met only by a deliberate
-    lock (#1447). ``None`` where ``locked`` is ``None``. The Oracle survey
-    reads it from the status alone, so it is true for a lockout under a
-    profile whose ``PASSWORD_LOCK_TIME`` is ``UNLIMITED``: Oracle shows that
-    lockout as ``LOCKED``, and ``SYS.USER$.ASTATUS`` is 8, as for a lock
-    somebody set (measured on 23.26.3.0.0).
+    ``LOCKED(TIMED)``. It asks what
+    :attr:`~sopuli.driver.protocol.UserState.deliberately_locked` asks, and
+    answers it more closely: UC-2's reset reads the status alone, so under an
+    ``UNLIMITED`` lock time it takes a lockout as a lock somebody set and
+    refuses the reset, which errs toward the safe side. A rule's
+    ``login: refused`` is met only by a deliberate lock (#1447). ``None`` where
+    ``locked`` is ``None``, or where the product cannot tell the two apart.
+    Under a profile whose ``PASSWORD_LOCK_TIME`` is
+    ``UNLIMITED``, Oracle shows a lockout as ``LOCKED``, as it does a lock
+    somebody set (measured on 23.26.3.0.0). There the Oracle survey takes a
+    failed-login count that has reached the profile's limit as a lockout, and
+    answers ``None`` where it cannot read the count or the limit.
+
+    ``no_authentication`` is whether nobody can log in to the account with a
+    password, whatever its lock: on Oracle, an account made ``NO
+    AUTHENTICATION`` (18c and later), the usual way to make a schema owner. A
+    proxy login (``GRANT CONNECT THROUGH``) can still reach such an account;
+    the survey does not read proxy grants.
     """
 
     name: str
@@ -70,3 +80,4 @@ class SurveyedAccount:
     unreadable: tuple[str, ...] = ()
     kept_in_root: bool = False
     deliberately_locked: bool | None = None
+    no_authentication: bool = False

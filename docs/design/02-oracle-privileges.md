@@ -785,16 +785,45 @@ account, so none binds anything, and none reads a password or verifier column.
 
 | Statement | Reads | Needs |
 |---|---|---|
-| every account: `USERNAME`, `ACCOUNT_STATUS`, `PROFILE`, `COMMON`, `ORACLE_MAINTAINED` | `DBA_USERS` | the grants above |
-| `PASSWORD_LIFE_TIME` and `FAILED_LOGIN_ATTEMPTS` for every profile, as shown, resolved through this container's `DEFAULT` profile, and the profile's `COMMON`. Every profile has these rows, so they also give the target's profile names, which `report accounts` compares with the profiles the config expects (`survey_with_profiles`, #1390) | `DBA_PROFILES` | the grants above |
+| every account: `USERNAME`, `ACCOUNT_STATUS`, `PROFILE`, `COMMON`, `ORACLE_MAINTAINED`, `AUTHENTICATION_TYPE` | `DBA_USERS` | the grants above |
+| `PASSWORD_LIFE_TIME`, `FAILED_LOGIN_ATTEMPTS` and `PASSWORD_LOCK_TIME` for every profile, as shown, resolved through this container's `DEFAULT` profile, and the profile's `COMMON`. Every profile has these rows, so they also give the target's profile names, which `report accounts` compares with the profiles the config expects (`survey_with_profiles`, #1390) | `DBA_PROFILES` | the grants above |
 | `NAME` and `LCOUNT` for every user | `SYS.USER$` | the optional grant; sent only with `offline_verify` |
 
 On a release that answers `ORA-00904` to `COMMON` or `ORACLE_MAINTAINED`, as
 11.2.0.2.0 does, the first two statements are sent again with `NULL` in those
-positions. Then an account is vendor-maintained when its name is on check 5's
-list (§4). In a non-CDB no account is common. In any other container an account
-named with the `C##` prefix is taken as common, as the lockout guard does, and
-every profile is taken as common.
+positions, and in place of `AUTHENTICATION_TYPE`: its value `NONE`, for an
+account made `NO AUTHENTICATION`, exists from 18c. Then an account is
+vendor-maintained when its name is on check 5's list (§4). In a non-CDB no
+account is common. In any other container an account named with the `C##`
+prefix is taken as common, as the lockout guard does, and every profile is
+taken as common.
+
+**A lock somebody set, or a lockout** (#1447). `sql/oracle/22_lock_kind_probe.sql`
+measured, on 23.26.3.0.0, what each kind of lock reads ([the
+matrix](../measurements.md)):
+
+- a lockout after failed logins reads `LOCKED(TIMED)` and `SYS.USER$.ASTATUS`
+  4 under a finite `PASSWORD_LOCK_TIME`;
+- under `UNLIMITED` it reads `LOCKED` and `ASTATUS` 8, the same as after
+  `ACCOUNT LOCK`. Only `LCOUNT` differs;
+- a lock somebody set after failed logins below the limit keeps the count;
+- a locked account does not count failed logins: a login to it gets
+  `ORA-28000`, with any password, and `LCOUNT` stays as it was;
+- raising `FAILED_LOGIN_ATTEMPTS` after a lockout leaves the account `LOCKED`,
+  with its count now below the limit;
+- an account made `NO AUTHENTICATION` reads `ACCOUNT_STATUS` `OPEN` and
+  `AUTHENTICATION_TYPE` `NONE`, and a login with a password gets `ORA-01017`.
+
+So under `UNLIMITED`, and where the profile's lock time cannot be read, the
+survey takes a `LOCKED` account whose `LCOUNT` has reached the profile's
+`FAILED_LOGIN_ATTEMPTS` as a lockout, and cannot say which it is where it has no
+count. The count is compared with the limit the profile has now. A lockout
+whose profile's limit was raised afterwards reads as a lock somebody set, and
+a lock somebody set after failed logins reads as a lockout once the limit is
+lowered to the count or below, or the account moves to such a profile.
+`NO AUTHENTICATION` stops a login with a password, not a proxy login: a user
+granted `CONNECT THROUGH` the account can still connect as it. The survey does
+not read proxy grants.
 
 The survey reports a value as unreadable, with a reason, where the findings
 above say a container cannot read it. It never reports the value the container
@@ -1713,6 +1742,7 @@ the design as it is then.
 | `sql/oracle/17_common_lcount_probe.sql` | where a common account's failed-login count lives, which profile limit locks it, and what a session in a PDB can read of the count (§2) |
 | `sql/oracle/18_common_spare4_probe.sql` | what `SPARE4` holds for a common account in a PDB and in `CDB$ROOT`, and whether a password change in the root reaches the PDB's row (§2) |
 | `sql/oracle/19_report_read_probe.sql` | what UC-5's report commands can read, the grants the privilege views need (column grants among them), the effective-privilege query, and how a `DEFAULT` limit resolves for a local and a common profile (§2) |
+| `sql/oracle/22_lock_kind_probe.sql` | what a lock somebody set, a lockout under a finite and an `UNLIMITED` `PASSWORD_LOCK_TIME`, and an account made `NO AUTHENTICATION` read in `DBA_USERS` and `SYS.USER$` (§2) |
 | `sql/oracle/99_uninstall.sql` | removes the service account and, optionally, the audit policies |
 | `docs/decisions/adr-001-privilege-model.md` | why this model, what was rejected, and when to reconsider |
 

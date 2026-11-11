@@ -1091,29 +1091,38 @@ def is_common(cursor: Cursor, name: str) -> bool | None:
 #: column that holds or describes a password is read. ``COMMON`` and
 #: ``ORACLE_MAINTAINED`` exist from 12.1; :data:`SURVEY_USERS_QUERY_LEGACY` is
 #: the shape for a release that answers ``ORA-00904`` to them.
+#: ``AUTHENTICATION_TYPE`` says how the account logs in, not what with: it is
+#: ``NONE`` for an account made ``NO AUTHENTICATION``, which nobody can log in
+#: to with a password (18c and later, #1447).
 SURVEY_USERS_QUERY = (
-    "select username, account_status, profile, common, oracle_maintained from dba_users"
+    "select username, account_status, profile, common, oracle_maintained, "
+    "authentication_type from dba_users"
 )
 
-#: :data:`SURVEY_USERS_QUERY` with ``NULL`` in place of the two columns, in the
-#: same positions. Measured on 11.2.0.2.0, which has neither.
+#: :data:`SURVEY_USERS_QUERY` with ``NULL`` in place of ``COMMON`` and
+#: ``ORACLE_MAINTAINED``, in the same positions. Measured on 11.2.0.2.0, which
+#: has neither. ``AUTHENTICATION_TYPE`` is ``NULL`` too: ``NONE`` is from 18c,
+#: and this shape is for a release older than 12.1.
 SURVEY_USERS_QUERY_LEGACY = (
     "select username, account_status, profile, "
-    "cast(null as varchar2(3)), cast(null as varchar2(1)) "
+    "cast(null as varchar2(3)), cast(null as varchar2(1)), cast(null as varchar2(8)) "
     "from dba_users"
 )
 
-#: The two limits UC-5 checks, for every profile. Each row has the limit as
-#: ``DBA_PROFILES`` shows it, the limit resolved through the ``DEFAULT`` profile
-#: of this container, and whether the profile is common. The raw value is kept
-#: because a ``DEFAULT`` on a common profile follows the root's ``DEFAULT``
-#: profile, and a PDB cannot read that (§2).
+#: The two limits UC-5 checks, and ``PASSWORD_LOCK_TIME``, for every profile.
+#: Each row has the limit as ``DBA_PROFILES`` shows it, the limit resolved
+#: through the ``DEFAULT`` profile of this container, and whether the profile
+#: is common. The raw value is kept because a ``DEFAULT`` on a common profile
+#: follows the root's ``DEFAULT`` profile, and a PDB cannot read that (§2).
+#: ``PASSWORD_LOCK_TIME`` tells whether a ``LOCKED`` status can be a lockout
+#: after failed logins: only where it is ``UNLIMITED`` (#1447).
 SURVEY_LIMITS_QUERY = (
     "select p.profile, p.resource_name, p.limit, "
     "case when p.limit = 'DEFAULT' then d.limit else p.limit end, p.common "
     "from dba_profiles p "
     "join dba_profiles d on d.profile = 'DEFAULT' and d.resource_name = p.resource_name "
-    "where p.resource_name in ('PASSWORD_LIFE_TIME', 'FAILED_LOGIN_ATTEMPTS')"
+    "where p.resource_name in "
+    "('PASSWORD_LIFE_TIME', 'FAILED_LOGIN_ATTEMPTS', 'PASSWORD_LOCK_TIME')"
 )
 
 #: :data:`SURVEY_LIMITS_QUERY` for a release with no ``DBA_PROFILES.COMMON``.
@@ -1123,7 +1132,8 @@ SURVEY_LIMITS_QUERY_LEGACY = (
     "cast(null as varchar2(3)) "
     "from dba_profiles p "
     "join dba_profiles d on d.profile = 'DEFAULT' and d.resource_name = p.resource_name "
-    "where p.resource_name in ('PASSWORD_LIFE_TIME', 'FAILED_LOGIN_ATTEMPTS')"
+    "where p.resource_name in "
+    "('PASSWORD_LIFE_TIME', 'FAILED_LOGIN_ATTEMPTS', 'PASSWORD_LOCK_TIME')"
 )
 
 #: Every account's failed-login count, behind the optional ``SELECT ON
@@ -1132,6 +1142,10 @@ SURVEY_LIMITS_QUERY_LEGACY = (
 SURVEY_LCOUNT_QUERY = "select name, lcount from sys.user$ where type# = 1"
 
 PASSWORD_LIFE_TIME = "PASSWORD_LIFE_TIME"
+PASSWORD_LOCK_TIME = "PASSWORD_LOCK_TIME"
+
+#: ``DBA_USERS.AUTHENTICATION_TYPE`` of an account made ``NO AUTHENTICATION``.
+NO_AUTHENTICATION = "NONE"
 
 #: What ``DBA_PROFILES`` shows for a limit that the profile inherits.
 _INHERITED = "DEFAULT"
@@ -1266,6 +1280,16 @@ def survey_with_profiles(
         else:
             failed = counts[name]
 
+        deliberate: bool | None = None
+        if locked is not None:
+            lock_time = limits.get((profile, PASSWORD_LOCK_TIME))
+            deliberate = _locked_by_somebody(
+                status,
+                lock_time_unlimited=_lock_time_unlimited(lock_time, profile, own_container),
+                limit=resolved[FAILED_LOGIN_ATTEMPTS],
+                failed=failed,
+            )
+
         surveyed.append(
             SurveyedAccount(
                 name=name,
@@ -1279,11 +1303,53 @@ def survey_with_profiles(
                 failed_logins=failed,
                 unreadable=tuple(reasons),
                 kept_in_root=held_elsewhere and not application,
-                deliberately_locked=None if locked is None else deliberately_locked(status),
+                deliberately_locked=deliberate,
+                no_authentication=str(row[5] or "").upper() == NO_AUTHENTICATION,
             )
         )
     accounts = tuple(sorted(surveyed, key=lambda account: account.name))
     return accounts, frozenset(str(row[0]) for row in limit_rows)
+
+
+def _lock_time_unlimited(row: Any, profile: str, own_container: bool) -> bool | None:
+    """Whether a profile's ``PASSWORD_LOCK_TIME`` is ``UNLIMITED``; ``None`` if unknown.
+
+    Only ``UNLIMITED`` matters here, so a fraction of a day, the usual value,
+    is simply "not unlimited". A ``DEFAULT`` that a container cannot resolve is
+    unknown, as for the other limits (:func:`_limit`).
+    """
+    if row is None or _default_gap(row, profile, PASSWORD_LOCK_TIME, own_container):
+        return None
+    return str(row[3] or "").strip().upper() == "UNLIMITED"
+
+
+def _locked_by_somebody(
+    status: str, *, lock_time_unlimited: bool | None, limit: Limit, failed: int | None
+) -> bool | None:
+    """Whether somebody set the lock this status shows; ``None`` where Oracle cannot say.
+
+    A lockout after failed logins reads ``LOCKED(TIMED)``, so a ``LOCKED``
+    component is a lock somebody set, except under a ``PASSWORD_LOCK_TIME`` of
+    ``UNLIMITED``. There Oracle shows the lockout as ``LOCKED``, and
+    ``SYS.USER$.ASTATUS`` is 8 for both (measured on 23.26.3.0.0). The
+    maintainer decided (#1447) that a ``LOCKED`` account whose failed-login
+    count has reached the profile's ``FAILED_LOGIN_ATTEMPTS`` is taken as a
+    lockout there, and that where the count or the limit cannot be read, the
+    answer is unknown. A lock time that cannot be read is treated as possibly
+    ``UNLIMITED``. The count is compared with the limit the profile has now: a
+    lockout whose limit was raised afterwards reads as a lock somebody set
+    (``sql/oracle/22_lock_kind_probe.sql``, KD6), and a lock somebody set after
+    failed logins reads as a lockout once the limit is lowered to the count. A
+    locked account does not count further failed logins (KD7), so the count
+    cannot grow past the limit after somebody locks it.
+    """
+    if not deliberately_locked(status):
+        return False
+    if lock_time_unlimited is False or limit == "unlimited":
+        return True
+    if limit is None or failed is None:
+        return None
+    return failed < limit
 
 
 #: Why no failed-login count was read, where the optional grant was not made.
@@ -1317,6 +1383,31 @@ def _lcounts(cursor: Cursor) -> tuple[dict[str, int | None], str | None]:
     return {str(name): None if count is None else int(count) for name, count in rows}, None
 
 
+def _default_gap(row: Any, profile: str, resource: str, own_container: bool) -> str | None:
+    """Why this container cannot resolve a limit shown as ``DEFAULT``, or ``None``.
+
+    Outside ``CDB$ROOT`` and a non-CDB, a ``DEFAULT`` on a common profile
+    follows the root's ``DEFAULT`` profile, which a PDB cannot read (§2), and so
+    does one on a profile whose ``COMMON`` the narrowed shape could not read.
+    The one rule for :func:`_limit` and :func:`_lock_time_unlimited`.
+    """
+    shown, profile_common = row[2], row[4]
+    if str(shown).upper() != _INHERITED or own_container:
+        return None
+    if profile_common is None:
+        return (
+            f"{resource} on profile {profile} is DEFAULT, and whether the profile "
+            f"is common, so that the DEFAULT profile in {_ROOT} applies, could not "
+            "be read"
+        )
+    if is_yes(profile_common):
+        return (
+            f"{resource} on common profile {profile} is DEFAULT, which follows the "
+            f"DEFAULT profile in {_ROOT}, and this container cannot read it"
+        )
+    return None
+
+
 def _limit(row: Any, profile: str, resource: str, own_container: bool) -> tuple[Limit, str | None]:
     """One limit from :data:`SURVEY_LIMITS_QUERY`'s row, or ``None`` and why.
 
@@ -1326,19 +1417,10 @@ def _limit(row: Any, profile: str, resource: str, own_container: bool) -> tuple[
     """
     if row is None:
         return None, f"DBA_PROFILES has no {resource} for profile {profile}"
-    shown, value, profile_common = row[2], row[3], row[4]
-    if str(shown).upper() == _INHERITED and not own_container:
-        if profile_common is None:
-            return None, (
-                f"{resource} on profile {profile} is DEFAULT, and whether the profile "
-                f"is common, so that the DEFAULT profile in {_ROOT} applies, could not "
-                "be read"
-            )
-        if is_yes(profile_common):
-            return None, (
-                f"{resource} on common profile {profile} is DEFAULT, which follows the "
-                f"DEFAULT profile in {_ROOT}, and this container cannot read it"
-            )
+    gap = _default_gap(row, profile, resource, own_container)
+    if gap is not None:
+        return None, gap
+    value = row[3]
     text = str(value or "").strip().upper()
     if text == "UNLIMITED":
         return "unlimited", None

@@ -442,7 +442,14 @@ def _check(surveyed: SurveyedAccount, expectation: _Expectation) -> tuple[Findin
     if "lock" in expectation.conflicts:
         lock = Finding("lock", NOT_CHECKED_OUTCOME, "two rules expect different things")
     else:
-        lock = _lock(surveyed, reasons.get("locked", _UNREAD), expectation.login)
+        lock = _lock(
+            surveyed,
+            reasons.get("locked", _UNREAD),
+            expectation.login,
+            count_reason=reasons.get("failed_logins")
+            or reasons.get("failed_login_limit")
+            or _UNREAD,
+        )
     settings = expectation.settings
     if expectation.profile is None and settings.is_empty and expectation.login is None:
         return (
@@ -486,15 +493,17 @@ def _check(surveyed: SurveyedAccount, expectation: _Expectation) -> tuple[Findin
     return tuple(findings)
 
 
-def _lock(surveyed: SurveyedAccount, reason: str, login: Login | None) -> Finding:
+def _lock(
+    surveyed: SurveyedAccount, reason: str, login: Login | None, *, count_reason: str
+) -> Finding:
     """The lock against the rule's `login:`, or against "not locked" where none says.
 
-    `login: refused` passes only on a lock somebody set (#1447). A lockout after
-    failed logins does not pass: somebody tried to log in, and the lock ends by
-    itself after the profile's `PASSWORD_LOCK_TIME`. Where that is `UNLIMITED`,
-    Oracle reads the lockout as `LOCKED`, the same as a lock somebody set, so it
-    passes; that lock never ends, so the account still cannot log in
-    (:class:`~sopuli.driver.survey.SurveyedAccount`).
+    `login: refused` passes on an account nobody can log in to with a password,
+    whatever its lock, and otherwise only on a lock somebody set (#1447). A
+    lockout after failed logins does not pass: somebody tried to log in. The
+    survey says which a lock is (:class:`~sopuli.driver.survey.SurveyedAccount`),
+    and where it cannot, the lock is not checked: never OK without proof.
+    ``count_reason`` says why the survey could not tell.
     """
     if surveyed.locked is None:
         return Finding("lock", NOT_CHECKED_OUTCOME, reason)
@@ -502,19 +511,29 @@ def _lock(surveyed: SurveyedAccount, reason: str, login: Login | None) -> Findin
         if surveyed.locked:
             return Finding("lock", PROBLEM, f"locked: {surveyed.status}")
         return Finding("lock", OK, surveyed.status)
+    if surveyed.no_authentication:
+        return Finding("lock", OK, f"no authentication: {surveyed.status}")
     if not surveyed.locked:
         return Finding("lock", PROBLEM, f"can log in: {surveyed.status}, rule says login refused")
     if surveyed.deliberately_locked is None:
         return Finding(
             "lock",
             NOT_CHECKED_OUTCOME,
-            f"locked: {surveyed.status}, but whether on purpose cannot be read on this target",
+            f"locked: {surveyed.status}; the profile's PASSWORD_LOCK_TIME is UNLIMITED or "
+            "unreadable, where a lockout reads LOCKED too, and the failed-login count "
+            f"that would tell them apart cannot be read: "
+            f"{count_reason}",
         )
     if not surveyed.deliberately_locked:
+        counted = ""
+        limit, failed = surveyed.failed_login_limit, surveyed.failed_logins
+        if isinstance(limit, int) and failed is not None and failed >= limit:
+            logins = "failed login" if failed == 1 else "failed logins"
+            counted = f", {failed} {logins} reached the limit of {limit}"
         return Finding(
             "lock",
             PROBLEM,
-            f"locked by failed logins: {surveyed.status}, rule says login refused",
+            f"locked by failed logins: {surveyed.status}{counted}, rule says login refused",
         )
     return Finding("lock", OK, f"locked on purpose: {surveyed.status}")
 

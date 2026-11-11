@@ -5360,9 +5360,16 @@ the register.
   4. `login: refused | allowed` on a rule. It is read from Oracle's
      `ACCOUNT_STATUS`, MySQL's `account_locked` and PostgreSQL's `NOLOGIN`.
      On MariaDB it is *not checked*, because the lock cannot be read there.
-     On Oracle only `LOCKED` and `EXPIRED & LOCKED` satisfy `refused`:
-     `LOCKED(TIMED)` is a lockout after failed logins, not a decision.
-     Without the key, a lock on an account a rule names stays a problem.
+     On Oracle a status with a `LOCKED` component satisfies `refused`, and
+     one with `LOCKED(TIMED)` does not: that is a lockout after failed
+     logins, not a decision. Under a `PASSWORD_LOCK_TIME` of `UNLIMITED`
+     Oracle shows a lockout as `LOCKED` too, so there a `LOCKED` account
+     whose failed-login count has reached the profile's limit is taken as a
+     lockout, and one whose count cannot be read is *not checked*. An
+     account made `NO AUTHENTICATION` satisfies `refused`, because nobody
+     can log in to it with a password, though it reads `OPEN`. The last two
+     were decided on review of #1451. Without the key, a lock on an account
+     a rule names stays a problem.
   5. `postgresql.valid_until: required | forbidden`. Where it is absent, a
      date in the past is still reported as an expired password.
 

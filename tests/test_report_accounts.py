@@ -213,6 +213,63 @@ def test_login_refused_where_the_purpose_cannot_be_read_is_not_checked() -> None
     assert row.state == NOT_CHECKED
 
 
+def test_login_refused_names_why_a_lock_cannot_be_classified() -> None:
+    """The survey's reason for the missing count is shown, so the DBA knows the fix."""
+    cfg = config(**rule(accounts=["ACME_OWNER"], login="refused"))
+    surveyed = account(
+        "ACME_OWNER",
+        locked=True,
+        deliberately_locked=None,
+        status="LOCKED",
+        failed_logins=None,
+        unreadable=("GRANT SELECT ON SYS.USER$ to read it",),
+    )
+    assert lock_of(rows(cfg, surveyed)["ACME_OWNER"]) == (
+        "not_checked",
+        "locked: LOCKED; the profile's PASSWORD_LOCK_TIME is UNLIMITED or unreadable, "
+        "where a lockout reads LOCKED too, and the failed-login count that would tell "
+        "them apart cannot be read: "
+        "GRANT SELECT ON SYS.USER$ to read it",
+    )
+
+
+def test_a_locked_status_whose_count_reached_the_limit_says_so() -> None:
+    """Under `PASSWORD_LOCK_TIME UNLIMITED` a lockout reads `LOCKED`; the survey
+    takes a count at the limit as a lockout (#1447), and the detail shows it."""
+    cfg = config(**rule(accounts=["ACME_OWNER"], login="refused"))
+    surveyed = account(
+        "ACME_OWNER",
+        locked=True,
+        deliberately_locked=False,
+        status="LOCKED",
+        failed_logins=3,
+        failed_login_limit=3,
+    )
+    assert lock_of(rows(cfg, surveyed)["ACME_OWNER"]) == (
+        "problem",
+        "locked by failed logins: LOCKED, 3 failed logins reached the limit of 3, "
+        "rule says login refused",
+    )
+
+
+def test_login_refused_passes_on_an_account_with_no_authentication() -> None:
+    """A schema-only owner (`NO AUTHENTICATION`) reads `OPEN`, and nobody can log
+    in to it with a password; the maintainer decided it meets the rule (#1447)."""
+    cfg = config(**rule(accounts=["ACME_OWNER"], login="refused"))
+    surveyed = account("ACME_OWNER", locked=False, status="OPEN", no_authentication=True)
+    row = rows(cfg, surveyed)["ACME_OWNER"]
+    assert lock_of(row) == ("ok", "no authentication: OPEN")
+    assert row.state == REPORT_OK
+
+
+def test_no_authentication_does_not_change_the_lock_check_without_login_refused() -> None:
+    cfg = config(**rule(accounts=["ACME_OWNER"], settings={"password_lifetime": "unlimited"}))
+    surveyed = account(
+        "ACME_OWNER", locked=False, status="OPEN", no_authentication=True, password_lifetime=180
+    )
+    assert lock_of(rows(cfg, surveyed)["ACME_OWNER"]) == ("ok", "OPEN")
+
+
 def test_login_refused_where_the_lock_cannot_be_read_is_not_checked() -> None:
     cfg = config(**rule(accounts=["ACME_OWNER"], login="refused"))
     surveyed = account("ACME_OWNER", locked=None, status="OPEN", unreadable=("kept in CDB$ROOT",))

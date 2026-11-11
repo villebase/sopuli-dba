@@ -2399,13 +2399,15 @@ the accounts that passed, here `ACME_RPT_OK`. The release in the head line is
 the full release, `V$INSTANCE.VERSION_FULL`. `doctor --output json` shows it
 as `scope.db_release`.
 
-A schema owner that nobody logs in as should be locked. `login: refused` says
-so. Make three owners as SYS in the PDB: one locked, one open, and one locked
-by a failed login:
+A schema owner that nobody logs in as should be locked, or have no
+authentication at all. `login: refused` says so. Make four owners as SYS in
+the PDB: one locked, one with no authentication, one open, and one locked by a
+failed login:
 
 ```sql
 CREATE PROFILE acme_owner_prof LIMIT FAILED_LOGIN_ATTEMPTS 1 PASSWORD_LOCK_TIME 1;
 CREATE USER acme_owner_locked IDENTIFIED BY "Acme_Own_Lock_1" ACCOUNT LOCK;
+CREATE USER acme_owner_schema NO AUTHENTICATION;
 CREATE USER acme_owner_open IDENTIFIED BY "Acme_Own_Open_1";
 CREATE USER acme_owner_timed IDENTIFIED BY "Acme_Own_Timed_1" PROFILE acme_owner_prof;
 GRANT CREATE SESSION TO acme_owner_timed;
@@ -2429,21 +2431,24 @@ reports:
 
 ```
 $ sopuli --config owners.yaml report accounts --all
-free-pdb  (23.26.3.0.0, 39 accounts read, 2 with a problem, 5 undeclared)
+free-pdb  (23.26.3.0.0, 40 accounts read, 2 with a problem, 5 undeclared)
   ACCOUNT            KIND        PROFILE          STATUS         FAILED LOGINS  STATE           FINDING
   ACME_OWNER_OPEN    technical   DEFAULT          OPEN           0              REPORT_PROBLEM  lock: can log in: OPEN, rule says login refused
-  ACME_OWNER_TIMED   technical   ACME_OWNER_PROF  LOCKED(TIMED)  1              REPORT_PROBLEM  lock: locked by failed logins: LOCKED(TIMED), rule says login refused
+  ACME_OWNER_TIMED   technical   ACME_OWNER_PROF  LOCKED(TIMED)  1              REPORT_PROBLEM  lock: locked by failed logins: LOCKED(TIMED), 1 failed login reached the limit of 1, rule says login refused
   ACME_RPT_OK        undeclared  ACME_RPT_PROF    OPEN           0              UNDECLARED      not in config
   ACME_RPT_STRAY     undeclared  DEFAULT          LOCKED         0              UNDECLARED      not in config
   ACME_RPT_USER      undeclared  ACME_RPT_PROF    OPEN           0              UNDECLARED      not in config
   PDBADMIN           undeclared  DEFAULT          OPEN           0              UNDECLARED      not in config
   SOPULI_PROBE       undeclared  DEFAULT          OPEN           0              UNDECLARED      not in config
   ACME_OWNER_LOCKED  technical   DEFAULT          LOCKED         0              REPORT_OK       -
+  ACME_OWNER_SCHEMA  technical   DEFAULT          OPEN           0              REPORT_OK       -
 ```
 
-It exits 3. Only the owner somebody locked passes. A lock after failed logins
-does not: somebody tried, and the lock ends by itself after the profile's
-`PASSWORD_LOCK_TIME`.
+It exits 3. The owner somebody locked passes, and so does the one with no
+authentication, though it reads `OPEN`: nobody can log in to it with a
+password. A lock after
+failed logins does not pass: somebody tried, and the lock ends by itself after
+the profile's `PASSWORD_LOCK_TIME`.
 
 `report privileges` shows each account's effective privileges, through every
 role, for the same accounts. The service account needs `SELECT` on

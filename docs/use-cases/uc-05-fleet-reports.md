@@ -164,14 +164,16 @@ count cannot be read truthfully, the report shows `unknown`, never 0.
 **A rule's `login:` says what the lock must be**
 ([#1447](../decisions/log.md#1447)). Without it, a lock is a problem. With
 `login: refused`, for an account nobody should log in as, such as a schema
-owner, an open account is the problem, and only a lock somebody set passes:
-a status with a `LOCKED` component, such as `LOCKED`, `EXPIRED & LOCKED` or
-`LOCKED & IN ROLLOVER`, and not one with `LOCKED(TIMED)`. A lockout after
-failed logins means somebody tried, and it ends by itself. The survey tells the
-two apart by the status's components, because `LOCKED(TIMED)` contains
-`LOCKED`. Under a profile whose `PASSWORD_LOCK_TIME` is `UNLIMITED`, Oracle
-shows a lockout as `LOCKED`, so it passes. That lock never ends, so the account
-still cannot log in, and the failed-login count shows the attempts
+owner, an open account is the problem. An account made `NO AUTHENTICATION`
+passes, because nobody can log in to it with a password, though it reads
+`OPEN`. Otherwise only a lock somebody set passes: a status with a `LOCKED`
+component, such as `LOCKED`, `EXPIRED & LOCKED` or `LOCKED & IN ROLLOVER`, and
+not one with `LOCKED(TIMED)`. A lockout after failed logins means somebody
+tried. The survey tells the two apart by the status's components, because
+`LOCKED(TIMED)` contains `LOCKED`. Under a profile whose `PASSWORD_LOCK_TIME`
+is `UNLIMITED`, Oracle shows a lockout as `LOCKED`, so there the survey also
+reads the failed-login count: a count that has reached the profile's limit is
+a lockout, and a count it cannot read leaves the lock *not checked*
 (`01-configuration.md` §8a). Two rules that set `login:` two ways leave the
 lock *not checked*.
 

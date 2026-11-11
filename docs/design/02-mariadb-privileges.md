@@ -197,6 +197,58 @@ be refused as one ([#1346](../decisions/log.md#1346)).
   shows one method of an account that has two, and a password change ends the
   other ([#1301](../decisions/log.md#1301)).
 
+### 2.4 What the reports can read
+
+The UC-5 `report` commands are not built on MariaDB yet (#1411). This is what
+the tool account can read for them with §2.1's grants, and what each further
+read would cost. It was measured on 10.11.19, 11.4.13, 11.8.9 and 12.3.3
+(`15_report_read_probe.py`, #1448).
+
+- **An account is a user name at a host.** One name at three hosts is three
+  rows of the `mysql.user` view. A role is a row with an empty host and
+  `is_role = 'Y'`, so a role is never mistaken for an account.
+- **The lock, the lifetime and the date of the last change cannot be read
+  with §2.1** (LK2, on every release). They are kept only in
+  `mysql.global_priv`, beside the hash, and in `SHOW CREATE USER`, which
+  prints the value. The view has no `account_locked` column, `1143`;
+  `global_priv` is refused, `1142`, and `SHOW CREATE USER` for another
+  account, `1044`. Only the expiry, `password_expired`, reads.
+- **A view that a DBA creates reads them.** A view with `SQL SECURITY
+  DEFINER` over three keys of `global_priv`'s `Priv`, and `SELECT` on it, give
+  the tool account `account_locked`, which is `1` when locked and absent
+  otherwise; `password_lifetime`, which is the days, `0` for `PASSWORD EXPIRE
+  NEVER`, `-1` or absent for the server's default; and
+  `password_last_changed`, in seconds since 1970. `PASSWORD EXPIRE` sets that
+  to `0`, which is how MariaDB marks an expired password, so after an expiry
+  the date of the last change is lost.
+- **There is no failed-login limit per account.** `FAILED_LOGIN_ATTEMPTS` is a
+  syntax error, `1064`. The limit is the server's `max_password_errors`,
+  which the tool account reads; its default, 4294967295, means no limit.
+  With the limit at 2, an account with no privilege, one with `CONNECTION
+  ADMIN` and one with `SUPER` were all blocked, `4150`, the right password
+  too. The count is `PASSWORD_ERRORS` in `information_schema.USERS`, per
+  account, from 11.8; it shows the tool account only its own row (RD1).
+- **The date of the last change, through the view**, moves with a change by
+  value, as the driver sends it, and with a rollover by `OR`. `ACCOUNT LOCK`
+  leaves it. `PASSWORD EXPIRE` sets it to `0`.
+- **Roles.** A recursive query over `mysql.roles_mapping` gives each
+  account's roles, nested ones included, with the path and `Admin_option`.
+  The default role is the view's `default_role` column, which §2.1 does not
+  grant, `1143`; a column grant on it reads it, and it holds a role's name
+  only.
+- **Privilege levels.** Static global privileges are the view's `*_priv`
+  columns, and schema, table, column, routine and proxy grants are in `db`,
+  `tables_priv`, `columns_priv`, `procs_priv` and `proxies_priv`, which §2.1
+  reads. A grant to `PUBLIC` is a row whose user is `PUBLIC` and host is
+  empty. The privileges split from `SUPER`, such as `CONNECTION ADMIN`, set
+  no column of the view (`08_split_privileges_probe.py`): an account that
+  holds only `CONNECTION ADMIN` reads as holding nothing.
+  `information_schema`'s `*_PRIVILEGES` views show the tool account none of
+  another account's grants.
+- **Cost.** With about 510 accounts and roles and 1000 tables, after one
+  untimed run, the role query took 0.25 s or less, and the table grants every
+  account reaches through its roles 1.3 to 2.9 s.
+
 ---
 
 ## 3. What must not be granted

@@ -374,6 +374,21 @@ specified yet; #1411 lists what to decide first, such as what the privilege
 report does about a cluster's other databases. Measured on 13.23 to 18.6
 (`02-postgres-privileges.md` §2.5, #1443).
 
+On MySQL and MariaDB the reports are not built either. An account is a user
+name at a host, so one name can be several accounts, each with its own
+state. With the grants the tool account holds today, MySQL reads each
+account's lock, expiry, lifetime and date of the last change, and every
+privilege level with the role path. It cannot read an account's
+`FAILED_LOGIN_ATTEMPTS`, which is kept beside a hash, nor its count of failed
+logins, which only 9.7.4 keeps in a table, behind a grant of its own. Nor a
+partial revoke, nor the default role without `SELECT` on
+`mysql.default_roles`. MariaDB reads only the expiry: the lock, the lifetime
+and the date of the last change are kept beside the hash, and a DBA would
+have to create a view to expose them. MariaDB has no failed-login limit per
+account, only the server's `max_password_errors`. Measured on 8.0.46 to
+9.7.4 and on 10.11.19 to 12.3.3 (`02-mysql-privileges.md` §2.4,
+`02-mariadb-privileges.md` §2.4, #1448).
+
 ---
 
 ## 9. Decisions

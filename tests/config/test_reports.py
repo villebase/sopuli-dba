@@ -121,7 +121,26 @@ def test_the_only_wildcard_is_a_star() -> None:
 def test_a_rule_needs_a_profile_or_settings() -> None:
     with pytest.raises(ConfigError) as caught:
         build_reports(document(accounts=[{"accounts": ["X"]}]))
-    assert "must declare `settings:` or `oracle.profile`" in str(caught.value)
+    assert "must declare `login:`, `settings:` or `oracle.profile`" in str(caught.value)
+
+
+@pytest.mark.parametrize("login", ["refused", "allowed"])
+def test_a_rule_may_state_only_login(login: str) -> None:
+    """An owner account locked on purpose needs nothing but `login: refused` (#1447)."""
+    built = build_reports(document(accounts=[{"accounts": ["ACME_OWNER"], "login": login}]))
+    assert built.accounts[0].login == login
+
+
+def test_a_rule_without_login_says_none() -> None:
+    built = build_reports(document(accounts=[{"accounts": ["X"], "oracle": on("P")}]))
+    assert built.accounts[0].login is None
+
+
+@pytest.mark.parametrize("value", ["locked", "no", True, None])
+def test_login_is_refused_or_allowed(value: Any) -> None:
+    with pytest.raises(ConfigError) as caught:
+        build_reports(document(accounts=[{"accounts": ["X"], "login": value}]))
+    assert "reports.accounts[0].login" in str(caught.value)
 
 
 def test_a_rule_needs_accounts() -> None:

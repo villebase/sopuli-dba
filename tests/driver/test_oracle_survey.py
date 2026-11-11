@@ -118,6 +118,7 @@ def test_local_account_in_a_pdb_reads_everything() -> None:
             failed_login_limit=5,
             failed_logins=2,
             unreadable=(),
+            locked_on_purpose=False,
         ),
     )
 
@@ -132,6 +133,7 @@ def test_common_account_in_a_pdb_has_no_lock_limits_or_count() -> None:
     assert account.common is True
     assert account.kept_in_root is True
     assert account.locked is None
+    assert account.locked_on_purpose is None
     assert account.password_lifetime is None
     assert account.failed_login_limit is None
     assert account.failed_logins is None
@@ -331,23 +333,28 @@ def test_oracle_maintained_is_read_where_the_column_exists() -> None:
 
 
 @pytest.mark.parametrize(
-    ("status", "locked"),
+    ("status", "locked", "on_purpose"),
     [
-        ("LOCKED", True),
-        ("LOCKED(TIMED)", True),
-        ("EXPIRED & LOCKED", True),
-        ("OPEN", False),
-        ("EXPIRED(GRACE)", False),
-        ("OPEN & IN ROLLOVER", False),
+        ("LOCKED", True, True),
+        ("LOCKED(TIMED)", True, False),
+        ("EXPIRED & LOCKED", True, True),
+        ("EXPIRED & LOCKED(TIMED)", True, False),
+        ("LOCKED & IN ROLLOVER", True, True),
+        ("OPEN", False, False),
+        ("EXPIRED(GRACE)", False, False),
+        ("OPEN & IN ROLLOVER", False, False),
     ],
 )
-def test_locked_statuses(status: str, locked: bool) -> None:
+def test_locked_statuses(status: str, locked: bool, on_purpose: bool) -> None:
+    """A lock set on purpose is told from a lockout by component, not by substring:
+    `LOCKED(TIMED)` contains `LOCKED` (#1447)."""
     accounts, _ = _run(
         [("ACME_APP_USER", status, "ACME_PROF", "NO", "N")],
         _limits("ACME_PROF"),
         own_container=True,
     )
     assert accounts[0].locked is locked
+    assert accounts[0].locked_on_purpose is on_purpose
 
 
 def test_a_limit_that_is_not_a_whole_number_is_unreadable() -> None:

@@ -11,7 +11,7 @@ Put the binding keys at the top level and the file reads like a straightforward
 target list. This is the shape most users will ever need.
 
 ```yaml
-# yaml-language-server: $schema=./sopuli-config-5.0.schema.json
+# yaml-language-server: $schema=./sopuli-config-5.1.schema.json
 version: 1
 
 vaults: {}          # named secret stores
@@ -487,7 +487,7 @@ PDB per tenant across three environments, HashiCorp Vault as master. It needs no
 `applications:` section.
 
 ```yaml
-# yaml-language-server: $schema=./sopuli-config-5.0.schema.json
+# yaml-language-server: $schema=./sopuli-config-5.1.schema.json
 version: 1
 
 runtime:
@@ -3453,6 +3453,8 @@ reports:
       oracle: { profile: TECH_NOEXPIRE }
     - accounts: [acme_app_user]
       settings: { password_lifetime: 90 }
+    - accounts: [acme_owner]
+      login: refused
   oracle:
     profiles:
       - name: TECH_NOEXPIRE
@@ -3463,14 +3465,27 @@ reports:
 |---|---|
 | `accounts[].accounts` | account names, or patterns whose only wildcard is `*`. Names are compared by `upper()` |
 | `accounts[].targets` | the same selector an application entry takes; absent means every target |
+| `accounts[].login` | `refused` or `allowed`: whether the accounts must be able to log in |
 | `accounts[].settings` | what the accounts' password limits must be |
 | `accounts[].oracle.profile` | the database profile the accounts must be on |
 | `oracle.profiles[].name` | a database profile |
 | `oracle.profiles[].settings` | what that profile's limits must be, for every account on it |
 
-An `accounts` entry needs `settings:`, `oracle.profile` or both, because one
-with neither has nothing to check. An `oracle.profiles` entry needs
-`settings:`. A profile name appears once in `oracle.profiles`.
+An `accounts` entry needs at least one of `login:`, `settings:` and
+`oracle.profile`, because one with none of them has nothing to check. An
+`oracle.profiles` entry needs `settings:`. A profile name appears once in
+`oracle.profiles`.
+
+**`login:` says what the lock must be** (#1447). Every account a rule covers
+has its lock checked. Without `login:`, and with `login: allowed`, any lock is
+a problem. `login: refused` is for an account nobody should log in as, such as
+a schema owner: the lock passes only where somebody set it, and an open
+account is a problem. A lockout after failed logins does not pass either. On
+Oracle that is `LOCKED(TIMED)`: somebody tried to log in, and the lock ends by
+itself after the profile's `PASSWORD_LOCK_TIME`. `LOCKED` and
+`EXPIRED & LOCKED` pass. Where the target cannot read the lock, as for a
+common account on a PDB target, the check is *not checked*. `login:` is a
+neutral word, so it stays outside the product blocks.
 
 **A key that only one product has goes in that product's block.**
 `settings:` holds the words that more than one product has. A rule's
@@ -3764,7 +3779,7 @@ error message for a file this long.
 ## 9b. The published schema
 
 P3 requires a published JSON Schema. It is
-[`docs/schemas/sopuli-config-5.0.schema.json`](../schemas/sopuli-config-5.0.schema.json),
+[`docs/schemas/sopuli-config-5.1.schema.json`](../schemas/sopuli-config-5.1.schema.json),
 Draft 2020-12, and it exists for the editor rather than for the tool: pointed at
 from a YAML language server, it gives completion and inline errors while somebody
 is editing a 130-line file, which is worth more than the validation itself.
@@ -3775,7 +3790,7 @@ the same constants the builders validate with — `TARGET_KEYS`, `VAULT_TYPES`,
 a section's keys and its type table disagree. Regenerate with:
 
 ```
-python -m sopuli.config.schema > docs/schemas/sopuli-config-5.0.schema.json
+python -m sopuli.config.schema > docs/schemas/sopuli-config-5.1.schema.json
 ```
 
 `tests/config/test_schema.py` fails when the committed file is not what the model
@@ -3860,7 +3875,7 @@ A schema nothing is pointed at is a file in a directory. The association is made
 from the config file itself, with a comment on the first line:
 
 ```yaml
-# yaml-language-server: $schema=./sopuli-config-5.0.schema.json
+# yaml-language-server: $schema=./sopuli-config-5.1.schema.json
 version: 1
 ```
 
@@ -3871,7 +3886,7 @@ description the generator wrote for it, and an unknown key is underlined where i
 was typed.
 
 **The path is relative to the YAML file**, not to the repository. Copy the schema
-next to the config, or point at it where it lives — `$schema=../sopuli-dba/docs/schemas/sopuli-config-5.0.schema.json`
+next to the config, or point at it where it lives — `$schema=../sopuli-dba/docs/schemas/sopuli-config-5.1.schema.json`
 is as valid as the form above.
 
 **The `$id` inside the schema is an identifier, not an address.** It reads like a
@@ -3992,8 +4007,9 @@ notices until a rotation.
   store comes only from a profile or `SOPULI_VAULT`, the file cannot show the
   pair: a run that draws both accounts refuses the write, and a run whose
   selectors leave one out does not see it ([#841](../decisions/log.md#841))
-- in `reports:` (§8a): a `reports.accounts` rule with neither `settings:` nor
-  `oracle.profile`, an empty `settings:` or `oracle:`, a setting that is neither
+- in `reports:` (§8a): a `reports.accounts` rule with none of `login:`,
+  `settings:` and `oracle.profile`, a `login:` other than `refused` or
+  `allowed`, an empty `settings:` or `oracle:`, a setting that is neither
   `unlimited` nor a whole number above 0, a pattern using a wildcard other than
   `*`, an account named twice (in one rule or across rules), an `oracle.profile`
   given to an account an application declares, a `reports.oracle.profiles` name

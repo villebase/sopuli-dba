@@ -117,7 +117,8 @@ have a problem, how many were not checked, how many have no rule, and how many
 are undeclared. Then:
 
 - **problems first, worst first:** a password that will expire on an account
-  whose rule says it must not; a locked account; the wrong profile; another
+  whose rule says it must not; a locked account, or an account that can log in
+  where its rule says `login: refused`; the wrong profile; another
   setting that differs from the rule; a declared account missing from a target
   it is declared for;
 - **then the accounts not checked, with no rule, and undeclared.** An
@@ -159,6 +160,15 @@ calls it OK. The count needs the optional
 for a common account in a PDB, because the count is kept in `CDB$ROOT`
 (`02-oracle-privileges.md` §2, [#1122](../decisions/log.md#1122)). Where the
 count cannot be read truthfully, the report shows `unknown`, never 0.
+
+**A rule's `login:` says what the lock must be**
+([#1447](../decisions/log.md#1447)). Without it, a lock is a problem. With
+`login: refused`, for an account nobody should log in as, such as a schema
+owner, an open account is the problem, and only a lock somebody set passes:
+`LOCKED` or `EXPIRED & LOCKED`, not `LOCKED(TIMED)`. A lockout after failed
+logins means somebody tried, and it ends by itself. The survey tells the two
+apart by the status's components, because `LOCKED(TIMED)` contains `LOCKED`.
+Two rules that set `login:` two ways leave the lock *not checked*.
 
 **Two checks on settings:**
 
@@ -321,7 +331,7 @@ settings. On another product, a rule reports *not checked* until that
 product's driver reads the settings.
 
 - `reports.accounts` rules name accounts by name or `*` pattern, give them
-  their expected settings or profile, and select targets as `applications:`
+  their expected login, settings or profile, and select targets as `applications:`
   and `personal_accounts:` do. A rule does not write a kind: the report
   derives it from where the file declares the account.
 - The list of database profiles is `reports.oracle.profiles`. Inside the

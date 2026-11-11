@@ -160,6 +160,110 @@ def test_a_locked_declared_account_is_a_problem() -> None:
     assert any(f.check == "lock" and f.detail == "locked: LOCKED(TIMED)" for f in row.findings)
 
 
+def lock_of(row: AccountRow) -> tuple[str, str]:
+    """The lock finding's outcome and detail."""
+    finding = next(f for f in row.findings if f.check == "lock")
+    return finding.outcome, finding.detail
+
+
+def test_login_refused_passes_on_a_lock_set_on_purpose() -> None:
+    """An owner account locked on purpose is what `login: refused` is for (#1447)."""
+    cfg = config(**rule(accounts=["ACME_OWNER"], login="refused"))
+    surveyed = account("ACME_OWNER", locked=True, locked_on_purpose=True, status="LOCKED")
+    row = rows(cfg, surveyed)["ACME_OWNER"]
+    assert lock_of(row) == ("ok", "locked on purpose: LOCKED")
+    assert row.state == REPORT_OK
+    assert row.kind == "technical"
+
+
+def test_login_refused_passes_on_a_compound_status_with_a_lock_set_on_purpose() -> None:
+    cfg = config(**rule(accounts=["ACME_OWNER"], login="refused"))
+    surveyed = account("ACME_OWNER", locked=True, locked_on_purpose=True, status="EXPIRED & LOCKED")
+    assert rows(cfg, surveyed)["ACME_OWNER"].state == REPORT_OK
+
+
+def test_login_refused_on_an_open_account_is_a_problem() -> None:
+    """The case the rule exists to catch: an owner account that can log in."""
+    cfg = config(**rule(accounts=["ACME_OWNER"], login="refused"))
+    row = rows(cfg, account("ACME_OWNER", locked=False, status="OPEN"))["ACME_OWNER"]
+    assert lock_of(row) == ("problem", "can log in: OPEN, rule says login refused")
+    assert row.state == REPORT_PROBLEM
+
+
+def test_login_refused_is_not_met_by_a_lockout_after_failed_logins() -> None:
+    """`LOCKED(TIMED)` is a lockout: somebody tried, and it ends by itself."""
+    cfg = config(**rule(accounts=["ACME_OWNER"], login="refused"))
+    surveyed = account("ACME_OWNER", locked=True, locked_on_purpose=False, status="LOCKED(TIMED)")
+    row = rows(cfg, surveyed)["ACME_OWNER"]
+    assert lock_of(row) == (
+        "problem",
+        "locked by failed logins: LOCKED(TIMED), rule says login refused",
+    )
+    assert row.state == REPORT_PROBLEM
+
+
+def test_login_refused_where_the_purpose_cannot_be_read_is_not_checked() -> None:
+    """Never OK without proof: a lock the target cannot classify is not checked."""
+    cfg = config(**rule(accounts=["ACME_OWNER"], login="refused"))
+    surveyed = account("ACME_OWNER", locked=True, locked_on_purpose=None, status="LOCKED")
+    row = rows(cfg, surveyed)["ACME_OWNER"]
+    assert lock_of(row)[0] == "not_checked"
+    assert row.state == NOT_CHECKED
+
+
+def test_login_refused_where_the_lock_cannot_be_read_is_not_checked() -> None:
+    cfg = config(**rule(accounts=["ACME_OWNER"], login="refused"))
+    surveyed = account("ACME_OWNER", locked=None, status="OPEN", unreadable=("kept in CDB$ROOT",))
+    row = rows(cfg, surveyed)["ACME_OWNER"]
+    assert lock_of(row) == ("not_checked", "kept in CDB$ROOT")
+
+
+def test_login_allowed_reads_any_lock_as_a_problem() -> None:
+    cfg = config(**rule(accounts=["ACME_SVC"], login="allowed"))
+    surveyed = account("ACME_SVC", locked=True, locked_on_purpose=True, status="LOCKED")
+    row = rows(cfg, surveyed)["ACME_SVC"]
+    assert lock_of(row) == ("problem", "locked: LOCKED")
+
+
+def test_login_allowed_alone_makes_an_open_account_ok() -> None:
+    """A rule with only `login:` states something, so the account is not `no rule`."""
+    cfg = config(**rule(accounts=["ACME_SVC"], login="allowed"))
+    row = rows(cfg, account("ACME_SVC", locked=False, status="OPEN"))["ACME_SVC"]
+    assert row.state == REPORT_OK
+
+
+def test_two_rules_that_expect_two_logins_leave_the_lock_not_checked() -> None:
+    cfg = config(
+        reports={
+            "accounts": [
+                {"accounts": ["ACME_*"], "login": "refused"},
+                {"accounts": ["ACME_OWNER*"], "login": "allowed"},
+            ]
+        }
+    )
+    row = rows(cfg, account("ACME_OWNER", locked=False, status="OPEN"))["ACME_OWNER"]
+    assert lock_of(row) == ("not_checked", "two rules expect different things")
+    assert row.state == NOT_CHECKED
+
+
+def test_a_login_rule_beside_a_settings_rule_both_apply() -> None:
+    """Rules combine field by field: one says the lock, another a setting."""
+    cfg = config(
+        reports={
+            "accounts": [
+                {"accounts": ["ACME_*"], "login": "refused"},
+                {"accounts": ["ACME_OWNER"], "settings": {"password_lifetime": 90}},
+            ]
+        }
+    )
+    surveyed = account(
+        "ACME_OWNER", locked=True, locked_on_purpose=True, status="LOCKED", password_lifetime=60
+    )
+    row = rows(cfg, surveyed)["ACME_OWNER"]
+    assert row.state == REPORT_OK
+    assert {f.check for f in row.findings} == {"lock", "password_lifetime"}
+
+
 def test_a_declared_name_that_is_not_there_is_missing() -> None:
     cfg = config(**rule(accounts=["ACME_GONE_USER"], profile="P"))
     row = rows(cfg)["ACME_GONE_USER"]

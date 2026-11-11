@@ -992,13 +992,15 @@ class ReportAccountRule:
     declares nothing a changing command may act on: a name here is not a
     declaration for invariant 5 (UC-5 §7). ``profile`` is the profile the
     accounts must be on, written ``oracle.profile`` because only Oracle has
-    one; ``settings`` is what their password limits must be.
+    one; ``settings`` is what their password limits must be. ``login`` is
+    ``refused`` or ``allowed``, or ``None`` where the rule does not say.
     """
 
     accounts: tuple[str, ...]
     targets: TargetSelector = field(default_factory=TargetSelector)
     profile: str | None = None
     settings: Settings = field(default_factory=Settings)
+    login: str | None = None
 
 
 @dataclass(frozen=True)

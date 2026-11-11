@@ -24,6 +24,7 @@ from typing import Any
 from sopuli.config.applications import account_owners, build_target_selector
 from sopuli.config.errors import ROOT, ConfigError, KeyPath
 from sopuli.config.fields import (
+    choice,
     describe,
     mapping,
     optional_string,
@@ -43,7 +44,14 @@ from sopuli.config.model import (
 )
 
 REPORTS_KEYS = ("accounts", "oracle")
-REPORT_ACCOUNT_KEYS = ("accounts", "targets", "settings", "oracle")
+REPORT_ACCOUNT_KEYS = ("accounts", "targets", "login", "settings", "oracle")
+
+#: What a rule's `login:` takes (#1447). `refused`: the account must not be able
+#: to log in, so only a lock somebody set passes, and a lockout after failed
+#: logins does not. `allowed`: any lock is a problem, as it is with no `login:`.
+LOGIN_REFUSED = "refused"
+LOGIN_ALLOWED = "allowed"
+LOGIN_VALUES = (LOGIN_REFUSED, LOGIN_ALLOWED)
 #: `reports.oracle`: what only Oracle has, for the whole section.
 ORACLE_REPORTS_KEYS = ("profiles",)
 #: `reports.accounts[].oracle`: what only Oracle has, for one rule.
@@ -204,17 +212,21 @@ def _build_account_rule(raw: Any, *, at: KeyPath) -> ReportAccountRule:
     settings = Settings()
     if "settings" in entry:
         settings = _build_settings(entry["settings"], at=at.key("settings"))
-    if profile is None and settings.is_empty:
+    login = None
+    if "login" in entry:
+        login = choice(entry["login"], allowed=LOGIN_VALUES, at=at.key("login"), noun="login")
+    if login is None and profile is None and settings.is_empty:
         raise ConfigError(
-            "must declare `settings:` or `oracle.profile`",
+            "must declare `login:`, `settings:` or `oracle.profile`",
             at=at,
-            hint="a rule with neither has nothing to check",
+            hint="a rule with none of them has nothing to check",
         )
     return ReportAccountRule(
         accounts=accounts,
         targets=build_target_selector(entry.get("targets"), at=at.key("targets")),
         profile=profile,
         settings=settings,
+        login=login,
     )
 
 

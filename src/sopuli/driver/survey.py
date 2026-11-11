@@ -45,6 +45,12 @@ class SurveyedAccount:
     a rule names it (UC-5 §4, #1438). In an application container it is false:
     where the values are kept there was not measured, and an
     application-common user's own container may be the target itself.
+
+    ``locked_on_purpose`` is whether somebody set the lock, as against a lockout
+    after failed logins: on Oracle, ``LOCKED`` rather than ``LOCKED(TIMED)``. A
+    rule's ``login: refused`` is met only by a lock set on purpose (#1447).
+    ``None`` where ``locked`` is ``None``, or where the product cannot tell the
+    two apart.
     """
 
     name: str
@@ -58,3 +64,4 @@ class SurveyedAccount:
     failed_logins: int | None
     unreadable: tuple[str, ...] = ()
     kept_in_root: bool = False
+    locked_on_purpose: bool | None = None

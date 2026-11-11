@@ -34,7 +34,7 @@ from sopuli.config.model import (
     ReportAccountRule,
     Settings,
 )
-from sopuli.config.products import fold_mysql_host, mysql_account, same_mysql_host
+from sopuli.config.products import account_key, mysql_account, same_mysql_host
 from sopuli.config.reports import LOGIN_REFUSED, UNLIMITED, is_pattern
 from sopuli.config.selection import select
 from sopuli.config.targets import USER_AT_HOST_TYPES
@@ -347,18 +347,22 @@ class _Naming:
     personal rule on these targets, so only a report rule can hold one.
     """
 
-    user_at_host: bool
+    #: The target's `type:`, or ``""`` for a target the config lacks.
+    product: str
+
+    @property
+    def user_at_host(self) -> bool:
+        return self.product in USER_AT_HOST_TYPES
 
     def reaches(self, name: str) -> bool:
         """Whether a name the file writes can name an account on this target."""
         return not self.user_at_host or mysql_account(name) is not None
 
     def key(self, name: str) -> object:
-        if not self.user_at_host:
-            return name.upper()
-        split = mysql_account(name)
-        # A name without a host keys as itself and is equal to no account's.
-        return name if split is None else (split[0], fold_mysql_host(split[1]))
+        """UC-1's own key (:func:`~sopuli.config.products.account_key`), so the
+        report and the verbs cannot compare names two ways. A name without a
+        host keys as itself and is equal to no account's."""
+        return account_key(self.product)(name)
 
     def shown(self, name: str) -> str:
         return name if self.user_at_host else name.upper()
@@ -376,8 +380,8 @@ class _Naming:
 def _naming(config: Config, target: str) -> _Naming:
     for expanded in config.expanded_targets:
         if expanded.name == target:
-            return _Naming(user_at_host=expanded.target.type in USER_AT_HOST_TYPES)
-    return _Naming(user_at_host=False)
+            return _Naming(expanded.target.type)
+    return _Naming("")
 
 
 def _bound_policies(config: Config, target: str, naming: _Naming) -> dict[object, Policy | None]:

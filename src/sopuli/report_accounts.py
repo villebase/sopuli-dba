@@ -43,7 +43,7 @@ from sopuli.config.reports import (
     is_pattern,
 )
 from sopuli.config.selection import select
-from sopuli.config.targets import USER_AT_HOST_TYPES
+from sopuli.config.targets import ORACLE, USER_AT_HOST_TYPES
 from sopuli.driver.registry import DRIVERS
 from sopuli.driver.survey import SurveyedAccount
 from sopuli.personal import rules_for
@@ -349,8 +349,9 @@ class _Naming:
     On MySQL and MariaDB the user part compares exactly and the host without
     ASCII case, as UC-1 compares them (#1202, decision 3). ``key`` is equal for
     two names that are one account, and ``shown`` is how a name the file
-    declares is spelled in a row: upper case where names compare by
-    ``upper()``, as written where case tells two accounts apart.
+    declares is spelled in a row, such as a missing account's: upper case on
+    Oracle, which keeps an unquoted name in upper case, and as the file writes
+    it on every other product (#1465, option B).
 
     A rule's name without a host reaches no account on such a target, and is
     never reported missing there (decided on #1461): it names an account on
@@ -376,7 +377,8 @@ class _Naming:
         return account_key(self.product)(name)
 
     def shown(self, name: str) -> str:
-        return name if self.user_at_host else name.upper()
+        # A target the config lacks has no product, and keeps the old spelling.
+        return name.upper() if self.product in (ORACLE, "") else name
 
     def matches(self, pattern: str, name: str) -> bool:
         """Whether a rule's ``*`` pattern reaches the account ``name``."""

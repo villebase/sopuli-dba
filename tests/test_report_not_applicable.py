@@ -8,6 +8,8 @@ lacks, from the target's `type:`, with no connection. Fictional names only.
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -17,10 +19,12 @@ from sopuli.config.loading import build_config
 from sopuli.config.model import Config
 from sopuli.driver.registry import DRIVERS
 from sopuli.driver.survey import SurveyedAccount
+from sopuli.output.document import SCHEMA_VERSION
 from sopuli.report_accounts import (
     CHECKS,
     NO_RULE,
     NOT_APPLICABLE_OUTCOME,
+    OUTCOMES,
     REPORT_OK,
     REPORT_PROBLEM,
     AccountRow,
@@ -28,6 +32,13 @@ from sopuli.report_accounts import (
     exit_code,
     missing_profiles,
     not_applicable_on,
+)
+
+SCHEMA = (
+    Path(__file__).resolve().parents[1]
+    / "docs"
+    / "schemas"
+    / f"sopuli-run-{SCHEMA_VERSION}.schema.json"
 )
 
 PG = "pg-dev"
@@ -130,10 +141,43 @@ def test_an_account_whose_every_stated_check_is_not_applicable_has_no_rule() -> 
     cfg = config({"accounts": ["ACME_SVC"], "settings": {"password_lifetime": 90}})
     found = row(cfg, PG, account("ACME_SVC"))
     assert found.state == NO_RULE
-    assert outcome(found, "profile") == (
-        "no_rule",
-        "no rule states a check this product has (password_lifetime: not applicable)",
+    # The finding stays, so the run document names the check (review of #1463).
+    assert outcome(found, "password_lifetime") == (
+        NOT_APPLICABLE_OUTCOME,
+        "this product has no password_lifetime",
     )
+    assert {f.check for f in found.findings} == {"lock", "password_lifetime"}
+
+
+def test_a_lock_on_an_account_whose_checks_are_not_applicable_is_still_a_problem() -> None:
+    cfg = config({"accounts": ["ACME_SVC"], "settings": {"password_lifetime": 90}})
+    found = row(cfg, PG, account("ACME_SVC", locked=True, status="NOLOGIN"))
+    assert found.state == REPORT_PROBLEM
+
+
+def test_every_outcome_is_in_the_published_schema() -> None:
+    """A tripwire: the run schema's outcome enum is the module's `OUTCOMES`."""
+    schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
+    enum = _find_outcome_enum(schema)
+    assert tuple(enum) == OUTCOMES
+
+
+def _find_outcome_enum(node: Any) -> list[str]:
+    """The `outcome` enum of a `report accounts` finding, wherever it sits."""
+    if isinstance(node, dict):
+        outcome_node = node.get("properties", {}).get("outcome")
+        if isinstance(outcome_node, dict) and "no_rule" in outcome_node.get("enum", ()):
+            return list(outcome_node["enum"])
+        for value in node.values():
+            found = _find_outcome_enum(value)
+            if found:
+                return found
+    if isinstance(node, list):
+        for value in node:
+            found = _find_outcome_enum(value)
+            if found:
+                return found
+    return []
 
 
 def test_an_oracle_profile_on_another_product_is_not_applicable() -> None:

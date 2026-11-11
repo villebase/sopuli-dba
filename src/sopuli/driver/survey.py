@@ -98,8 +98,10 @@ class AccountSurvey(Protocol):
     One read of the target, with nothing bound and no password or verifier
     column. The accounts come ordered by name. The second value is every
     profile the target has, by name, which `report accounts` compares with the
-    profiles the config expects (#1390); a product with no profiles returns an
-    empty set, and its profile check is *not applicable* (#1458).
+    profiles the config expects (#1390). A product with no profiles returns an
+    empty set, and its driver registry entry lists ``profile`` in
+    ``not_applicable``: the registry, not the empty set, makes the check *not
+    applicable* and stops a missing profile being reported (#1458).
     """
 
     def survey_with_profiles(self) -> tuple[tuple[SurveyedAccount, ...], frozenset[str]]:

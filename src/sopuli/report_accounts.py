@@ -212,7 +212,8 @@ def evaluate(
             application=kind == APPLICATION,
         )
         findings = _check(surveyed, expectation, not_applicable)
-        built.append(_row(target, surveyed, kind, findings, _state(findings)))
+        state = _state(findings, login_stated=expectation.login is not None)
+        built.append(_row(target, surveyed, kind, findings, state))
 
     for name in _declared_names(rules, applications, personal_names):
         if name in found:
@@ -459,35 +460,19 @@ def _check(
 
     A stated check the product lacks, such as `password_lifetime` on
     PostgreSQL or an `oracle.profile` on any product but Oracle, is
-    `not_applicable` (#1458). Where every check the file states is one of
-    those, and it states no `login:`, the file says nothing this product can
-    compare: the account is `no rule`, and the detail names the checks.
+    `not_applicable` (#1458). Each stays in the findings, so the run document
+    names it; :func:`_state` decides what an account whose every stated check
+    is one of those is.
     """
     findings = _stated(surveyed, expectation)
     if not not_applicable:
         return findings
-    marked = tuple(
+    return tuple(
         Finding(f.check, NOT_APPLICABLE_OUTCOME, f"this product has no {f.check}")
         if f.check in not_applicable and f.outcome != NO_RULE_OUTCOME
         else f
         for f in findings
     )
-    stated = [f for f in marked if f.check != "lock"]
-    if (
-        stated
-        and expectation.login is None
-        and all(f.outcome == NOT_APPLICABLE_OUTCOME for f in stated)
-    ):
-        lacking = ", ".join(f.check for f in stated)
-        return (
-            marked[0],
-            Finding(
-                "profile",
-                NO_RULE_OUTCOME,
-                f"no rule states a check this product has ({lacking}: not applicable)",
-            ),
-        )
-    return marked
 
 
 def _stated(surveyed: SurveyedAccount, expectation: _Expectation) -> tuple[Finding, ...]:
@@ -630,13 +615,23 @@ def _limit_text(value: Limit, unit: str) -> str:
     return UNLIMITED if value == UNLIMITED else f"{value}{unit}"
 
 
-def _state(findings: Sequence[Finding]) -> str:
+def _state(findings: Sequence[Finding], *, login_stated: bool = False) -> str:
+    """An account's state from its findings, worst first.
+
+    A `not_applicable` finding never makes an account worse. But where every
+    check the file states is one the product lacks, and no `login:` makes the
+    lock a stated check, the file says nothing this product can compare: the
+    account is `no rule`, its findings still naming each check (#1458).
+    """
     outcomes = {finding.outcome for finding in findings}
     if PROBLEM in outcomes:
         return REPORT_PROBLEM
     if NOT_CHECKED_OUTCOME in outcomes:
         return NOT_CHECKED
     if NO_RULE_OUTCOME in outcomes:
+        return NO_RULE
+    stated = [f for f in findings if f.check != "lock" or login_stated]
+    if stated and all(f.outcome == NOT_APPLICABLE_OUTCOME for f in stated):
         return NO_RULE
     return REPORT_OK
 

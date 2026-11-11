@@ -158,6 +158,27 @@ def test_problems_first_then_the_count(write_config: WriteConfig, sessions: Any)
     assert "2 accounts OK" in text
 
 
+class _NoSurvey:
+    """A session that connects but cannot survey its accounts (no `AccountSurvey`)."""
+
+    def close(self) -> None:
+        return None
+
+
+def test_a_session_without_the_survey_is_not_supported_never_unreachable(
+    write_config: WriteConfig, sessions: Any
+) -> None:
+    """From the review of #1463: the `AccountSurvey` check in `_report_target`."""
+    sessions["prod-alpha"] = lambda *_: _NoSurvey()
+    result = report(write_config, "--target", "prod-alpha")
+    text = click.unstyle(result.output)
+    assert "prod-alpha  not supported" in text
+    assert "this driver cannot survey its accounts and profiles" in text
+    assert "could not be reached" not in text
+    # The only target cannot run the report, so nothing could run: exit 5.
+    assert result.exit_code == ExitCode.UNSUPPORTED_CAPABILITY, result.output
+
+
 def test_all_lists_every_account(write_config: WriteConfig, sessions: Any) -> None:
     text = click.unstyle(report(write_config, "--target", "prod-alpha", "--all").output)
     assert "ACME_BATCH_USER" in text

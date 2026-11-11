@@ -2383,8 +2383,8 @@ from run schema 1.93, `not_applicable`: the target's product has no concept of
 the check, such as `password_lifetime` on PostgreSQL or an `oracle.profile` on
 any product but Oracle (#1458). It is never a gap, so it never sets the exit
 code and never makes an account `NOT_CHECKED`. An account whose every stated
-check is `not_applicable`, with no `login:`, is `NO_RULE`, and its finding's
-detail names the checks.
+check is `not_applicable`, with no `login:`, is `NO_RULE`, and its
+`findings[]` still list each of those checks as `not_applicable`.
 
 `PROFILE_MISSING`, from run schema 1.86, is about a target, not an account, so
 its `account` is `-`. A profile that a `reports.accounts` rule or an

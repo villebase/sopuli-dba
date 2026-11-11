@@ -10,8 +10,9 @@ rules, and the report decides what a database's answer means
 `failed_login_limit` say what is expected, and each product reads them from
 where it keeps them (UC-5 §7). A value is `unlimited` or a whole number that the
 database's value must not exceed. A key that only one product has goes in that
-product's block: `oracle:` on a rule holds `profile:`, and `oracle:` on the
-section holds `profiles:`, the list of database profiles.
+product's block: `oracle:` on a rule holds `profile:`, `oracle:` on the
+section holds `profiles:`, the list of database profiles, and `postgresql:` on
+a rule holds `valid_until:`.
 
 **A rule declares nothing for invariant 5.** A name in `reports.accounts` lets
 the report check an account; it does not let any changing command touch it.
@@ -42,10 +43,11 @@ from sopuli.config.model import (
     ReportAccountRule,
     Reports,
     Settings,
+    ValidUntilRule,
 )
 
 REPORTS_KEYS = ("accounts", "oracle")
-REPORT_ACCOUNT_KEYS = ("accounts", "targets", "login", "settings", "oracle")
+REPORT_ACCOUNT_KEYS = ("accounts", "targets", "login", "settings", "oracle", "postgresql")
 
 #: What a rule's `login:` takes (#1447). `refused`: the account must not be able
 #: to log in, so only a lock somebody set passes, and a lockout after failed
@@ -57,6 +59,15 @@ LOGIN_VALUES: tuple[Login, ...] = (LOGIN_REFUSED, LOGIN_ALLOWED)
 ORACLE_REPORTS_KEYS = ("profiles",)
 #: `reports.accounts[].oracle`: what only Oracle has, for one rule.
 ORACLE_RULE_KEYS = ("profile",)
+#: `reports.accounts[].postgresql`: what only PostgreSQL has, for one rule
+#: (#1459).
+POSTGRESQL_RULE_KEYS = ("valid_until",)
+#: What `postgresql.valid_until` takes. `required`: a `VALID UNTIL` in the
+#: future. `forbidden`: no date, or `infinity`, which is how `ALTER ROLE`
+#: removes one.
+VALID_UNTIL_REQUIRED: ValidUntilRule = "required"
+VALID_UNTIL_FORBIDDEN: ValidUntilRule = "forbidden"
+VALID_UNTIL_VALUES: tuple[ValidUntilRule, ...] = (VALID_UNTIL_REQUIRED, VALID_UNTIL_FORBIDDEN)
 DB_PROFILE_KEYS = ("name", "settings")
 SETTINGS_KEYS = ("password_lifetime", "failed_login_limit")
 
@@ -219,9 +230,10 @@ def _build_account_rule(raw: Any, *, at: KeyPath) -> ReportAccountRule:
         login = cast(
             Login, choice(entry["login"], allowed=LOGIN_VALUES, at=at.key("login"), noun="login")
         )
-    if login is None and profile is None and settings.is_empty:
+    valid_until = _postgresql_valid_until(entry, at=at)
+    if login is None and profile is None and settings.is_empty and valid_until is None:
         raise ConfigError(
-            "must declare `login:`, `settings:` or `oracle.profile`",
+            "must declare `login:`, `settings:`, `oracle.profile` or `postgresql.valid_until`",
             at=at,
             hint="a rule with none of them has nothing to check",
         )
@@ -231,6 +243,7 @@ def _build_account_rule(raw: Any, *, at: KeyPath) -> ReportAccountRule:
         profile=profile,
         settings=settings,
         login=login,
+        valid_until=valid_until,
     )
 
 
@@ -240,6 +253,24 @@ def _oracle_rule_profile(entry: dict[str, Any], *, at: KeyPath) -> str | None:
     if block is None:
         return None
     return optional_string(block, "profile", at=at.key("oracle"))
+
+
+def _postgresql_valid_until(entry: dict[str, Any], *, at: KeyPath) -> ValidUntilRule | None:
+    """A rule's `postgresql.valid_until`, or ``None`` where the rule has no `postgresql:` block."""
+    block = _product_block(entry, "postgresql", allowed=POSTGRESQL_RULE_KEYS, at=at)
+    if block is None:
+        return None
+    block_at = at.key("postgresql")
+    # `choice` has checked the value against VALID_UNTIL_VALUES; the cast only says so.
+    return cast(
+        ValidUntilRule,
+        choice(
+            block["valid_until"],
+            allowed=VALID_UNTIL_VALUES,
+            at=block_at.key("valid_until"),
+            noun="valid_until",
+        ),
+    )
 
 
 def _build_db_profile(raw: Any, *, at: KeyPath) -> DbProfileRule:

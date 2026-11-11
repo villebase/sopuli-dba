@@ -6,7 +6,7 @@ for text output that keep it consistent with both.
 `sopuli/output/` produces them, and CI validates the output against the
 published schemas.
 
-Schemas: [`../schemas/sopuli-run-1.93.schema.json`](../schemas/sopuli-run-1.93.schema.json),
+Schemas: [`../schemas/sopuli-run-1.94.schema.json`](../schemas/sopuli-run-1.94.schema.json),
 [`../schemas/sopuli-event-1.25.schema.json`](../schemas/sopuli-event-1.25.schema.json)
 Examples, each from a real run:
 [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json),
@@ -2385,6 +2385,12 @@ any product but Oracle (#1458). It is never a gap, so it never sets the exit
 code and never makes an account `NOT_CHECKED`. An account whose every stated
 check is `not_applicable`, with no `login:`, is `NO_RULE`, and its
 `findings[]` still list each of those checks as `not_applicable`.
+
+**A finding's `check`** is `password_lifetime`, `lock`, `profile`,
+`failed_login_limit` or `present`, and, from run schema 1.94, `valid_until`: a
+PostgreSQL role's `VALID UNTIL` against a rule's `postgresql.valid_until`
+(#1459). A date in the past is a `valid_until` problem whether or not a rule
+states the key. On every other product the check is `not_applicable`.
 
 `PROFILE_MISSING`, from run schema 1.86, is about a target, not an account, so
 its `account` is `-`. A profile that a `reports.accounts` rule or an

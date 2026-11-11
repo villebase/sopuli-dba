@@ -134,6 +134,13 @@ def _held(condition: str) -> str:
     )
 
 
+#: Whether the role ``r`` was made by ``initdb``. `report accounts` shares it.
+BUILT_IN = f"r.oid < {FIRST_NORMAL_OID}"
+
+#: Whether the role ``r``'s ``VALID UNTIL`` has passed, by the server's clock.
+#: `report accounts` shares it, so it and `creds status` agree.
+EXPIRED_NOW = "coalesce(r.rolvaliduntil < now(), false)"
+
 #: The memberships are walked twice. The first walk follows every chain of
 #: grants whatever their options, for guardrail 4: a member that holds a
 #: guarded role only with ``ADMIN OPTION`` can still grant it on, so it is
@@ -147,9 +154,9 @@ def _held(condition: str) -> str:
 #: without supautils gives ``NULL`` rather than an error.
 ROLE_QUERY = (
     "select r.rolname, r.rolsuper, r.rolcanlogin, r.rolreplication, r.rolbypassrls, "
-    f"r.rolcreaterole, r.oid < {FIRST_NORMAL_OID}, r.rolname = session_user, "
+    f"r.rolcreaterole, {BUILT_IN}, r.rolname = session_user, "
     "case when isfinite(r.rolvaliduntil) then r.rolvaliduntil end, "
-    "coalesce(r.rolvaliduntil < now(), false), "
+    f"{EXPIRED_NOW}, "
     f"{_held('true')}, {_held(COUNTING_GRANT)}, "
     f"current_setting('{RESERVED_ROLES}', true) "
     "from pg_roles r where upper(r.rolname) = upper(%s) "

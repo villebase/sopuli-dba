@@ -11,9 +11,11 @@ which a caller finds with ``getattr``.
 **For a new product** (#1458): implement :class:`AccountSurvey`, fill each
 field the product reads, set a field it cannot read truthfully to ``None``
 with a reason, and list ``report.accounts`` in the driver registry's
-``commands``. A check the product has no concept of is the registry's
-``not_applicable``, not a ``None`` here: ``None`` means a gap somebody could
-close, such as a missing grant.
+``commands``. A field the product has no such value for is ``None`` too,
+with a reason that says so, as PostgreSQL's ``password_lifetime`` is. What
+makes its check *not applicable* rather than *not checked* is the registry's
+``not_applicable``, never the ``None``: by itself a ``None`` reads as a gap
+somebody could close, such as a missing grant.
 
 A field the target cannot read truthfully is ``None``, never a guess, and
 :attr:`SurveyedAccount.unreadable` says why. On an Oracle PDB, for example, a

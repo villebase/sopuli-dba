@@ -234,15 +234,17 @@ count:
   how a group role is written, so most such roles are not locked accounts.
   Without `login:`, a `NOLOGIN` role is not a problem. With `login: refused`
   it passes, and a role that can log in is the problem. With `login: allowed`,
-  `NOLOGIN` is the problem. The status column shows `NOLOGIN`, `EXPIRED` or
-  `OPEN`, as `creds status` does.
+  `NOLOGIN` is the problem. A role an application logs in as must be able to
+  log in, so there `NOLOGIN` is a problem whatever a pattern's `login:` says.
+  The status column shows `NOLOGIN`, `EXPIRED` or `OPEN`, as `creds status`
+  does.
 - **A `VALID UNTIL` in the past is an expired password**, and a problem on
   every declared role, with or without a rule's key: no password logs the role
   in until somebody moves the date. A rule's `postgresql.valid_until` compares
   the date: `required` wants one in the future, and `forbidden` wants none.
   `ALTER ROLE` cannot remove a date, so `VALID UNTIL 'infinity'` is how a DBA
   removes one, and it counts as none. The date is compared on the server,
-  `rolvaliduntil < now()`, as `creds status` compares it.
+  `rolvaliduntil < now()`, as `creds status` compares it, and shown in UTC.
 - **A rule's `password_lifetime`, `failed_login_limit` and `oracle.profile` are
   *not applicable*.** The failed-login count is `unknown` on every role.
 

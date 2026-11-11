@@ -162,6 +162,8 @@ class _Expectation:
     login: Login | None = None
     #: A rule's `postgresql.valid_until`, or ``None`` where no rule says.
     valid_until: ValidUntilRule | None = None
+    #: Whether an application logs in as the account, so it must be able to.
+    application: bool = False
 
 
 def evaluate(
@@ -459,6 +461,7 @@ def _expectation(
         conflicts=conflicts,
         login=next(iter(logins), None),
         valid_until=next(iter(valid_untils), None),
+        application=application,
     )
 
 
@@ -504,6 +507,7 @@ def _stated(surveyed: SurveyedAccount, expectation: _Expectation) -> tuple[Findi
             surveyed,
             reasons.get("locked", _UNREAD),
             expectation.login,
+            application=expectation.application,
             count_reason=reasons.get("failed_logins")
             or reasons.get("failed_login_limit")
             or _UNREAD,
@@ -558,7 +562,12 @@ def _stated(surveyed: SurveyedAccount, expectation: _Expectation) -> tuple[Findi
 
 
 def _lock(
-    surveyed: SurveyedAccount, reason: str, login: Login | None, *, count_reason: str
+    surveyed: SurveyedAccount,
+    reason: str,
+    login: Login | None,
+    *,
+    count_reason: str,
+    application: bool = False,
 ) -> Finding:
     """The lock against the rule's `login:`, or against "not locked" where none says.
 
@@ -574,6 +583,12 @@ def _lock(
     if surveyed.lock_is_login_attribute and surveyed.locked:
         # PostgreSQL's NOLOGIN, which is also how a group role is written: only
         # a rule's `login:` judges it (#1459).
+        if application:
+            # An application logs in as its account, so it must be able to,
+            # whatever a pattern's `login:` says (#1464 review).
+            return Finding(
+                "lock", PROBLEM, f"cannot log in: {surveyed.status}, an application logs in as it"
+            )
         if login is None:
             return Finding("lock", OK, f"{surveyed.status}, which only a rule's login: judges")
         if login == LOGIN_REFUSED:

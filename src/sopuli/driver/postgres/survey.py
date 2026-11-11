@@ -25,17 +25,21 @@ field                           PostgreSQL
 ``failed_logins``               ``None``: PostgreSQL keeps no count
 ==============================  ===============================================
 
-The expiry is compared on the server, ``rolvaliduntil < now()``, as
-:mod:`sopuli.driver.postgres.roles` compares it, so the report and `creds
-status` agree on which role has expired.
+The expiry is compared on the server, with the expression
+:mod:`sopuli.driver.postgres.roles` uses, so the report and `creds status`
+agree on which role has expired.
+
+``password_lifetime``, ``failed_login_limit`` and ``failed_logins`` are
+``None`` because PostgreSQL has no such value, and each reason says so. The
+registry's ``not_applicable`` turns the two checks into *not applicable*. The
+count is information, and shows as ``unknown`` with that reason.
 """
 
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Any
 
-from sopuli.driver.postgres.roles import EXPIRED, FIRST_NORMAL_OID, NOLOGIN, OPEN
+from sopuli.driver.postgres.roles import BUILT_IN, EXPIRED, EXPIRED_NOW, NOLOGIN, OPEN
 from sopuli.driver.protocol import Cursor
 from sopuli.driver.survey import SurveyedAccount, ValidUntil
 
@@ -45,15 +49,17 @@ NO_LIFETIME = "PostgreSQL has no password lifetime"
 NO_LIMIT = "PostgreSQL has no failed-login limit"
 NO_COUNT = "PostgreSQL keeps no failed-login count"
 
-#: One row per role, ordered by name. ``isfinite`` keeps ``infinity`` and
-#: ``-infinity`` out of the date column, which Python's ``datetime`` cannot
-#: hold; the text column names them instead.
+#: One row per role, ordered by name. The date comes as text, in UTC, and
+#: ``infinity`` or ``-infinity`` as the server spells them: the expiry is
+#: compared on the server, so no ``datetime`` is built, and a date Python's
+#: ``datetime`` cannot hold, such as one after the year 9999, cannot fail the
+#: read (#1464 review).
 SURVEY_QUERY = (
-    "select r.rolname, r.rolcanlogin, "
-    f"r.oid < {FIRST_NORMAL_OID}, "
-    "case when isfinite(r.rolvaliduntil) then r.rolvaliduntil end, "
-    "case when not isfinite(r.rolvaliduntil) then r.rolvaliduntil::text end, "
-    "coalesce(r.rolvaliduntil < now(), false) "
+    f"select r.rolname, r.rolcanlogin, {BUILT_IN}, "
+    "case when isfinite(r.rolvaliduntil) "
+    "then to_char(r.rolvaliduntil at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') "
+    "else r.rolvaliduntil::text end, "
+    f"{EXPIRED_NOW} "
     "from pg_roles r order by r.rolname"
 )
 
@@ -66,13 +72,8 @@ def survey(cursor: Cursor) -> tuple[SurveyedAccount, ...]:
 
 def surveyed_of(row: tuple[Any, ...]) -> SurveyedAccount:
     """One :data:`SURVEY_QUERY` row as a :class:`SurveyedAccount`."""
-    name, can_login, built_in, finite, infinite, expired = row
-    if isinstance(finite, datetime):
-        text: str | None = finite.isoformat(sep=" ")
-    elif infinite is not None:
-        text = str(infinite)
-    else:
-        text = None
+    name, can_login, built_in, valid_until, expired = row
+    text = None if valid_until is None else str(valid_until)
     status = NOLOGIN if not can_login else EXPIRED if expired else OPEN
     return SurveyedAccount(
         name=str(name),

@@ -2491,8 +2491,8 @@ reports:
 $ sopuli --config pg-report.yaml report accounts --all
 pg-dev  (16.15, 22 accounts read, 4 with a problem, 1 undeclared)
   ACCOUNT           KIND        PROFILE  STATUS   FAILED LOGINS  STATE            FINDING
-  acme_rpt_expired  technical   -        EXPIRED  unknown        REPORT_PROBLEM   valid_until: password expired: VALID UNTIL 2001-01-01 00:00:00+00:00, rule says forbidden
-  acme_rpt_temp     technical   -        OPEN     unknown        REPORT_PROBLEM   valid_until: VALID UNTIL 2099-01-01 00:00:00+00:00, rule says forbidden
+  acme_rpt_expired  technical   -        EXPIRED  unknown        REPORT_PROBLEM   valid_until: password expired: VALID UNTIL 2001-01-01T00:00:00Z, rule says forbidden
+  acme_rpt_temp     technical   -        OPEN     unknown        REPORT_PROBLEM   valid_until: VALID UNTIL 2099-01-01T00:00:00Z, rule says forbidden
   acme_rpt_batch    technical   -        NOLOGIN  unknown        REPORT_PROBLEM   lock: cannot log in: NOLOGIN, rule says login allowed
   ACME_RPT_GONE     technical   -        -        -              ACCOUNT_MISSING  present: not on this target
   sopuli_admin      undeclared  -        OPEN     unknown        UNDECLARED       not in config
@@ -2508,7 +2508,9 @@ past is a problem with or without `valid_until:`. The roles `initdb` made, such
 as `postgres` and the `pg_*` roles, are counted in the head line and left out
 unless a rule names them. PostgreSQL has no profile and keeps no failed-login
 count, so both read `-` and `unknown`. A rule's `password_lifetime`,
-`failed_login_limit` or `oracle.profile` is *not applicable* there.
+`failed_login_limit` or `oracle.profile` is *not applicable* there. A role an
+application logs in as must be able to log in, so `NOLOGIN` on one is a
+problem with or without `login:`.
 
 `report privileges` shows each account's effective privileges, through every
 role, for the same accounts. The service account needs `SELECT` on

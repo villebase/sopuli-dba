@@ -8,7 +8,6 @@ only against a rule's ``login:``, and ``VALID UNTIL`` against a rule's
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -47,8 +46,8 @@ SCHEMA = (
 
 PG = "pg-dev"
 ORACLE = "free-pdb"
-FUTURE = datetime(2099, 1, 1, tzinfo=UTC)
-PAST = datetime(2001, 1, 1, tzinfo=UTC)
+FUTURE = "2099-01-01T00:00:00Z"
+PAST = "2001-01-01T00:00:00Z"
 
 
 def config(*rules: dict[str, Any]) -> Config:
@@ -69,12 +68,12 @@ def role(
     *,
     can_login: bool = True,
     built_in: bool = False,
-    until: datetime | None = None,
+    until: str | None = None,
     infinite: str | None = None,
     expired: bool = False,
 ) -> SurveyedAccount:
     """A surveyed role, made from the row the query returns."""
-    return surveyed_of((name, can_login, built_in, until, infinite, expired))
+    return surveyed_of((name, can_login, built_in, until or infinite, expired))
 
 
 def row(cfg: Config, surveyed: SurveyedAccount, target: str = PG) -> AccountRow:
@@ -110,7 +109,7 @@ class FakeCursor:
 
 
 def test_the_survey_is_one_read_with_nothing_bound() -> None:
-    cursor = FakeCursor([("acme_web_user", True, False, None, None, False)])
+    cursor = FakeCursor([("acme_web_user", True, False, None, False)])
     (surveyed,) = survey(cursor)
     assert cursor.executed == [(SURVEY_QUERY, None)]
     assert surveyed.name == "acme_web_user"
@@ -155,7 +154,7 @@ def test_a_past_valid_until_is_expired() -> None:
     assert surveyed.status == "EXPIRED"
     assert surveyed.valid_until is not None
     assert surveyed.valid_until.expired
-    assert surveyed.valid_until.text == "2001-01-01 00:00:00+00:00"
+    assert surveyed.valid_until.text == "2001-01-01T00:00:00Z"
 
 
 def test_nologin_wins_over_expired_in_the_status() -> None:
@@ -210,6 +209,54 @@ def test_nologin_with_login_allowed_is_a_problem() -> None:
     )
 
 
+def test_survey_reads_the_date_as_utc_text() -> None:
+    """No `datetime` is built, so a date past the year 9999 cannot fail the read."""
+    assert "to_char(r.rolvaliduntil at time zone 'UTC'" in SURVEY_QUERY
+    assert role("acme_web_user", until="10000-01-01T00:00:00Z").valid_until == ValidUntil(
+        text="10000-01-01T00:00:00Z", expired=False
+    )
+
+
+def application_config(*rules: dict[str, Any]) -> Config:
+    """`acme_web_user` declared by an application on the PostgreSQL target."""
+    document: dict[str, Any] = {
+        "version": 1,
+        "vaults": {
+            "v": {
+                "type": "hashicorp",
+                "addr": "https://vault.example.com:8200",
+                "mount": "kv",
+                "kv_version": 2,
+                "auth": {"method": "token"},
+            }
+        },
+        "defaults": {"vault": "v"},
+        "targets": [{"name": PG, "type": "postgresql", "dsn": "pg-dev.example.com:5432"}],
+        "applications": [
+            {
+                "name": "acme",
+                "accounts": ["acme_web_user"],
+                "secret_template": "v:acme/{target}#DB_CREDENTIALS/{account}",
+            }
+        ],
+    }
+    if rules:
+        document["reports"] = {"accounts": list(rules)}
+    return build_config(document)
+
+
+def test_an_application_role_that_cannot_log_in_is_a_problem() -> None:
+    """The application logs in as it, with or without a rule (#1464 review)."""
+    refused = {"accounts": ["acme_*"], "login": "refused"}
+    for cfg in (application_config(), application_config(refused)):
+        found = row(cfg, role("acme_web_user", can_login=False))
+        assert outcome(found, "lock") == (
+            "problem",
+            "cannot log in: NOLOGIN, an application logs in as it",
+        )
+        assert found.state == REPORT_PROBLEM
+
+
 def test_an_undeclared_role_is_information() -> None:
     found = row(config(), role("acme_leftover", can_login=False))
     assert found.state == UNDECLARED
@@ -257,7 +304,7 @@ def test_a_past_date_is_a_problem_without_the_key() -> None:
     found = row(cfg, role("acme_web_user", until=PAST, expired=True))
     assert outcome(found, "valid_until") == (
         "problem",
-        "password expired: VALID UNTIL 2001-01-01 00:00:00+00:00",
+        "password expired: VALID UNTIL 2001-01-01T00:00:00Z",
     )
     assert found.state == REPORT_PROBLEM
 
@@ -278,7 +325,7 @@ def test_a_future_date_without_the_key_is_not_a_check() -> None:
 @pytest.mark.parametrize(
     ("wanted", "fields", "expected"),
     [
-        ("required", {"until": FUTURE}, ("ok", "VALID UNTIL 2099-01-01 00:00:00+00:00")),
+        ("required", {"until": FUTURE}, ("ok", "VALID UNTIL 2099-01-01T00:00:00Z")),
         ("required", {}, ("problem", "no VALID UNTIL, rule says required")),
         (
             "required",
@@ -290,7 +337,7 @@ def test_a_future_date_without_the_key_is_not_a_check() -> None:
             {"until": PAST, "expired": True},
             (
                 "problem",
-                "password expired: VALID UNTIL 2001-01-01 00:00:00+00:00, rule says required",
+                "password expired: VALID UNTIL 2001-01-01T00:00:00Z, rule says required",
             ),
         ),
         ("forbidden", {}, ("ok", "no VALID UNTIL")),
@@ -298,7 +345,7 @@ def test_a_future_date_without_the_key_is_not_a_check() -> None:
         (
             "forbidden",
             {"until": FUTURE},
-            ("problem", "VALID UNTIL 2099-01-01 00:00:00+00:00, rule says forbidden"),
+            ("problem", "VALID UNTIL 2099-01-01T00:00:00Z, rule says forbidden"),
         ),
         (
             "forbidden",

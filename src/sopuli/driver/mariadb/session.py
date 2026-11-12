@@ -33,7 +33,7 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any, ClassVar, NoReturn, TypeVar
@@ -42,16 +42,20 @@ import pymysql
 
 from sopuli.config.model import ExpandedTarget, Runtime
 from sopuli.driver.clusters import Identity
+from sopuli.driver.grants import SYSTEM, GrantSurvey
 from sopuli.driver.mariadb import account_state, roles, verification
 from sopuli.driver.mariadb import accounts as accounts_module
 from sopuli.driver.mariadb import password as password_module
+from sopuli.driver.mariadb import privilege_survey as privilege_module
 from sopuli.driver.mariadb import survey as survey_module
 from sopuli.driver.mariadb.account_state import AccountStates
+from sopuli.driver.mariadb.admin import PUBLIC
 from sopuli.driver.mariadb.errors import from_error
 from sopuli.driver.mariadb.limits import LIMIT
 from sopuli.driver.mariadb.privileges import audit as privilege_audit
 from sopuli.driver.mariadb.scope import observe, read_password_checks, require_read_write
 from sopuli.driver.mysql_family import account_statements
+from sopuli.driver.mysql_family import privilege_survey as privilege_rows
 from sopuli.driver.mysql_family.accounts import Principal, current_user, split
 from sopuli.driver.mysql_family.client import client_lines
 from sopuli.driver.mysql_family.connection import connect_arguments, require_tls
@@ -451,6 +455,38 @@ class MariadbSession(ClosesConnection):
         """
         states = self.account_states()
         return self._read_grants(lambda cursor: survey_module.survey(cursor, states)), frozenset()
+
+    def survey_privileges(self, accounts: Sequence[str], *, public: bool) -> GrantSurvey:
+        """Every privilege ``accounts`` hold, one row per path, for `report
+        privileges` (:mod:`~sopuli.driver.mariadb.privilege_survey`, #1483).
+
+        :class:`~sopuli.driver.grants.PrivilegeSurvey`. The global level is
+        not checked (decision A). The default roles are an optional read (R3):
+        without the column grant the server refuses it, ``1143``, and whether
+        a role is active without ``SET ROLE`` is not checked. Any other error
+        fails the read. ``public`` lists ``PUBLIC``'s grants once.
+        """
+        reasons: list[str] = []
+        defaults = None
+        try:
+            defaults = self._read_grants(privilege_module.read_defaults)
+        except DriverError as error:
+            if error.code != str(COLUMN_ACCESS_DENIED):
+                raise
+            reasons.append(privilege_module.NO_DEFAULTS)
+
+        def read(cursor: Any) -> GrantSurvey:
+            return privilege_rows.survey(
+                accounts,
+                privilege_module.read_edges(cursor),
+                privilege_module.read_objects(cursor),
+                privilege_rows.Activation(defaults=defaults),
+                unread={SYSTEM: privilege_module.GLOBAL_NOT_CHECKED},
+                reasons=reasons,
+                public=PUBLIC if public else None,
+            )
+
+        return self._read_grants(read)
 
     def account_states(self) -> AccountStates:
         """Each account's lock, lifetime and time of the last change, from the

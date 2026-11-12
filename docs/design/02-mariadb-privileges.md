@@ -117,8 +117,8 @@ four). Guardrail 9 reads the six tables (§5). Without the grant,
 11.8.9).
 
 **One optional column grant.** `SELECT (default_role)` on `mysql.user` reads
-each account's default role, for the privilege report, which does not read it
-yet (#1411, R3). It holds a role's name only. The audit counts it as held
+each account's default role, for the privilege report (#1411, R3, #1483).
+Without it, whether a role is active without `SET ROLE` is not checked. It holds a role's name only. The audit counts it as held
 where it is granted, and never as missing.
 
 ```sql
@@ -221,7 +221,8 @@ be refused as one ([#1346](../decisions/log.md#1346)).
 ### 2.4 What the reports can read
 
 `report accounts` (#1462) and `report history` (#1460) are built on MariaDB,
-and the privilege report is not (#1483). This is what the tool account can read for
+and so is the privilege report, without the global level (#1483). This is what
+the tool account can read for
 them with §2.1's grants, and what each further read would cost. It was
 measured on 10.11.19, 11.4.13, 11.8.9 and 12.3.3 (`15_report_read_probe.py`,
 #1448). `report accounts` reads `User`, `Host` and `password_expired` from

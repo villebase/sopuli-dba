@@ -16,16 +16,12 @@ The levels, as :attr:`~sopuli.driver.grants.GrantRow.level` names them:
   owner, as stored. With ``partial_revokes`` off it may be a pattern, such
   as ``acme%``. With it on, the server reads ``%`` and ``_`` as themselves,
   so it is one schema's name.
-- ``table``, ``routine`` and ``proxy``: ``tables_priv``, ``procs_priv`` and
-  ``proxies_priv``. The ``objects`` part. ``tables_priv`` does not say
-  whether the object is a table or a view, so its type is ``TABLE``. A proxy
-  grant's object is the account it proxies.
-- ``column``: ``columns_priv``. The ``columns`` part.
+- ``table``, ``routine``, ``proxy`` and ``column``: ``tables_priv``,
+  ``procs_priv``, ``proxies_priv`` and ``columns_priv``, which MariaDB reads
+  the same way (:mod:`~sopuli.driver.mysql_family.privilege_reads`).
 
 ``GRANT OPTION`` is listed as a privilege of its level, as ``SHOW GRANTS``
-spells it, and each privilege of the same holder and level is grantable. A
-column grant's ``GRANT OPTION`` is kept on its table in ``tables_priv``, so
-it makes the table's column privileges grantable too.
+spells it, and each privilege of the same holder and level is grantable.
 
 **Not checked:**
 
@@ -46,21 +42,14 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Any
 
-from sopuli.driver.grants import COLUMN, OBJECT, SCHEMA, SYSTEM
+from sopuli.driver.grants import SCHEMA, SYSTEM
 from sopuli.driver.mysql.admin import DB_PRIV_COLUMNS, PRIV_COLUMNS, read_mandatory_roles
 from sopuli.driver.mysql_family.accounts import Principal, text
-from sopuli.driver.mysql_family.grant_tables import set_members
+from sopuli.driver.mysql_family.privilege_reads import DATABASE, level, read_object_tables, yes
 from sopuli.driver.mysql_family.privilege_survey import Activation, Edge, Held
 
 GLOBAL_STATIC = "global static"
 GLOBAL_DYNAMIC = "global dynamic"
-DATABASE = "database"
-TABLE = "table"
-COLUMN_LEVEL = "column"
-ROUTINE = "routine"
-PROXY = "proxy"
-
-GRANT_OPTION = "GRANT OPTION"
 
 SETTINGS = "select @@global.partial_revokes, @@global.activate_all_roles_on_login"
 EDGES = "select FROM_USER, FROM_HOST, TO_USER, TO_HOST, WITH_ADMIN_OPTION from mysql.role_edges"
@@ -71,10 +60,6 @@ GLOBAL_ROWS = f"select User, Host, {', '.join(PRIV_COLUMNS)} from mysql.user"
 PRINCIPALS = "select User, Host from mysql.user"
 DYNAMIC = "select USER, HOST, PRIV, WITH_GRANT_OPTION from mysql.global_grants"
 SCHEMA_ROWS = f"select User, Host, Db, {', '.join(DB_PRIV_COLUMNS)} from mysql.db"
-TABLES = "select User, Host, Db, Table_name, Table_priv from mysql.tables_priv"
-COLUMNS = "select User, Host, Db, Table_name, Column_name, Column_priv from mysql.columns_priv"
-ROUTINES = "select User, Host, Db, Routine_name, Routine_type, Proc_priv from mysql.procs_priv"
-PROXIES = "select User, Host, Proxied_user, Proxied_host, With_grant from mysql.proxies_priv"
 
 PARTIAL_REVOKES = (
     "global privileges: @@partial_revokes is on, and a revoke of a global privilege on one "
@@ -113,7 +98,7 @@ def read_edges(cursor: Any) -> list[Edge]:
         Edge(
             member=Principal(text(to_user), text(to_host)),
             role=Principal(text(from_user), text(from_host)),
-            admin_option=_yes(admin),
+            admin_option=yes(admin),
         )
         for from_user, from_host, to_user, to_host, admin in cursor.fetchall()
     ]
@@ -142,7 +127,7 @@ def read_system(cursor: Any) -> list[Held]:
     cursor.execute(GLOBAL_ROWS)
     for user, host, *flags in cursor.fetchall():
         holder = Principal(text(user), text(host))
-        held += _level(holder, SYSTEM, GLOBAL_STATIC, _flagged(PRIV_COLUMNS, flags))
+        held += level(holder, SYSTEM, GLOBAL_STATIC, _flagged(PRIV_COLUMNS, flags))
     cursor.execute(DYNAMIC)
     for user, host, privilege, grant_option in cursor.fetchall():
         held.append(
@@ -151,7 +136,7 @@ def read_system(cursor: Any) -> list[Held]:
                 kind=SYSTEM,
                 level=GLOBAL_DYNAMIC,
                 privilege=text(privilege).upper(),
-                grantable=_yes(grant_option),
+                grantable=yes(grant_option),
             )
         )
     return held
@@ -163,98 +148,13 @@ def read_objects(cursor: Any) -> list[Held]:
     cursor.execute(SCHEMA_ROWS)
     for user, host, db, *flags in cursor.fetchall():
         names = _flagged(DB_PRIV_COLUMNS, flags)
-        held += _level(Principal(text(user), text(host)), SCHEMA, DATABASE, names, owner=text(db))
-    cursor.execute(TABLES)
-    # A column grant's GRANT OPTION is kept in tables_priv, on its table, and
-    # not in columns_priv (measured on 8.4.13, #1482).
-    grant_option: set[tuple[tuple[str, str], str, str]] = set()
-    for user, host, db, table, privileges in cursor.fetchall():
-        holder = Principal(text(user), text(host))
-        names = list(set_members(privileges))
-        if GRANT_OPTION in names:
-            grant_option.add((holder.key(), text(db), text(table)))
-        held += _level(
-            holder, OBJECT, TABLE, names, owner=text(db), name=text(table), object_type="TABLE"
-        )
-    cursor.execute(COLUMNS)
-    for user, host, db, table, column, privileges in cursor.fetchall():
-        holder = Principal(text(user), text(host))
-        held += _level(
-            holder,
-            COLUMN,
-            COLUMN_LEVEL,
-            list(set_members(privileges)),
-            owner=text(db),
-            name=text(table),
-            column=text(column),
-            grantable=(holder.key(), text(db), text(table)) in grant_option,
-        )
-    cursor.execute(ROUTINES)
-    for user, host, db, routine, kind, privileges in cursor.fetchall():
-        held += _level(
-            Principal(text(user), text(host)),
-            OBJECT,
-            ROUTINE,
-            list(set_members(privileges)),
-            owner=text(db),
-            name=text(routine),
-            object_type=text(kind).upper(),
-        )
-    cursor.execute(PROXIES)
-    for user, host, proxied_user, proxied_host, with_grant in cursor.fetchall():
-        held.append(
-            Held(
-                holder=Principal(text(user), text(host)),
-                kind=OBJECT,
-                level=PROXY,
-                privilege="PROXY",
-                name=str(Principal(text(proxied_user), text(proxied_host))),
-                object_type="ACCOUNT",
-                grantable=_yes(with_grant),
-            )
-        )
-    return held
-
-
-def _level(
-    holder: Principal,
-    kind: str,
-    level: str,
-    names: list[str],
-    *,
-    owner: str | None = None,
-    name: str | None = None,
-    object_type: str | None = None,
-    column: str | None = None,
-    grantable: bool = False,
-) -> list[Held]:
-    """One :class:`Held` per privilege of one grant, each grantable where the
-    grant holds ``GRANT OPTION``, or where ``grantable`` says so."""
-    grantable = grantable or GRANT_OPTION in names
-    return [
-        Held(
-            holder=holder,
-            kind=kind,
-            level=level,
-            privilege=privilege,
-            owner=owner,
-            name=name,
-            object_type=object_type,
-            column=column,
-            grantable=grantable,
-        )
-        for privilege in names
-    ]
+        held += level(Principal(text(user), text(host)), SCHEMA, DATABASE, names, owner=text(db))
+    return held + read_object_tables(cursor)
 
 
 def _flagged(columns: Iterable[str], flags: list[Any]) -> list[str]:
     """The privilege of each ``*_priv`` column that reads ``Y``."""
-    return [PRIV_COLUMNS[column] for column, flag in zip(columns, flags, strict=True) if _yes(flag)]
-
-
-def _yes(value: Any) -> bool:
-    """``Y`` in an ``enum('N','Y')`` column, or ``1`` in a flag."""
-    return text(value).upper() in ("Y", "1")
+    return [PRIV_COLUMNS[column] for column, flag in zip(columns, flags, strict=True) if yes(flag)]
 
 
 def _on(value: Any) -> bool:

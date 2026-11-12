@@ -2345,8 +2345,7 @@ suspended acme_dev_bob@localhost on 1 of 1 targets
 
 `report accounts` reads every account on each target and checks it against the
 `reports:` rules (`design/01-configuration.md` §8a). It changes nothing. It
-runs on every product. `report privileges` runs on Oracle, PostgreSQL and MySQL,
-and `report history` on every product.
+runs on every product, and so do `report privileges` and `report history`.
 
 Make two accounts on a profile whose passwords expire after 180 days, and one
 locked account that nothing declares. As SYS in the PDB:
@@ -2870,6 +2869,58 @@ listed under its own name, and the functions and views it is granted on are
 counted too. The default privilege is what `acme_rp_owner`'s future tables
 will grant. `--detail` lists each one, with `KIND` naming the level, such as
 `object (default for acme_rp_owner)`.
+
+On *A MariaDB server*, as root, make the same shape. A role has no host, and
+`PUBLIC` is a role every account holds:
+
+```sql
+CREATE DATABASE acme;
+CREATE TABLE acme.orders (n int, total int);
+CREATE TABLE acme.notices (n int);
+CREATE PROCEDURE acme.close_day() SELECT 1;
+CREATE ROLE acme_top;
+CREATE ROLE acme_mid;
+GRANT SELECT ON acme.orders TO acme_top;
+GRANT acme_top TO acme_mid;
+CREATE USER 'acme_rp'@'%' IDENTIFIED BY '…';
+CREATE USER 'acme_rp_ops'@'localhost' IDENTIFIED BY '…';
+GRANT acme_mid TO 'acme_rp'@'%';
+SET DEFAULT ROLE acme_mid FOR 'acme_rp'@'%';
+GRANT acme_top TO 'acme_rp_ops'@'localhost' WITH ADMIN OPTION;
+GRANT SELECT ON `acme%`.* TO 'acme_rp'@'%';
+GRANT INSERT ON acme.orders TO 'acme_rp'@'%' WITH GRANT OPTION;
+GRANT UPDATE (total) ON acme.orders TO 'acme_rp'@'%';
+GRANT EXECUTE ON PROCEDURE acme.close_day TO 'acme_rp'@'%';
+GRANT CONNECTION ADMIN ON *.* TO 'acme_rp_ops'@'localhost';
+GRANT SELECT ON acme.notices TO PUBLIC;
+GRANT SELECT (default_role) ON mysql.user TO 'sopuli_admin'@'%';
+```
+
+The last line is the optional column grant of
+`design/02-mariadb-privileges.md` §2.1, which reads the default role.
+
+```
+$ sopuli --config mariadb.yaml report privileges --account 'acme_rp@%' --detail
+mariadb-dev  (11.8.9, 1 account)
+  acme_rp@%  (application)
+    roles: acme_mid (default)
+    KIND               PRIVILEGE     OBJECT             TYPE       FROM                     GRANTABLE
+    system             not checked
+    object (routine)   EXECUTE       acme.close_day     PROCEDURE  direct                   no
+    object (table)     GRANT OPTION  acme.orders        TABLE      direct                   yes
+    object (table)     INSERT        acme.orders        TABLE      direct                   yes
+    object (table)     SELECT        acme.orders        TABLE      via acme_mid > acme_top  no
+    column             UPDATE        acme.orders.total  -          direct                   yes
+    schema (database)  SELECT        acme%              SCHEMA     direct                   no
+  not checked: global privileges: MariaDB keeps the privileges split from SUPER, such as CONNECTION ADMIN, only in mysql.global_priv, beside the stored value, and they set no column of the mysql.user view, so the global level as the tool account reads it would be incomplete
+...
+```
+
+It exits 4: the global level is not checked on MariaDB, so
+`acme_rp_ops@localhost`'s `CONNECTION ADMIN` does not show. `acme_rp_ops`
+reaches `SELECT` through `acme_top`, which is not its default role, so the row
+says `not a default role`. `--public` adds `PUBLIC` once, with its `SELECT` on
+`acme.notices`.
 
 `report history` shows when each password the tool manages was rotated or
 reset, from the store's versions, with the database's own date of the last

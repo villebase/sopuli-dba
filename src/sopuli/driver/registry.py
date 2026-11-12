@@ -288,11 +288,11 @@ DRIVERS: dict[str, DatabaseDriver] = {
     # refuses an administrator in all three that change an account, except a
     # reset of the tool's own account, which guardrail 7 refuses unless
     # `--force`; `account list` says which (`guardrails.every_verb`). UC-5:
-    # `report accounts`, one row per `user@host` with the lock and the lifetime
-    # not checked (R2, #1462); `report history`, from the store, with no
-    # database date. MariaDB keeps the lock, the lifetime and that date only
-    # beside the stored value, which the tool does not read (R2, #1460).
-    # `report privileges` is not written for it yet.
+    # `report accounts`, one row per `user@host` (#1462), and `report
+    # history`, from the store (#1460): the lock, the lifetime and the
+    # database's date come from the optional view `sopuli.account_state`, and
+    # are not checked without it (#1491). `report privileges`, one row per
+    # path, the global level not checked (#1483, decision A).
     "mariadb": DatabaseDriver(
         module="sopuli.driver.mariadb.session",
         extra="mariadb",
@@ -307,6 +307,7 @@ DRIVERS: dict[str, DatabaseDriver] = {
         commands=frozenset(
             {
                 "report.accounts",
+                "report.privileges",
                 "account.list",
                 "account.reset-password",
                 "account.suspend",

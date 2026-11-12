@@ -226,14 +226,52 @@ the view, with `is_role = 'N'`
   prints the value. The view has no `account_locked` column, `1143`;
   `global_priv` is refused, `1142`, and `SHOW CREATE USER` for another
   account, `1044`. Only the expiry, `password_expired`, reads.
-- **A view that a DBA creates reads them.** A view with `SQL SECURITY
-  DEFINER` over three keys of `global_priv`'s `Priv`, and `SELECT` on it, give
-  the tool account `account_locked`, which is `1` when locked and absent
-  otherwise; `password_lifetime`, which is the days, `0` for `PASSWORD EXPIRE
-  NEVER`, `-1` or absent for the server's default; and
-  `password_last_changed`, in seconds since 1970. `PASSWORD EXPIRE` sets that
-  to `0`, which is how MariaDB marks an expired password, so after an expiry
-  the date of the last change is lost.
+- **A view that a DBA creates reads them, and an open rollover**
+  (`16_definer_view_probe.py`, #1479, for #1457). Nothing reads the view
+  yet. It has `SQL SECURITY DEFINER` and selects `User`, `Host`, three keys
+  of `global_priv`'s `Priv` and one flag:
+
+  ```sql
+  CREATE SQL SECURITY DEFINER VIEW sopuli_probe.account_state AS
+  SELECT User, Host,
+         JSON_VALUE(Priv, '$.account_locked')        AS account_locked,
+         JSON_VALUE(Priv, '$.password_lifetime')     AS password_lifetime,
+         JSON_VALUE(Priv, '$.password_last_changed') AS password_last_changed,
+         COALESCE(JSON_LENGTH(Priv, '$.auth_or'), 0) > 1 AS rollover_open
+    FROM mysql.global_priv;
+  ```
+
+  With `SELECT` on it, the tool account reads:
+  - `account_locked`: `NULL` for an account never locked, `1` when locked,
+    `0` after `ACCOUNT UNLOCK`;
+  - `password_lifetime`: the days, `0` for `PASSWORD EXPIRE NEVER`, and
+    `NULL` or `-1` for the server's default. `PASSWORD EXPIRE` sets `-1`;
+  - `password_last_changed`: seconds since 1970, by the server's clock.
+    `PASSWORD EXPIRE` sets it to `0`, which is how MariaDB marks an expired
+    password, so after an expiry the date of the last change is lost;
+  - `rollover_open`: `1` while a rollover by `OR` is open, `PASSWORD
+    EXPIRE` during it included, and `0` after the close. The close leaves
+    `auth_or` as one empty entry, so whether the key exists is not the flag.
+
+  The view gives every row of `global_priv`, roles and `root` among them,
+  and no stored value: the probe looked for every fixture value in all the
+  tool account read, refusals included, and found none. The tool account is
+  refused `SHOW CREATE VIEW`, `1142`, and `EXPLAIN`, `1345`, and cannot
+  create a view, a procedure or a trigger over the view, or update it. The
+  view and what it gives survive the image's upgrade from 10.11.19 to
+  11.4.13, 11.8.9 and 12.3.3.
+- **The view's shape and presence, as the tool account sees them.**
+  `information_schema.COLUMNS` and `SHOW COLUMNS` list the view's columns
+  before any row is read, an extra `authentication_string` among them. Under
+  a column grant they list only the columns granted. An absent view, an
+  absent schema and a view without the grant all answer `1142`, so the tool
+  cannot tell them apart. A dropped definer answers `1045 (28000)`, "Access
+  denied", in a session that is already logged in. A definer that exists
+  without `SELECT` on `global_priv` answers `1356`. The definer can be a
+  locked account that holds only `SELECT` on `mysql.global_priv`. A DBA
+  without `SET USER` or `SUPER` cannot name another definer, `1227`.
+- **The view does not show a block by `max_password_errors`.** `Priv` has no
+  key for it; only `information_schema.USERS` has the count, from 11.8.
 - **There is no failed-login limit per account.** `FAILED_LOGIN_ATTEMPTS` is a
   syntax error, `1064`. The limit is the server's `max_password_errors`,
   which the tool account reads; its default, 4294967295, means no limit.
@@ -242,8 +280,9 @@ the view, with `is_role = 'N'`
   password too. The count is `PASSWORD_ERRORS` in `information_schema.USERS`,
   per account, from 11.8; it shows the tool account only its own row.
 - **The date of the last change, through the view**, moves with a change by
-  value, as the driver sends it, and with a rollover by `OR`. `ACCOUNT LOCK`
-  leaves it. `PASSWORD EXPIRE` sets it to `0`.
+  value, as the driver sends it, with a rollover by `OR` and with its close.
+  `ACCOUNT LOCK` and a new lifetime leave it. `PASSWORD EXPIRE` sets it to
+  `0`, and the next change by value sets a new time.
 - **Roles.** A recursive query over `mysql.roles_mapping` gives each
   account's roles, nested ones included, with the path and `Admin_option`.
   The default role is the view's `default_role` column, which §2.1's
@@ -313,7 +352,9 @@ lock leave everything it reads as it was (RD2 to RD5).
 
 **What the tool never reads.** Each of these is only in `mysql.global_priv` or
 in `SHOW CREATE USER`, beside the stored value, so reading it would read every
-hash.
+hash. A view that a DBA creates gives the first three without a stored value
+(§2.4, #1479); whether the tool reads it is #1457. It does not give the
+fourth.
 
 | Never read | What the tool does instead |
 |---|---|

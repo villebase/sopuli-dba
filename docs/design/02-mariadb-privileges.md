@@ -116,6 +116,15 @@ four). Guardrail 9 reads the six tables (§5). Without the grant,
 `roles_mapping` is refused with `1142` (TG7), and so is `mysql.db` (checked on
 11.8.9).
 
+**One optional column grant.** `SELECT (default_role)` on `mysql.user` reads
+each account's default role, for the privilege report, which does not read it
+yet (#1411, R3). It holds a role's name only. The audit counts it as held
+where it is granted, and never as missing.
+
+```sql
+GRANT SELECT (default_role) ON mysql.user TO 'sopuli_admin'@'192.0.2.10';
+```
+
 Give the account no other privilege, and no role.
 
 ### 2.2 What the tool reads about itself
@@ -199,10 +208,13 @@ be refused as one ([#1346](../decisions/log.md#1346)).
 
 ### 2.4 What the reports can read
 
-The UC-5 `report` commands are not built on MariaDB yet (#1411). This is what
-the tool account can read for them with §2.1's grants, and what each further
-read would cost. It was measured on 10.11.19, 11.4.13, 11.8.9 and 12.3.3
-(`15_report_read_probe.py`, #1448).
+`report accounts` (#1462) and `report history` (#1460) are built on MariaDB,
+and the privilege report is not. This is what the tool account can read for
+them with §2.1's grants, and what each further read would cost. It was
+measured on 10.11.19, 11.4.13, 11.8.9 and 12.3.3 (`15_report_read_probe.py`,
+#1448). `report accounts` reads `User`, `Host` and `password_expired` from
+the view, with `is_role = 'N'`
+(`sopuli/driver/mariadb/survey.py`), and nothing else.
 
 - **An account is a user name at a host.** One name at three hosts is three
   rows of the `mysql.user` view. A role is a row with an empty host and
@@ -234,9 +246,9 @@ read would cost. It was measured on 10.11.19, 11.4.13, 11.8.9 and 12.3.3
   leaves it. `PASSWORD EXPIRE` sets it to `0`.
 - **Roles.** A recursive query over `mysql.roles_mapping` gives each
   account's roles, nested ones included, with the path and `Admin_option`.
-  The default role is the view's `default_role` column, which §2.1 does not
-  grant, `1143`; a column grant on it reads it, and it holds a role's name
-  only.
+  The default role is the view's `default_role` column, which §2.1's
+  required grants do not cover, `1143`; §2.1's optional column grant reads
+  it, and it holds a role's name only.
 - **Privilege levels.** Static global privileges are the view's `*_priv`
   columns, and schema, table, column, routine and proxy grants are in `db`,
   `tables_priv`, `columns_priv`, `procs_priv` and `proxies_priv`, which §2.1

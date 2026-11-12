@@ -2345,7 +2345,7 @@ suspended acme_dev_bob@localhost on 1 of 1 targets
 
 `report accounts` reads every account on each target and checks it against the
 `reports:` rules (`design/01-configuration.md` §8a). It changes nothing. It
-runs on Oracle, PostgreSQL and MySQL. `report privileges` runs on Oracle only,
+runs on every product. `report privileges` runs on Oracle only,
 and `report history` on every product.
 
 Make two accounts on a profile whose passwords expire after 180 days, and one
@@ -2573,6 +2573,69 @@ MySQL 9.7.4, with the optional `SELECT` on
 `design/02-mysql-privileges.md` §2.1, the same account reads
 `LOCKED(TIMED)` with its count, and the lock is still a problem, because
 somebody tried to log in.
+
+On MariaDB, `report accounts` reads only each account's expiry: the lock and
+the lifetime are kept beside the stored value, which the tool account does not
+read. Use the target and tool account of §*A MariaDB server*. As root, make
+one name at two hosts, a locked owner, an expired account, a role, and an
+account nothing declares. No account here needs a password for the report:
+
+```sql
+CREATE USER 'acme_app'@'%' PASSWORD EXPIRE INTERVAL 90 DAY;
+CREATE USER 'acme_app'@'192.0.2.%' PASSWORD EXPIRE NEVER;
+CREATE USER 'acme_owner'@'%' ACCOUNT LOCK;
+CREATE USER 'acme_old'@'%' PASSWORD EXPIRE;
+CREATE USER 'acme_stray'@'%';
+CREATE ROLE 'acme_read';
+GRANT 'acme_read' TO 'acme_app'@'%';
+```
+
+Run the report with this config:
+
+```yaml
+version: 1
+targets:
+  - name: mariadb-dev
+    type: mariadb
+    environment: dev
+    dsn: "127.0.0.1:3307"
+    admin: { username: sopuli_admin, auth: { method: env } }
+    mariadb: { ssl_mode: REQUIRED }
+reports:
+  accounts:
+    - accounts: ["acme_app@%", "acme_old@%", "acme_gone@%"]
+      settings: { password_lifetime: 60, failed_login_limit: 5 }
+    - accounts: ["acme_owner@%"]
+      login: refused
+```
+
+```
+$ sopuli --config mariadb-report.yaml report accounts
+mariadb-dev  (11.8.9, 12 accounts read, 1 with a problem, 3 not checked, 8 undeclared, 2 with a check not applicable)
+  ACCOUNT                KIND        PROFILE  STATUS   FAILED LOGINS  STATE            FINDING
+  acme_gone@%            technical   -        -        -              ACCOUNT_MISSING  present: not on this target
+  acme_app@%             technical   -        OPEN     unknown        NOT_CHECKED      lock: MariaDB keeps the lock in mysql.global_priv, beside the stored value, which the tool account does not read; password_lifetime: MariaDB keeps the password lifetime in mysql.global_priv, beside the stored value, which the tool account does not read
+  acme_old@%             technical   -        EXPIRED  unknown        NOT_CHECKED      lock: MariaDB keeps the lock in mysql.global_priv, beside the stored value, which the tool account does not read; password_lifetime: MariaDB keeps the password lifetime in mysql.global_priv, beside the stored value, which the tool account does not read
+  acme_owner@%           technical   -        OPEN     unknown        NOT_CHECKED      lock: MariaDB keeps the lock in mysql.global_priv, beside the stored value, which the tool account does not read
+  acme_app@192.0.2.%     undeclared  -        OPEN     unknown        UNDECLARED       not in config
+  acme_stray@%           undeclared  -        OPEN     unknown        UNDECLARED       not in config
+  healthcheck@127.0.0.1  undeclared  -        OPEN     unknown        UNDECLARED       not in config
+  healthcheck@::1        undeclared  -        OPEN     unknown        UNDECLARED       not in config
+  healthcheck@localhost  undeclared  -        OPEN     unknown        UNDECLARED       not in config
+  root@%                 undeclared  -        OPEN     unknown        UNDECLARED       not in config
+  root@localhost         undeclared  -        OPEN     unknown        UNDECLARED       not in config
+  sopuli_admin@%         undeclared  -        OPEN     unknown        UNDECLARED       not in config
+  0 accounts OK
+  failed logins unknown: MariaDB shows an account's failed logins, PASSWORD_ERRORS in information_schema.USERS, only to the account itself
+```
+
+It exits 3, for `acme_gone@%`; without it, the run exits 4. Every account a
+rule names is *not checked*, because the lock is compared even without
+`login:`. `acme_owner@%` is locked and reads `OPEN`: the status is the
+expiry alone, as `account list` shows it. A rule's `failed_login_limit` is
+*not applicable*: MariaDB has no limit per account, only the server's
+`max_password_errors`. The role and `mariadb.sys@localhost` are left out.
+The `healthcheck` accounts are the image's own.
 
 `report privileges` shows each account's effective privileges, through every
 role, for the Oracle accounts above. The service account needs `SELECT` on `DBA_SYS_PRIVS`, `DBA_TAB_PRIVS`, `DBA_COL_PRIVS` and, on 23ai,

@@ -5583,6 +5583,40 @@ the register.
   2. Only the target's reason and exit 4: the privilege's own entry would
      say `false` with nothing beside it to show it was not checked.
 
+## #1483
+
+- **Decided:** 2026-11-12, #1483
+- **Question:** on MariaDB, the privileges split from `SUPER`, such as
+  `CONNECTION ADMIN`, set no column of the `mysql.user` view, and the tool
+  account cannot read `mysql.global_priv` (`08_split_privileges_probe.py`).
+  How does `report privileges` report the global level? A: as *not checked*.
+  B: from the view's columns, with a note that the split privileges are not
+  read. C: through an optional view that a DBA creates, as #1457 does for the
+  account state, and A without it.
+- **Decision:** the maintainer's: A and C. C is a second optional view,
+  `sopuli.global_privileges`, over `information_schema.USER_PRIVILEGES`, with
+  a locked definer of its own that holds `SELECT` on `mysql.*`. Without the
+  view, or with a broken one, the global level is *not checked*. A role's
+  global level is always *not checked*, because roles have no rows in
+  `USER_PRIVILEGES`. The schema `sopuli` holds this view and #1491's
+  `account_state`.
+- **Why:** `17_global_privileges_view_probe.py` found that the view gives
+  each account's privileges as `SHOW GRANTS` does, on every release in the
+  matrix and after upgrades from 10.4.34 and 10.6.28, with no stored value.
+  The maintainer chose it after that run's first, exploratory form.
+- **Rejected:**
+  1. B: an account that holds only `CONNECTION ADMIN` would read as holding
+     no global privilege, which is what #1375 set out to prevent.
+  2. A column of `global_priv`'s access bits in `account_state`: an upgrade
+     keeps the stored bits, and each release reads them differently. `SUPER`
+     stored by 10.6.28 reads as `SUPER` and `READ_ONLY ADMIN` on 10.11.19,
+     and as `SUPER` and all ten split privileges from 11.4.13. Decoding them
+     means copying each release's rules, which is branching on a version
+     (invariant 3).
+  3. One definer for both views: it would widen the grant of
+     `account_state`'s definer from `SELECT` on `mysql.global_priv` to
+     `SELECT` on `mysql.*`.
+
 ## #1491
 
 - **Decided:** 2026-11-12, #1491

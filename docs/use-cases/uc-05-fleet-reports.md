@@ -341,7 +341,8 @@ ROLE` counts, and is marked "needs SET ROLE"; a path with neither option gives
 nothing. An attribute is never inherited, so a role's attribute counts only
 where the account can `SET ROLE` to that role. A target reads the database it
 connects to: the cluster's other databases, except templates, are named as
-*not checked*, and the run exits 4 unless each one is its own target.
+*not checked* on every target, so the run exits 4 on a cluster with more than
+one such database, even where a target is declared for each.
 
 ---
 

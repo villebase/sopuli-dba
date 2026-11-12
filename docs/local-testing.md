@@ -2741,7 +2741,7 @@ pg-dev  (16.15, 1 account)
     objects: EXECUTE on 3 functions (0 direct, 3 via roles); INSERT on 1 table (0 direct, 1 via roles, 1 only after SET ROLE); SELECT on 2 tables (1 direct, 1 via roles); SELECT on 2 views (0 direct, 2 via roles); default for acme_rp_owner: SELECT on 1 table (0 direct, 1 via roles)
     columns: UPDATE on 1 column (1 direct, 0 via roles)
     schemas: USAGE on acme_rp (schema, direct, via acme_rp_app > acme_rp_read, via acme_rp_batch)
-  not checked: the schemas and objects of the cluster's other databases were not read (sopuli): a target reads only the database it connects to, so declare a target for each database to report on it
+  not checked: the schemas and objects of the cluster's other databases were not read (sopuli): a target reads only the database it connects to; a target declared for another database reports on that one
 ```
 
 It exits 4: the stack's cluster has a second database, `sopuli`, which a

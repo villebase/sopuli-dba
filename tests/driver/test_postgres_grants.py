@@ -269,7 +269,7 @@ def test_the_other_databases_are_named_as_not_read() -> None:
     result, _ = survey(others=["acme_rp_other", "postgres"])
     (reason,) = result.unreadable
     assert "(acme_rp_other, postgres)" in reason
-    assert "declare a target for each database" in reason
+    assert "a target reads only the database it connects to" in reason
     alone, _ = survey()
     assert alone.unreadable == ()
 

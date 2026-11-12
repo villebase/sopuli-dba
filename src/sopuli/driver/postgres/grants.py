@@ -403,8 +403,8 @@ def survey_grants(cursor: Cursor, accounts: Sequence[str], *, public: bool) -> G
         unreadable = (
             "the schemas and objects of the cluster's other databases were not read ("
             + ", ".join(others)
-            + "): a target reads only the database it connects to, so declare a "
-            "target for each database to report on it",
+            + "): a target reads only the database it connects to; a target "
+            "declared for another database reports on that one",
         )
     return GrantSurvey(
         roles=_roles(walks),

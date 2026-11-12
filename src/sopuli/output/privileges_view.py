@@ -47,17 +47,20 @@ class TargetPrivileges:
 
 @dataclass(frozen=True)
 class Words:
-    """How a privilege the account holds but has not active is marked: after its
-    sources, and in a count."""
+    """A product's words for what is not active without ``SET ROLE``: after a
+    privilege's sources, in a count, and how a role's options are named."""
 
     source: str
     count: str
+    #: ``inherit`` and ``set``, as PostgreSQL names a membership's options,
+    #: rather than ``default`` and ``not default``.
+    options: bool = False
 
 
 #: Oracle's: the role is not a default role, so it needs ``SET ROLE``.
 DEFAULT_ROLE_WORDS = Words("not a default role", "through a role that is not a default role")
 #: PostgreSQL's: a grant on the path does not inherit (#1481).
-SET_ROLE_WORDS = Words("needs SET ROLE", "only after SET ROLE")
+SET_ROLE_WORDS = Words("needs SET ROLE", "only after SET ROLE", options=True)
 _WORDS = {"postgresql": SET_ROLE_WORDS}
 
 
@@ -103,7 +106,7 @@ def _section(report: TargetPrivileges, *, detail: bool) -> list[str]:
 
 def _summary(one: AccountPrivileges, words: Words) -> list[str]:
     lines = [f"  {one.account}  ({one.kind})"]
-    lines.append(f"    roles: {_roles(one.roles) or 'none'}")
+    lines.append(f"    roles: {_roles(one.roles, words) or 'none'}")
     lines.append(f"    system: {_system(one.system, words)}")
     lines.append(f"    objects: {_counts(one.objects, words)}")
     lines.append(f"    columns: {_counts(one.columns, words, noun='column')}")
@@ -111,16 +114,16 @@ def _summary(one: AccountPrivileges, words: Words) -> list[str]:
     return lines
 
 
-def _roles(roles: Sequence[RoleGrant]) -> str:
+def _roles(roles: Sequence[RoleGrant], words: Words) -> str:
     def one(role: RoleGrant) -> str:
-        if role.set_option is None:
-            marks = ["default" if role.default_role else "not default"]
-        else:
+        if words.options:
             # PostgreSQL's two options, in its own words (#1481).
             marks = [
                 "inherit" if role.default_role else "no inherit",
                 "set" if role.set_option else "no set",
             ]
+        else:
+            marks = ["default" if role.default_role else "not default"]
         if role.admin_option:
             marks.append("admin option")
         if role.authentication not in ("NONE", ""):
@@ -207,7 +210,7 @@ def _sources(privilege: Privilege, words: Words) -> str:
 def _detail(one: AccountPrivileges, words: Words) -> list[str]:
     lines = [f"  {one.account}  ({one.kind})"]
     if one.roles:
-        lines.append(f"    roles: {_roles(one.roles)}")
+        lines.append(f"    roles: {_roles(one.roles, words)}")
     rows: list[list[str]] = []
     parts = (
         ("system", one.system),

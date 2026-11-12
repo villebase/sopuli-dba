@@ -182,7 +182,7 @@
           },
           "via_default_role": {
             "type": "boolean",
-            "description": "Whether the account holds it without SET ROLE: directly, or through a default role."
+            "description": "Whether the account holds it without SET ROLE: directly, or on Oracle through a default role, on PostgreSQL through a path where every grant inherits."
           },
           "grantable": {"type": "boolean"}
         }

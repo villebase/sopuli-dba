@@ -56,7 +56,6 @@ from sopuli.driver.oracle.accounts import (
     resolve_profile,
     resolve_role,
     stored_verifiers,
-    survey,
     survey_with_profiles,
 )
 from sopuli.driver.oracle.audit import coverage_of
@@ -437,26 +436,16 @@ class OracleSession(ClosesConnection):
         with traced_cursor(self.connection) as cursor:
             return password_constraints(cursor, account)
 
-    def survey_accounts(self) -> tuple[SurveyedAccount, ...]:
-        """Every account on this target, ordered by name, for UC-5's reports.
+    def survey_with_profiles(self) -> tuple[tuple[SurveyedAccount, ...], frozenset[str]]:
+        """Every account on this target, ordered by name, and every profile on
+        it (#1390), for UC-5's `report accounts` and `report privileges`.
 
-        Oracle only, and not in the :class:`~sopuli.driver.protocol.Session`
-        protocol: a caller finds it with ``getattr``. Read-only, on the baseline
+        :class:`~sopuli.driver.survey.AccountSurvey`. Read-only, on the baseline
         grant set, plus ``SYS.USER$`` for the failed-login counts where the
         session has ``offline_verify``. Outside :data:`OWN_COUNT_SCOPES` a
         common account's lock, limits and count are ``None``, each with a
-        reason (:func:`~sopuli.driver.oracle.accounts.survey`).
-        """
-        with traced_cursor(self.connection) as cursor:
-            return survey(cursor, **self._survey_scope())
-
-    def survey_with_profiles(self) -> tuple[tuple[SurveyedAccount, ...], frozenset[str]]:
-        """:meth:`survey_accounts`, and every profile on this target (#1390).
-
-        :class:`~sopuli.driver.survey.AccountSurvey`, for `report accounts`. The
-        same statements as :meth:`survey_accounts`: the names come from the
-        rows the limits statement already reads
-        (:func:`~sopuli.driver.oracle.accounts.survey_with_profiles`).
+        reason. The profile names come from the rows the limits statement
+        already reads (:func:`~sopuli.driver.oracle.accounts.survey_with_profiles`).
         """
         with traced_cursor(self.connection) as cursor:
             return survey_with_profiles(cursor, **self._survey_scope())

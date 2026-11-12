@@ -134,10 +134,11 @@ def state_of(account: Account) -> UserState:
 
 
 def status(*, expired: bool) -> str:
-    """``UserState.status`` in Oracle's words, as `account list` and `report
-    accounts` show it. From ``password_expired`` alone: the lock is never
-    read, and neither is a lifetime that has run out, so ``OPEN`` says only
-    that nobody expired the password."""
+    """``UserState.status`` in Oracle's words, as ``describe_user`` gives it.
+    From ``password_expired`` alone: the lock is not read here, and neither
+    is a lifetime that has run out, so ``OPEN`` says only that nobody expired
+    the password. `account list` and `report accounts` add the lock from the
+    optional view where it is readable (#1491)."""
     return EXPIRED if expired else OPEN
 
 

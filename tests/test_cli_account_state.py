@@ -1,8 +1,9 @@
 """The reports' use of MariaDB's optional view `sopuli.account_state` (#1491). Tier 0.
 
 The view's own reads are `tests/driver/test_mariadb_account_state.py`'s. Here:
-that a broken view is warned about once, as `SOPULI-W073`, and that `report
-history` takes MariaDB's date from the view and never from `describe_user`.
+that a broken view is warned about once, as `SOPULI-W073`, that `report
+history` takes MariaDB's date from the view and never from `describe_user`, and
+that `account list` takes the lock from it.
 """
 
 from __future__ import annotations
@@ -11,9 +12,11 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
 
-from sopuli.cli import _database_date, _warn_if_view_broken
+import pytest
+
+from sopuli.cli import _database_date, _warn_if_view_broken, _with_view_lock
 from sopuli.config.codes import ACCOUNT_STATE_VIEW_BROKEN
-from sopuli.driver.mariadb.account_state import ABSENT, AccountStates
+from sopuli.driver.mariadb.account_state import ABSENT, AccountStates, State
 from sopuli.driver.protocol import UserState
 from sopuli.output.document import Diagnostic
 from sopuli.report_history import AccountHistory
@@ -54,6 +57,65 @@ class ViewSession:
     def report_changed_at(self, user: UserState) -> tuple[datetime | None, str | None]:
         self.asked.append(user.name)
         return self.changed
+
+    def report_lock(self, user: UserState) -> UserState:
+        return user
+
+
+def _mariadb(states: AccountStates) -> Any:
+    """A MariaDB session with no connection, whose view already gave ``states``."""
+    from sopuli.config.model import ExpandedTarget, Target
+    from sopuli.driver.mariadb.session import MariadbSession
+    from sopuli.driver.protocol import Timeouts
+
+    session = MariadbSession(
+        connection=None,
+        target=ExpandedTarget(
+            target=Target(name="mariadb-dev", type="mariadb", dsn="mariadb-dev.example.com:3306")
+        ),
+        correlation_id="tier0",
+        timeouts=Timeouts(),
+    )
+    session._account_states = states
+    return session
+
+
+def _state(*, locked: bool) -> State:
+    return State(locked=locked, lifetime="unlimited", changed_at=WHEN)
+
+
+@pytest.mark.parametrize(("expired", "status"), [(False, "LOCKED"), (True, "EXPIRED & LOCKED")])
+def test_account_list_shows_the_lock_the_view_gives(expired: bool, status: str) -> None:
+    """`describe_user` never reads the lock on MariaDB, so it says `OPEN` or
+    `EXPIRED`; `account list` takes the lock from the view (#1491)."""
+    session = _mariadb(AccountStates(rows={("acme_dev", "%"): _state(locked=True)}))
+    read = UserState(name="acme_dev@%", status="EXPIRED" if expired else "OPEN", expired=expired)
+    shown = _with_view_lock(session, read)
+    assert shown is not None
+    assert (shown.status, shown.locked) == (status, True)
+
+
+@pytest.mark.parametrize(
+    "states",
+    [
+        AccountStates(rows={("acme_dev", "%"): _state(locked=False)}),
+        AccountStates(rows={}),
+        AccountStates(rows=None, reason=ABSENT),
+        AccountStates(rows=None, reason="x", broken="its definer no longer exists (1045)"),
+    ],
+    ids=["not-locked", "no-row", "absent", "broken"],
+)
+def test_account_list_keeps_the_state_as_read_where_the_view_does_not_say_locked(
+    states: AccountStates,
+) -> None:
+    read = UserState(name="acme_dev@%", status="OPEN")
+    assert _with_view_lock(_mariadb(states), read) is read
+
+
+def test_account_list_reads_no_view_on_another_product() -> None:
+    read = UserState(name="ACME_DEV", status="OPEN")
+    assert _with_view_lock(object(), read) is read
+    assert _with_view_lock(object(), None) is None
 
 
 def test_the_mariadb_session_is_a_state_view() -> None:

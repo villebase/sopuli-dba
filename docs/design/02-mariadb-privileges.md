@@ -129,8 +129,8 @@ GRANT SELECT (default_role) ON mysql.user TO 'sopuli_admin'@'192.0.2.10';
 `sopuli.account_state` and grants `SELECT` on it to the tool account (#1491).
 The view reads, for each account, the lock, the password lifetime and the time
 of the last change from `mysql.global_priv`, and never the stored value.
-`report accounts` and `report history` read it, and nothing that changes an
-account does. Without it, those are *not checked*. §2.4 says
+`report accounts`, `report history` and `account list` read it, and nothing
+that changes an account does. Without it, those are *not checked*. §2.4 says
 what it gives. Edit the two `SET` lines at its top to name the tool account,
 and run it as an administrator who may name another definer (`SET USER` or
 `SUPER`). `doctor --check-privileges` counts `SELECT` on the view as held
@@ -368,15 +368,16 @@ lock leave everything it reads as it was (RD2 to RD5).
 | `password_expired` | expired. `PASSWORD EXPIRE` sets it, and the password then logs in and every statement but setting it answers `1820` (`04_lock_expiry_probe.py`, LK3) |
 | `is_role` | whether the row is a role. Guardrail 9 reads a role's privileges from its row (§5) |
 
-**What the tool never reads.** Each of these is only in `mysql.global_priv` or
-in `SHOW CREATE USER`, beside the stored value, so reading it would read every
-hash. A view that a DBA creates gives the first three without a stored value
-(§2.4, #1479); whether the tool reads it is #1457. It does not give the
-fourth.
+**What the tool never reads to change an account.** Each of these is only in
+`mysql.global_priv` or in `SHOW CREATE USER`, beside the stored value, so
+reading it would read every hash. The optional view `sopuli.account_state`
+(§2.1, §2.4) gives the first three without a stored value. The reports and
+`account list` read it, and no verb that changes an account does (#1491). It
+does not give the fourth.
 
-| Never read | What the tool does instead |
+| Never read by a verb that changes an account | What the tool does instead |
 |---|---|
-| the lock, `account_locked` (LK2) | `account list` says the lock cannot be read. `account suspend` always sends `ACCOUNT LOCK` and reports `changed: true` ([#1267](../decisions/log.md#1267), decision 2) |
+| the lock, `account_locked` (LK2) | `account suspend` always sends `ACCOUNT LOCK` and reports `changed: true` ([#1267](../decisions/log.md#1267), decision 2). `account list` shows a locked account `LOCKED` where the view is readable, and `OPEN` or `EXPIRED` from `password_expired` alone where it is not |
 | an open rollover, `auth_or` (`03_dual_password_probe.py`, DP4) | `creds finish-rollover` always sends the current value alone and reports `changed: true` ([#1271](../decisions/log.md#1271), decision 2) |
 | when the password changed, and its lifetime (RD1) | a change is verified by login (§7), not by its time (decision 8) |
 | a block after failed logins, `max_password_errors` (LK4, RD6) | `ACCOUNT UNLOCK` ends it. A reset never sends it, and a DBA unlocks by hand after checking for a suspension ([#1272](../decisions/log.md#1272), decision 1) |

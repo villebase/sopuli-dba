@@ -4250,6 +4250,8 @@ def _list_one(
             return [_unreachable_row(target, _finding(error))], 1
 
         named = _declared_names(session, config, target, wanted=wanted)
+        if named:
+            _warn_if_view_broken(run, target, session)
         journal = _open_journal(run, config, unread) if named else None
         rows: list[account_list.Row] = []
         failed = 0
@@ -4511,11 +4513,22 @@ def _describe_row(
         account=state.name if state is not None else name,
         target=target.name,
         rule=admitted,
-        state=state,
+        # The lock is shown after the guardrails ran on what `describe_user`
+        # gave, so the notices say what a verb would do, and a verb does not
+        # read the view (#1491).
+        state=_with_view_lock(session, state),
         reset_at=_reset_at(journal, config, target, name, unread=unread),
         notices=tuple(notices),
         product=target.target.type,
     )
+
+
+def _with_view_lock(session: Any, state: UserState | None) -> UserState | None:
+    """``state``, locked where MariaDB's optional view says so (#1491).
+    Only a :class:`~sopuli.driver.survey.StateView` has one."""
+    if state is None or not isinstance(session, StateView):
+        return state
+    return session.report_lock(state)
 
 
 def _undescribed_row(

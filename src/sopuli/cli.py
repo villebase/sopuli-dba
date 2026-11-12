@@ -154,6 +154,7 @@ from sopuli.diagnostics import (
     ROLLOVER_LEFT_OPEN,
     ROTATION_UNCONFIRMED,
     VERSION_PRUNED,
+    account_state_view_broken,
     admin_diagnostics,
     constraint_diagnostics,
     encryption_diagnostics,
@@ -5925,6 +5926,7 @@ def _report_target(
             )
         try:
             surveyed, profiles = session.survey_with_profiles()
+            _warn_if_view_broken(run, target, session)
             members = _personal_role_members(session, config, target)
         except Exception as error:  # noqa: BLE001 -- a per-target finding
             # Connected, then could not read: said as such, not as "could not
@@ -6369,6 +6371,7 @@ def _history_target(
             try:
                 release = session.scope().db_version
                 found = [_database_date(one, session) for one in found]
+                _warn_if_view_broken(run, target, session)
             except Exception as failed:  # noqa: BLE001 -- a per-target finding
                 error, read_failed = _finding(failed), True
         absent = None
@@ -6397,6 +6400,17 @@ def _account_key(account: str, product: str) -> object:
     return account_key(product)(account)
 
 
+def _warn_if_view_broken(run: Invocation, target: ExpandedTarget, session: Any) -> None:
+    """`SOPULI-W073` where a MariaDB target's optional view exists and is not
+    used (#1491). A session without the view has no ``account_states``."""
+    states = getattr(session, "account_states", None)
+    if states is None:
+        return
+    broken = states().broken
+    if broken is not None:
+        run.document.warn_in_text(account_state_view_broken(target.name, broken))
+
+
 def _database_date(
     one: history_states.AccountHistory, session: Session
 ) -> history_states.AccountHistory:
@@ -6413,6 +6427,12 @@ def _database_date(
         if not refused.about_account:
             raise
         return history_states.without_database(one, refused.message)
+    # MariaDB's date is in its optional view only, which `describe_user` does
+    # not read, so no verb acts on it (#1491).
+    changed_at = getattr(session, "report_changed_at", None)
+    if user is not None and changed_at is not None:
+        when, why = changed_at(user)
+        user = replace(user, password_changed_at=when, password_changed_unknown=why)
     return history_states.with_database(one, user)
 
 

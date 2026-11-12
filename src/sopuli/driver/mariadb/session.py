@@ -35,16 +35,18 @@ import logging
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
+from datetime import datetime
 from typing import Any, ClassVar, NoReturn, TypeVar
 
 import pymysql
 
 from sopuli.config.model import ExpandedTarget, Runtime
 from sopuli.driver.clusters import Identity
+from sopuli.driver.mariadb import account_state, roles, verification
 from sopuli.driver.mariadb import accounts as accounts_module
 from sopuli.driver.mariadb import password as password_module
-from sopuli.driver.mariadb import roles, verification
 from sopuli.driver.mariadb import survey as survey_module
+from sopuli.driver.mariadb.account_state import AccountStates
 from sopuli.driver.mariadb.errors import from_error
 from sopuli.driver.mariadb.limits import LIMIT
 from sopuli.driver.mariadb.privileges import audit as privilege_audit
@@ -277,6 +279,7 @@ class MariadbSession(ClosesConnection):
     #: ``CURRENT_USER()``, read on the first :meth:`describe_user`. It does
     #: not change for the life of a connection.
     _session_user: str | None = field(default=None, init=False, repr=False)
+    _account_states: AccountStates | None = field(default=None, init=False, repr=False)
     #: The password validation plugins that refuse the driver's value, read
     #: with the scope (#1310); ``None`` where that read failed.
     _password_checks: tuple[str, ...] | None = field(default=None, init=False, repr=False)
@@ -446,7 +449,37 @@ class MariadbSession(ClosesConnection):
         none, and the registry makes the profile check *not applicable*
         (#1458). One read, by §2.1's column grant.
         """
-        return self._read_grants(survey_module.survey), frozenset()
+        states = self.account_states()
+        return self._read_grants(lambda cursor: survey_module.survey(cursor, states)), frozenset()
+
+    def account_states(self) -> AccountStates:
+        """Each account's lock, lifetime and time of the last change, from the
+        optional view ``sopuli.account_state``, or why there are none
+        (:mod:`~sopuli.driver.mariadb.account_state`, #1491).
+
+        Read once per session, its columns checked first. For `report
+        accounts`, `report history` and `account list` only: ``describe_user``
+        does not read it, so no verb that changes an account acts on it.
+        """
+        if self._account_states is None:
+            self._account_states = self._read(account_state.read)
+        return self._account_states
+
+    def report_changed_at(self, user: UserState) -> tuple[datetime | None, str | None]:
+        """When ``user``'s password last changed, by the server's clock, from
+        the optional view, for `report history` (#1491): the time, or ``None``
+        and why. ``user`` is as ``describe_user`` gave it, so its name is the
+        server's spelling."""
+        states = self.account_states()
+        if states.rows is None:
+            return None, states.reason
+        name, host = user.name.rsplit("@", 1)
+        state = states.get(name, host)
+        if state is None:
+            return None, account_state.NO_ROW
+        if state.changed_at is None:
+            return None, account_state.NO_TIME
+        return state.changed_at, None
 
     def _read_grants(self, reader: Callable[[Any], T]) -> T:
         """:meth:`_read`, with the hint about §2.1's grants on a refused read."""

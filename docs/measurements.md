@@ -404,3 +404,7 @@ library in docker.
 | `16_definer_view_probe.py` | `11.4.13` | 2026-11-12 | #1479 | As on 10.11.19 |
 | `16_definer_view_probe.py` | `11.8.9` | 2026-11-12 | #1479 | As on 10.11.19, and root reads `PASSWORD_ERRORS` 2 for the blocked account in `information_schema.USERS`, which `Priv` does not hold |
 | `16_definer_view_probe.py` | `12.3.3` | 2026-11-12 | #1479 | As on 11.8.9 |
+| `account_state_view.sql` | `10.11.19` | 2026-11-12 | #1491 | The install script for the optional view `sopuli.account_state`, run twice as root: both runs pass, and the tool account then reads the lock, the lifetime and the time of the last change for a locked account, one with a 90-day lifetime, one with `NEVER` and one expired. `report accounts` shows the locked one `LOCKED` and checks the lifetimes |
+| `account_state_view.sql` | `11.4.13` | 2026-11-12 | #1491 | As on 10.11.19 |
+| `account_state_view.sql` | `11.8.9` | 2026-11-12 | #1491 | As on 10.11.19, and the tier-1 tests of the view, `test_mariadb_account_state_live.py` |
+| `account_state_view.sql` | `12.3.3` | 2026-11-12 | #1491 | As on 10.11.19. A view with an extra column, one whose definer was dropped and one whose grant was revoked each leave the lock and lifetime *not checked*, the first two with `SOPULI-W073`; running the script again mends each |

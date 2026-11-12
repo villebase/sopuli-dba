@@ -709,6 +709,7 @@ def _hostless_report_names(
         _, separator, host = account.rpartition(MYSQL_HOST_SEPARATOR)
         if separator and host:
             continue
+        example = typed_user(account, default="acme_app")
         warnings.append(
             ConfigWarning(
                 message=(
@@ -717,9 +718,9 @@ def _hostless_report_names(
                 ),
                 at=str(at.key("accounts").index(position)),
                 hint=(
-                    f"the rule checks nothing for {account!r}; name the account `user@host`, "
-                    f"such as `{typed_user(account, default='acme_app')}@localhost`, "
-                    "one name per host"
+                    f"the rule checks nothing for {account!r}; write the host the account "
+                    f"has, as `{example}@10.%`, or `{example}@%` for any host, one name "
+                    "per host"
                 ),
                 code=HOSTLESS_REPORT_NAME,
             )

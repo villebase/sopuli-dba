@@ -189,17 +189,21 @@ def test_a_name_without_a_host_warns_where_every_target_is_mysql() -> None:
     ]
     assert "'acme_batch' without a host" in found[0].message
     assert "MySQL" in found[0].message
-    assert "`acme_batch@localhost`" in (found[0].hint or "")
+    assert "`acme_batch@%`" in (found[0].hint or "")
 
 
 def test_a_name_with_an_empty_host_warns_too() -> None:
     (found,) = hostless(config({"accounts": ["acme_batch@"], "targets": [MYSQL], **LIFETIME}))
-    assert "`acme_batch@localhost`" in (found.hint or "")
+    assert "`acme_batch@%`" in (found.hint or "")
 
 
 def test_the_anonymous_account_has_a_host() -> None:
-    """`@localhost` names the account with an empty user, which has a host."""
-    assert hostless(config({"accounts": ["@localhost"], "targets": [MYSQL], **LIFETIME})) == []
+    """`@localhost` names the account with an empty user. The rule checks it, so
+    it is not warned about."""
+    cfg = config({"accounts": ["@localhost"], "targets": [MYSQL], **LIFETIME})
+
+    assert hostless(cfg) == []
+    assert rows(cfg, "@localhost")["@localhost"].state == REPORT_OK
 
 
 def test_a_rule_that_also_selects_another_product_does_not_warn() -> None:

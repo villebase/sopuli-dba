@@ -615,8 +615,9 @@ FILE_STORE_IN_USE = "SOPULI-W070"
 FILE_STORE_LEFTOVER = "SOPULI-W071"
 
 #: The config layer's codes, such as ``SOPULI-W004`` and ``SOPULI-W072`` --
-#: imported above rather than defined here. They are raised in the config layer, which cannot
-#: import this module, so they are defined in :mod:`sopuli.config.codes` and
+#: imported above rather than defined here. They are raised in the config
+#: layer, which cannot import this module, so they are defined in
+#: :mod:`sopuli.config.codes` and
 #: the registry below stays the one place that says what each means.
 #: Importing them here is also what puts them in this module's namespace, so
 #: ``from sopuli.diagnostics import UNVERIFIED_TRANSPORT`` reads the same as

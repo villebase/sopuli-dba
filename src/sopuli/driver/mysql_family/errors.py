@@ -194,6 +194,16 @@ def unchanged(message: str) -> str:
     return message
 
 
+def error_number(exc: BaseException) -> int | None:
+    """The server's error number PyMySQL put first in ``exc.args``, or ``None``
+    where there is none: no args, a message alone, or ``0``."""
+    args = getattr(exc, "args", ())
+    number = args[0] if args else None
+    if isinstance(number, int) and not isinstance(number, bool) and number:
+        return number
+    return None
+
+
 def from_error(
     exc: Any,
     *,
@@ -225,8 +235,8 @@ def from_error(
     know, so the caller supplies the scrub.
     """
     args = exc.args
-    number = args[0] if args else None
-    if isinstance(number, int) and not isinstance(number, bool) and number:
+    number = error_number(exc)
+    if number is not None:
         message = str(args[1]) if len(args) > 1 else ""
     else:
         # A message alone is its args; `(0, "")` and no args at all say nothing.

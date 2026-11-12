@@ -458,12 +458,18 @@ class MariadbSession(ClosesConnection):
         (:mod:`~sopuli.driver.mariadb.account_state`, #1491).
 
         Read once per session, its columns checked first. For `report
-        accounts`, `report history` and `account list` only: ``describe_user``
-        does not read it, so no verb that changes an account acts on it.
+        accounts` and `report history` only (:class:`~sopuli.driver.survey.StateView`):
+        ``describe_user`` does not read it, so no verb that changes an account
+        acts on it.
         """
         if self._account_states is None:
             self._account_states = self._read(account_state.read)
         return self._account_states
+
+    def view_broken(self) -> str | None:
+        """:class:`~sopuli.driver.survey.StateView`: what is wrong with a view
+        that exists and is not used, for ``SOPULI-W073``."""
+        return self.account_states().broken
 
     def report_changed_at(self, user: UserState) -> tuple[datetime | None, str | None]:
         """When ``user``'s password last changed, by the server's clock, from

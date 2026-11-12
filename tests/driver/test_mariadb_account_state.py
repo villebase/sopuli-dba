@@ -89,9 +89,27 @@ def test_a_grant_revoked_between_the_two_reads_is_absent() -> None:
     assert (states.rows, states.reason, states.broken) == (None, ABSENT, None)
 
 
-def test_any_other_error_is_raised() -> None:
+def test_any_other_refusal_is_broken_and_names_only_the_number() -> None:
+    # Never the target's failure (#1376), and never the server's message,
+    # which could quote a value.
+    states = read(Answers(ALL, (0,), ServerError(1449, "the user specified ... secret")))
+    assert (states.rows, states.broken) == (None, "the server refused to read it (1449)")
+    assert states.reason is not None
+    assert "secret" not in states.reason
+
+
+def test_an_error_with_no_number_is_raised() -> None:
     with pytest.raises(ServerError):
-        read(Answers(ALL, (0,), ServerError(2013, "lost connection")))
+        read(Answers(ALL, (0,), ServerError("lost connection")))
+
+
+def test_a_value_that_is_not_an_integer_is_broken_and_not_repeated() -> None:
+    # A view whose password_lifetime reads another key of Priv: its value
+    # could be a stored one (invariant 2).
+    stored = "*2470C0C06DEE42FD1618BB99005ADCA2EC9D1E19"
+    states = read(Answers(ALL, (0,), [("acme_app", "%", None, stored, "1762905600")]))
+    assert (states.rows, states.broken) == (None, "a column holds values the tool does not expect")
+    assert stored not in (states.reason or "")
 
 
 def test_the_rows_as_the_probe_read_them() -> None:

@@ -45,8 +45,8 @@ class ViewSession:
         self.changed = changed
         self.asked: list[str] = []
 
-    def account_states(self) -> AccountStates:
-        return self.states
+    def view_broken(self) -> str | None:
+        return self.states.broken
 
     def describe_user(self, account: str) -> UserState:
         return UserState(name="acme_app@%", status="OPEN", password_changed_unknown="no date")
@@ -54,6 +54,18 @@ class ViewSession:
     def report_changed_at(self, user: UserState) -> tuple[datetime | None, str | None]:
         self.asked.append(user.name)
         return self.changed
+
+
+def test_the_mariadb_session_is_a_state_view() -> None:
+    from sopuli.driver.mariadb.session import MariadbSession
+    from sopuli.driver.survey import StateView
+
+    def typed(session: MariadbSession) -> StateView:
+        # mypy checks the signatures here; isinstance only the names.
+        return session
+
+    assert typed is not None
+    assert issubclass(MariadbSession, StateView)
 
 
 def test_a_broken_view_is_warned_about() -> None:

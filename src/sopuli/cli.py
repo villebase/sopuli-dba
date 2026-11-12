@@ -244,7 +244,7 @@ from sopuli.driver.registry import (
     installed,
     require_command,
 )
-from sopuli.driver.survey import AccountSurvey, SurveyedAccount
+from sopuli.driver.survey import AccountSurvey, StateView, SurveyedAccount
 from sopuli.exit_codes import ExitCode
 from sopuli.extras import MISSING_MODULE, missing_kind
 from sopuli.generate import Candidate, DocumentWrite
@@ -6402,11 +6402,10 @@ def _account_key(account: str, product: str) -> object:
 
 def _warn_if_view_broken(run: Invocation, target: ExpandedTarget, session: Any) -> None:
     """`SOPULI-W073` where a MariaDB target's optional view exists and is not
-    used (#1491). A session without the view has no ``account_states``."""
-    states = getattr(session, "account_states", None)
-    if states is None:
+    used (#1491). Only a :class:`~sopuli.driver.survey.StateView` has one."""
+    if not isinstance(session, StateView):
         return
-    broken = states().broken
+    broken = session.view_broken()
     if broken is not None:
         run.document.warn_in_text(account_state_view_broken(target.name, broken))
 
@@ -6429,9 +6428,8 @@ def _database_date(
         return history_states.without_database(one, refused.message)
     # MariaDB's date is in its optional view only, which `describe_user` does
     # not read, so no verb acts on it (#1491).
-    changed_at = getattr(session, "report_changed_at", None)
-    if user is not None and changed_at is not None:
-        when, why = changed_at(user)
+    if user is not None and isinstance(session, StateView):
+        when, why = session.report_changed_at(user)
         user = replace(user, password_changed_at=when, password_changed_unknown=why)
     return history_states.with_database(one, user)
 

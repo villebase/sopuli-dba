@@ -32,13 +32,9 @@ from __future__ import annotations
 from typing import Any
 
 from sopuli.driver.mariadb.account_state import NO_ROW, AccountStates
-from sopuli.driver.mariadb.accounts import EXPIRED, SYSTEM_ACCOUNTS, status
-from sopuli.driver.mysql_family.accounts import text
-from sopuli.driver.survey import SurveyedAccount
-
-#: ``SurveyedAccount.status`` for an account the view reads as locked, in
-#: the words MySQL and Oracle use.
-LOCKED = "LOCKED"
+from sopuli.driver.mariadb.accounts import SYSTEM_ACCOUNTS, status
+from sopuli.driver.mysql_family.accounts import EXPIRED_AND_LOCKED, LOCKED, text
+from sopuli.driver.survey import Limit, SurveyedAccount
 
 #: Every account, by §2.1's column grant, roles left out. No stored value.
 ACCOUNTS = (
@@ -77,50 +73,42 @@ def survey(cursor: Any, states: AccountStates | None = None) -> tuple[SurveyedAc
 def _account(user: str, host: str, *, expired: bool, states: AccountStates) -> SurveyedAccount:
     name = f"{user}@{host}"
     state = states.get(user, host)
-    if state is None:
-        # No view, or no row for this account in it: the lock and the
-        # lifetime are not checked, with why.
-        lock_reason = NO_LOCK_READ if states.reason is None else states.reason
-        lifetime_reason = NO_LIFETIME_READ if states.reason is None else states.reason
-        if states.rows is not None:
-            lock_reason = lifetime_reason = NO_ROW
-        return SurveyedAccount(
-            name=name,
-            # The words `account list` shows; the lock finding says the lock
-            # was not checked.
-            status=status(expired=expired),
-            locked=None,
-            profile="",
-            common=False,
-            # MariaDB's own account, left out unless the file names it, as
-            # Oracle's are.
-            vendor_maintained=name in SYSTEM_ACCOUNTS,
-            password_lifetime=None,
-            failed_login_limit=None,
-            failed_logins=None,
-            unreadable=(lock_reason, lifetime_reason, NO_LIMIT, NO_COUNT_READ),
-        )
-    return SurveyedAccount(
-        name=name,
-        status=_status(locked=state.locked, expired=expired),
-        locked=state.locked,
+    locked: bool | None = None
+    lifetime: Limit = None
+    if state is not None:
         # Only ACCOUNT LOCK sets account_locked: a block after failed logins
         # (max_password_errors) is not in the view (#1479).
-        deliberately_locked=state.locked,
+        locked, lifetime = state.locked, state.lifetime
+        unread: tuple[str, ...] = ()
+    elif states.rows is not None:
+        unread = (NO_ROW, NO_ROW)
+    elif states.reason is not None:
+        unread = (states.reason, states.reason)
+    else:
+        unread = (NO_LOCK_READ, NO_LIFETIME_READ)
+    return SurveyedAccount(
+        name=name,
+        # The words `account list` shows; without the view the lock finding
+        # says the lock was not checked.
+        status=_status(locked=bool(locked), expired=expired),
+        locked=locked,
+        deliberately_locked=locked,
         profile="",
         common=False,
+        # MariaDB's own account, left out unless the file names it, as
+        # Oracle's are.
         vendor_maintained=name in SYSTEM_ACCOUNTS,
-        password_lifetime=state.lifetime,
+        password_lifetime=lifetime,
         failed_login_limit=None,
         failed_logins=None,
-        unreadable=(NO_LIMIT, NO_COUNT_READ),
+        unreadable=(*unread, NO_LIMIT, NO_COUNT_READ),
     )
 
 
 def _status(*, locked: bool, expired: bool) -> str:
     """The verbs' words, with the lock the view read."""
     if locked and expired:
-        return f"{EXPIRED} & {LOCKED}"
+        return EXPIRED_AND_LOCKED
     if locked:
         return LOCKED
     return status(expired=expired)

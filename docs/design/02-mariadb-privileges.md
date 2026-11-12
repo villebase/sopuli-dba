@@ -129,8 +129,8 @@ GRANT SELECT (default_role) ON mysql.user TO 'sopuli_admin'@'192.0.2.10';
 `sopuli.account_state` and grants `SELECT` on it to the tool account (#1491).
 The view reads, for each account, the lock, the password lifetime and the time
 of the last change from `mysql.global_priv`, and never the stored value.
-`report accounts`, `report history` and `account list` read it, and nothing
-that changes an account does. Without it, those are *not checked*. §2.4 says
+`report accounts` and `report history` read it, and nothing that changes an
+account does. Without it, those are *not checked*. §2.4 says
 what it gives. Edit the two `SET` lines at its top to name the tool account,
 and run it as an administrator who may name another definer (`SET USER` or
 `SUPER`).

@@ -32,6 +32,18 @@ from typing import Any
 from sopuli.config.products import same_mysql_account
 from sopuli.driver.mysql import admin
 from sopuli.driver.mysql_family.accounts import (
+    EXPIRED as EXPIRED,
+)
+from sopuli.driver.mysql_family.accounts import (
+    EXPIRED_AND_LOCKED as EXPIRED_AND_LOCKED,
+)
+from sopuli.driver.mysql_family.accounts import (
+    LOCKED as LOCKED,
+)
+from sopuli.driver.mysql_family.accounts import (
+    OPEN as OPEN,
+)
+from sopuli.driver.mysql_family.accounts import (
     Principal,
     current_user,
     same_host,
@@ -58,11 +70,6 @@ ROWS_FOR_USERS = (
 #: is ``NULL``. ``0`` is no limit.
 DEFAULT_LIFETIME = "select @@global.default_password_lifetime"
 
-#: ``UserState.status``, in the words Oracle uses for the same states.
-OPEN = "OPEN"
-LOCKED = "LOCKED"
-EXPIRED = "EXPIRED"
-EXPIRED_AND_LOCKED = "EXPIRED & LOCKED"
 
 #: The system accounts a new server creates, by name (TG2). Each holds
 #: ``SYSTEM_USER``, so the tool account cannot change them anyway (TG1). A

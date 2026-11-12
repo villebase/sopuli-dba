@@ -37,9 +37,9 @@ from dataclasses import dataclass
 from typing import Any
 
 from sopuli.config.products import fold_mysql_host
-from sopuli.driver.mysql.accounts import DEFAULT_LIFETIME, EXPIRED, SYSTEM_ACCOUNTS, status
+from sopuli.driver.mysql.accounts import DEFAULT_LIFETIME, SYSTEM_ACCOUNTS, status
 from sopuli.driver.mysql.admin import read_mandatory_roles
-from sopuli.driver.mysql_family.accounts import text
+from sopuli.driver.mysql_family.accounts import EXPIRED, text
 from sopuli.driver.survey import Limit, SurveyedAccount
 
 #: Every account and role, by §2.1's column grant. No hash column.

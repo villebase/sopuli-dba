@@ -24,6 +24,13 @@ from sopuli.exit_codes import ExitCode
 #: the account's own pattern (``%``), not the client's address.
 CURRENT_USER = "select current_user()"
 
+#: ``UserState.status`` and ``SurveyedAccount.status`` on MySQL and MariaDB,
+#: in the words Oracle uses for the same states.
+OPEN = "OPEN"
+LOCKED = "LOCKED"
+EXPIRED = "EXPIRED"
+EXPIRED_AND_LOCKED = "EXPIRED & LOCKED"
+
 
 class BareAccountError(DriverError):
     """A MySQL or MariaDB account named without its host. The config refuses

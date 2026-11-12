@@ -8,8 +8,8 @@ account ``SELECT`` on it (#1457). ``sql/mariadb/account_state_view.sql``
 creates it. What it gives was measured by ``16_definer_view_probe.py``
 (#1479; ``02-mariadb-privileges.md`` §2.4).
 
-**Who reads it.** `report accounts`, `report history` and `account list`
-only, through :meth:`~sopuli.driver.mariadb.session.MariadbSession.account_states`.
+**Who reads it.** `report accounts` and `report history` only, through
+:meth:`~sopuli.driver.mariadb.session.MariadbSession.account_states`.
 ``describe_user`` does not, so no verb that changes an account acts on what the
 view says (#1491).
 
@@ -30,7 +30,10 @@ only the granted columns are listed, and the others cannot be read either.
 
 An absent view leaves the fields *not checked*, with the reason. A view that
 exists and cannot be used is **broken**: the fields are *not checked* too, and
-the caller warns, naming what is wrong (#1491).
+the caller warns, naming what is wrong (#1491). So is any other refusal of the
+read, and a column that holds something other than an integer, such as another
+key of ``Priv`` under an expected name. Neither the server's message nor the
+value is repeated, as either could carry a stored value.
 """
 
 from __future__ import annotations
@@ -40,6 +43,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from sopuli.driver.mysql_family.accounts import text
+from sopuli.driver.mysql_family.errors import error_number
 from sopuli.driver.protocol import Cursor
 from sopuli.driver.survey import Limit
 
@@ -136,22 +140,32 @@ def read(cursor: Cursor) -> AccountStates:
         (default,) = cursor.fetchone()
         cursor.execute(ROWS_QUERY)
         rows = cursor.fetchall()
-    except Exception as error:  # noqa: BLE001 -- classified below, others re-raised
-        number = _number(error)
+    except Exception as error:  # noqa: BLE001 -- a server's answer is classified
+        number = error_number(error)
+        if number is None:
+            # Not the server's answer, such as a lost connection: the target's.
+            raise
+        if number == NO_GRANT:
+            return AccountStates(rows=None, reason=ABSENT)
         if number == DEFINER_GONE:
             return _broken(f"its definer no longer exists ({DEFINER_GONE})")
         if number == VIEW_INVALID:
             return _broken(f"its definer cannot read mysql.global_priv ({VIEW_INVALID})")
-        if number == NO_GRANT:
-            return AccountStates(rows=None, reason=ABSENT)
-        raise
-    default_days = int(default or 0)
-    return AccountStates(
-        rows={
-            (text(user), text(host)): _state(locked, lifetime, changed, default_days)
-            for user, host, locked, lifetime, changed in rows
-        }
-    )
+        # Any other refusal of an optional view: not read, never the target's
+        # failure (#1376). Only the number, never the server's message.
+        return _broken(f"the server refused to read it ({number})")
+    try:
+        default_days = int(default or 0)
+        return AccountStates(
+            rows={
+                (text(user), text(host)): _state(locked, lifetime, changed, default_days)
+                for user, host, locked, lifetime, changed in rows
+            }
+        )
+    except (TypeError, ValueError):
+        # A column the right name holds something else, such as another key of
+        # Priv. Its value is never repeated: it may be a stored one (invariant 2).
+        return _broken("a column holds values the tool does not expect")
 
 
 def _broken(what: str) -> AccountStates:
@@ -160,11 +174,6 @@ def _broken(what: str) -> AccountStates:
         reason=f"the optional view {VIEW} is not used: {what}",
         broken=what,
     )
-
-
-def _number(error: Exception) -> int | None:
-    args = getattr(error, "args", ())
-    return args[0] if args and isinstance(args[0], int) else None
 
 
 def _state(locked: Any, lifetime: Any, changed: Any, default_days: int) -> State:
@@ -181,6 +190,11 @@ def _state(locked: Any, lifetime: Any, changed: Any, default_days: int) -> State
 
 
 def _int(value: Any) -> int | None:
+    """An integer the view gave, as text or a number. Raises ``ValueError`` for
+    anything else; the caller never repeats the value."""
     if value is None:
         return None
-    return int(text(value))
+    found = text(value)
+    if not found.lstrip("-").isdigit():
+        raise ValueError("not an integer")
+    return int(found)

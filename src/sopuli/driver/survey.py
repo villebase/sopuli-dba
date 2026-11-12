@@ -26,7 +26,10 @@ in the root (``02-oracle-privileges.md`` §2), so its ``locked`` is ``None``.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Literal, Protocol, runtime_checkable
+
+from sopuli.driver.protocol import UserState
 
 #: A password limit: a whole number, ``"unlimited"``, or ``None`` where the
 #: target cannot read the limit that applies.
@@ -142,4 +145,24 @@ class AccountSurvey(Protocol):
 
     def survey_with_profiles(self) -> tuple[tuple[SurveyedAccount, ...], frozenset[str]]:
         """Every account on the target, and every profile it has."""
+        ...
+
+
+@runtime_checkable
+class StateView(Protocol):
+    """A session that reads an optional view for the reports, beside
+    ``describe_user``: MariaDB's ``sopuli.account_state`` (#1491).
+
+    Only `report accounts` and `report history` ask for it, so no verb that
+    changes an account acts on what the view says.
+    """
+
+    def view_broken(self) -> str | None:
+        """What is wrong with a view that exists and cannot be used, for
+        ``SOPULI-W073``; ``None`` where it is absent or was read."""
+        ...
+
+    def report_changed_at(self, user: UserState) -> tuple[datetime | None, str | None]:
+        """When ``user``'s password last changed, from the view, or ``None``
+        and why."""
         ...

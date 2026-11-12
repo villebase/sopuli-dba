@@ -75,6 +75,11 @@ class RoleGrant:
     ``authentication`` is the role's own: ``NONE`` for an ordinary role, or
     the database's word for one that needs more to enable, such as Oracle's
     ``PASSWORD`` and ``APPLICATION``.
+
+    ``default_role`` is whether the role's privileges are active without
+    ``SET ROLE``: Oracle's default role, and PostgreSQL's ``INHERIT`` option.
+    ``set_option`` is PostgreSQL's ``SET`` option, whether the member may
+    ``SET ROLE`` to it, and ``None`` on a product that has no such option.
     """
 
     grantee: str
@@ -82,6 +87,7 @@ class RoleGrant:
     admin_option: bool
     default_role: bool
     authentication: str
+    set_option: bool | None = None
 
 
 @dataclass(frozen=True)

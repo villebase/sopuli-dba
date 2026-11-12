@@ -568,7 +568,8 @@ def _stated(surveyed: SurveyedAccount, expectation: _Expectation) -> tuple[Findi
     So the checks that apply are the lock and whatever the file states. Where it
     states nothing at all, the account is in the `no rule` state (U8). A rule's
     `login:` is something stated: it says what the lock must be. A PostgreSQL
-    `VALID UNTIL` in the past is a problem whatever the file states (#1459).
+    `VALID UNTIL` in the past is a problem whatever the file states, on a role
+    that can log in (#1459, #1468).
     """
     reasons = _reasons(surveyed)
     if "lock" in expectation.conflicts:
@@ -674,16 +675,15 @@ def _lock(
     if surveyed.no_authentication:
         return Finding("lock", OK, f"no authentication: {surveyed.status}")
     if not surveyed.locked:
-        if surveyed.valid_until is not None and surveyed.valid_until.expired:
-            # A past VALID UNTIL stops password logins only: trust, peer and
-            # cert lines in pg_hba.conf still let the role in (#1468).
-            return Finding(
-                "lock",
-                PROBLEM,
-                f"can log in: {surveyed.status}, rule says login refused; VALID UNTIL "
-                "stops password logins only, and NOLOGIN refuses every login",
-            )
-        return Finding("lock", PROBLEM, f"can log in: {surveyed.status}, rule says login refused")
+        # A past VALID UNTIL stops password logins only: trust, peer and cert
+        # lines in pg_hba.conf still let the role in (#1468).
+        expired = surveyed.valid_until is not None and surveyed.valid_until.expired
+        why = "; VALID UNTIL stops password logins only, and NOLOGIN refuses every login"
+        return Finding(
+            "lock",
+            PROBLEM,
+            f"can log in: {surveyed.status}, rule says login refused{why if expired else ''}",
+        )
     if surveyed.deliberately_locked is None:
         return Finding(
             "lock",
@@ -723,8 +723,9 @@ def _valid_until(surveyed: SurveyedAccount, expectation: _Expectation) -> Findin
     conflict = "valid_until" in expectation.conflicts
     wanted = None if conflict else expectation.valid_until
     read = surveyed.valid_until
-    # A date in the past is a problem whatever the rules say, so it is read
-    # before a conflict between them can leave the check not checked.
+    # On a role that can log in, a date in the past is a problem whatever the
+    # rules say, so it is read before a conflict between them can leave the
+    # check not checked. On a NOLOGIN role only a rule judges it (#1468).
     nologin = surveyed.lock_is_login_attribute and surveyed.locked is True
     if read is not None and read.expired and not nologin:
         says = "" if wanted is None else f", rule says {wanted}"
@@ -737,8 +738,10 @@ def _valid_until(surveyed: SurveyedAccount, expectation: _Expectation) -> Findin
     says = "" if wanted is None else f", rule says {wanted}"
     if wanted is None:
         return None
-    # `required` wants a date that will pass; `forbidden` wants none.
-    met = not read.never if wanted == VALID_UNTIL_REQUIRED else read.never
+    # `required` wants a date still to come; `forbidden` wants none. A past
+    # date reaches here only on a NOLOGIN role, and does not meet `required`.
+    required = wanted == VALID_UNTIL_REQUIRED
+    met = (not read.never and not read.expired) if required else read.never
     if met:
         return Finding("valid_until", OK, shown)
     return Finding("valid_until", PROBLEM, f"{shown}{says}")

@@ -234,14 +234,16 @@ def test_an_expired_date_on_a_nologin_role_is_not_a_problem() -> None:
     assert found.state == REPORT_OK
 
 
-def test_a_rule_still_judges_the_date_on_a_nologin_role() -> None:
-    """`forbidden` wants no date, so a past one is still a problem there."""
-    cfg = config({"accounts": ["acme_owner"], "postgresql": {"valid_until": "forbidden"}})
+@pytest.mark.parametrize("wanted", ["forbidden", "required"])
+def test_a_rule_still_judges_the_date_on_a_nologin_role(wanted: str) -> None:
+    """`forbidden` wants no date, and `required` a date still to come, so a
+    past one fails either rule there."""
+    cfg = config({"accounts": ["acme_owner"], "postgresql": {"valid_until": wanted}})
     found = row(cfg, role("acme_owner", can_login=False, until=PAST, expired=True))
 
     assert outcome(found, "valid_until") == (
         "problem",
-        "VALID UNTIL 2001-01-01T00:00:00Z, rule says forbidden",
+        f"VALID UNTIL 2001-01-01T00:00:00Z, rule says {wanted}",
     )
 
 

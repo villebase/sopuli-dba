@@ -497,6 +497,14 @@ class DriverError(Exception):
     #: never a driver's list of codes.
     reach_warning: str | None = None
 
+    #: Whether the refusal is about the one account asked for, not the target:
+    #: a MySQL or MariaDB account on a plugin the tool does not set passwords
+    #: for. A report that reads many accounts then gives that account the
+    #: reason and keeps the target's other answers (`report history`, #1460).
+    #: ``False`` on the class, so an error the driver did not mark stays the
+    #: target's.
+    about_account = False
+
     def __init__(
         self,
         message: str,

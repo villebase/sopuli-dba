@@ -307,6 +307,17 @@ held two ways is counted once and shows both sources. A role that is not a
 default role still counts, and is marked, because the account can enable it.
 Grants to `PUBLIC` are left out unless a flag asks for them.
 
+**Other products** have the same four parts, each counted in the product's own
+terms ([#1411](../decisions/log.md#1411), question 4): *system* is what
+applies to the whole database or cluster, *schemas* what applies to one schema
+or database, *objects* what applies to one object, and *columns* what applies
+to one column. Where a product has more than one level in a part, such as
+MySQL's static and dynamic global privileges, each privilege names its level,
+as in "SYSTEM_VARIABLES_ADMIN (global dynamic, direct)". A scope the target
+cannot reach, such as another database of a PostgreSQL cluster, is listed as
+*not checked* on that target. The report is not built on PostgreSQL, MySQL or
+MariaDB yet (#1481, #1482, #1483).
+
 ---
 
 ## 6. Rotation history

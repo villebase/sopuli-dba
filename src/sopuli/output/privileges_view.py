@@ -104,7 +104,7 @@ def _system(privileges: Sequence[Privilege] | None) -> str:
         return "not checked"
     if not privileges:
         return "none"
-    return "; ".join(f"{p.privilege} ({_sources(p)})" for p in privileges)
+    return "; ".join(f"{p.privilege} ({_where(p)})" for p in privileges)
 
 
 def _schemas(privileges: Sequence[Privilege] | None) -> str:
@@ -113,7 +113,13 @@ def _schemas(privileges: Sequence[Privilege] | None) -> str:
         return "not checked"
     if not privileges:
         return "none"
-    return "; ".join(f"{p.privilege} on {p.owner} ({_sources(p)})" for p in privileges)
+    return "; ".join(f"{p.privilege} on {p.owner} ({_where(p)})" for p in privileges)
+
+
+def _where(privilege: Privilege) -> str:
+    """``global dynamic, direct``: the level, where the part has more than one, then the sources."""
+    sources = _sources(privilege)
+    return sources if privilege.level is None else f"{privilege.level}, {sources}"
 
 
 def _counts(privileges: Sequence[Privilege] | None, *, noun: str | None = None) -> str:
@@ -174,7 +180,7 @@ def _detail(one: AccountPrivileges) -> list[str]:
             continue
         rows.extend(
             [
-                label,
+                p.level or label,
                 p.privilege,
                 ".".join(x for x in (p.owner, p.name, p.column) if x) or ABSENT,
                 SCHEMA_TYPE if p.kind == SCHEMA else p.object_type or ABSENT,
@@ -264,6 +270,7 @@ def _privileges_json(part: Sequence[Privilege] | None) -> list[dict[str, Any]] |
     return [
         {
             "privilege": p.privilege,
+            "level": p.level,
             "owner": p.owner,
             "name": p.name,
             "object_type": p.object_type,

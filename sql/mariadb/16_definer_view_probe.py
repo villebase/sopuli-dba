@@ -22,8 +22,10 @@ says otherwise. Root creates the view:
        after it is closed (DV3 sends the statements). Then whether anything
        the tool account reads through the view, in any step, holds a stored
        value: its rows, SHOW CREATE VIEW, information_schema.VIEWS, EXPLAIN,
-       and every error message. Root reads the fixture's stored values to
-       compare and the probe prints only whether one was found
+       and the answer to every statement it sends, refusals and their
+       messages included, in DV1 to DV9. Root reads the fixture's stored
+       values to compare, and the probe prints only whether one was found.
+       A run that reads no stored value to compare with fails
   DV2  the lock, LK2: account_locked through the view for an account never
        locked, after the tool account's ACCOUNT LOCK and ACCOUNT UNLOCK, and
        for one created with ACCOUNT LOCK
@@ -35,7 +37,8 @@ says otherwise. Root creates the view:
        account created with PASSWORD EXPIRE. password_last_changed against
        the server's UNIX_TIMESTAMP(), after a change by value, after PASSWORD
        EXPIRE and after a second change by value. Each step waits over a
-       second first
+       second first. Then PASSWORD EXPIRE on the INTERVAL 90 DAY and NEVER
+       accounts
   DV5  the failed-login block, LK4/RD6: Priv's keys, as root reads them with
        JSON_KEYS, before and after max_password_errors = 2 blocks an account,
        and what the view gives for it
@@ -49,7 +52,8 @@ says otherwise. Root creates the view:
        without the grant, and when its definer has been dropped
   DV8  the cost, #1457 Q5: how many rows the view gives against
        mysql.global_priv's, with roles and root. Whether the tool account can
-       CREATE VIEW over it, CREATE PROCEDURE, CREATE TRIGGER, or UPDATE it. A
+       CREATE VIEW over it, CREATE PROCEDURE, CREATE TRIGGER on the table t
+       (a trigger cannot be on a view), or UPDATE it. A
        column grant on part of the view. WITH CHECK OPTION. A definer that is
        a locked account holding only SELECT on mysql.global_priv. And a DBA
        with every privilege on sopuli_probe.* and SELECT on mysql.global_priv,
@@ -89,9 +93,12 @@ value is found in what the tool account read.
 STATUS: run on 10.11.19, 11.4.13, 11.8.9 and 12.3.3, the mariadb:10.11,
 mariadb:11.4, mariadb:11.8 and mariadb:12.3 images of test/compose.yaml
 profile mariadb-matrix, on 2026-11-12 (#1479), with Python 3.13.12 on Windows
-11 AMD64. Twice, exit 0, the same result both times but for the times of the
-last change. The first run did not yet have DV7's message and the definer
-created again, or DV8's read after root's grant.
+11 AMD64. Three times, exit 0, the same result each time but for the times of
+the last change. The first run did not yet have DV7's message and the definer
+created again, or DV8's read after root's grant. The first two did not yet
+have DV4's PASSWORD EXPIRE on the 90-day and NEVER accounts, checked only
+the tool account's reads through the view for a stored value, and did not
+check DV9's.
 
 RESULTS -- the same on every release, except where noted
 
@@ -104,17 +111,18 @@ RESULTS -- the same on every release, except where noted
        CREATE VIEW, 1142 (42000), and EXPLAIN, 1345 (HY000).
        information_schema.VIEWS shows it the view's row with an empty
        VIEW_DEFINITION and SECURITY_TYPE DEFINER. No stored value of the
-       fixture was in anything the tool account read: 110 outputs, rows and
-       refusals, against 7 values
+       fixture was in anything the tool account read: 158 outputs on each
+       server and 40 in DV9, rows and refusals, against 7 and 4 values
   DV2  account_locked is NULL for an account never locked, 1 after ACCOUNT
        LOCK, **0 after ACCOUNT UNLOCK**, and 1 for an account created with
        ACCOUNT LOCK. The tool account's own ACCOUNT LOCK and UNLOCK run, and
        the view follows each
   DV3  rollover_open is 0 before, 1 after the tool account's OR, still 1
        after PASSWORD EXPIRE during it, 0 after the close with the current
-       value alone, and the same again for a second rollover. PASSWORD EXPIRE
-       sets password_lifetime to -1 and password_last_changed to 0; the close
-       sets a new time and leaves the lifetime at -1
+       value alone, and the same again for a second rollover. On this
+       account, whose lifetime was the default, PASSWORD EXPIRE sets
+       password_lifetime to -1 and password_last_changed to 0; the close sets
+       a new time and leaves the lifetime at -1
   DV4  password_lifetime is NULL for an account created with neither, 90
        for INTERVAL 90 DAY, 0 for NEVER, and -1 for one created with PASSWORD
        EXPIRE. password_last_changed is seconds since 1970 by the server's
@@ -122,7 +130,10 @@ RESULTS -- the same on every release, except where noted
        moves with a change by value, PASSWORD EXPIRE sets it to 0, and a
        second change by value sets a new time. ACCOUNT LOCK and a lifetime
        of 30 days leave it. An account created with PASSWORD EXPIRE reads 0,
-       and a time after its first change by value
+       and a time after its first change by value. **PASSWORD EXPIRE keeps a
+       lifetime of the account's own**: the 90-day account reads 90 and the
+       NEVER account 0 after it, each with the time 0. It sets -1 only where
+       the lifetime was the default
   DV5  Priv's keys are access, version_id, plugin, authentication_string and
        password_last_changed, before the block and while blocked: three
        wrong passwords give 1045, 1045 and 4150, and the right one 4150. The
@@ -144,12 +155,13 @@ RESULTS -- the same on every release, except where noted
        is logged in, and COLUMNS still gives 6 rows. When the definer exists
        without SELECT on global_priv, the SELECT answers 1356 (HY000), and
        COLUMNS gives 6 rows
-  DV8  the view gives every row of mysql.global_priv, 19 on 19 in the second
-       run, roles at an empty host and root's two among them, and no other
+  DV8  the view gives every row of mysql.global_priv, 19 of 19 in the later
+       runs, roles at an empty host and root's two among them, and no other
        column. The tool account's CREATE VIEW over it is refused, 1142
-       (42000), CREATE PROCEDURE 1044 (42000), CREATE TRIGGER 1419 (HY000)
-       (the matrix has the binary log on), and UPDATE of the view 1142
-       (42000). With a column grant on User, Host and account_locked, those
+       (42000), CREATE PROCEDURE 1044 (42000), and UPDATE of the view 1142
+       (42000). CREATE TRIGGER on the table t is refused 1419 (HY000), the
+       binary log's check, which runs first on the matrix; the account holds
+       no TRIGGER privilege either. With a column grant on User, Host and account_locked, those
        read, password_lifetime is refused 1143 (42000) and SELECT * 1142
        (42000). WITH CHECK OPTION is accepted. The DBA without SET USER or
        SUPER is refused CREATE DEFINER = root@localhost VIEW, 1227 (42000);
@@ -213,7 +225,7 @@ VIEW = f"{SCHEMA}.account_state"
 #: A test password, not a credential.
 PASSWORD = "Acme-View-pw1"
 P = "sopuli_probe_dv_"
-FIXTURE_LIKE = "'sopuli\\_probe\\_%'"
+FIXTURE_LIKE = rr.FIXTURE_LIKE
 COLUMNS = (
     "User, Host,"
     " JSON_VALUE(Priv, '$.account_locked') AS account_locked,"
@@ -245,8 +257,24 @@ def tool(service: str, statement: str) -> str:
     return found[1]
 
 
-def as_account(service: str, user: str, statement: str, host: str = "%") -> str:
-    """`ok` and the output, or the refusal's code, for another fixture account."""
+def sent(service: str, statement: str) -> str:
+    """`ok`, or the refusal with its message, for a statement the tool account sends.
+
+    What `ch.as_tool` gives, with the answer kept for the leak check.
+    """
+    returncode, out, err = ch.client(service, ch.TOOL, ch.TOOL_PASSWORD, statement, "-h127.0.0.1")
+    SEEN.append(out)
+    SEEN.append(err)
+    if returncode == 0:
+        return "ok"
+    found = re.search(r"^ERROR (\d+ \(\w+\))(?: at line \d+)?: (.*)", err, re.MULTILINE)
+    if found is None:
+        raise ch.StepError(f"{service}: tool account: {(err or out)[:200]}")
+    return f"{found[1]}: {found[2][:110]}"
+
+
+def as_account(service: str, user: str, statement: str) -> str:
+    """`ok` and the output, or the refusal's code, for another fixture account at '%'."""
     returncode, out, err = ch.client(service, user, PASSWORD, statement, "-h127.0.0.1")
     if returncode == 0:
         return f"ok {out}".strip()
@@ -256,12 +284,10 @@ def as_account(service: str, user: str, statement: str, host: str = "%") -> str:
     return found[1]
 
 
-def root(service: str, statement: str) -> str:
-    return str(ch.root(service, statement))
-
-
-def lines(text: str) -> list[str]:
-    return [line.replace("\t", " | ") for line in text.splitlines() if line]
+root = rr.root
+#: 15's clean-up drops every sopuli_probe_ account and role, the schema, and
+#: a grant to PUBLIC that an interrupted run of 15 left.
+clean = rr.clean
 
 
 def remember(service: str) -> None:
@@ -304,25 +330,6 @@ def age(service: str, value: str) -> str:
         return "0"
     now = int(root(service, "SELECT UNIX_TIMESTAMP()"))
     return f"a time {now - int(value)} s before UNIX_TIMESTAMP()"
-
-
-def clean(service: str) -> None:
-    """Drop what this probe creates, whatever an earlier run left."""
-    found = root(
-        service,
-        "SELECT GROUP_CONCAT(CONCAT(QUOTE(User), '@', QUOTE(Host))) FROM mysql.user"
-        f" WHERE User LIKE {FIXTURE_LIKE} AND is_role = 'N'",
-    )
-    if found and found != "NULL":
-        root(service, f"DROP USER {found}")
-    roles = root(
-        service,
-        "SELECT GROUP_CONCAT(QUOTE(User)) FROM mysql.user"
-        f" WHERE User LIKE {FIXTURE_LIKE} AND is_role = 'Y'",
-    )
-    if roles not in ("", "NULL"):
-        root(service, f"DROP ROLE {roles}")
-    root(service, f"DROP DATABASE IF EXISTS {SCHEMA}")
 
 
 def create(account: str, extra: str = "") -> str:
@@ -393,7 +400,7 @@ def dv2(service: str) -> None:
     account = f"'{P}lock'@'%'"
     print(f"  DV2  never locked: {row(service, P + 'lock')}")
     for statement in ("ACCOUNT LOCK", "ACCOUNT UNLOCK", "ACCOUNT LOCK", "ACCOUNT UNLOCK"):
-        answer = ch.as_tool(service, f"ALTER USER {account} {statement}")
+        answer = sent(service, f"ALTER USER {account} {statement}")
         print(f"  DV2  after the tool account's {statement} ({answer}): {row(service, P + 'lock')}")
     print(f"  DV2  created with ACCOUNT LOCK: {row(service, P + 'born_lock')}")
 
@@ -416,7 +423,7 @@ def dv3(service: str) -> None:
         ("its close", f"ALTER USER {account} IDENTIFIED VIA mysql_native_password USING '{first}'"),
     )  # fmt: skip
     for label, statement in steps:
-        answer = ch.as_tool(service, statement)
+        answer = sent(service, statement)
         remember(service)
         print(
             f"  DV3  after {label} ({answer}): {row(service, user)}; root: {auth_or(service, user)}"
@@ -443,14 +450,14 @@ def dv4(service: str) -> None:
     print(f"  DV4  {user} last change, before: {age(service, last)}")
     for label, statement in steps:
         time.sleep(1.2)
-        answer = ch.as_tool(service, statement)
+        answer = sent(service, statement)
         remember(service)
         now = last_changed(service, user)
         print(f"  DV4  after {label} ({answer}): {age(service, now)}; moved: {now != last}")
         last = now
     exp = f"{P}born_exp"
     time.sleep(1.2)
-    answer = ch.as_tool(
+    answer = sent(
         service,
         f"ALTER USER '{exp}'@'%' IDENTIFIED VIA mysql_native_password USING"
         f" '{ch.native_hash('Acme-View-pw6')}'",
@@ -460,6 +467,10 @@ def dv4(service: str) -> None:
         f"  DV4  {exp}, after a change by value ({answer}):"
         f" {age(service, last_changed(service, exp))}; {row(service, exp)}"
     )
+    # PASSWORD EXPIRE on an account with a lifetime of its own.
+    for user in ("life90", "never"):
+        answer = sent(service, f"ALTER USER '{P}{user}'@'%' PASSWORD EXPIRE")
+        print(f"  DV4  {P}{user}, after PASSWORD EXPIRE ({answer}): {row(service, P + user)}")
 
 
 def keys(service: str, user: str) -> str:
@@ -568,7 +579,7 @@ def dv7(service: str) -> None:
     print(f"  DV7  its row for {P}plain: {row(service, P + 'plain', SCHEMA + '.by_definer')}")
     root(service, f"DROP USER {DEFINER}")
     print(f"  DV7  definer dropped: {probe_read(service, SCHEMA + '.by_definer')}")
-    answer = ch.as_tool(service, f"SELECT COUNT(*) FROM {SCHEMA}.by_definer")
+    answer = sent(service, f"SELECT COUNT(*) FROM {SCHEMA}.by_definer")
     print(f"  DV7  definer dropped, the message: {answer}")
     root(service, f"CREATE USER {DEFINER} IDENTIFIED BY {ch.quote(PASSWORD)} ACCOUNT LOCK")
     print(
@@ -594,7 +605,7 @@ def dv8(service: str) -> None:
         "UPDATE the view": f"UPDATE {VIEW} SET account_locked = NULL",
     }
     for label, statement in attempts.items():
-        print(f"  DV8  the tool account's {label}: {ch.as_tool(service, statement)}")
+        print(f"  DV8  the tool account's {label}: {sent(service, statement)}")
     root(
         service,
         f"CREATE SQL SECURITY DEFINER VIEW {SCHEMA}.cols AS {VIEW_SQL};"
@@ -637,6 +648,9 @@ def dv8(service: str) -> None:
 
 def check_leaks(service: str) -> None:
     remember(service)
+    if not STORED:
+        # The pattern found no value, so the check would compare nothing.
+        raise ch.StepError(f"{service}: no stored value read to compare with")
     found = [value for value in STORED if any(value in text for text in SEEN)]
     print(
         f"  DV1  stored values in anything the tool account read ({len(SEEN)} outputs,"
@@ -652,7 +666,8 @@ def probe(service: str) -> None:
     SEEN.clear()
     STORED.clear()
     clean(service)
-    try:
+
+    def steps() -> None:
         setup(service)
         dv1(service)
         dv2(service)
@@ -663,8 +678,9 @@ def probe(service: str) -> None:
         dv7(service)
         dv8(service)
         check_leaks(service)
-    finally:
-        clean(service)
+
+    # A clean-up that fails after a failed step is reported, not raised.
+    ch.cleaned(service, steps, lambda: clean(service))
 
 
 # --------------------------------------------------------------- upgrades --
@@ -715,6 +731,8 @@ def start(image: str) -> None:
 def dv9() -> None:
     print(f"\n== DV9: upgrades, {' > '.join(IMAGES)}")
     upgrade_clean()
+    SEEN.clear()
+    STORED.clear()
     try:
         start(IMAGES[0])
         setup(UPGRADE)
@@ -726,6 +744,7 @@ def dv9() -> None:
             f"ALTER USER {roll} IDENTIFIED VIA mysql_native_password USING '{second}'"
             f" OR mysql_native_password USING '{first}'",
         )
+        remember(UPGRADE)
         ddl = root(UPGRADE, f"SHOW CREATE VIEW {VIEW}")
         container, _ = upgrade_names()
         for image in IMAGES:
@@ -743,6 +762,7 @@ def dv9() -> None:
             )
             for user in ("lock", "roll", "life90", "born_exp", "plain"):
                 print(f"  DV9    {P}{user}: {row(UPGRADE, P + user)}")
+        check_leaks(UPGRADE)
     finally:
         upgrade_clean()
 

@@ -245,7 +245,8 @@ the view, with `is_role = 'N'`
   - `account_locked`: `NULL` for an account never locked, `1` when locked,
     `0` after `ACCOUNT UNLOCK`;
   - `password_lifetime`: the days, `0` for `PASSWORD EXPIRE NEVER`, and
-    `NULL` or `-1` for the server's default. `PASSWORD EXPIRE` sets `-1`;
+    `NULL` or `-1` for the server's default. `PASSWORD EXPIRE` sets `-1`
+    where the lifetime was the default, and keeps an account's own;
   - `password_last_changed`: seconds since 1970, by the server's clock.
     `PASSWORD EXPIRE` sets it to `0`, which is how MariaDB marks an expired
     password, so after an expiry the date of the last change is lost;
@@ -257,13 +258,14 @@ the view, with `is_role = 'N'`
   and no stored value: the probe looked for every fixture value in all the
   tool account read, refusals included, and found none. The tool account is
   refused `SHOW CREATE VIEW`, `1142`, and `EXPLAIN`, `1345`, and cannot
-  create a view, a procedure or a trigger over the view, or update it. The
+  create a view or a procedure over the view, or update it. The
   view and what it gives survive the image's upgrade from 10.11.19 to
   11.4.13, 11.8.9 and 12.3.3.
 - **The view's shape and presence, as the tool account sees them.**
   `information_schema.COLUMNS` and `SHOW COLUMNS` list the view's columns
-  before any row is read, an extra `authentication_string` among them. Under
-  a column grant they list only the columns granted. An absent view, an
+  before any row is read. A second view, made with an extra
+  `authentication_string` column to test this, showed that column in both.
+  Under a column grant they list only the columns granted. An absent view, an
   absent schema and a view without the grant all answer `1142`, so the tool
   cannot tell them apart. A dropped definer answers `1045 (28000)`, "Access
   denied", in a session that is already logged in. A definer that exists

@@ -119,6 +119,17 @@ class GrantSurvey:
 
 
 @runtime_checkable
+class PrivilegeViewState(Protocol):
+    """A privilege survey that reads an optional view a DBA creates: MariaDB's
+    ``sopuli.global_privileges`` (#1483)."""
+
+    def privilege_view_broken(self) -> str | None:
+        """What is wrong with a view that exists and cannot be used, for
+        ``SOPULI-W074``; ``None`` where it is absent or was read."""
+        ...
+
+
+@runtime_checkable
 class PrivilegeSurvey(Protocol):
     """A session that can survey accounts' privileges, for `report privileges`.
 

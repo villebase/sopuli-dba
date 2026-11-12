@@ -31,14 +31,15 @@ are listed once, under ``PUBLIC``, when the report asks for them.
 
 **Not checked:**
 
-- **the global level** (#1483, decision A). The privileges split from
-  ``SUPER``, such as ``CONNECTION ADMIN``, set no column of the
-  ``mysql.user`` view: they are only in ``mysql.global_priv``, beside the
-  stored value (``08_split_privileges_probe.py``). An account holding only
-  ``CONNECTION ADMIN`` would read as holding no global privilege, so the
-  ``system`` part is ``None``, with the reason. The optional view
-  ``sopuli.global_privileges`` will read it (decision C, a later part of
-  #1483).
+- **the global level, without the optional view** (#1483, decision A). The
+  privileges split from ``SUPER``, such as ``CONNECTION ADMIN``, set no
+  column of the ``mysql.user`` view: they are only in ``mysql.global_priv``,
+  beside the stored value (``08_split_privileges_probe.py``). An account
+  holding only ``CONNECTION ADMIN`` would read as holding no global
+  privilege, so without the view the ``system`` part is ``None``, with the
+  reason. With ``sopuli.global_privileges`` it is read there, for accounts
+  (decision C, :mod:`~sopuli.driver.mariadb.global_privileges`); a role's
+  and ``PUBLIC``'s global level are not checked even then.
 - **default roles, without §2.1's optional column grant** on the view's
   ``default_role`` (R3). Without it, the server refuses the read, ``1143``,
   and whether a role is a default role, and so active without ``SET ROLE``,

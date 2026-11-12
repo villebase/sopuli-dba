@@ -82,3 +82,9 @@ HOSTLESS_REPORT_NAME = "SOPULI-W072"
 #: cannot read ``mysql.global_priv`` (#1491). What it would give is not
 #: checked on that target.
 ACCOUNT_STATE_VIEW_BROKEN = "SOPULI-W073"
+
+#: The optional MariaDB view ``sopuli.global_privileges`` exists and cannot
+#: be used: a column outside the expected set, a definer that is gone, or one
+#: that reads less than ``mysql.*`` (#1483). The global privileges are not
+#: checked on that target.
+GLOBAL_PRIVILEGES_VIEW_BROKEN = "SOPULI-W074"

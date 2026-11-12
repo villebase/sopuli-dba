@@ -12,6 +12,8 @@ import pytest
 from sopuli.driver.grants import COLUMN, OBJECT, SCHEMA, GrantSurvey, PrivilegeSurvey
 from sopuli.driver.mariadb import privilege_survey as reads
 from sopuli.driver.mariadb.admin import DB_COLUMNS
+from sopuli.driver.mariadb.global_privileges import ABSENT as GLOBAL_ABSENT
+from sopuli.driver.mariadb.global_privileges import NO_ROLE_ROWS, GlobalPrivileges
 from sopuli.driver.mariadb.session import MariadbSession
 from sopuli.driver.mysql_family import privilege_reads as shared
 from sopuli.driver.protocol import DriverError
@@ -51,8 +53,16 @@ class _Cursor:
 ACCOUNTS = ["acme_app@%", "acme_ops@localhost"]
 
 
+#: The optional view of the global privileges, absent (#1483).
+NO_VIEW = GlobalPrivileges(rows=None, reason=GLOBAL_ABSENT)
+
+
 def survey(
-    cursor: _Cursor, *, public: bool = False, refuse_defaults: str | None = None
+    cursor: _Cursor,
+    *,
+    public: bool = False,
+    refuse_defaults: str | None = None,
+    view: GlobalPrivileges = NO_VIEW,
 ) -> GrantSurvey:
     session = MariadbSession.__new__(MariadbSession)
 
@@ -63,6 +73,7 @@ def survey(
 
     session._read = read  # type: ignore[method-assign]
     session._read_grants = read  # type: ignore[method-assign]
+    session.global_privileges = lambda: view  # type: ignore[method-assign]
     return session.survey_privileges(ACCOUNTS, public=public)
 
 
@@ -101,13 +112,49 @@ def test_each_level_below_the_global_one_is_read_with_its_level() -> None:
     assert {row.kind for row in found.columns or ()} == {COLUMN}
 
 
-def test_the_global_level_is_not_checked() -> None:
+def test_without_the_view_the_global_level_is_not_checked() -> None:
     """The privileges split from SUPER set no column the tool account reads,
-    so the level is not checked rather than shown incomplete (#1483, A)."""
+    so the level is not checked rather than shown incomplete (#1483, A), and
+    the reason says how to add the view (C)."""
     found = survey(_Cursor())
 
     assert found.system is None
-    assert found.unreadable == (reads.GLOBAL_NOT_CHECKED,)
+    assert found.unreadable == (f"{reads.GLOBAL_NOT_CHECKED}; {GLOBAL_ABSENT}",)
+
+
+def test_with_the_view_the_global_level_is_read_for_accounts() -> None:
+    """#1483, C: each account's own rows, at level `global`."""
+    view = GlobalPrivileges(
+        rows={"'acme_ops'@'localhost'": (("CONNECTION ADMIN", False), ("PROCESS", True))}
+    )
+    found = survey(_Cursor(), view=view)
+
+    assert found.system is not None
+    rows = {(row.grantee, row.privilege, row.level, row.grantable) for row in found.system}
+    assert rows == {
+        ("acme_ops@localhost", "CONNECTION ADMIN", "global", False),
+        ("acme_ops@localhost", "PROCESS", "global", True),
+    }
+    # No account here holds a role, and PUBLIC is not asked for.
+    assert found.unreadable == ()
+
+
+def test_with_the_view_publics_global_level_is_not_checked() -> None:
+    """USER_PRIVILEGES has no row for PUBLIC, though PUBLIC can hold a global
+    privilege (measured on 11.8.9): never shown as holding none."""
+    found = survey(_Cursor(), public=True, view=GlobalPrivileges(rows={}))
+
+    assert not any(row.grantee == "PUBLIC" for row in found.system or ())
+    assert NO_ROLE_ROWS in found.unreadable
+
+
+def test_with_the_view_a_roles_global_level_is_not_checked() -> None:
+    """A role has no row in USER_PRIVILEGES (probe 17)."""
+    view = GlobalPrivileges(rows={})
+    found = survey(_Cursor(edges=[("acme_app", "%", "acme_read", "N")]), view=view)
+
+    assert found.system == ()
+    assert NO_ROLE_ROWS in found.unreadable
 
 
 def test_a_default_role_and_the_role_it_holds_are_active_and_another_is_not() -> None:

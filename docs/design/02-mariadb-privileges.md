@@ -125,19 +125,25 @@ where it is granted, and never as missing.
 GRANT SELECT (default_role) ON mysql.user TO 'sopuli_admin'@'192.0.2.10';
 ```
 
-**One optional view.** `sql/mariadb/account_state_view.sql` makes the view
-`sopuli.account_state` and grants `SELECT` on it to the tool account (#1491).
-The view reads, for each account, the lock, the password lifetime and the time
-of the last change from `mysql.global_priv`, and never the stored value.
-`report accounts`, `report history` and `account list` read it, and nothing
-that changes an account does. Without it, the reports say those are *not
-checked*, and `account list` shows `OPEN` or `EXPIRED`, which say nothing of
-the lock. §2.4 says
-what it gives. Edit the two `SET` lines at its top to name the tool account,
-and run it as an administrator who may name another definer (`SET USER` or
-`SUPER`). `doctor --check-privileges` counts `SELECT` on the view as held
-where it is granted, and never as missing; any other privilege on it is
-over-granted.
+**Two optional views,** each made by its own script in `sql/mariadb/`, which
+grants `SELECT` on it to the tool account. Both live in the schema `sopuli`,
+and neither gives a stored value:
+
+- `account_state_view.sql` makes `sopuli.account_state` (#1491): for each
+  account, the lock, the password lifetime and the time of the last change,
+  from `mysql.global_priv`. `report accounts`, `report history` and `account
+  list` read it;
+- `global_privileges_view.sql` makes `sopuli.global_privileges` (#1483): each
+  account's global privileges, from `information_schema.USER_PRIVILEGES`, as
+  a definer that reads `mysql.*` sees them. `report privileges` reads it.
+
+Nothing that changes an account reads either. Without them, the reports say
+what they give is *not checked*, and `account list` shows `OPEN` or
+`EXPIRED`, which say nothing of the lock. §2.4 says what each gives. Edit the
+two `SET` lines at the top of each script to name the tool account, and run it
+as an administrator who may name another definer (`SET USER` or `SUPER`).
+`doctor --check-privileges` counts `SELECT` on each view as held where it is
+granted, and never as missing; any other privilege on them is over-granted.
 
 Give the account no other privilege, and no role.
 
@@ -321,10 +327,11 @@ that view.
   `information_schema`'s `*_PRIVILEGES` views show the tool account none of
   another account's grants.
 - **A second view that a DBA creates reads the global level**
-  (`17_global_privileges_view_probe.py`, #1483). Nothing reads it yet. It
-  has `SQL SECURITY DEFINER`, and a locked definer that holds `SELECT` on
-  `mysql.*`. The probe created it in its own schema; the build's install
-  script will create it as `sopuli.global_privileges`:
+  (`17_global_privileges_view_probe.py`, #1483). `report privileges` reads
+  it as `sopuli.global_privileges`, which
+  `sql/mariadb/global_privileges_view.sql` makes. It has `SQL SECURITY
+  DEFINER`, and a locked definer that holds `SELECT` on `mysql.*`. The
+  probe's own copy:
 
   ```sql
   CREATE USER 'sopuli_probe_gp_definer'@'localhost' ACCOUNT LOCK;

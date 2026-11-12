@@ -397,7 +397,9 @@ can survey its accounts, its targets are *not checked*.
   their expected login, settings or profile, and select targets as `applications:`
   and `personal_accounts:` do. On MySQL and MariaDB a name is `user@host`,
   compared as UC-1 compares it, and a name without a host reaches no account
-  there ([#1461](../decisions/log.md#1461)). A rule does not write a kind: the report
+  there ([#1461](../decisions/log.md#1461)). Where a rule selects only MySQL
+  and MariaDB targets, such a name is warned about when the file loads
+  (`SOPULI-W072`). A rule does not write a kind: the report
   derives it from where the file declares the account.
 - The list of database profiles is `reports.oracle.profiles`. Inside the
   product block it cannot be read as the top-level `profiles:`, which means run

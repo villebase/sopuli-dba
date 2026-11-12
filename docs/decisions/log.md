@@ -5412,6 +5412,10 @@ the register.
      a name's is.
   2. A name without a host reaches no account on a MySQL or MariaDB target,
      and is never reported missing there. A `*` in the host is refused.
+  3. Added 2026-11-12, #1472: where every target a rule selects is MySQL or
+     MariaDB, each name without a host gets the warning `SOPULI-W072` when
+     the file loads. The file still loads. A rule that also selects another
+     product's target is not warned about, so one name keeps one meaning.
 - **Why:** with `upper()`, a rule for `jdoe@%` would also check `JDOE@%`,
   and would not report `jdoe@%` missing when only `JDOE@%` exists: the report
   would call an account present that is not. A rule with no `targets:`
@@ -5426,5 +5430,8 @@ the register.
      schema 6.0. It can still be chosen later.
   3. Refusing it only where the rule's own `targets:` reach MySQL: the same
      name would mean two things.
-- **Known cost:** a rule meant for MySQL that leaves out the host checks
-  nothing there, and the accounts it meant show as undeclared.
+- **Known cost:** a rule that covers MySQL and another product, and leaves
+  out the host, checks nothing on MySQL, and the accounts it meant show as
+  undeclared. Part 3 warns only where the rule covers MySQL and MariaDB
+  alone. Refusing there too was not chosen, because a warning keeps every
+  file that loaded before loading.

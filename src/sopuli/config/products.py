@@ -25,11 +25,13 @@ import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
+from sopuli.config.codes import HOSTLESS_REPORT_NAME
 from sopuli.config.errors import ROOT, ConfigError, KeyPath
 from sopuli.config.expansion import block_key_at, declared_at
 from sopuli.config.model import (
     Application,
     Config,
+    ConfigWarning,
     ExpandedTarget,
     Override,
     Target,
@@ -639,24 +641,28 @@ def check_personal_mysql_accounts(config: Config) -> None:
                 )
 
 
-def check_report_mysql_accounts(config: Config) -> None:
+def check_report_mysql_accounts(config: Config) -> tuple[ConfigWarning, ...]:
     """A `reports.accounts` rule's ``user@host`` name is one the report can match.
 
     A rule names a MySQL or MariaDB account as UC-1 does, ``user@host``
     (#1461), because one user name at two hosts is two accounts, each with its
     own lock and limits. A name without a host is not refused: it is a name for
     the rule's other targets, and on these it reaches no account, so a rule
-    written for Oracle can cover every target (decided on #1461). A
-    ``user@host`` name is checked as an application's is: no part in SQL's
-    quotes or with a space at an end. The wildcard ``*`` stands in the user
-    part only. A host is the server's own pattern, such as ``10.%``, compared
-    with the host each account was created with, so ``*`` there would match no
-    account. Run after references are resolved, so the rule's ``targets:``
-    names exist.
+    written for Oracle can cover every target (decided on #1461). Where the
+    rule selects no other target, the name checks nothing, so it is warned
+    about with ``SOPULI-W072`` (#1472). A ``user@host`` name is checked as an
+    application's is: no part in SQL's quotes or with a space at an end. The
+    wildcard ``*`` stands in the user part only. A host is the server's own
+    pattern, such as ``10.%``, compared with the host each account was created
+    with, so ``*`` there would match no account. Run after references are
+    resolved, so the rule's ``targets:`` names exist.
     """
+    warnings: list[ConfigWarning] = []
     for index, rule in enumerate(config.reports.accounts):
         at = ROOT.key("reports").key("accounts").index(index)
-        for expanded in select(config, rule.targets):
+        selected = select(config, rule.targets)
+        warnings.extend(_hostless_report_names(rule.accounts, selected, at=at))
+        for expanded in selected:
             if expanded.target.type not in USER_AT_HOST_TYPES:
                 continue
             product = _PRODUCTS[expanded.target.type].name
@@ -679,3 +685,44 @@ def check_report_mysql_accounts(config: Config) -> None:
                             "@10.%`, and one name per host"
                         ),
                     )
+    return tuple(warnings)
+
+
+def _hostless_report_names(
+    accounts: Sequence[str], selected: Sequence[ExpandedTarget], *, at: KeyPath
+) -> tuple[ConfigWarning, ...]:
+    """``SOPULI-W072`` for each name without a host, where every target the
+    rule selects is MySQL or MariaDB (#1472).
+
+    Such a name reaches no account on these targets (#1461), and the rule has
+    no other target where it means something, so the name checks nothing. A
+    warning and not a refusal: the file loaded before, and a rule that also
+    selects an Oracle or PostgreSQL target uses the name there. A rule that
+    selects no target has nothing to check, and is not warned about.
+    """
+    if not selected or any(each.target.type not in USER_AT_HOST_TYPES for each in selected):
+        return ()
+    products = sorted({_PRODUCTS[each.target.type].name for each in selected})
+    where = " or ".join(products)
+    warnings = []
+    for position, account in enumerate(accounts):
+        _, separator, host = account.rpartition(MYSQL_HOST_SEPARATOR)
+        if separator and host:
+            continue
+        example = typed_user(account, default="acme_app")
+        warnings.append(
+            ConfigWarning(
+                message=(
+                    f"a report rule names {account!r} without a host, and every target "
+                    f"it selects is {where}, where such a name reaches no account"
+                ),
+                at=str(at.key("accounts").index(position)),
+                hint=(
+                    f"the rule checks nothing for {account!r}; write the host the account "
+                    f"has, as `{example}@10.%`, or `{example}@%` for any host, one name "
+                    "per host"
+                ),
+                code=HOSTLESS_REPORT_NAME,
+            )
+        )
+    return tuple(warnings)

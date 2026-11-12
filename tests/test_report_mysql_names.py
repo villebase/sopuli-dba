@@ -3,7 +3,9 @@
 A rule names a MySQL account `user@host`, as UC-1 does: the user compared
 exactly and the host without ASCII case, with `*` in the user part only. A
 name without a host is a name for the rule's other targets, and reaches no
-account on a MySQL target (decided on #1461). Fictional names only.
+account on a MySQL target (decided on #1461). Where a rule has no other
+target, such a name is warned about with SOPULI-W072 (#1472). Fictional names
+only.
 """
 
 from __future__ import annotations
@@ -12,9 +14,10 @@ from typing import Any
 
 import pytest
 
+from sopuli.config.codes import HOSTLESS_REPORT_NAME
 from sopuli.config.errors import ConfigError
 from sopuli.config.loading import build_config
-from sopuli.config.model import Config
+from sopuli.config.model import Config, ConfigWarning
 from sopuli.driver.survey import SurveyedAccount
 from sopuli.report_accounts import (
     ACCOUNT_MISSING,
@@ -164,3 +167,65 @@ def test_a_quoted_name_is_refused() -> None:
 
 def test_a_rule_that_reaches_no_mysql_target_is_not_checked_for_hosts() -> None:
     config({"accounts": ["acme@*"], "targets": [ORACLE], **LIFETIME})
+
+
+# ------------------------------------------------- SOPULI-W072 (#1472) ---
+
+
+def hostless(cfg: Config) -> list[ConfigWarning]:
+    return [each for each in cfg.warnings if each.code == HOSTLESS_REPORT_NAME]
+
+
+def test_a_name_without_a_host_warns_where_every_target_is_mysql() -> None:
+    """A name without a host checks nothing there, so the file says so."""
+    cfg = config(
+        {"accounts": ["acme_batch", "acme_*", "acme_app@%"], "targets": [MYSQL], **LIFETIME}
+    )
+
+    found = hostless(cfg)
+    assert [each.at for each in found] == [
+        "reports.accounts[0].accounts[0]",
+        "reports.accounts[0].accounts[1]",
+    ]
+    assert "'acme_batch' without a host" in found[0].message
+    assert "MySQL" in found[0].message
+    assert "`acme_batch@%`" in (found[0].hint or "")
+
+
+def test_a_name_with_an_empty_host_warns_too() -> None:
+    (found,) = hostless(config({"accounts": ["acme_batch@"], "targets": [MYSQL], **LIFETIME}))
+    assert "`acme_batch@%`" in (found.hint or "")
+
+
+def test_the_anonymous_account_has_a_host() -> None:
+    """`@localhost` names the account with an empty user. The rule checks it, so
+    it is not warned about."""
+    cfg = config({"accounts": ["@localhost"], "targets": [MYSQL], **LIFETIME})
+
+    assert hostless(cfg) == []
+    assert rows(cfg, "@localhost")["@localhost"].state == REPORT_OK
+
+
+def test_a_rule_that_also_selects_another_product_does_not_warn() -> None:
+    """Decided on #1461: the name means an account on the Oracle target."""
+    for targets in ([MYSQL, ORACLE], [MYSQL, PG]):
+        cfg = config({"accounts": ["acme_batch"], "targets": targets, **LIFETIME})
+        assert hostless(cfg) == []
+
+
+def test_a_rule_without_targets_does_not_warn_on_a_mixed_estate() -> None:
+    assert hostless(config({"accounts": ["acme_batch"], **LIFETIME})) == []
+
+
+def test_a_rule_without_targets_warns_on_an_estate_of_mysql_and_mariadb() -> None:
+    document: dict[str, Any] = {
+        "version": 1,
+        "targets": [
+            {"name": MYSQL, "type": "mysql", "dsn": "mysql-dev.example.com:3306"},
+            {"name": "mariadb-dev", "type": "mariadb", "dsn": "mariadb-dev.example.com:3306"},
+        ],
+        "reports": {"accounts": [{"accounts": ["acme_batch"], **LIFETIME}]},
+    }
+
+    (found,) = hostless(build_config(document))
+    assert "is MariaDB or MySQL," in found.message

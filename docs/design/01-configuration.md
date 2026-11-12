@@ -3546,7 +3546,9 @@ only, as in `acme_*@10.%`. A `*` in the host, or a part in SQL's quotes, is
 refused when the file is read, with exit 9. A name without a host reaches no
 account on these targets and is never reported missing there: it names the
 accounts of the rule's other targets, so a rule written for Oracle may cover
-every target.
+every target. Where every target a rule selects is MySQL or MariaDB, such a
+name checks nothing, and the file loads with `SOPULI-W072` for each one
+([#1461](../decisions/log.md#1461), part 3).
 
 ```yaml
 reports:

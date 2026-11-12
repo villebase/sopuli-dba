@@ -203,7 +203,8 @@ DRIVERS: dict[str, DatabaseDriver] = {
         # role cannot be made to change its password at login; `account
         # suspend`, which sets NOLOGIN; and `account expire-password`, which is
         # refused by the same capability at plan time (#1201). UC-5: `report
-        # accounts`, from `pg_roles` (#1459).
+        # accounts`, from `pg_roles` (#1459); `report history`, from the store,
+        # with no database date, because PostgreSQL keeps none (#1460).
         commands=frozenset(
             {
                 "account.list",
@@ -217,6 +218,7 @@ DRIVERS: dict[str, DatabaseDriver] = {
                 "creds.status",
                 "creds.finish-rollover",
                 "report.accounts",
+                "report.history",
             }
         ),
     ),
@@ -231,9 +233,10 @@ DRIVERS: dict[str, DatabaseDriver] = {
     # `profile:` rule is refused by capability, because MySQL has no profiles
     # (#1225); `account reset-password`, which refuses `--keep-rollover` by
     # capability; `account suspend`, by `ACCOUNT LOCK`; and `account
-    # expire-password`, which discards a retained password first. UC-5 (#1461):
-    # `report accounts`, one row per `user@host`. `report privileges` and
-    # `report history` are not written for it yet.
+    # expire-password`, which discards a retained password first. UC-5: `report
+    # accounts`, one row per `user@host` (#1461); `report history`, from the
+    # store, with `mysql.user.password_last_changed` as the database's date
+    # (#1460). `report privileges` is not written for it yet.
     "mysql": DatabaseDriver(
         module="sopuli.driver.mysql.session",
         extra="mysql",
@@ -257,6 +260,7 @@ DRIVERS: dict[str, DatabaseDriver] = {
                 "creds.generate",
                 "creds.status",
                 "creds.finish-rollover",
+                "report.history",
             }
         ),
     ),
@@ -278,7 +282,9 @@ DRIVERS: dict[str, DatabaseDriver] = {
     # `account expire-password`, by `PASSWORD EXPIRE` alone. Guardrail 9
     # refuses an administrator in all three that change an account, except a
     # reset of the tool's own account, which guardrail 7 refuses unless
-    # `--force`; `account list` says which (`guardrails.every_verb`).
+    # `--force`; `account list` says which (`guardrails.every_verb`). UC-5:
+    # `report history`, from the store, with no database date: MariaDB keeps it
+    # only beside the stored value, which the tool does not read (R2, #1460).
     "mariadb": DatabaseDriver(
         module="sopuli.driver.mariadb.session",
         extra="mariadb",
@@ -302,6 +308,7 @@ DRIVERS: dict[str, DatabaseDriver] = {
                 "creds.generate",
                 "creds.status",
                 "creds.finish-rollover",
+                "report.history",
             }
         ),
     ),

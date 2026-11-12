@@ -217,8 +217,8 @@ statements that grant it.
 
 ### 2.4 What the reports can read
 
-`report accounts` runs on MySQL (#1461). `report privileges` and `report
-history` are not built here yet (#1411). This is what the tool account can
+`report accounts` (#1461) and `report history` (#1460) run on MySQL. `report
+privileges` is not built here yet (#1411). This is what the tool account can
 read for them with §2.1's grants, and what each further read would cost. It
 was measured on 8.0.46, 8.4.13 and 9.7.4 (`10_report_read_probe.py`, #1448).
 

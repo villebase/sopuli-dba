@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Mapping
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -24,7 +25,10 @@ from sopuli.admin import Resolved
 from sopuli.cli import cli
 from sopuli.config.model import Vault
 from sopuli.config.targets import EXTERNAL
+from sopuli.driver.mysql.accounts import OtherPluginError
+from sopuli.driver.mysql_family.accounts import BareAccountError
 from sopuli.driver.protocol import Credential, Scope, UserState
+from sopuli.driver.registry import DRIVERS
 from sopuli.exit_codes import ExitCode
 from sopuli.output.document import SCHEMA_VERSION
 from sopuli.store import MemoryStore, SecretStore
@@ -284,7 +288,16 @@ def test_an_unreachable_target_still_shows_the_store_history_and_exits_1(
     assert "2026-11-02T03:00:00Z rotation v2" in text
 
 
-def test_another_product_is_refused_and_exits_5(write_config: WriteConfig) -> None:
+def test_a_product_not_written_for_the_report_is_refused_and_exits_5(
+    write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every product runs it now (#1460); a driver that does not list it is
+    still refused before anything is read."""
+    monkeypatch.setitem(
+        DRIVERS,
+        "postgresql",
+        replace(DRIVERS["postgresql"], commands=frozenset({"creds.check"})),
+    )
     result = report(write_config, config=PG_CONFIG)
 
     assert result.exit_code == ExitCode.UNSUPPORTED_CAPABILITY, result.output
@@ -483,3 +496,150 @@ def test_a_native_secret_lists_its_versions_by_generation(
     assert {e["kind"] for e in entry["history"]["events"]} >= {"generated"}
     assert "first" not in result.output
     assert "second" not in result.output
+
+
+# ------------------------------------------------- MySQL and MariaDB (#1460) ---
+
+MYSQL_CONFIG = """\
+version: 1
+vaults:
+  vault-dev:
+    type: hashicorp
+    addr: https://vault-dev.example.com:8200
+targets:
+  - name: mysql-dev
+    type: mysql
+    dsn: mysql-dev.example.com:3306
+    vault: vault-dev
+applications:
+  - name: acme
+    accounts: ["acme_app@%"]
+    secret_template: "apps/acme/{host}#DB_CREDENTIALS/{user}"
+personal_accounts:
+  - accounts: ["jdoe@%"]
+reset_records:
+  vault: vault-dev
+  prefix: sopuli/personal-resets
+"""
+
+
+class FakeMysqlSession(FakeSession):
+    """Names match as the server matches them: the user exactly, the host
+    without case. Another plugin and a bare name are refused, as the MySQL
+    driver refuses them."""
+
+    def scope(self) -> Scope:
+        return Scope(type="server", db_version="8.4.13", capabilities=frozenset())
+
+    def describe_user(self, account: str) -> UserState | None:
+        self.described.append(account)
+        if "@" not in account:
+            raise BareAccountError(account)
+        if account == "root@localhost":
+            raise OtherPluginError(account, "auth_socket", target="mysql-dev")
+        user, _, host = account.rpartition("@")
+        return self.users.get(f"{user}@{host.lower()}")
+
+
+@pytest.fixture
+def mysql_estate(monkeypatch: pytest.MonkeyPatch) -> MemoryStore:
+    store = MemoryStore()
+    store.write(
+        "apps/acme/any",
+        {
+            "DB_CREDENTIALS": {"acme_app": SECRET},
+            "rotated_at": {"acme_app": stamp(2)},
+            "rotated_by": {"acme_app": "ville"},
+        },
+        cas=0,
+    )
+    # A leftover record for a second account of another spelling: `JDOE@%`
+    # is not `jdoe@%` on MySQL.
+    store.write(
+        "sopuli/personal-resets/mysql-dev/JDOE@any",
+        reset_record(4, "JDOE@%"),
+        cas=0,
+    )
+    users = {
+        "acme_app@%": UserState(name="acme_app@%", status="OPEN", password_changed_at=CHANGED),
+        "jdoe@%": UserState(name="jdoe@%", status="OPEN", password_changed_at=CHANGED),
+    }
+
+    def fake_connect(
+        vault: Vault, *, env: Mapping[str, str], token_file: Path | None = None
+    ) -> SecretStore:
+        return store
+
+    class FakeDriver:
+        def __init__(self, context: Any) -> None:
+            pass
+
+        def connect(self, target: Any, credential: Any) -> FakeSession:
+            return FakeMysqlSession(users)
+
+    monkeypatch.setattr("sopuli.cli.connect", fake_connect)
+    monkeypatch.setattr("sopuli.cli.driver_for", lambda target, context: FakeDriver(context))
+    monkeypatch.setattr("sopuli.cli.admin_resolve", lambda target, **_: CREDENTIAL)
+    return store
+
+
+def test_a_mysql_history_shows_password_last_changed(
+    write_config: WriteConfig, mysql_estate: MemoryStore
+) -> None:
+    result = report(write_config, config=MYSQL_CONFIG)
+    text = flat(result)
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert "mysql-dev (8.4.13" in text
+    app = text.split("acme_app@% (application)")[1]
+    assert "database changed: 2026-11-07T03:00:05Z" in app
+    assert "2026-11-02T03:00:00Z rotation v1 ville" in app
+
+
+def test_mysql_user_names_are_matched_exactly(
+    write_config: WriteConfig, mysql_estate: MemoryStore
+) -> None:
+    """`JDOE@%` is another account than the rule's `jdoe@%` (#1460 review)."""
+    text = flat(report(write_config, config=MYSQL_CONFIG))
+
+    assert "JDOE@% (personal)" in text
+    jdoe = text.split("jdoe@% (personal)")[1]
+    assert "no reset record" in jdoe
+
+
+def test_an_account_the_driver_refuses_to_describe_keeps_the_target(
+    write_config: WriteConfig, mysql_estate: MemoryStore
+) -> None:
+    """A refusal about one account is that account's reason, never the
+    target's failure (#1460 review)."""
+    result = report(write_config, "--account", "root@localhost", config=MYSQL_CONFIG)
+    text = flat(result)
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert "root@localhost (undeclared)" in text
+    assert 'database changed: unknown, account "root@localhost"' in text
+
+
+def test_a_bare_name_on_mysql_is_refused_before_connecting(
+    write_config: WriteConfig, mysql_estate: MemoryStore
+) -> None:
+    """As every other `--account` verb refuses it (invariant 4, #1470 review)."""
+    result = report(write_config, "--account", "acme_app", config=MYSQL_CONFIG)
+
+    # `CliRunner` calls `cli` without `main()`'s boundary, so the refusal
+    # arrives as the exception that carries the exit code.
+    assert getattr(result.exception, "exit_code", None) == ExitCode.CONFIG_INVALID
+    assert "is not user@host" in str(result.exception)
+    assert "mysql-dev (8.4.13" not in flat(result)
+
+
+def test_a_host_written_any_is_not_the_wildcard(
+    write_config: WriteConfig, mysql_estate: MemoryStore
+) -> None:
+    """`acme_app@any` is a host named `any`, not `acme_app@%`, though a vault
+    path writes both as `any` (#1470 review)."""
+    result = report(write_config, "--account", "acme_app@any", config=MYSQL_CONFIG)
+    text = flat(result)
+
+    assert "acme_app@% (application)" not in text
+    assert "acme_app@any" in text

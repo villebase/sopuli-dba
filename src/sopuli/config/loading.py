@@ -628,7 +628,7 @@ def build_config(
     # silently selecting nothing and producing no bindings at all.
     warnings = check_references(config)
     check_personal_mysql_accounts(config)
-    check_report_mysql_accounts(config)
+    report_warnings = check_report_mysql_accounts(config)
     config = replace(config, bindings=build_bindings(config))
     check_admin_refs(config)
     # §10 on the store each password actually goes to, which only the bindings
@@ -636,7 +636,7 @@ def build_config(
     check_production_stores(config)
     return replace(
         config,
-        warnings=(*layered, *warnings, *_delivery_warnings(config)),
+        warnings=(*layered, *warnings, *report_warnings, *_delivery_warnings(config)),
     )
 
 

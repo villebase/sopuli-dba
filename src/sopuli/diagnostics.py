@@ -34,6 +34,7 @@ from sopuli.admin import Resolved
 from sopuli.clock import Skew, to_rfc3339
 from sopuli.config.codes import (
     DELIVERY_UNSERVICEABLE,
+    HOSTLESS_REPORT_NAME,
     NOTIFY_UNSERVICEABLE,
     PROFILE_NAMED_AFTER_ENVIRONMENT,
     RELAXATION_DEFEATED,
@@ -613,8 +614,8 @@ FILE_STORE_IN_USE = "SOPULI-W070"
 #: directory (#1430).
 FILE_STORE_LEFTOVER = "SOPULI-W071"
 
-#: ``SOPULI-W004`` and ``SOPULI-W034`` to ``SOPULI-W039`` -- imported above
-#: rather than defined here. They are raised in the config layer, which cannot
+#: The config layer's codes, such as ``SOPULI-W004`` and ``SOPULI-W072`` --
+#: imported above rather than defined here. They are raised in the config layer, which cannot
 #: import this module, so they are defined in :mod:`sopuli.config.codes` and
 #: the registry below stays the one place that says what each means.
 #: Importing them here is also what puts them in this module's namespace, so
@@ -1090,6 +1091,14 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "One entry per target. `safety.require_encryption` "
             "refuses `disable`, `DISABLED` and a connection that is not encrypted; it does "
             "not ask for a verified server."
+        ),
+        HOSTLESS_REPORT_NAME: (
+            "A `reports.accounts` rule names an account without a host, and every target "
+            "the rule selects is MySQL or MariaDB. There an account is `user@host`, and a "
+            "name without a host reaches no account, so the rule checks nothing for it and "
+            "the account it meant shows as undeclared. One entry per name. A warning and "
+            "not a refusal: a rule that also selects an Oracle or PostgreSQL target uses "
+            "the name there, and gets no warning."
         ),
         ROTATION_OVERDUE: (
             "`creds status --max-age-days`: the vault last rotated this credential longer "

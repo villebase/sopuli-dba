@@ -71,3 +71,8 @@ THIRD_PARTY_ADDR_USERINFO = "SOPULI-W057"
 #: database counterpart of :data:`UNVERIFIED_TRANSPORT`, with a code of its own
 #: because that one answers whether a run talked to a *vault* unverified.
 UNVERIFIED_DATABASE = "SOPULI-W058"
+
+#: A ``reports.accounts`` rule names an account without a host, and every
+#: target the rule selects is MySQL or MariaDB, where such a name reaches no
+#: account (#1472). The rule checks nothing for that name.
+HOSTLESS_REPORT_NAME = "SOPULI-W072"

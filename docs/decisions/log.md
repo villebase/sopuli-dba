@@ -5078,6 +5078,27 @@ the register.
   4. `finish-rollover` reports a refused `current` as `UNVERIFIABLE`, not
      `DRIFT`. The window stays open either way.
 
+## #1411
+
+- **Decided:** 2026-11-12, #1411
+- **Question:** question 4 of #1411. The privilege report counts Oracle's
+  privileges by privilege and object type. What does it count on PostgreSQL,
+  MySQL and MariaDB, whose privileges are shaped differently?
+- **Decision:** the maintainer's: each product in its own terms. On
+  PostgreSQL, role attributes (`SUPERUSER`, `CREATEROLE`, `CREATEDB`,
+  `REPLICATION`, `BYPASSRLS`), memberships with the path and their options,
+  and object privileges with `PUBLIC` and default privileges; the cluster's
+  other databases are listed as not checked. On MySQL and MariaDB, by level:
+  global static, global dynamic, database, table, column, routine and proxy,
+  with the role path.
+- **Why:** a count in Oracle's words would misname what the other products
+  grant, and an auditor reads the report in the product's own words.
+- **Rejected:**
+  1. Oracle's terms on every product: PostgreSQL has no system privileges,
+     and MySQL's global privileges are not Oracle's.
+  2. Summarise only the database a PostgreSQL target connects to, without
+     naming the others: the report would read as complete when it is not.
+
 ## #1415
 
 - **Decided:** 2026-11-09, #1415

@@ -1,13 +1,23 @@
 """Every privilege an account holds, as a report reads it (UC-5).
 
-Product-neutral types. Only Oracle fills them, through
-``OracleSession.survey_privileges``, which a caller finds with ``getattr``: the
-:class:`~sopuli.driver.protocol.Session` protocol does not list it.
+Product-neutral types. A session that serves the privilege report implements
+:class:`PrivilegeSurvey`; only Oracle's does yet. The
+:class:`~sopuli.driver.protocol.Session` protocol does not list it, so the
+report checks for it per target (#1480).
 
 A privilege can reach an account by several paths: granted directly, and
 through one or more roles. The driver returns **one row per path**, as the
 dictionary does (``02-oracle-privileges.md`` §2). Merging the rows per
 privilege is the report's job, not the driver's.
+
+**Four parts on every product**, each in that product's own terms (#1411,
+question 4). ``system`` holds what applies to the whole database or cluster,
+``schemas`` what applies to one schema or database, ``objects`` what applies
+to one object, and ``columns`` what applies to one column. Where a product has
+more than one level inside a part, such as MySQL's static and dynamic global
+privileges, each row names its level in :attr:`GrantRow.level`, in the
+product's own words. Oracle's parts each hold one level, so its rows have
+none.
 
 A part the target cannot read is ``None``, never ``()``. An empty tuple says
 the account holds no such privilege; ``None`` says nobody could look.
@@ -15,7 +25,9 @@ the account holds no such privilege; ``None`` says nobody could look.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import Protocol, runtime_checkable
 
 #: :attr:`GrantRow.kind` for a system privilege, such as ``CREATE SESSION``.
 SYSTEM = "system"
@@ -38,7 +50,9 @@ class GrantRow:
     active without ``SET ROLE``; it is ``None`` for a direct grant.
     ``grantable`` is whether the holder may grant it on: ``GRANTABLE`` for an
     object or column privilege, ``ADMIN_OPTION`` for a system or schema
-    privilege, on the last grant of the path.
+    privilege, on the last grant of the path. ``level`` is the product's own
+    word for the level inside ``kind``'s part, such as ``global dynamic`` on
+    MySQL, and ``None`` where the part has one level, as each of Oracle's does.
     """
 
     grantee: str
@@ -51,6 +65,7 @@ class GrantRow:
     path: tuple[str, ...]
     first_role_default: bool | None
     grantable: bool
+    level: str | None = None
 
 
 @dataclass(frozen=True)
@@ -86,3 +101,21 @@ class GrantSurvey:
     columns: tuple[GrantRow, ...] | None
     schemas: tuple[GrantRow, ...] | None
     unreadable: tuple[str, ...] = ()
+
+
+@runtime_checkable
+class PrivilegeSurvey(Protocol):
+    """A session that can survey accounts' privileges, for `report privileges`.
+
+    ``accounts`` are the names the accounts survey read, exactly as it spelled
+    them. ``public`` asks for the grants to everyone too, once, under the
+    product's name for them. A part the session could not read is ``None``,
+    with one reason in :attr:`GrantSurvey.unreadable` naming what would make it
+    readable. So is a scope the session could not reach at all, such as another
+    database of a PostgreSQL cluster: the reason names it, and the report shows
+    it as not checked on that target.
+    """
+
+    def survey_privileges(self, accounts: Sequence[str], *, public: bool) -> GrantSurvey:
+        """Every grant ``accounts`` hold, one row per path."""
+        ...

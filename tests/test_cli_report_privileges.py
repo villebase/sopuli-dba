@@ -278,6 +278,59 @@ def test_an_unread_part_is_not_checked_exit_4(
     assert "not checked: DBA_TAB_PRIVS could not be read" in text
 
 
+def test_a_level_is_shown_where_a_part_has_more_than_one(
+    write_config: WriteConfig, session: dict[str, FakeSession]
+) -> None:
+    session["session"] = FakeSession(
+        GrantSurvey(
+            roles=(),
+            system=(row("SYSTEM_VARIABLES_ADMIN", kind=SYSTEM, level="global dynamic"),),
+            objects=(),
+            columns=(),
+            schemas=(),
+        )
+    )
+    text = click.unstyle(report(write_config).output)
+    assert "system: SYSTEM_VARIABLES_ADMIN (global dynamic, direct)" in text
+    detail = click.unstyle(report(write_config, "--detail").output)
+    line = next(one for one in detail.splitlines() if "SYSTEM_VARIABLES_ADMIN" in one)
+    # The part first, so a reader can still tell the parts apart.
+    assert line.split()[:4] == ["system", "(global", "dynamic)", "SYSTEM_VARIABLES_ADMIN"]
+    (privilege,) = json_run(write_config)["results"][0]["privileges"]["system"]
+    assert privilege["level"] == "global dynamic"
+
+
+def test_a_driver_without_a_privilege_survey_is_not_supported(
+    write_config: WriteConfig, session: dict[str, Any]
+) -> None:
+    class AccountsOnly:
+        # A driver that serves `report accounts` and not this report.
+        scope = FakeSession.scope
+        survey_accounts = FakeSession.survey_accounts
+
+        def close(self) -> None:
+            return None
+
+    session["session"] = AccountsOnly()
+    result = report(write_config)
+    assert "not supported: " in click.unstyle(result.output)
+    assert "cannot survey its privileges" in result.output
+
+
+def test_the_oracle_session_is_a_privilege_survey() -> None:
+    from sopuli.driver.grants import PrivilegeSurvey
+    from sopuli.driver.oracle.session import OracleSession
+
+    def typed(session: OracleSession) -> PrivilegeSurvey:
+        # mypy checks the signature here; isinstance, at run time, only the name.
+        # Each product's session gets the same line when it joins (#1481-#1483).
+        return session
+
+    assert typed is not None
+    assert issubclass(OracleSession, PrivilegeSurvey)
+    assert isinstance(FakeSession(GRANTS), PrivilegeSurvey)
+
+
 def test_the_json_validates(write_config: WriteConfig, session: Any) -> None:
     config = write_config(CONFIG)
     result = CliRunner().invoke(
@@ -290,6 +343,8 @@ def test_the_json_validates(write_config: WriteConfig, session: Any) -> None:
     assert entry["state"] == "REPORT_OK"
     insert = next(p for p in entry["privileges"]["objects"] if p["privilege"] == "INSERT")
     assert insert["paths"] == [["ACME_RR_EXTRA"]]
+    # Oracle's parts each hold one level, so none is named.
+    assert insert["level"] is None
     assert insert["via_default_role"] is False
     assert entry["privileges"]["schema_privileges_read"] is True
     (schema,) = entry["privileges"]["schemas"]

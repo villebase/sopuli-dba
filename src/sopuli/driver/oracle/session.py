@@ -473,8 +473,9 @@ class OracleSession(ClosesConnection):
     def survey_privileges(self, accounts: Sequence[str], *, public: bool) -> GrantSurvey:
         """Every privilege ``accounts`` hold, with each path, for UC-5's reports.
 
-        Oracle only, and not in the :class:`~sopuli.driver.protocol.Session`
-        protocol: a caller finds it with ``getattr``. ``PUBLIC``'s grants are
+        :class:`~sopuli.driver.grants.PrivilegeSurvey`, which the
+        :class:`~sopuli.driver.protocol.Session` protocol does not list. Every
+        row has no level: each of Oracle's parts holds one. ``PUBLIC``'s grants are
         read once, as their own grantee, only when ``public`` is true. A grant
         view the session cannot read makes its part ``None`` with a reason
         (:func:`~sopuli.driver.oracle.grants.survey_grants`). Without the

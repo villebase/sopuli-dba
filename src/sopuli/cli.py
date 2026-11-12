@@ -191,6 +191,7 @@ from sopuli.diagnostics import (
 )
 from sopuli.driver import guardrails
 from sopuli.driver.clusters import ClusterIdentity, scope_and_claim
+from sopuli.driver.grants import PrivilegeSurvey
 from sopuli.driver.mariadb.roles import PublicRoleError
 from sopuli.driver.mysql.roles import MandatoryRoleError
 from sopuli.driver.oracle.wallet import survey as wallet_survey
@@ -6052,8 +6053,7 @@ def _privileges_target(
         except Exception as error:  # noqa: BLE001 -- a per-target finding
             return privileges_view.TargetPrivileges(target=target.name, error=_finding(error))
         survey_accounts = getattr(session, "survey_accounts", None)
-        survey_privileges = getattr(session, "survey_privileges", None)
-        if survey_accounts is None or survey_privileges is None:
+        if survey_accounts is None or not isinstance(session, PrivilegeSurvey):
             missing = DriverError(f"{target.name}: this driver cannot survey its privileges")
             return privileges_view.TargetPrivileges(
                 target=target.name, error=_finding(missing), unsupported=True
@@ -6071,7 +6071,7 @@ def _privileges_target(
                 rows = _wanted_rows(target.name, rows, surveyed, wanted)
                 absent = None if rows else wanted
             names = [row.account for row in rows if row.state != report_states.ACCOUNT_MISSING]
-            grants = survey_privileges(names, public=public)
+            grants = session.survey_privileges(names, public=public)
         except Exception as error:  # noqa: BLE001 -- a per-target finding
             return privileges_view.TargetPrivileges(
                 target=target.name, error=_finding(error), read_failed=True

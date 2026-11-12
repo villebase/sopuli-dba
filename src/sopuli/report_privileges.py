@@ -45,6 +45,9 @@ class Privilege:
     #: role that is a default role.
     via_default_role: bool
     grantable: bool
+    #: The product's word for its level inside the part, such as ``global
+    #: dynamic`` on MySQL; ``None`` where the part has one level, as on Oracle.
+    level: str | None = None
 
 
 @dataclass(frozen=True)
@@ -69,16 +72,25 @@ class AccountPrivileges:
 
 
 def collapse(rows: Sequence[GrantRow]) -> tuple[Privilege, ...]:
-    """One :class:`Privilege` per (kind, privilege, object, column), every path kept."""
+    """One :class:`Privilege` per (kind, level, privilege, object, column), every path kept."""
     grouped: dict[tuple[object, ...], list[GrantRow]] = {}
     for row in rows:
-        key = (row.kind, row.privilege, row.owner, row.name, row.object_type, row.column)
+        key = (
+            row.kind,
+            row.level,
+            row.privilege,
+            row.owner,
+            row.name,
+            row.object_type,
+            row.column,
+        )
         grouped.setdefault(key, []).append(row)
     collapsed = []
-    for (kind, privilege, owner, name, object_type, column), group in grouped.items():
+    for (kind, level, privilege, owner, name, object_type, column), group in grouped.items():
         collapsed.append(
             Privilege(
                 kind=str(kind),
+                level=_text(level),
                 privilege=str(privilege),
                 owner=_text(owner),
                 name=_text(name),
@@ -92,7 +104,10 @@ def collapse(rows: Sequence[GrantRow]) -> tuple[Privilege, ...]:
             )
         )
     return tuple(
-        sorted(collapsed, key=lambda p: (p.privilege, p.owner or "", p.name or "", p.column or ""))
+        sorted(
+            collapsed,
+            key=lambda p: (p.level or "", p.privilege, p.owner or "", p.name or "", p.column or ""),
+        )
     )
 
 
@@ -100,14 +115,17 @@ def _text(value: object) -> str | None:
     return None if value is None else str(value)
 
 
-def counts(objects: Sequence[Privilege]) -> dict[tuple[str, str], tuple[int, int]]:
-    """``(privilege, object type) -> (direct, through roles only)``.
+def counts(objects: Sequence[Privilege]) -> dict[tuple[str, str, str], tuple[int, int]]:
+    """``(level, privilege, object type) -> (direct, through roles only)``.
 
     A privilege held both directly and through a role counts as direct, once.
+    The level is ``""`` where the part has one, as on Oracle; two levels of one
+    privilege and type are counted apart, so a PostgreSQL default privilege is
+    never counted as a grant on a table that exists.
     """
-    tally: dict[tuple[str, str], list[int]] = {}
+    tally: dict[tuple[str, str, str], list[int]] = {}
     for privilege in objects:
-        key = (privilege.privilege, privilege.object_type or "-")
+        key = (privilege.level or "", privilege.privilege, privilege.object_type or "-")
         slot = tally.setdefault(key, [0, 0])
         slot[0 if () in privilege.paths else 1] += 1
     return {key: (direct, via) for key, (direct, via) in sorted(tally.items())}

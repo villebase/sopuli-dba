@@ -56,6 +56,48 @@ RR4 = (
 )
 
 
+def test_one_privilege_at_two_levels_stays_two_privileges() -> None:
+    # MySQL keeps a static and a dynamic global privilege in two places; a
+    # privilege named the same at both levels is two grants, not two paths.
+    static = GrantRow(
+        APP, SYSTEM, "AUDIT_ADMIN", None, None, None, None, (), None, False, "global static"
+    )
+    dynamic = GrantRow(
+        APP,
+        SYSTEM,
+        "AUDIT_ADMIN",
+        None,
+        None,
+        None,
+        None,
+        ("ACME_ROLE",),
+        True,
+        False,
+        "global dynamic",
+    )
+    collapsed = collapse([static, dynamic])
+    assert [(p.level, p.paths) for p in collapsed] == [
+        ("global dynamic", (("ACME_ROLE",),)),
+        ("global static", ((),)),
+    ]
+
+
+def test_two_levels_of_one_privilege_and_type_are_counted_apart() -> None:
+    # A default privilege is not a grant on a table that exists (#1481).
+    granted = grant("SELECT", "T1")
+    default = GrantRow(
+        APP, OBJECT, "SELECT", "ACME_RR_OWNER", None, "TABLE", None, (), None, False, "default"
+    )
+    assert counts(collapse([granted, default])) == {
+        ("", "SELECT", "TABLE"): (1, 0),
+        ("default", "SELECT", "TABLE"): (1, 0),
+    }
+
+
+def test_oracle_rows_have_no_level() -> None:
+    assert {p.level for p in collapse(RR4)} == {None}
+
+
 def test_collapse_gives_one_privilege_per_object_with_every_path() -> None:
     collapsed = collapse(RR4)
     # 11 rows, 7 privileges: RR4's two PUBLIC grants are not in this fixture.
@@ -71,9 +113,9 @@ def test_a_non_default_role_still_counts_and_is_marked() -> None:
 
 def test_counts_split_direct_and_via_roles() -> None:
     by_kind = counts(collapse(RR4))
-    assert by_kind[("SELECT", "TABLE")] == (2, 3)
-    assert by_kind[("EXECUTE", "PROCEDURE")] == (0, 1)
-    assert by_kind[("INSERT", "TABLE")] == (0, 1)
+    assert by_kind[("", "SELECT", "TABLE")] == (2, 3)
+    assert by_kind[("", "EXECUTE", "PROCEDURE")] == (0, 1)
+    assert by_kind[("", "INSERT", "TABLE")] == (0, 1)
 
 
 def test_grantable_if_any_path_is() -> None:

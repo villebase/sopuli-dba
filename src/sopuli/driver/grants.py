@@ -1,7 +1,8 @@
 """Every privilege an account holds, as a report reads it (UC-5).
 
 Product-neutral types. A session that serves the privilege report implements
-:class:`PrivilegeSurvey`; only Oracle's does yet. The
+:class:`PrivilegeSurvey`, and the registry lists ``report.privileges`` for its
+product. The
 :class:`~sopuli.driver.protocol.Session` protocol does not list it, so the
 report checks for it per target (#1480).
 
@@ -46,11 +47,12 @@ class GrantRow:
 
     ``path`` lists the roles from the grantee down to the role that holds the
     privilege, and is ``()`` for a direct grant. ``first_role_default`` is
-    whether ``path[0]`` is active at login, so the privilege is held without
-    ``SET ROLE``: a default role of the grantee, or any role where the product
-    activates every role at login, as MySQL's ``activate_all_roles_on_login``
-    does. It is ``None`` for a direct grant, and for a path the target cannot
-    say this for, such as one whose default roles were not read.
+    whether the privilege is active without ``SET ROLE``: on Oracle and MySQL,
+    whether ``path[0]`` is active at login, as a default role of the grantee or
+    any role where the product activates every role at login, as MySQL's
+    ``activate_all_roles_on_login`` does; on PostgreSQL, whether every grant on
+    the path inherits. It is ``None`` for a direct grant, and for a path the
+    target cannot say this for, such as one whose default roles were not read.
     ``grantable`` is whether the holder may grant it on: ``GRANTABLE`` for an
     object or column privilege, ``ADMIN_OPTION`` for a system or schema
     privilege, on the last grant of the path. ``level`` is the product's own
@@ -77,10 +79,15 @@ class RoleGrant:
 
     ``authentication`` is the role's own: ``NONE`` for an ordinary role, or
     the database's word for one that needs more to enable, such as Oracle's
-    ``PASSWORD`` and ``APPLICATION``. ``default_role_checked`` is ``False``
-    where whether it is a default role could not be read, such as on MySQL
-    without ``SELECT`` on ``mysql.default_roles``; ``default_role`` is then
-    ``False`` and says nothing.
+    ``PASSWORD`` and ``APPLICATION``.
+
+    ``default_role`` is whether the role's privileges are active without
+    ``SET ROLE``: Oracle's and MySQL's default role, and PostgreSQL's
+    ``INHERIT`` option. ``default_role_checked`` is ``False`` where whether it
+    is a default role could not be read, such as on MySQL without ``SELECT`` on
+    ``mysql.default_roles``; ``default_role`` is then ``False`` and says
+    nothing. ``set_option`` is PostgreSQL's ``SET`` option, whether the member
+    may ``SET ROLE`` to it, and ``None`` on a product that has no such option.
     """
 
     grantee: str
@@ -89,6 +96,7 @@ class RoleGrant:
     default_role: bool
     authentication: str
     default_role_checked: bool = True
+    set_option: bool | None = None
 
 
 @dataclass(frozen=True)

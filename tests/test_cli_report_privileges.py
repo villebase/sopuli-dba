@@ -361,14 +361,20 @@ def test_a_driver_without_a_privilege_survey_is_not_supported(
 def test_the_oracle_session_is_a_privilege_survey() -> None:
     from sopuli.driver.grants import PrivilegeSurvey
     from sopuli.driver.oracle.session import OracleSession
+    from sopuli.driver.postgres.session import PostgresSession
 
     def typed(session: OracleSession) -> PrivilegeSurvey:
         # mypy checks the signature here; isinstance, at run time, only the name.
         # Each product's session gets the same line when it joins (#1481-#1483).
         return session
 
+    def typed_postgres(session: PostgresSession) -> PrivilegeSurvey:
+        return session
+
     assert typed is not None
+    assert typed_postgres is not None
     assert issubclass(OracleSession, PrivilegeSurvey)
+    assert issubclass(PostgresSession, PrivilegeSurvey)
     assert isinstance(FakeSession(GRANTS), PrivilegeSurvey)
 
 

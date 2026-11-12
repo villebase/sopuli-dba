@@ -32,7 +32,7 @@ from __future__ import annotations
 import logging
 import re
 import time
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
 from typing import Any
@@ -41,10 +41,12 @@ import psycopg
 from psycopg import pq, sql
 
 from sopuli.config.model import ExpandedTarget, Runtime
+from sopuli.driver.grants import GrantSurvey
 from sopuli.driver.postgres import roles
 from sopuli.driver.postgres.client import REQUIRE_AUTH_FROM, client_lines, libpq_release
 from sopuli.driver.postgres.connection import connect_arguments
 from sopuli.driver.postgres.errors import INSUFFICIENT_PRIVILEGE, from_error
+from sopuli.driver.postgres.grants import survey_grants
 from sopuli.driver.postgres.limits import LIMIT
 from sopuli.driver.postgres.password import (
     SCRAM_FROM,
@@ -234,6 +236,17 @@ class PostgresSession(ClosesConnection):
         """
         with self._cursor() as cursor:
             return survey(cursor), frozenset()
+
+    def survey_privileges(self, accounts: Sequence[str], *, public: bool) -> GrantSurvey:
+        """Every privilege ``accounts`` hold, with each path, for `report privileges`.
+
+        :class:`~sopuli.driver.grants.PrivilegeSurvey`
+        (:mod:`sopuli.driver.postgres.grants`). The catalogs it reads are open
+        to every role, so it needs no grant and no capability. The cluster's
+        other databases are named in ``unreadable``.
+        """
+        with self._cursor() as cursor:
+            return survey_grants(cursor, accounts, public=public)
 
     def byte_limit(self) -> ByteLimit:
         """1024 bytes of UTF-8, whatever the server: the limit is libpq 13's, on

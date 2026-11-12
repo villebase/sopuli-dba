@@ -21,6 +21,8 @@ from typing import Any
 from sopuli.config.products import same_mysql_account
 from sopuli.driver.mariadb import admin
 from sopuli.driver.mysql_family.accounts import (
+    EXPIRED,
+    OPEN,
     Principal,
     current_user,
     same_host,
@@ -47,9 +49,6 @@ ROWS_FOR_USERS = (
 #: ``root`` is the site's own account, not one of these.
 SYSTEM_ACCOUNTS = frozenset({"mariadb.sys@localhost"})
 
-#: ``UserState.status``, in the words Oracle and MySQL use.
-OPEN = "OPEN"
-EXPIRED = "EXPIRED"
 
 #: ``UserState.password_changed_unknown``: MariaDB keeps the time of a change
 #: only in ``mysql.global_priv``, beside the stored value (#1275, RD1).

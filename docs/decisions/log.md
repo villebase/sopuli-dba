@@ -5444,6 +5444,29 @@ the register.
      profile's limit today: a limit lowered after a lock somebody set would
      let a reset clear that lock. It can still be chosen later.
 
+## #1457
+
+- **Decided:** 2026-11-12, #1457
+- **Question:** MySQL and MariaDB keep some of an account's settings only
+  beside a stored hash, where the tool account must not read. Should the tool
+  read an optional view a DBA creates, with `SQL SECURITY DEFINER`, over
+  those settings alone?
+- **Decision:** the maintainer's: yes, for reading only, in stages. The view
+  has a fixed name the install script documents, and is probed as a
+  capability, with no config key. Its columns are checked every session, and a
+  view with a column outside the expected set is not read. It is an optional
+  block in `sql/mysql/` and `sql/mariadb/`, run by a DBA as an administrator.
+  Each stage is measured first: MariaDB (#1479), then MySQL (#1490). Each
+  exception to an invariant that a view could remove stays its own decision.
+- **Why:** ADR-001 rejected a definer-rights package that changes accounts.
+  A view the tool only selects from changes nothing, and the column check keeps
+  a stored value from reaching the tool (invariant 2, P2).
+- **Rejected:**
+  1. Leave the gaps *not checked* for good: MariaDB's lock and lifetime could
+     never be checked.
+  2. A config key naming the view: one more thing to get wrong per target,
+     for no gain over a fixed name.
+
 ## #1461
 
 - **Decided:** 2026-11-11, #1461
@@ -5593,3 +5616,31 @@ the register.
   3. One definer for both views: it would widen the grant of
      `account_state`'s definer from `SELECT` on `mysql.global_priv` to
      `SELECT` on `mysql.*`.
+
+## #1491
+
+- **Decided:** 2026-11-12, #1491
+- **Question:** how is MariaDB's view of #1457 named and read, by which
+  commands, and what happens when it exists and cannot be used?
+- **Decision:** the maintainer's:
+  1. **Name:** `sopuli.account_state`, in a schema `sopuli` that holds only it.
+  2. **Readers:** `report accounts` (the lock and the lifetime), `report
+     history` (the time of the last change) and `account list` (the lock).
+  3. **A separate read:** the view is read by its own session read, which
+     only those three call. `describe_user` does not read it, so no verb
+     that changes an account acts on it.
+  4. **A broken view** (a column outside the expected set, or a definer that
+     is gone or cannot read `mysql.global_priv`) is not read: its fields are
+     *not checked*, and `SOPULI-W073` names what is wrong.
+- **Why:** the reports gain the checks R2 left out, with no change to what
+  the mutating verbs do. Through `describe_user`, `creds apply` would start
+  skipping locked accounts and `account suspend`'s exception to invariant 9
+  would need deciding again. A broken optional object should not stop a
+  report (#1376).
+- **Rejected:**
+  1. `mysql.sopuli_account_state`: an object of the site's own in the
+     server's schema, which upgrades and backups treat as the server's.
+  2. Reading it through `describe_user`: every UC-1 and UC-2 verb would act
+     on the lock and the date.
+  3. Failing the target on a broken view: a mistake in an optional object
+     would stop the report there.

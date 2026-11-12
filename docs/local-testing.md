@@ -2575,9 +2575,10 @@ MySQL 9.7.4, with the optional `SELECT` on
 `LOCKED(TIMED)` with its count, and the lock is still a problem, because
 somebody tried to log in.
 
-On MariaDB, `report accounts` reads only each account's expiry: the lock and
-the lifetime are kept beside the stored value, which the tool account does not
-read. Use the target and tool account of §*A MariaDB server*. As root, make
+On MariaDB, with the grants of `design/02-mariadb-privileges.md` §2.1,
+`report accounts` reads only each account's
+expiry: the lock and the lifetime are kept beside the stored value, which the
+tool account does not read. The optional view below reads them. Use the target and tool account of §*A MariaDB server*. As root, make
 one name at two hosts, a locked owner, an expired account, a role, and an
 account nothing declares. No account here needs a password for the report:
 
@@ -2615,9 +2616,9 @@ $ sopuli --config mariadb-report.yaml report accounts
 mariadb-dev  (11.8.9, 12 accounts read, 1 with a problem, 3 not checked, 8 undeclared, 2 with a check not applicable)
   ACCOUNT                KIND        PROFILE  STATUS   FAILED LOGINS  STATE            FINDING
   acme_gone@%            technical   -        -        -              ACCOUNT_MISSING  present: not on this target
-  acme_app@%             technical   -        OPEN     unknown        NOT_CHECKED      lock: MariaDB keeps the lock in mysql.global_priv, beside the stored value, which the tool account does not read; password_lifetime: MariaDB keeps the password lifetime in mysql.global_priv, beside the stored value, which the tool account does not read
-  acme_old@%             technical   -        EXPIRED  unknown        NOT_CHECKED      lock: MariaDB keeps the lock in mysql.global_priv, beside the stored value, which the tool account does not read; password_lifetime: MariaDB keeps the password lifetime in mysql.global_priv, beside the stored value, which the tool account does not read
-  acme_owner@%           technical   -        OPEN     unknown        NOT_CHECKED      lock: MariaDB keeps the lock in mysql.global_priv, beside the stored value, which the tool account does not read
+  acme_app@%             technical   -        OPEN     unknown        NOT_CHECKED      lock: MariaDB keeps it in mysql.global_priv, beside the stored value, and the optional view sopuli.account_state that reads it without the value is absent or not granted to the tool account: run sql/mariadb/account_state_view.sql as an administrator; password_lifetime: MariaDB keeps it in mysql.global_priv, beside the stored value, and the optional view sopuli.account_state that reads it without the value is absent or not granted to the tool account: run sql/mariadb/account_state_view.sql as an administrator
+  acme_old@%             technical   -        EXPIRED  unknown        NOT_CHECKED      lock: MariaDB keeps it in mysql.global_priv, beside the stored value, and the optional view sopuli.account_state that reads it without the value is absent or not granted to the tool account: run sql/mariadb/account_state_view.sql as an administrator; password_lifetime: MariaDB keeps it in mysql.global_priv, beside the stored value, and the optional view sopuli.account_state that reads it without the value is absent or not granted to the tool account: run sql/mariadb/account_state_view.sql as an administrator
+  acme_owner@%           technical   -        OPEN     unknown        NOT_CHECKED      lock: MariaDB keeps it in mysql.global_priv, beside the stored value, and the optional view sopuli.account_state that reads it without the value is absent or not granted to the tool account: run sql/mariadb/account_state_view.sql as an administrator
   acme_app@192.0.2.%     undeclared  -        OPEN     unknown        UNDECLARED       not in config
   acme_stray@%           undeclared  -        OPEN     unknown        UNDECLARED       not in config
   healthcheck@127.0.0.1  undeclared  -        OPEN     unknown        UNDECLARED       not in config
@@ -2637,6 +2638,44 @@ expiry alone, as `account list` shows it. A rule's `failed_login_limit` is
 *not applicable*: MariaDB has no limit per account, only the server's
 `max_password_errors`. The role and `mariadb.sys@localhost` are left out.
 The `healthcheck` accounts are the image's own.
+
+The optional view `sopuli.account_state` reads the lock, the lifetime and the
+time of the last change without the stored value
+(`design/02-mariadb-privileges.md` §2.1). Edit the two `SET` lines at the top
+of `sql/mariadb/account_state_view.sql` to name the tool account, here
+`sopuli_admin` at `%`, and run it as root:
+
+```
+$ docker exec -i sopuli-test-mariadb-1 mariadb -uroot -psopuli-test < account_state_view.sql
+```
+
+The same report then checks the lock and the lifetimes:
+
+```
+$ sopuli --config mariadb-report.yaml report accounts
+mariadb-dev  (11.8.9, 13 accounts read, 3 with a problem, 9 undeclared, 2 with a check not applicable)
+  ACCOUNT                        KIND        PROFILE  STATUS   FAILED LOGINS  STATE            FINDING
+  acme_app@%                     technical   -        OPEN     unknown        REPORT_PROBLEM   password_lifetime: 90 days, rule says at most 60 days
+  acme_old@%                     technical   -        EXPIRED  unknown        REPORT_PROBLEM   password_lifetime: unlimited, rule says at most 60 days
+  acme_gone@%                    technical   -        -        -              ACCOUNT_MISSING  present: not on this target
+  acme_app@192.0.2.%             undeclared  -        OPEN     unknown        UNDECLARED       not in config
+  acme_stray@%                   undeclared  -        OPEN     unknown        UNDECLARED       not in config
+  healthcheck@127.0.0.1          undeclared  -        OPEN     unknown        UNDECLARED       not in config
+  healthcheck@::1                undeclared  -        OPEN     unknown        UNDECLARED       not in config
+  healthcheck@localhost          undeclared  -        OPEN     unknown        UNDECLARED       not in config
+  root@%                         undeclared  -        OPEN     unknown        UNDECLARED       not in config
+  root@localhost                 undeclared  -        OPEN     unknown        UNDECLARED       not in config
+  sopuli_admin@%                 undeclared  -        OPEN     unknown        UNDECLARED       not in config
+  sopuli_view_definer@localhost  undeclared  -        LOCKED   unknown        UNDECLARED       not in config
+  1 account OK
+  failed logins unknown: MariaDB shows an account's failed logins, PASSWORD_ERRORS in information_schema.USERS, only to the account itself
+```
+
+`acme_owner@%` now reads `LOCKED`, and its `login: refused` rule passes: it
+is the one account OK. `acme_old@%` was made with `PASSWORD EXPIRE`, which
+leaves the server's default lifetime, here none. `sopuli_view_definer` is the
+view's definer, locked by the script. A view that exists and cannot be used,
+such as one with another column, is not read, and `SOPULI-W073` says why.
 
 `report privileges` shows each account's effective privileges, through every
 role, for the Oracle accounts above. The service account needs `SELECT` on `DBA_SYS_PRIVS`, `DBA_TAB_PRIVS`, `DBA_COL_PRIVS` and, on 23ai,

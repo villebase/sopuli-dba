@@ -33,6 +33,7 @@ from types import MappingProxyType
 from sopuli.admin import Resolved
 from sopuli.clock import Skew, to_rfc3339
 from sopuli.config.codes import (
+    ACCOUNT_STATE_VIEW_BROKEN,
     DELIVERY_UNSERVICEABLE,
     HOSTLESS_REPORT_NAME,
     NOTIFY_UNSERVICEABLE,
@@ -1101,6 +1102,14 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "not a refusal: a rule that also selects an Oracle or PostgreSQL target uses "
             "the name there, and gets no warning."
         ),
+        ACCOUNT_STATE_VIEW_BROKEN: (
+            "The optional MariaDB view `sopuli.account_state` exists on a target and "
+            "cannot be used: it has a column outside the expected set, or its definer "
+            "is gone or cannot read `mysql.global_priv`. The tool does not read it, so "
+            "the lock, the lifetime and the date of the last change are not checked "
+            "there, and the reports say why. One per target. A warning and not a "
+            "refusal: the view is optional, and the reports still run."
+        ),
         ROTATION_OVERDUE: (
             "`creds status --max-age-days`: the vault last rotated this credential longer "
             "ago than the threshold. The age is the vault's, not the database's, which is "
@@ -1848,6 +1857,22 @@ def no_reset_record() -> Diagnostic:
             "no `reset_records:` block is declared, so no record of this reset will be "
             "written and no advisory lock is taken on the account: the run document and "
             "the database are the whole record of it"
+        ),
+    )
+
+
+def account_state_view_broken(target: str, what: str) -> Diagnostic:
+    """`SOPULI-W073`, once per target, where the optional MariaDB view exists and
+    is not used (#1491): ``what`` is what is wrong with it."""
+    return Diagnostic(
+        level="warning",
+        code=ACCOUNT_STATE_VIEW_BROKEN,
+        target=target,
+        message=(
+            f"{target}: the optional view sopuli.account_state is not used: {what}. The "
+            "lock, the lifetime and the date of the last change are not checked here. "
+            "Recreate it with sql/mariadb/account_state_view.sql, which makes it with only "
+            "the expected columns, owned by a locked definer that can read mysql.global_priv"
         ),
     )
 

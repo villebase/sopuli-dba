@@ -239,6 +239,28 @@ def test_the_optional_default_role_column_is_held_and_never_missing() -> None:
     assert not any("default_role" in missing for missing in audit.missing)
 
 
+def test_the_optional_view_is_held_and_never_missing() -> None:
+    """#1491: `sql/mariadb/account_state_view.sql` grants it, and it holds no
+    stored value. Any other privilege on it is still over-granted."""
+    view = "sopuli.account_state"
+    with_view = privileges.Grants(
+        global_=FULL.global_, table=(*FULL.table, (view, "SELECT", False)), column=FULL.column
+    )
+    audit = privileges.classify(user="sopuli_admin@%", grants=with_view, roles=())
+    assert audit.over_granted == ()
+    assert f"SELECT ON {view}" in audit.held
+
+    without = privileges.classify(user="sopuli_admin@%", grants=FULL, roles=())
+    assert not any(view in missing for missing in without.missing)
+
+    wider = privileges.Grants(
+        global_=FULL.global_, table=(*FULL.table, (view, "UPDATE", False)), column=FULL.column
+    )
+    assert privileges.classify(user="sopuli_admin@%", grants=wider, roles=()).over_granted == (
+        f"UPDATE ON {view}",
+    )
+
+
 def test_a_grant_that_reads_every_stored_value_is_over_granted() -> None:
     grants = privileges.Grants(
         global_=(("CREATE USER", False), ("SET USER", False)),

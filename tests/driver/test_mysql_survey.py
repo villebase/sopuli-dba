@@ -10,9 +10,9 @@ from typing import Any
 import pytest
 
 from sopuli.driver.mysql import survey
-from sopuli.driver.mysql.accounts import DEFAULT_LIFETIME
 from sopuli.driver.mysql.admin import MANDATORY_ROLES
 from sopuli.driver.mysql.session import MysqlSession
+from sopuli.driver.mysql_family.accounts import DEFAULT_LIFETIME
 from sopuli.driver.protocol import DriverError
 from sopuli.driver.survey import AccountSurvey
 

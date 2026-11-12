@@ -78,6 +78,12 @@ COLUMNS = (
 #: holds a role's name only.
 OPTIONAL_COLUMNS = ("default_role",)
 
+#: Views the tool account may also read, with ``SELECT`` on each, and does
+#: without: held where granted, never missing. The optional view the reports
+#: read the lock, the lifetime and the time of the last change from (§2.1,
+#: #1491). It holds no stored value; its definer reads ``global_priv``.
+OPTIONAL_TABLES = ("sopuli.account_state",)
+
 #: §2.1's whole-table reads: roles, and the privilege tables guardrail 9 reads.
 #: None holds a stored value (checked on 10.11.19, 11.4.13, 11.8.9 and 12.3.3).
 TABLES_READ = (
@@ -197,7 +203,7 @@ def classify(
     for table, privilege, grantable in grants.table:
         if grantable:
             over.add(f"GRANT OPTION ON {table}")
-        if table in TABLES_READ and privilege == "SELECT":
+        if table in (*TABLES_READ, *OPTIONAL_TABLES) and privilege == "SELECT":
             held.add(_table(table))
             continue
         if table == USER_TABLE and privilege == "SELECT":

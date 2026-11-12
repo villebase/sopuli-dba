@@ -674,6 +674,15 @@ def _lock(
     if surveyed.no_authentication:
         return Finding("lock", OK, f"no authentication: {surveyed.status}")
     if not surveyed.locked:
+        if surveyed.valid_until is not None and surveyed.valid_until.expired:
+            # A past VALID UNTIL stops password logins only: trust, peer and
+            # cert lines in pg_hba.conf still let the role in (#1468).
+            return Finding(
+                "lock",
+                PROBLEM,
+                f"can log in: {surveyed.status}, rule says login refused; VALID UNTIL "
+                "stops password logins only, and NOLOGIN refuses every login",
+            )
         return Finding("lock", PROBLEM, f"can log in: {surveyed.status}, rule says login refused")
     if surveyed.deliberately_locked is None:
         return Finding(
@@ -702,8 +711,11 @@ def _valid_until(surveyed: SurveyedAccount, expectation: _Expectation) -> Findin
     """PostgreSQL's ``VALID UNTIL`` against a rule's `postgresql.valid_until` (#1459).
 
     A date in the past is a problem with or without the key: no password logs
-    the role in until somebody moves it. Without the key, any other date is not
-    compared, so there is no finding. `required` wants a date in the future,
+    the role in until somebody moves it. On a ``NOLOGIN`` role it is not, since
+    the role cannot log in at all and the date only makes it safer (#1468). It
+    is compared as any other date there, and becomes a problem once the role
+    gets ``LOGIN``. Without the key, any other date is not compared, so there
+    is no finding. `required` wants a date in the future,
     and `forbidden` none, where ``infinity`` counts as none
     (:class:`~sopuli.driver.survey.ValidUntil`). On a product with no such
     date, a rule's key is a finding that the registry makes *not applicable*.
@@ -713,7 +725,8 @@ def _valid_until(surveyed: SurveyedAccount, expectation: _Expectation) -> Findin
     read = surveyed.valid_until
     # A date in the past is a problem whatever the rules say, so it is read
     # before a conflict between them can leave the check not checked.
-    if read is not None and read.expired:
+    nologin = surveyed.lock_is_login_attribute and surveyed.locked is True
+    if read is not None and read.expired and not nologin:
         says = "" if wanted is None else f", rule says {wanted}"
         return Finding("valid_until", PROBLEM, f"password expired: VALID UNTIL {read.text}{says}")
     if conflict:

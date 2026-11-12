@@ -3520,7 +3520,7 @@ apply a rule's profile, and the lock is checked as without the key.
 block holds `valid_until:`, because only PostgreSQL has a `VALID UNTIL` date:
 `required` wants a date in the future, and `forbidden` wants none, where
 `infinity` counts as none. A date in the past is a problem with or without the
-key (UC-5 §4). On another product the check is *not applicable*. Config schema
+key on a role that can log in, and not on a `NOLOGIN` role (UC-5 §4, #1468). On another product the check is *not applicable*. Config schema
 5.0 moved the two Oracle keys there from a rule's `profile:` and the section's
 `db_profiles:`. A file that still has them in the old place is refused, and the
 message names the new place. The tool does not read both places, because the file could then say two

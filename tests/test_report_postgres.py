@@ -209,6 +209,42 @@ def test_nologin_with_login_allowed_is_a_problem() -> None:
     )
 
 
+def test_an_expired_date_does_not_meet_login_refused() -> None:
+    """#1468: VALID UNTIL limits password logins only, so pg_hba.conf's trust,
+    peer and cert lines still let the role in. The message points to NOLOGIN,
+    and the expiry stays a problem."""
+    cfg = config({"accounts": ["acme_owner"], "login": "refused"})
+    found = row(cfg, role("acme_owner", until=PAST, expired=True))
+
+    assert outcome(found, "lock") == (
+        "problem",
+        "can log in: EXPIRED, rule says login refused; VALID UNTIL stops password "
+        "logins only, and NOLOGIN refuses every login",
+    )
+    assert outcome(found, "valid_until")[0] == "problem"
+    assert found.state == REPORT_PROBLEM
+
+
+def test_an_expired_date_on_a_nologin_role_is_not_a_problem() -> None:
+    """#1468: the role cannot log in, and the date only makes it safer."""
+    cfg = config({"accounts": ["acme_owner"], "login": "refused"})
+    found = row(cfg, role("acme_owner", can_login=False, until=PAST, expired=True))
+
+    assert "valid_until" not in checks(found)
+    assert found.state == REPORT_OK
+
+
+def test_a_rule_still_judges_the_date_on_a_nologin_role() -> None:
+    """`forbidden` wants no date, so a past one is still a problem there."""
+    cfg = config({"accounts": ["acme_owner"], "postgresql": {"valid_until": "forbidden"}})
+    found = row(cfg, role("acme_owner", can_login=False, until=PAST, expired=True))
+
+    assert outcome(found, "valid_until") == (
+        "problem",
+        "VALID UNTIL 2001-01-01T00:00:00Z, rule says forbidden",
+    )
+
+
 def test_survey_reads_the_date_as_utc_text() -> None:
     """No `datetime` is built, so a date past the year 9999 cannot fail the read."""
     assert "to_char(r.rolvaliduntil at time zone 'UTC'" in SURVEY_QUERY

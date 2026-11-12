@@ -67,6 +67,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from sopuli.driver.grants import COLUMN, OBJECT, SCHEMA, SYSTEM, GrantRow, GrantSurvey, RoleGrant
+from sopuli.driver.postgres.roles import FIRST_NORMAL_OID
 from sopuli.driver.protocol import Cursor
 
 #: The grantee every role holds through, as the report names it.
@@ -80,9 +81,10 @@ SCHEMA_LEVEL = "schema"
 DEFAULT_FOR = "default for "
 PREDEFINED = "predefined role"
 
-#: The first oid ``initdb`` does not use: a role below it is built in
-#: (:data:`sopuli.driver.postgres.roles.BUILT_IN`).
-FIRST_NORMAL_OID = 16384
+#: Whether the role ``g`` is one of the built-in ``pg_*`` roles: made by
+#: ``initdb`` and named ``pg_``. The bootstrap superuser is made by ``initdb``
+#: too, and is not one.
+_IS_PREDEFINED = f"(g.oid < {FIRST_NORMAL_OID} and starts_with(g.rolname::text, 'pg_'))"
 
 #: The five attributes that are privileges, with ``pg_roles``' column for each.
 ATTRIBUTES = (
@@ -115,13 +117,13 @@ WALK_QUERY = (
     f"with recursive edge as ({_EDGES}), "
     "walk(account, roleid, path, inherits, sets, reach, admin, predefined) as ("
     "select x.rolname::text, e.roleid, array[g.rolname::text], e.inherits, e.sets, e.sets, "
-    f"e.admin, g.oid < {FIRST_NORMAL_OID} "
+    f"e.admin, {_IS_PREDEFINED} "
     "from pg_roles x join edge e on e.member = x.oid "
     "join pg_roles g on g.oid = e.roleid where x.rolname = any(%s) "
     "union all "
     "select w.account, e.roleid, w.path || g.rolname::text, w.inherits and e.inherits, "
     "w.sets and e.sets, (w.sets and e.sets) or (w.reach and e.inherits), false, "
-    f"g.oid < {FIRST_NORMAL_OID} "
+    f"{_IS_PREDEFINED} "
     "from walk w join edge e on e.member = w.roleid join pg_roles g on g.oid = e.roleid "
     "where not g.rolname::text = any(w.path)"
     ") select account, path, inherits, sets, reach, admin, predefined from walk"
@@ -170,13 +172,17 @@ def _acl(
     column: str,
     acl: str,
     source: str,
+    where: str | None = None,
 ) -> str:
     """One catalog's ACL items, each column cast to ``text`` so the branches of
-    the union agree. The SQL expressions are this module's own, never input."""
+    the union agree. ``where`` limits the catalog's rows; ``wanted`` is the
+    surveyed roles' oids (:func:`privileges_query`). The SQL expressions are
+    this module's own, never input."""
     return (
         f"select {kind}::text, {level}::text, {owner}::text, {name}::text, "
         f"{object_type}::text, {column}::text, e.grantee, e.privilege_type, e.is_grantable "
         f"from {source} cross join lateral aclexplode({acl}) e"
+        + ("" if where is None else f" where {where}")
     )
 
 
@@ -231,7 +237,8 @@ _ACLS = (
         f"'{OBJECT}'",
         "null",
         "n.nspname",
-        "p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')'",
+        # The input types only, as a GRANT names the function.
+        "p.proname || '(' || array_to_string(p.proargtypes::oid[]::regtype[], ', ') || ')'",
         _PROKIND,
         "null",
         "coalesce(p.proacl, acldefault('f', p.proowner))",
@@ -248,7 +255,8 @@ _ACLS = (
         "pg_language l",
     ),
     # A type's array type, a range's multirange type and a table's row type
-    # follow the type, the range or the table, and are not listed.
+    # follow the type, the range or the table, and are not listed. A domain
+    # over an array type is its own type, though it shares the category.
     _acl(
         f"'{OBJECT}'",
         "null",
@@ -258,7 +266,7 @@ _ACLS = (
         "null",
         "coalesce(t.typacl, acldefault('T', t.typowner))",
         "pg_type t join pg_namespace n on n.oid = t.typnamespace "
-        "and t.typcategory <> 'A' and t.typtype <> 'm' and not exists "
+        "and not (t.typtype = 'b' and t.typcategory = 'A') and t.typtype <> 'm' and not exists "
         "(select 1 from pg_class rc where rc.oid = t.typrelid and rc.relkind <> 'c')",
     ),
     _acl(
@@ -269,7 +277,11 @@ _ACLS = (
         "'LARGE OBJECT'",
         "null",
         "coalesce(o.lomacl, acldefault('L', o.lomowner))",
+        # A large object's default gives its owner alone, so one nobody has
+        # granted on matters only when a surveyed role owns it. A database can
+        # hold millions.
         "pg_largeobject_metadata o",
+        "o.lomacl is not null or o.lomowner in (select oid from wanted)",
     ),
     _acl(
         f"'{OBJECT}'",
@@ -332,23 +344,31 @@ def privileges_query(*, parameters: bool) -> str:
     has ``pg_parameter_acl``."""
     acls = " union all ".join((*_ACLS, _PARAMETER_ACL) if parameters else _ACLS)
     return (
-        "with acl(kind, level, owner, name, object_type, col, grantee, privilege, grantable) "
+        "with wanted as (select r.oid from pg_roles r where r.rolname = any(%s)), "
+        "acl(kind, level, owner, name, object_type, col, grantee, privilege, grantable) "
         f"as ({acls}) "
         f"select coalesce(g.rolname::text, '{PUBLIC}'), kind, level, owner, name, "
         "object_type, col, privilege, grantable "
         "from acl left join pg_roles g on g.oid = acl.grantee "
-        "where acl.grantee in (select r.oid from pg_roles r where r.rolname = any(%s)) "
-        "or (%s and acl.grantee = 0)"
+        "where acl.grantee in (select oid from wanted) or (%s and acl.grantee = 0)"
     )
 
 
 def survey_grants(cursor: Cursor, accounts: Sequence[str], *, public: bool) -> GrantSurvey:
     """Every privilege ``accounts`` hold, one row per path, and ``PUBLIC``'s once
-    when ``public``. ``accounts`` are role names as ``pg_roles`` spells them."""
-    names = [name for name in dict.fromkeys(accounts) if name != PUBLIC]
+    when ``public``. ``accounts`` are role names as ``pg_roles`` spells them.
+
+    A role may be named ``"PUBLIC"``: only the lower-case ``public`` is
+    reserved. It is surveyed like any other, but with ``public`` its rows and
+    the pseudo-role's share the name :data:`PUBLIC`, and the report lists them
+    together.
+    """
+    names = list(dict.fromkeys(accounts))
     cursor.execute(WALK_QUERY, (names,))
     walks = [_Walk(*row) for row in cursor.fetchall()]
-    reached = sorted({walk.path[-1] for walk in walks})
+    # Only the roles whose privileges or attributes reach the account: a path
+    # with neither option gives nothing, so its role's ACLs are not read.
+    reached = sorted({walk.path[-1] for walk in walks if walk.inherits or walk.reach or walk.sets})
     grantees = sorted({*names, *reached})
 
     cursor.execute(ATTRIBUTES_QUERY, (grantees,))

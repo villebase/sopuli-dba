@@ -105,6 +105,12 @@ def roles(live_postgres: Any) -> Iterator[dict[str, str]]:
         f"grant {n['deep']} to {n['hop']} with inherit true, set false",
         f"grant {n['hop']} to {n['user']} with inherit false, set true",
         f"grant pg_read_all_data to {n['user']}",
+        f"create domain {schema}.tags as text[]",
+        f"alter domain {schema}.tags owner to {n['owner']}",
+        f"grant usage on domain {schema}.tags to {n['user']}",
+        f"create function {schema}.add_item(n int, out total int) language sql as 'select n'",
+        f"alter function {schema}.add_item(int) owner to {n['owner']}",
+        f"grant execute on function {schema}.add_item(int) to {n['user']}",
         f"grant select on {schema}.orders to {n['user']}",
         f"grant update (n) on {schema}.items to {n['user']}",
         f"create table {schema}.notes (n int)",
@@ -278,3 +284,87 @@ def test_the_other_databases_are_named_as_not_read(live_postgres: Any, session: 
         return
     (reason,) = survey.unreadable
     assert f"({', '.join(others)})" in reason
+
+
+def test_a_domain_over_an_array_and_a_function_by_its_input_types(
+    session: Any, roles: dict[str, str]
+) -> None:
+    survey = session.survey_privileges([roles["user"]], public=False)
+    found = {
+        (row.privilege, row.name, row.object_type)
+        for row in survey.objects
+        if row.owner == roles["schema"] and row.path == ()
+    }
+    assert ("USAGE", "tags", "DOMAIN") in found
+    # The OUT parameter is not part of the name a GRANT uses.
+    assert ("EXECUTE", "add_item(integer)", "FUNCTION") in found
+
+
+@pytest.fixture
+def plain(live_postgres: Any) -> Iterator[Any]:
+    """A path through a NOINHERIT role, which needs no 16-only option, so it
+    runs on every release: ``user`` holds ``mid``, which is NOINHERIT and holds
+    ``deep``. Yields a session as a CREATEROLE tool account, and the names."""
+    import psycopg
+
+    from sopuli.driver.postgres.session import build_driver
+
+    suffix = uuid.uuid4().hex[:8]
+    names = {
+        "tool": f"sopuli_tool_{suffix}",
+        "deep": f"acme_{suffix}_deep",
+        "mid": f"acme_{suffix}_mid",
+        "user": f"acme_{suffix}_user",
+    }
+    schema = f"acme_{suffix}"
+    password = uuid.uuid4().hex
+    n = {key: f'"{value}"' for key, value in names.items()}
+    statements = [
+        f"create role {n['tool']} login createrole password '{password}'",
+        f"create role {n['deep']}",
+        f"create role {n['mid']} noinherit",
+        f"create role {n['user']} login",
+        f"create schema {schema}",
+        f"create table {schema}.orders (n int)",
+        f"grant select on {schema}.orders to {n['deep']}",
+        f"grant {n['deep']} to {n['mid']}",
+        f"grant {n['mid']} to {n['user']}",
+    ]
+    try:
+        with _superuser(live_postgres) as admin:
+            for statement in statements:
+                admin.execute(statement)
+        driver = build_driver(
+            DriverContext(env=os.environ, correlation_id="grants", runtime=Runtime())
+        )
+        target = ExpandedTarget(
+            target=Target(
+                name="tier1-postgres",
+                type="postgresql",
+                dsn=live_postgres.dsn,
+                postgres=TargetPostgres(sslmode="disable"),
+            )
+        )
+        opened = driver.connect(target, Credential(username=names["tool"], secret=Secret(password)))
+        try:
+            yield opened, {**names, "schema": schema}
+        finally:
+            opened.close()
+    finally:
+        with _superuser(live_postgres) as admin:
+            with suppress(psycopg.Error):
+                admin.execute(f"drop schema {schema} cascade")
+            for role in reversed(list(n.values())):
+                with suppress(psycopg.Error):
+                    admin.execute(f"drop role {role}")
+
+
+def test_a_path_through_a_noinherit_role_needs_set_role_on_every_release(plain: Any) -> None:
+    session, names = plain
+    survey = session.survey_privileges([names["user"]], public=False)
+    found = {
+        (row.privilege, row.path, row.first_role_default)
+        for row in survey.objects
+        if row.owner == names["schema"]
+    }
+    assert found == {("SELECT", (names["mid"], names["deep"]), False)}

@@ -117,6 +117,25 @@ def test_the_statements_and_their_parameters() -> None:
     assert cursor.executed[3][1] == (["acme_rp_app", USER], True)
 
 
+def test_a_role_that_gives_nothing_is_not_read() -> None:
+    # Held only WITH ADMIN OPTION, as a CREATEROLE creator holds its roles
+    # from 16: its ACLs could give the account nothing.
+    _, cursor = survey(walks=[walk("acme_rp_made", inherits=False, sets=False, admin=True)])
+    assert cursor.executed[3][1] == ([USER], False)
+
+
+def test_a_role_named_public_is_surveyed() -> None:
+    # Only the lower-case `public` is reserved; "PUBLIC" can be a real role.
+    cursor = Answers([], [], (True,), [], [])
+    survey_grants(cursor, ["PUBLIC"], public=False)
+    assert cursor.executed[0][1] == (["PUBLIC"],)
+
+
+def test_large_objects_nobody_granted_on_are_read_only_for_their_owners() -> None:
+    query = privileges_query(parameters=True)
+    assert "o.lomacl is not null or o.lomowner in (select oid from wanted)" in query
+
+
 def test_a_server_without_parameter_acls_is_not_asked_for_them() -> None:
     _, cursor = survey(parameters=False)
     assert cursor.executed[3][0] == privileges_query(parameters=False)

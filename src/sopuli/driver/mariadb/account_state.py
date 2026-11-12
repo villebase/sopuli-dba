@@ -8,7 +8,8 @@ account ``SELECT`` on it (#1457). ``sql/mariadb/account_state_view.sql``
 creates it. What it gives was measured by ``16_definer_view_probe.py``
 (#1479; ``02-mariadb-privileges.md`` §2.4).
 
-**Who reads it.** `report accounts` and `report history` only, through
+**Who reads it.** `report accounts`, `report history` and `account list`
+(the lock) only, through
 :meth:`~sopuli.driver.mariadb.session.MariadbSession.account_states`.
 ``describe_user`` does not, so no verb that changes an account acts on what the
 view says (#1491).

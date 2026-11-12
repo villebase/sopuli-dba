@@ -153,8 +153,8 @@ class StateView(Protocol):
     """A session that reads an optional view for the reports, beside
     ``describe_user``: MariaDB's ``sopuli.account_state`` (#1491).
 
-    Only `report accounts` and `report history` ask for it, so no verb that
-    changes an account acts on what the view says.
+    Only `report accounts`, `report history` and `account list` ask for it, so
+    no verb that changes an account acts on what the view says.
     """
 
     def view_broken(self) -> str | None:
@@ -165,4 +165,10 @@ class StateView(Protocol):
     def report_changed_at(self, user: UserState) -> tuple[datetime | None, str | None]:
         """When ``user``'s password last changed, from the view, or ``None``
         and why."""
+        ...
+
+    def report_lock(self, user: UserState) -> UserState:
+        """``user``, locked where the view says it is, with the status a
+        locked account has. Unchanged where the view is absent or broken, or
+        has no row for the account."""
         ...

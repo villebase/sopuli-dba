@@ -1107,8 +1107,10 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "cannot be used: it has a column outside the expected set, or its definer "
             "is gone or cannot read `mysql.global_priv`. The tool does not read it, so "
             "the lock, the lifetime and the date of the last change are not checked "
-            "there, and the reports say why. One per target. A warning and not a "
-            "refusal: the view is optional, and the reports still run."
+            "there, and the reports say why. One per target, from `report accounts`, "
+            "`report history` and `account list`, which then shows `OPEN` or `EXPIRED` "
+            "without the lock. A warning and not a refusal: the view is optional, and "
+            "the commands still run."
         ),
         ROTATION_OVERDUE: (
             "`creds status --max-age-days`: the vault last rotated this credential longer "

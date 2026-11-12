@@ -52,7 +52,7 @@ from sopuli.driver.mariadb.limits import LIMIT
 from sopuli.driver.mariadb.privileges import audit as privilege_audit
 from sopuli.driver.mariadb.scope import observe, read_password_checks, require_read_write
 from sopuli.driver.mysql_family import account_statements
-from sopuli.driver.mysql_family.accounts import Principal, current_user, split
+from sopuli.driver.mysql_family.accounts import Principal, current_user, locked_status, split
 from sopuli.driver.mysql_family.client import client_lines
 from sopuli.driver.mysql_family.connection import connect_arguments, require_tls
 from sopuli.driver.mysql_family.encryption import read_encryption
@@ -458,9 +458,9 @@ class MariadbSession(ClosesConnection):
         (:mod:`~sopuli.driver.mariadb.account_state`, #1491).
 
         Read once per session, its columns checked first. For `report
-        accounts` and `report history` only (:class:`~sopuli.driver.survey.StateView`):
-        ``describe_user`` does not read it, so no verb that changes an account
-        acts on it.
+        accounts`, `report history` and `account list` only
+        (:class:`~sopuli.driver.survey.StateView`): ``describe_user`` does not
+        read it, so no verb that changes an account acts on it.
         """
         if self._account_states is None:
             self._account_states = self._read(account_state.read)
@@ -479,11 +479,32 @@ class MariadbSession(ClosesConnection):
         states = self.account_states()
         if states.rows is None:
             return None, states.reason
-        name, host = user.name.rsplit("@", 1)
-        state = states.get(name, host)
+        state = states.get(*split(user.name))
         if state is None:
             return None, account_state.NO_ROW
         return state.changed_at, state.no_time
+
+    def report_lock(self, user: UserState) -> UserState:
+        """``user`` with the lock from the optional view, for `account list`
+        (#1491). ``describe_user`` never reads it, so its status is ``OPEN``
+        or ``EXPIRED``; a locked account becomes ``LOCKED`` or ``EXPIRED &
+        LOCKED``, as on MySQL. Unchanged where the view is absent or broken,
+        or has no row for the account. ``user`` is as ``describe_user`` gave
+        it, so its name is the server's spelling.
+
+        The view's ``account_locked`` is ``ACCOUNT LOCK``'s: a block after
+        failed logins is not in it (#1479). So the lock is a deliberate one,
+        as MySQL's ``account_locked`` and the report survey take it.
+        """
+        state = self.account_states().get(*split(user.name))
+        if state is None or not state.locked:
+            return user
+        return replace(
+            user,
+            locked=True,
+            deliberately_locked=True,
+            status=locked_status(locked=True, expired=user.expired),
+        )
 
     def _read_grants(self, reader: Callable[[Any], T]) -> T:
         """:meth:`_read`, with the hint about §2.1's grants on a refused read."""

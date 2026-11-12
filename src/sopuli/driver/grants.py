@@ -47,9 +47,12 @@ class GrantRow:
 
     ``path`` lists the roles from the grantee down to the role that holds the
     privilege, and is ``()`` for a direct grant. ``first_role_default`` is
-    whether the privilege is active without ``SET ROLE``: on Oracle, whether
-    ``path[0]`` is a default role of the grantee; on PostgreSQL, whether every
-    grant on the path inherits. It is ``None`` for a direct grant.
+    whether the privilege is active without ``SET ROLE``: on Oracle and MySQL,
+    whether ``path[0]`` is active at login, as a default role of the grantee or
+    any role where the product activates every role at login, as MySQL's
+    ``activate_all_roles_on_login`` does; on PostgreSQL, whether every grant on
+    the path inherits. It is ``None`` for a direct grant, and for a path the
+    target cannot say this for, such as one whose default roles were not read.
     ``grantable`` is whether the holder may grant it on: ``GRANTABLE`` for an
     object or column privilege, ``ADMIN_OPTION`` for a system or schema
     privilege, on the last grant of the path. ``level`` is the product's own

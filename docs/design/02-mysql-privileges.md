@@ -264,6 +264,17 @@ reads as locked, but not by somebody.
   `mysql.default_roles`, which §2.1 does not grant, `1142`. Its four columns
   are names only. `@@mandatory_roles` and `@@activate_all_roles_on_login`
   read without a grant.
+- **Which roles are active without `SET ROLE`** (`11_role_activation_probe.py`,
+  #1482). At login, the default roles are active, and so is every role one of
+  them holds. A role granted and not a default is not. With
+  `activate_all_roles_on_login` on, every role the account holds is active.
+  A role in `@@mandatory_roles` has no row in `role_edges` or
+  `default_roles`. It is active once it is set as a default role, which the
+  server accepts. Otherwise it is inactive on 8.0.46 and 8.4.13 and active
+  on 9.7.4, and nothing the tool account reads tells the two apart. The
+  shared survey (`sopuli/driver/mysql_family/privilege_survey.py`) builds
+  one row per path from these rules, and says *not checked* for such a
+  mandatory role.
 - **Privilege levels.** Each level has its table, and §2.1 reads them all:
   static global privileges in the `*_priv` columns, dynamic ones in
   `global_grants`, schema grants in `db`, table grants in `tables_priv`,

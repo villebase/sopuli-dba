@@ -2504,7 +2504,8 @@ pg-dev  (16.15, 22 accounts read, 4 with a problem, 1 undeclared)
 
 It exits 3. `acme_rpt_readers` is `NOLOGIN` and passes, because no rule gives
 it a `login:`: `NOLOGIN` is also how a group role is written. A date in the
-past is a problem with or without `valid_until:`. The roles `initdb` made, such
+past is a problem with or without `valid_until:` on a role that can log in,
+and not on a `NOLOGIN` role. The roles `initdb` made, such
 as `postgres` and the `pg_*` roles, are counted in the head line and left out
 unless a rule names them. PostgreSQL has no profile and keeps no failed-login
 count, so both read `-` and `unknown`. A rule's `password_lifetime`,

@@ -2389,8 +2389,10 @@ check is `not_applicable`, with no `login:`, is `NO_RULE`, and its
 **A finding's `check`** is `password_lifetime`, `lock`, `profile`,
 `failed_login_limit` or `present`, and, from run schema 1.94, `valid_until`: a
 PostgreSQL role's `VALID UNTIL` against a rule's `postgresql.valid_until`
-(#1459). A date in the past is a `valid_until` problem whether or not a rule
-states the key. On every other product the check is `not_applicable`.
+(#1459). A date in the past is a `valid_until` problem on a role that can log
+in, whether or not a rule states the key. On a `NOLOGIN` role only the rule's
+key judges the date (#1468). On every other product the check is
+`not_applicable`.
 
 `PROFILE_MISSING`, from run schema 1.86, is about a target, not an account, so
 its `account` is `-`. A profile that a `reports.accounts` rule or an

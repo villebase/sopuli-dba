@@ -401,6 +401,19 @@ def test_a_deliberately_locked_account_is_refused() -> None:
     assert "ALTER ROLE … LOGIN on PostgreSQL" in answer.detail
 
 
+def test_a_lockout_that_reads_as_a_deliberate_lock_is_refused_and_named() -> None:
+    """#1454, option 3: under `PASSWORD_LOCK_TIME UNLIMITED` a lockout reads
+    `LOCKED`. The reset still refuses, and says what the count shows."""
+    evidence = "its failed-login count, 3, has reached the profile's FAILED_LOGIN_ATTEMPTS, 3"
+    answer = decision(state(status="LOCKED", locked=True, lockout_evidence=evidence))
+
+    assert answer.proceed is False
+    assert answer.state == SKIPPED
+    assert evidence in answer.detail
+    assert "ALTER USER … ACCOUNT UNLOCK and reset again" in answer.detail
+    assert "deliberate lock --" not in answer.detail
+
+
 def test_a_nologin_role_is_refused_as_a_deliberate_lock() -> None:
     """#1201: the PostgreSQL driver sets the field, and the status is its own
     word, which Oracle's parse does not know."""

@@ -242,10 +242,18 @@ count:
   log in, so there `NOLOGIN` is a problem whatever a pattern's `login:` says.
   The status column shows `NOLOGIN`, `EXPIRED` or `OPEN`, as `creds status`
   does.
+- **An expired date does not meet `login: refused`.** `VALID UNTIL` limits
+  password logins only, so `trust`, `peer` and `cert` lines in
+  `pg_hba.conf`, which the tool cannot read, still let the role in. The lock
+  check says the role can log in, and that `NOLOGIN` refuses every login
+  ([#1468](../decisions/log.md#1468)).
 - **A `VALID UNTIL` in the past is an expired password**, and a problem on
-  every declared role, with or without a rule's key: no password logs the role
-  in until somebody moves the date. A rule's `postgresql.valid_until` compares
-  the date: `required` wants one in the future, and `forbidden` wants none.
+  every declared role that can log in, with or without a rule's key: no
+  password logs the role in until somebody moves the date. On a `NOLOGIN` role
+  it is not a problem, because the role cannot log in and the date only makes
+  it safer. It becomes one if the role gets `LOGIN` (#1468). A rule's
+  `postgresql.valid_until` compares the date on every role: `required` wants
+  one in the future, and `forbidden` wants none.
   `ALTER ROLE` cannot remove a date, so `VALID UNTIL 'infinity'` is how a DBA
   removes one, and it counts as none. The date is compared on the server,
   `rolvaliduntil < now()`, as `creds status` compares it, and shown in UTC.

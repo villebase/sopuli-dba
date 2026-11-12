@@ -19,6 +19,7 @@ from sopuli.driver.oracle.accounts import (
     SURVEY_USERS_QUERY,
     SURVEY_USERS_QUERY_LEGACY,
     DictionaryUnreadableError,
+    lockout_evidence,
     survey,
     survey_with_profiles,
 )
@@ -453,6 +454,32 @@ def test_a_limit_that_is_not_a_whole_number_is_unreadable() -> None:
     assert account.password_lifetime is None
     (reason,) = account.unreadable
     assert ".0416" in reason
+
+
+@pytest.mark.parametrize(
+    ("status", "lock_time", "limit", "failed", "named"),
+    [
+        ("LOCKED", "UNLIMITED", "3", 3, True),  # the count reached the limit
+        ("EXPIRED & LOCKED", "UNLIMITED", "3", 4, True),
+        ("LOCKED", "UNLIMITED", "3", 0, False),  # ACCOUNT LOCK, no failed login
+        ("LOCKED", ".0416", "3", 3, False),  # a lockout there reads LOCKED(TIMED)
+        ("LOCKED", None, "3", 3, False),  # unknown lock time: say nothing
+        ("LOCKED", "UNLIMITED", "UNLIMITED", 3, False),  # no limit, no lockout
+        ("LOCKED", "UNLIMITED", "3", None, False),  # no SYS.USER$ grant
+        ("LOCKED(TIMED)", "UNLIMITED", "3", 3, False),  # not read as deliberate
+    ],
+)
+def test_lockout_evidence_is_named_only_on_proof(
+    status: str, lock_time: str | None, limit: str, failed: int | None, named: bool
+) -> None:
+    """#1454: the reset still refuses, and says what the count shows only where
+    the lock time reads UNLIMITED and the count has reached a numeric limit."""
+    found = lockout_evidence(status, lock_time=lock_time, limit=limit, failed=failed)
+
+    assert (found is not None) is named
+    if found is not None:
+        assert f"count, {failed}," in found
+        assert "PASSWORD_LOCK_TIME UNLIMITED" in found
 
 
 def test_accounts_come_back_ordered_by_name() -> None:

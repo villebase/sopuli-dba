@@ -15,7 +15,8 @@ application's `oracle: container_clause`, and an account on a MySQL target that
 does not name its host, are checked where the application binds to its targets
 (:mod:`sopuli.config.bindings`), with :func:`refuse_a_container_clause` and
 :func:`refuse_a_bare_mysql_account`. A personal account names its host too,
-checked by :func:`check_personal_mysql_accounts`.
+checked by :func:`check_personal_mysql_accounts`. A report rule's
+``user@host`` names are checked by :func:`check_report_mysql_accounts`.
 """
 
 from __future__ import annotations
@@ -541,16 +542,36 @@ def refuse_a_bare_mysql_account(
                 "each with its own password"
             ),
         )
-    if quoted_or_padded(split):
-        raise ConfigError(
-            f"{declared_by} declares {account!r} on {product} target {expanded.name!r}, "
-            "whose user or host starts or ends with a quote or a space",
-            at=at,
-            hint=(
-                f"write the name without SQL's quotes, as `{example}@10.%`: the tool "
-                "quotes each part itself"
-            ),
-        )
+    refuse_a_quoted_mysql_account(
+        expanded, account, split, written_by=f"{declared_by} declares", at=at, example=example
+    )
+
+
+def refuse_a_quoted_mysql_account(
+    expanded: ExpandedTarget,
+    account: str,
+    split: tuple[str, str],
+    *,
+    written_by: str,
+    at: KeyPath,
+    example: str = "acme_app",
+) -> None:
+    """A ``user@host`` name with a part in SQL's quotes, as in ``'acme_app'@'%'``,
+    or with a space at an end, is refused. It splits, but the quotes would
+    become part of the name, and no account would match. ``written_by`` begins
+    the message, such as "a report rule names"."""
+    if not quoted_or_padded(split):
+        return
+    product = _PRODUCTS[expanded.target.type].name
+    raise ConfigError(
+        f"{written_by} {account!r} on {product} target {expanded.name!r}, "
+        "whose user or host starts or ends with a quote or a space",
+        at=at,
+        hint=(
+            f"write the name without SQL's quotes, as `{example}@10.%`: the tool "
+            "quotes each part itself"
+        ),
+    )
 
 
 def typed_user(name: str, *, default: str) -> str:
@@ -616,3 +637,45 @@ def check_personal_mysql_accounts(config: Config) -> None:
                     declared_by="a personal account rule",
                     at=at.key("accounts").index(position),
                 )
+
+
+def check_report_mysql_accounts(config: Config) -> None:
+    """A `reports.accounts` rule's ``user@host`` name is one the report can match.
+
+    A rule names a MySQL or MariaDB account as UC-1 does, ``user@host``
+    (#1461), because one user name at two hosts is two accounts, each with its
+    own lock and limits. A name without a host is not refused: it is a name for
+    the rule's other targets, and on these it reaches no account, so a rule
+    written for Oracle can cover every target (decided on #1461). A
+    ``user@host`` name is checked as an application's is: no part in SQL's
+    quotes or with a space at an end. The wildcard ``*`` stands in the user
+    part only. A host is the server's own pattern, such as ``10.%``, compared
+    with the host each account was created with, so ``*`` there would match no
+    account. Run after references are resolved, so the rule's ``targets:``
+    names exist.
+    """
+    for index, rule in enumerate(config.reports.accounts):
+        at = ROOT.key("reports").key("accounts").index(index)
+        for expanded in select(config, rule.targets):
+            if expanded.target.type not in USER_AT_HOST_TYPES:
+                continue
+            product = _PRODUCTS[expanded.target.type].name
+            for position, account in enumerate(rule.accounts):
+                where = at.key("accounts").index(position)
+                split = mysql_account(account)
+                if split is None:
+                    continue
+                refuse_a_quoted_mysql_account(
+                    expanded, account, split, written_by="a report rule names", at=where
+                )
+                if "*" in split[1]:
+                    raise ConfigError(
+                        f"a report rule names {account!r} on {product} target "
+                        f"{expanded.name!r}, with `*` in the host",
+                        at=where,
+                        hint=(
+                            f"`*` stands in the user part only; write the host as the "
+                            f"account has it, such as `{typed_user(account, default='acme_app')}"
+                            "@10.%`, and one name per host"
+                        ),
+                    )

@@ -130,7 +130,9 @@ are undeclared. Then:
   whose rule says it must not; a locked account, or an account that can log in
   where its rule says `login: refused`; the wrong profile; another
   setting that differs from the rule; a declared account missing from a target
-  it is declared for;
+  it is declared for. A missing account is named as the config spells it, and
+  in upper case on Oracle, which keeps an unquoted name that way
+  ([#1465](https://github.com/villebase/sopuli-dba/issues/1465));
 - **then the accounts not checked, with no rule, and undeclared.** An
   undeclared account is information and never sets exit 3;
 - **then a count of the accounts that passed everything.** `--all` lists them.
@@ -393,7 +395,9 @@ can survey its accounts, its targets are *not checked*.
 
 - `reports.accounts` rules name accounts by name or `*` pattern, give them
   their expected login, settings or profile, and select targets as `applications:`
-  and `personal_accounts:` do. A rule does not write a kind: the report
+  and `personal_accounts:` do. On MySQL and MariaDB a name is `user@host`,
+  compared as UC-1 compares it, and a name without a host reaches no account
+  there ([#1461](../decisions/log.md#1461)). A rule does not write a kind: the report
   derives it from where the file declares the account.
 - The list of database profiles is `reports.oracle.profiles`. Inside the
   product block it cannot be read as the top-level `profiles:`, which means run

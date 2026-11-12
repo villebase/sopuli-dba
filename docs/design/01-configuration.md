@@ -3465,7 +3465,7 @@ reports:
 
 | Key | Meaning |
 |---|---|
-| `accounts[].accounts` | account names, or patterns whose only wildcard is `*`. Names are compared by `upper()` |
+| `accounts[].accounts` | account names, or patterns whose only wildcard is `*`. Names are compared by `upper()`, and on MySQL and MariaDB as `user@host` (below) |
 | `accounts[].targets` | the same selector an application entry takes; absent means every target |
 | `accounts[].login` | `refused` or `allowed`: whether the accounts must be able to log in |
 | `accounts[].settings` | what the accounts' password limits must be |
@@ -3536,6 +3536,26 @@ whole number above 0 that the database's value must not exceed:
 
 `unlimited` matches only an unlimited value, and a number never matches one.
 A setting a rule does not name is not compared.
+
+**On MySQL and MariaDB a rule names an account `user@host`**, as an
+application does (§*`mysql:` on a target*), because one user name at two hosts
+is two accounts. The names are compared as UC-1 compares them: the user
+exactly and the host without ASCII case, so `jdoe@%` and `JDOE@%` are two
+accounts ([#1461](../decisions/log.md#1461)). `*` stands in the user part
+only, as in `acme_*@10.%`. A `*` in the host, or a part in SQL's quotes, is
+refused when the file is read, with exit 9. A name without a host reaches no
+account on these targets and is never reported missing there: it names the
+accounts of the rule's other targets, so a rule written for Oracle may cover
+every target.
+
+```yaml
+reports:
+  accounts:
+    - accounts: ["acme_*@10.%", acme_batch@localhost]
+      targets: [mysql-prod]
+      settings:
+        password_lifetime: 90
+```
 
 **Kind is never written.** The report says what kind each account is from
 where the file declares it: an account in `applications:` is an application

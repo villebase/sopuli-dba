@@ -5397,3 +5397,34 @@ the register.
      group role is written, so most `NOLOGIN` roles are not locked accounts.
   5. A maximum number of days for `valid_until`. It punishes a DBA who set a
      long date once.
+
+## #1461
+
+- **Decided:** 2026-11-11, #1461
+- **Question:** a `reports.accounts` rule names a MySQL or MariaDB account
+  `user@host`, with `*` in the user part only (#1411's build plan). How are
+  those names compared with the accounts the report reads, and what does a
+  name without a host mean on such a target?
+- **Decision:** the maintainer's, in two parts.
+  1. As UC-1 compares them: the user exactly and the host without ASCII case
+     ([#1202](#1202), decision 3). `jdoe@%` and `JDOE@%` are two accounts. A
+     pattern's `*` matches the user part by case, and its host is compared as
+     a name's is.
+  2. A name without a host reaches no account on a MySQL or MariaDB target,
+     and is never reported missing there. A `*` in the host is refused.
+- **Why:** with `upper()`, a rule for `jdoe@%` would also check `JDOE@%`,
+  and would not report `jdoe@%` missing when only `JDOE@%` exists: the report
+  would call an account present that is not. A rule with no `targets:`
+  covers every target, so refusing a name without a host, as an application's
+  is refused, would stop a file that loads today from loading wherever the
+  estate has a MySQL or MariaDB target.
+- **Rejected:**
+  1. `upper()`, as on every other product: it lets one account stand in for
+     another.
+  2. Refusing a name without a host, as UC-1 does. Strictest, but it breaks
+     mixed estates whose rules have no `targets:`, and would need config
+     schema 6.0. It can still be chosen later.
+  3. Refusing it only where the rule's own `targets:` reach MySQL: the same
+     name would mean two things.
+- **Known cost:** a rule meant for MySQL that leaves out the host checks
+  nothing there, and the accounts it meant show as undeclared.

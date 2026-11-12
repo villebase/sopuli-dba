@@ -59,7 +59,11 @@ from sopuli.config.notify import unserviceable as unserviceable_notify
 from sopuli.config.permissions import check_permissions
 from sopuli.config.personal_accounts import build_personal_accounts, reject_cross_declaration
 from sopuli.config.policies import build_policies
-from sopuli.config.products import check_personal_mysql_accounts, check_products
+from sopuli.config.products import (
+    check_personal_mysql_accounts,
+    check_products,
+    check_report_mysql_accounts,
+)
 from sopuli.config.profiles import build_profiles, select_profile
 from sopuli.config.references import check_references
 from sopuli.config.reports import (
@@ -624,6 +628,7 @@ def build_config(
     # silently selecting nothing and producing no bindings at all.
     warnings = check_references(config)
     check_personal_mysql_accounts(config)
+    check_report_mysql_accounts(config)
     config = replace(config, bindings=build_bindings(config))
     check_admin_refs(config)
     # §10 on the store each password actually goes to, which only the bindings

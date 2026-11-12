@@ -2494,7 +2494,7 @@ pg-dev  (16.15, 22 accounts read, 4 with a problem, 1 undeclared)
   acme_rpt_expired  technical   -        EXPIRED  unknown        REPORT_PROBLEM   valid_until: password expired: VALID UNTIL 2001-01-01T00:00:00Z, rule says forbidden
   acme_rpt_temp     technical   -        OPEN     unknown        REPORT_PROBLEM   valid_until: VALID UNTIL 2099-01-01T00:00:00Z, rule says forbidden
   acme_rpt_batch    technical   -        NOLOGIN  unknown        REPORT_PROBLEM   lock: cannot log in: NOLOGIN, rule says login allowed
-  ACME_RPT_GONE     technical   -        -        -              ACCOUNT_MISSING  present: not on this target
+  acme_rpt_gone     technical   -        -        -              ACCOUNT_MISSING  present: not on this target
   sopuli_admin      undeclared  -        OPEN     unknown        UNDECLARED       not in config
   acme_rpt_app      technical   -        OPEN     unknown        REPORT_OK        -
   acme_rpt_owner    technical   -        NOLOGIN  unknown        REPORT_OK        -

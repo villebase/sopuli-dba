@@ -878,6 +878,10 @@ same rows. [`measurements.md`](../measurements.md) has the times.
 | column privileges, the same way | `DBA_COL_PRIVS` | `grant_report_reads` |
 | schema privileges (23ai), the same way, with `SCHEMA` and `ADMIN_OPTION` | `DBA_SCHEMA_PRIVS` | `grant_report_reads` |
 
+Before these, the privilege report surveys the accounts as `report accounts`
+does, with the two reads for a personal rule's `role:` (#1469), so each
+account has the same kind in both reports.
+
 The last four each start with the recursive `WITH` the probe measured. A
 `CYCLE` clause stops it if a role is reached again, though Oracle refuses a
 circular grant (`ORA-01934`). The role path is joined with `CHR(0)`, which no

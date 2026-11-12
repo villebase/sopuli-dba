@@ -190,6 +190,36 @@ def json_run(write_config: WriteConfig, *args: str) -> dict[str, Any]:
     return document
 
 
+class _RoleSession(FakeSession):
+    """A second account, which a personal rule's `role:` admits (#1469)."""
+
+    def survey_accounts(self) -> tuple[SurveyedAccount, ...]:
+        alice = SurveyedAccount(
+            "ACME_DEV_ALICE", "OPEN", False, "DEFAULT", False, False, 180, 10, 0
+        )
+        return (*super().survey_accounts(), alice)
+
+    def resolve_role(self, role: str) -> str | None:
+        return role.upper()
+
+    def accounts_matching(self, *, role: str | None = None, **_: Any) -> tuple[str, ...]:
+        return ("ACME_DEV_ALICE",)
+
+
+def test_a_role_predicates_member_is_personal_in_the_privilege_report(
+    write_config: WriteConfig, session: dict[str, FakeSession]
+) -> None:
+    session["session"] = _RoleSession(GRANTS)
+    config = write_config(f"{CONFIG}personal_accounts:\n  - role: acme_developers\n")
+    result = CliRunner().invoke(
+        cli, ["--config", str(config), "--output", "json", "report", "privileges"]
+    )
+
+    document = json.loads(result.output)
+    kinds = {entry["account"]: entry["kind"] for entry in document["results"]}
+    assert kinds["ACME_DEV_ALICE"] == "personal"
+
+
 def test_public_json_validates_and_is_not_counted_as_an_account(
     write_config: WriteConfig, session: Any
 ) -> None:

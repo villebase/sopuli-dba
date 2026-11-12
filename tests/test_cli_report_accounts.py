@@ -18,7 +18,8 @@ from click.testing import CliRunner, Result
 from jsonschema import Draft202012Validator
 
 from conftest import WriteConfig
-from sopuli.cli import cli
+from sopuli.cli import _personal_role_members, cli
+from sopuli.config.loading import build_config
 from sopuli.driver.protocol import ROLE_LOOKUP, DriverError, Scope, UnsupportedCapabilityError
 from sopuli.driver.survey import SurveyedAccount
 from sopuli.exit_codes import ExitCode
@@ -210,6 +211,28 @@ def test_a_role_that_does_not_exist_declares_nobody(
 
     by_name = {row["account"]: row for row in json.loads(result.output)["results"]}
     assert by_name["ACME_STRAY_USER"]["state"] == "UNDECLARED"
+
+
+#: A role as each product's config names it: a MySQL role is an account.
+ROLES = {"postgresql": "acme_developers", "mysql": "acme_developers@%"}
+
+
+@pytest.mark.parametrize(("product", "asked"), [("postgresql", True), ("mysql", False)])
+def test_roles_are_resolved_only_where_built(product: str, asked: bool) -> None:
+    """#1469 resolves on Oracle and PostgreSQL. MySQL and MariaDB name a role
+    `user@host` and leave mandatory roles out, so they follow on their own."""
+    config = build_config(
+        {
+            "version": 1,
+            "targets": [{"name": "t", "type": product, "dsn": "t.example.com:5432"}],
+            "personal_accounts": [{"role": ROLES[product]}],
+        }
+    )
+    session = _RoleSession("t")
+    session.roles = {name.upper(): ("acme_dev_alice",) for name in ROLES.values()}
+    members = _personal_role_members(session, config, config.expanded_targets[0])
+
+    assert bool(members) is asked
 
 
 def test_without_role_lookup_the_report_runs_and_the_role_is_not_resolved(

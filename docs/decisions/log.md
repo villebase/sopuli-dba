@@ -5500,8 +5500,12 @@ the register.
   [#1376](#1376)). A role does not bring back an account the report leaves
   out, as a profile predicate does not.
 - **Why:** a listing must show exactly the accounts a mutating verb would
-  admit. With one query for both, the report and the verbs cannot disagree.
+  admit. The report and `account list` share one function for the two
+  reads, so they cannot disagree. A mutating verb admits one account by the
+  roles `describe` reads for it, through any chain, which the listing's
+  query is built to match (UC-2 §2).
 - **Rejected:**
   1. Leave a role predicate unresolved: on PostgreSQL every personal account
      declared by predicate shows as undeclared and gets no checks.
-  2. A query of the report's own: two queries for one set could disagree.
+  2. A query of the report's own: a third way to resolve one set, which
+     could disagree with the other two.

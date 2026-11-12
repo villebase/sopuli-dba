@@ -4325,9 +4325,23 @@ def _resolve_rule(
         return tuple(session.accounts_matching(profile=rule.profile))
 
     assert rule.role is not None
-    if session.resolve_role(rule.role) is None:
+    members = role_members(session, rule.role)
+    if members is None:
         raise _no_such_predicate(target, "role", rule.role)
-    return tuple(session.accounts_matching(role=rule.role))
+    return members
+
+
+def role_members(session: Any, role: str) -> tuple[str, ...] | None:
+    """Every account a `role:` predicate admits, or ``None`` where the role does not exist.
+
+    The two reads UC-2 §2 asks for: whether the role exists, then its members
+    through any chain. `account list` refuses ``None`` as a misspelling;
+    `report accounts` takes it as no members (#1469). One function for both,
+    so the listing and the report admit the same accounts.
+    """
+    if session.resolve_role(role) is None:
+        return None
+    return tuple(session.accounts_matching(role=role))
 
 
 def _no_such_predicate(target: ExpandedTarget, noun: str, name: str) -> click.ClickException:
@@ -5844,9 +5858,9 @@ _REPORT_ROLE_TYPES = frozenset({ORACLE, POSTGRESQL})
 def _personal_role_members(session: Any, config: Config, target: ExpandedTarget) -> tuple[str, ...]:
     """Every account a personal rule's `role:` admits on ``target`` (#1469).
 
-    The same two reads `account list` makes (:func:`_resolve_rule`), so the
-    report and the mutating verbs admit the same accounts: whether the role
-    exists, then its members through any chain. A role that does not exist has
+    The same two reads `account list` makes (:func:`role_members`), so the
+    report and the listing admit the same accounts: whether the role exists,
+    then its members through any chain. A role that does not exist has
     no members, and the report says nothing about it, as it says nothing about
     a personal rule's `profile:` that names no profile (#1390). `account list`
     refuses both, because there the rule is the whole answer.
@@ -5854,21 +5868,24 @@ def _personal_role_members(session: Any, config: Config, target: ExpandedTarget)
     Where the target lacks `role_lookup` (on Oracle, `SELECT ON DBA_ROLES`),
     the role is not resolved and its members show as undeclared, as before
     #1469. The report still runs: a report that lacks a capability does not
-    fail the target over it (invariant 4, #1376). Any other failure is the
-    target's read failure, as the survey's is.
+    fail the target over it (invariant 4, #1376). Any other failure, such as
+    two roles whose names differ only in case, is the target's read failure,
+    as the survey's is: without the members the report cannot say which
+    accounts the file declares, and listing them as undeclared would be a
+    wrong answer rather than a missing one.
     """
     if target.target.type not in _REPORT_ROLE_TYPES:
         return ()
+    # One resolution per role, however many rules name it, compared as the
+    # config compares role names.
+    roles = {rule.role.upper(): rule.role for rule in rules_for(config, target.name) if rule.role}
     members: list[str] = []
-    for rule in rules_for(config, target.name):
-        if rule.role is None:
-            continue
+    for role in roles.values():
         try:
-            resolved = session.resolve_role(rule.role)
+            found = role_members(session, role)
         except UnsupportedCapabilityError:
             continue
-        if resolved is not None:
-            members.extend(session.accounts_matching(role=rule.role))
+        members.extend(found or ())
     return tuple(members)
 
 

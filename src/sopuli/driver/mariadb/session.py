@@ -43,7 +43,7 @@ import pymysql
 from sopuli.config.model import ExpandedTarget, Runtime
 from sopuli.driver.clusters import Identity
 from sopuli.driver.grants import SYSTEM, GrantSurvey
-from sopuli.driver.mariadb import account_state, roles, verification
+from sopuli.driver.mariadb import account_state, global_privileges, roles, verification
 from sopuli.driver.mariadb import accounts as accounts_module
 from sopuli.driver.mariadb import password as password_module
 from sopuli.driver.mariadb import privilege_survey as privilege_module
@@ -51,6 +51,7 @@ from sopuli.driver.mariadb import survey as survey_module
 from sopuli.driver.mariadb.account_state import AccountStates
 from sopuli.driver.mariadb.admin import PUBLIC
 from sopuli.driver.mariadb.errors import from_error
+from sopuli.driver.mariadb.global_privileges import GlobalPrivileges
 from sopuli.driver.mariadb.limits import LIMIT
 from sopuli.driver.mariadb.privileges import audit as privilege_audit
 from sopuli.driver.mariadb.scope import observe, read_password_checks, require_read_write
@@ -284,6 +285,7 @@ class MariadbSession(ClosesConnection):
     #: not change for the life of a connection.
     _session_user: str | None = field(default=None, init=False, repr=False)
     _account_states: AccountStates | None = field(default=None, init=False, repr=False)
+    _global_privileges: GlobalPrivileges | None = field(default=None, init=False, repr=False)
     #: The password validation plugins that refuse the driver's value, read
     #: with the scope (#1310); ``None`` where that read failed.
     _password_checks: tuple[str, ...] | None = field(default=None, init=False, repr=False)
@@ -460,11 +462,16 @@ class MariadbSession(ClosesConnection):
         """Every privilege ``accounts`` hold, one row per path, for `report
         privileges` (:mod:`~sopuli.driver.mariadb.privilege_survey`, #1483).
 
-        :class:`~sopuli.driver.grants.PrivilegeSurvey`. The global level is
-        not checked (decision A). The default roles are an optional read (R3):
-        without the column grant the server refuses it, ``1143``, and whether
-        a role is active without ``SET ROLE`` is not checked. Any other error
-        fails the read. ``public`` lists ``PUBLIC``'s grants once.
+        :class:`~sopuli.driver.grants.PrivilegeSurvey`. The global level comes
+        from the optional view ``sopuli.global_privileges`` where it is read
+        (:mod:`~sopuli.driver.mariadb.global_privileges`, #1483, option C), for
+        accounts and ``PUBLIC``; a role has no row there, so where the surveyed
+        accounts hold a role its global level is not checked. Without the view
+        the global level is not checked (option A). The default roles are an
+        optional read (R3): without the column grant the server refuses it,
+        ``1143``, and whether a role is active without ``SET ROLE`` is not
+        checked. Any other error fails the read. ``public`` lists ``PUBLIC``'s
+        grants once.
         """
         reasons: list[str] = []
         defaults = None
@@ -474,23 +481,60 @@ class MariadbSession(ClosesConnection):
             if error.code != str(COLUMN_ACCESS_DENIED):
                 raise
             reasons.append(privilege_module.NO_DEFAULTS)
+        view = self.global_privileges()
 
         def read(cursor: Any) -> GrantSurvey:
+            holders = [Principal(*split(account)) for account in accounts]
+            if public:
+                holders.append(PUBLIC)
             edges = privilege_module.read_edges(cursor)
-            return privilege_rows.survey(
+            objects = privilege_module.read_objects(cursor)
+            if view.rows is None:
+                unread = {SYSTEM: f"{privilege_module.GLOBAL_NOT_CHECKED}; {view.reason}"}
+            else:
+                unread = {}
+                objects.extend(global_privileges.held(view, holders))
+            survey = privilege_rows.survey(
                 accounts,
                 edges,
-                privilege_module.read_objects(cursor),
+                objects,
                 privilege_rows.Activation(
                     defaults=defaults, always_active=privilege_module.public_reach(edges)
                 ),
-                unread={SYSTEM: privilege_module.GLOBAL_NOT_CHECKED},
+                unread=unread,
                 reasons=reasons,
                 public=PUBLIC if public else None,
                 named=privilege_module.role_name,
             )
+            if view.rows is not None and survey.roles:
+                survey = replace(
+                    survey, unreadable=(*survey.unreadable, global_privileges.NO_ROLE_ROWS)
+                )
+            return survey
 
         return self._read_grants(read)
+
+    def global_privileges(self) -> GlobalPrivileges:
+        """Each account's global privileges from the optional view
+        ``sopuli.global_privileges``, or why there are none
+        (:mod:`~sopuli.driver.mariadb.global_privileges`, #1483). Read once per
+        session, its columns checked first, and its tool-account row looked for."""
+        if self._global_privileges is None:
+
+            def read(cursor: Any) -> GlobalPrivileges:
+                if self._session_user is None:
+                    self._session_user = current_user(cursor)
+                user, host = split(self._session_user)
+                return global_privileges.read(cursor, user=user, host=host)
+
+            self._global_privileges = self._read(read)
+        return self._global_privileges
+
+    def privilege_view_broken(self) -> str | None:
+        """:class:`~sopuli.driver.grants.PrivilegeViewState`: what is wrong with
+        ``sopuli.global_privileges`` where it exists and is not used, for
+        ``SOPULI-W074``."""
+        return self.global_privileges().broken
 
     def account_states(self) -> AccountStates:
         """Each account's lock, lifetime and time of the last change, from the

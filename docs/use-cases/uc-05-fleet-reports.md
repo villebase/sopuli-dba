@@ -386,13 +386,23 @@ with the grants of `02-mariadb-privileges.md` §2.1, as on MySQL: *schemas*
 is `database`, *objects* `table`, `routine` and `proxy`, and *columns*
 `column`. A role has no host, so it is named alone. A privilege is held
 without `SET ROLE` where the path's first role is the account's default role,
-the `mysql.user` view's `default_role`. Two things are *not checked*, with
-the reason, and the run exits 4:
+the `mysql.user` view's `default_role`.
 
-- **the global level**, always for now. The privileges split from `SUPER`,
-  such as `CONNECTION ADMIN`, set no column the tool account reads, so an
-  account that holds only one would read as holding nothing. The optional
-  view `sopuli.global_privileges` is to read it (decision C);
+**The global level** comes from the optional view `sopuli.global_privileges`,
+which `sql/mariadb/global_privileges_view.sql` makes (decision C): each
+account's global privileges as the server applies them, at level `global`,
+and `PUBLIC`'s with `--public`. The tool checks the view's columns every
+session, and that its own row is there: a definer that reads less than
+`mysql.*` answers with its own row alone, and no error. A view that exists
+and cannot be used is not read, and `SOPULI-W074` says what is wrong. These
+are *not checked*, with the reason, and the run exits 4:
+
+- **the global level without the view**, or with a broken one (decision A).
+  The privileges split from `SUPER`, such as `CONNECTION ADMIN`, set no
+  column the tool account reads, so an account that holds only one would
+  read as holding nothing;
+- **a role's global level**, with the view too: the server's list has no row
+  for a role. It is said only where the accounts surveyed hold a role;
 - **whether a role is a default role**, without the optional column grant on
   `default_role`. The roles list then reads *default not checked*.
 

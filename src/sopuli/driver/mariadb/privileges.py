@@ -81,8 +81,9 @@ OPTIONAL_COLUMNS = ("default_role",)
 #: Views the tool account may also read, with ``SELECT`` on each, and does
 #: without: held where granted, never missing. The optional view the reports
 #: read the lock, the lifetime and the time of the last change from (§2.1,
-#: #1491). It holds no stored value; its definer reads ``global_priv``.
-OPTIONAL_TABLES = ("sopuli.account_state",)
+#: #1491), and the one the privilege report reads the global privileges from
+#: (#1483). Neither holds a stored value; their definers read ``mysql``.
+OPTIONAL_TABLES = ("sopuli.account_state", "sopuli.global_privileges")
 
 #: §2.1's whole-table reads: roles, and the privilege tables guardrail 9 reads.
 #: None holds a stored value (checked on 10.11.19, 11.4.13, 11.8.9 and 12.3.3).

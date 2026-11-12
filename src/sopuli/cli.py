@@ -162,6 +162,7 @@ from sopuli.diagnostics import (
     failed_login_block_unread,
     file_store_in_use,
     file_store_leftover,
+    global_privileges_view_broken,
     guardrail_diagnostics,
     guardrail_pass_ahead,
     guardrail_refuses_ahead,
@@ -193,7 +194,7 @@ from sopuli.diagnostics import (
 )
 from sopuli.driver import guardrails
 from sopuli.driver.clusters import ClusterIdentity, scope_and_claim
-from sopuli.driver.grants import PrivilegeSurvey
+from sopuli.driver.grants import PrivilegeSurvey, PrivilegeViewState
 from sopuli.driver.mariadb.roles import PublicRoleError
 from sopuli.driver.mysql.roles import MandatoryRoleError
 from sopuli.driver.oracle.wallet import survey as wallet_survey
@@ -6101,6 +6102,11 @@ def _privileges_target(
                 absent = None if rows else wanted
             names = [row.account for row in rows if row.state != report_states.ACCOUNT_MISSING]
             grants = session.survey_privileges(names, public=public)
+            # MariaDB's optional view of the global privileges (#1483).
+            if isinstance(session, PrivilegeViewState):
+                broken = session.privilege_view_broken()
+                if broken is not None:
+                    run.document.warn_in_text(global_privileges_view_broken(target.name, broken))
         except Exception as error:  # noqa: BLE001 -- a per-target finding
             return privileges_view.TargetPrivileges(
                 target=target.name, error=_finding(error), read_failed=True

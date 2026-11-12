@@ -2912,10 +2912,12 @@ GRANT SELECT (default_role) ON mysql.user TO 'sopuli_admin'@'%';
 The last line is the optional column grant of
 `design/02-mariadb-privileges.md` §2.1, which reads the default role.
 
+With a rule in `mariadb.yaml` naming `acme_rp@%` and `acme_rp_ops@localhost`:
+
 ```
 $ sopuli --config mariadb.yaml report privileges --account 'acme_rp@%' --detail
 mariadb-dev  (11.8.9, 1 account)
-  acme_rp@%  (application)
+  acme_rp@%  (technical)
     roles: acme_mid (default)
     KIND               PRIVILEGE     OBJECT             TYPE       FROM                     GRANTABLE
     system             not checked
@@ -2925,15 +2927,32 @@ mariadb-dev  (11.8.9, 1 account)
     object (table)     SELECT        acme.orders        TABLE      via acme_mid > acme_top  no
     column             UPDATE        acme.orders.total  -          direct                   yes
     schema (database)  SELECT        acme%              SCHEMA     direct                   no
-  not checked: global privileges: MariaDB keeps the privileges split from SUPER, such as CONNECTION ADMIN, only in mysql.global_priv, beside the stored value, and they set no column of the mysql.user view, so the global level as the tool account reads it would be incomplete
-...
+  not checked: global privileges: MariaDB keeps the privileges split from SUPER, such as CONNECTION ADMIN, only in mysql.global_priv, beside the stored value, and they set no column of the mysql.user view, so the global level as the tool account reads it would be incomplete; the optional view sopuli.global_privileges that reads them is absent or not granted to the tool account: run sql/mariadb/global_privileges_view.sql as an administrator
 ```
 
-It exits 4: the global level is not checked on MariaDB, so
-`acme_rp_ops@localhost`'s `CONNECTION ADMIN` does not show. `acme_rp_ops`
-reaches `SELECT` through `acme_top`, which is not its default role, so the row
-says `not a default role`. `--public` adds `PUBLIC` once, with its `SELECT` on
-`acme.notices`.
+It exits 4: without the optional view the global level is not checked on
+MariaDB. Edit the two `SET` lines at the top of
+`sql/mariadb/global_privileges_view.sql` to name the tool account, here
+`sopuli_admin` at `%`, and run it as root, as for `account_state_view.sql`
+above. The global level then reads:
+
+```
+$ sopuli --config mariadb.yaml report privileges --account 'acme_rp_ops@localhost'
+mariadb-dev  (11.8.9, 1 account)
+  acme_rp_ops@localhost  (technical)
+    roles: acme_top (not default, admin option)
+    system: CONNECTION ADMIN (global, direct)
+    objects: table: SELECT on 1 table (0 direct, 1 via roles, 1 through a role that is not a default role)
+    columns: none
+    schemas: none
+  not checked: a role's global privileges: information_schema.USER_PRIVILEGES, which the optional view sopuli.global_privileges reads, has no row for a role
+```
+
+`CONNECTION ADMIN` is one of the privileges split from `SUPER`, which only the
+view shows. It still exits 4: the account holds a role, and the server's list
+of global privileges has no row for a role. `acme_rp_ops` reaches `SELECT`
+through `acme_top`, which is not its default role, so the count says so.
+`--public` adds `PUBLIC` once, with its `SELECT` on `acme.notices`.
 
 `report history` shows when each password the tool manages was rotated or
 reset, from the store's versions, with the database's own date of the last

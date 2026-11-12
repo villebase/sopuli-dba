@@ -35,6 +35,7 @@ from sopuli.clock import Skew, to_rfc3339
 from sopuli.config.codes import (
     ACCOUNT_STATE_VIEW_BROKEN,
     DELIVERY_UNSERVICEABLE,
+    GLOBAL_PRIVILEGES_VIEW_BROKEN,
     HOSTLESS_REPORT_NAME,
     NOTIFY_UNSERVICEABLE,
     PROFILE_NAMED_AFTER_ENVIRONMENT,
@@ -1112,6 +1113,14 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "without the lock. A warning and not a refusal: the view is optional, and "
             "the commands still run."
         ),
+        GLOBAL_PRIVILEGES_VIEW_BROKEN: (
+            "The optional MariaDB view `sopuli.global_privileges` exists on a target and "
+            "cannot be used: it has a column outside the expected set, its definer is gone, "
+            "or its definer reads less than `mysql.*`, which shows as the tool account's own "
+            "row missing. The tool does not read it, so the global privileges are not "
+            "checked there, and the report says why. One per target. A warning and not a "
+            "refusal: the view is optional, and the report still runs."
+        ),
         ROTATION_OVERDUE: (
             "`creds status --max-age-days`: the vault last rotated this credential longer "
             "ago than the threshold. The age is the vault's, not the database's, which is "
@@ -1875,6 +1884,22 @@ def account_state_view_broken(target: str, what: str) -> Diagnostic:
             "lock, the lifetime and the date of the last change are not checked here. "
             "Recreate it with sql/mariadb/account_state_view.sql, which makes it with only "
             "the expected columns, owned by a locked definer that can read mysql.global_priv"
+        ),
+    )
+
+
+def global_privileges_view_broken(target: str, what: str) -> Diagnostic:
+    """`SOPULI-W074`, once per target, where the optional MariaDB view of the
+    global privileges exists and is not used (#1483)."""
+    return Diagnostic(
+        level="warning",
+        code=GLOBAL_PRIVILEGES_VIEW_BROKEN,
+        target=target,
+        message=(
+            f"{target}: the optional view sopuli.global_privileges is not used: {what}. The "
+            "global privileges are not checked here. Recreate it with "
+            "sql/mariadb/global_privileges_view.sql, which makes it with only the expected "
+            "columns, owned by a locked definer that can read mysql.*"
         ),
     )
 

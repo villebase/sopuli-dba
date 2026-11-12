@@ -21,7 +21,8 @@
 -- EXPIRED, which say nothing of the lock.
 --
 -- What it creates, each step safe to run again:
---   1. the schema sopuli, holding only this view;
+--   1. the schema sopuli, which holds this view and sopuli.global_privileges
+--      (global_privileges_view.sql);
 --   2. sopuli_view_definer@localhost, LOCKED, holding only SELECT on
 --      mysql.global_priv: the view runs with its rights, and nobody logs in
 --      as it;

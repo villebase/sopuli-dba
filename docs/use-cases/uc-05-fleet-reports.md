@@ -6,10 +6,10 @@ Depends on: `../design/00-principles.md`, `../design/01-configuration.md`,
 This document specifies `sopuli report accounts`, `sopuli report privileges`
 and `sopuli report history`. **All three are built, on Oracle**, with the
 `reports:` rules (§4, §5, §7). **`report history` is built on PostgreSQL,
-MySQL and MariaDB** too (§6), and **`report accounts` on PostgreSQL** (§4),
-**MySQL and MariaDB** (§8, #1461, #1462). The privilege report on those three
-comes later: until then it is refused before it connects. §9 lists the
-decisions.
+MySQL and MariaDB** too (§6), **`report accounts` on PostgreSQL** (§4),
+**MySQL and MariaDB** (§8, #1461, #1462), and **`report privileges` on
+PostgreSQL** (§5, #1481). The privilege report on MySQL and MariaDB comes
+later: until then it is refused before it connects. §9 lists the decisions.
 
 ---
 
@@ -272,7 +272,8 @@ count:
 
 ## 5. The privilege report
 
-**Built, on Oracle:** `sopuli report privileges [--detail] [--account NAME]
+**Built, on Oracle and PostgreSQL** (PostgreSQL's terms are at the end of this
+section): `sopuli report privileges [--detail] [--account NAME]
 [--public]`, for the same accounts `report accounts` covers, and also for the
 common accounts it leaves out on a PDB target: their grants made in the PDB
 are read there. Each account has the kind `report accounts` gives it,
@@ -315,8 +316,32 @@ to one column. Where a product has more than one level in a part, such as
 MySQL's static and dynamic global privileges, each privilege names its level,
 is counted per level, and is listed by level, then by privilege. A scope the target
 cannot reach, such as another database of a PostgreSQL cluster, is listed as
-*not checked* on that target. The report is not built on PostgreSQL, MySQL or
-MariaDB yet (#1481, #1482, #1483).
+*not checked* on that target. The report is not built on MySQL or MariaDB yet
+(#1482, #1483).
+
+**On PostgreSQL** (#1481), from catalogs the tool account reads with its own
+grants (`02-postgres-privileges.md` §2.5):
+
+- *system*: the attributes `SUPERUSER`, `CREATEROLE`, `CREATEDB`,
+  `REPLICATION` and `BYPASSRLS`; `SET` and `ALTER SYSTEM` on a parameter, from
+  15; and each built-in `pg_*` role the account reaches, such as
+  `pg_read_all_data`, under its own name, because what it gives is in no ACL;
+- *schemas*: each database's privileges, and each schema's;
+- *objects*: tables, views, sequences, functions, procedures, languages, types,
+  large objects, foreign-data wrappers, foreign servers and tablespaces; and
+  default privileges, as `default for <role>`, for what that role's future
+  objects will grant;
+- *columns*: column grants.
+
+An object nobody has granted on still gives its owner every privilege, and
+`PUBLIC` some, such as `EXECUTE` on a function; the report counts those too.
+Each role shows its `INHERIT` and `SET` options. A privilege through a path
+where every grant inherits is active; one the account reaches only by `SET
+ROLE` counts, and is marked "needs SET ROLE"; a path with neither option gives
+nothing. An attribute is never inherited, so a role's attribute counts only
+where the account can `SET ROLE` to that role. A target reads the database it
+connects to: the cluster's other databases, except templates, are named as
+*not checked*, and the run exits 4 unless each one is its own target.
 
 ---
 
@@ -479,9 +504,8 @@ personal rule's `role:` (§4). PostgreSQL keeps no date
 of a role's last password change, no last login and no failed logins, so the
 failed-login count is `unknown` there, and `report history` shows only the
 store's records. Object privileges are per database: a session can read only
-the grants of the database it connects to. The privilege report on PostgreSQL
-is not built yet; #1411 lists what to decide first, such as what it does about
-a cluster's other databases. Measured on 13.23 to 18.6
+the grants of the database it connects to, so the privilege report names the
+cluster's other databases as not checked (§5). Measured on 13.23 to 18.6
 (`02-postgres-privileges.md` §2.5, #1443).
 
 On MySQL (#1461) and MariaDB (#1462), `report accounts` and `report history`

@@ -40,6 +40,29 @@ class TargetPrivileges:
     read_failed: bool = False
     #: The name ``--account`` gave, where this target has no such account.
     absent: str | None = None
+    #: The target's ``type:``, for the words a privilege that is not active is
+    #: marked with.
+    product: str | None = None
+
+
+@dataclass(frozen=True)
+class Words:
+    """How a privilege the account holds but has not active is marked: after its
+    sources, and in a count."""
+
+    source: str
+    count: str
+
+
+#: Oracle's: the role is not a default role, so it needs ``SET ROLE``.
+DEFAULT_ROLE_WORDS = Words("not a default role", "through a role that is not a default role")
+#: PostgreSQL's: a grant on the path does not inherit (#1481).
+SET_ROLE_WORDS = Words("needs SET ROLE", "only after SET ROLE")
+_WORDS = {"postgresql": SET_ROLE_WORDS}
+
+
+def words_for(product: str | None) -> Words:
+    return _WORDS.get(product or "", DEFAULT_ROLE_WORDS)
 
 
 #: The one count of unanswered and unsupported targets, shared with
@@ -71,25 +94,33 @@ def _section(report: TargetPrivileges, *, detail: bool) -> list[str]:
     ]
     if report.absent is not None:
         lines.append(f"  no account {report.absent} on this target")
+    words = words_for(report.product)
     for one in report.accounts:
-        lines.extend(_detail(one) if detail else _summary(one))
+        lines.extend(_detail(one, words) if detail else _summary(one, words))
     lines.extend(f"  not checked: {reason}" for reason in report.unreadable)
     return lines
 
 
-def _summary(one: AccountPrivileges) -> list[str]:
+def _summary(one: AccountPrivileges, words: Words) -> list[str]:
     lines = [f"  {one.account}  ({one.kind})"]
     lines.append(f"    roles: {_roles(one.roles) or 'none'}")
-    lines.append(f"    system: {_system(one.system)}")
-    lines.append(f"    objects: {_counts(one.objects)}")
-    lines.append(f"    columns: {_counts(one.columns, noun='column')}")
-    lines.append(f"    schemas: {_schemas(one.schemas)}")
+    lines.append(f"    system: {_system(one.system, words)}")
+    lines.append(f"    objects: {_counts(one.objects, words)}")
+    lines.append(f"    columns: {_counts(one.columns, words, noun='column')}")
+    lines.append(f"    schemas: {_schemas(one.schemas, words)}")
     return lines
 
 
 def _roles(roles: Sequence[RoleGrant]) -> str:
     def one(role: RoleGrant) -> str:
-        marks = ["default" if role.default_role else "not default"]
+        if role.set_option is None:
+            marks = ["default" if role.default_role else "not default"]
+        else:
+            # PostgreSQL's two options, in its own words (#1481).
+            marks = [
+                "inherit" if role.default_role else "no inherit",
+                "set" if role.set_option else "no set",
+            ]
         if role.admin_option:
             marks.append("admin option")
         if role.authentication not in ("NONE", ""):
@@ -99,30 +130,32 @@ def _roles(roles: Sequence[RoleGrant]) -> str:
     return ", ".join(one(role) for role in roles)
 
 
-def _system(privileges: Sequence[Privilege] | None) -> str:
+def _system(privileges: Sequence[Privilege] | None, words: Words) -> str:
     if privileges is None:
         return "not checked"
     if not privileges:
         return "none"
-    return "; ".join(f"{p.privilege} ({_where(p)})" for p in privileges)
+    return "; ".join(f"{p.privilege} ({_where(p, words)})" for p in privileges)
 
 
-def _schemas(privileges: Sequence[Privilege] | None) -> str:
+def _schemas(privileges: Sequence[Privilege] | None, words: Words) -> str:
     """``SELECT ANY TABLE on ACME_OWNER (direct)``, one per privilege and schema."""
     if privileges is None:
         return "not checked"
     if not privileges:
         return "none"
-    return "; ".join(f"{p.privilege} on {p.owner} ({_where(p)})" for p in privileges)
+    return "; ".join(f"{p.privilege} on {p.owner} ({_where(p, words)})" for p in privileges)
 
 
-def _where(privilege: Privilege) -> str:
+def _where(privilege: Privilege, words: Words) -> str:
     """The level, where the part has more than one, then the sources."""
-    sources = _sources(privilege)
+    sources = _sources(privilege, words)
     return sources if privilege.level is None else f"{privilege.level}, {sources}"
 
 
-def _counts(privileges: Sequence[Privilege] | None, *, noun: str | None = None) -> str:
+def _counts(
+    privileges: Sequence[Privilege] | None, words: Words, *, noun: str | None = None
+) -> str:
     """``SELECT on 42 table (30 direct, 12 via roles)``; ``noun`` overrides the type.
 
     A level, where the part has more than one, comes first, followed by a
@@ -137,8 +170,8 @@ def _counts(privileges: Sequence[Privilege] | None, *, noun: str | None = None) 
         what = noun or (object_type.lower() if object_type != "-" else "object")
         total = direct + via
         plural = what if total == 1 else _plural(what)
-        # Held only through a role that is not a default role: counted, and
-        # said, because the account has it only after SET ROLE (UC-5 §5).
+        # Held only through a path that is not active: counted, and said,
+        # because the account has it only after SET ROLE (UC-5 §5).
         inactive = sum(
             1
             for p in privileges
@@ -147,7 +180,7 @@ def _counts(privileges: Sequence[Privilege] | None, *, noun: str | None = None) 
             and (p.object_type or "-") == object_type
             and not p.via_default_role
         )
-        note = f", {inactive} through a role that is not a default role" if inactive else ""
+        note = f", {inactive} {words.count}" if inactive else ""
         prefix = f"{level}: " if level else ""
         parts.append(
             f"{prefix}{privilege} on {total} {plural} ({direct} direct, {via} via roles{note})"
@@ -164,14 +197,14 @@ def _plural(noun: str) -> str:
     return noun + "s"
 
 
-def _sources(privilege: Privilege) -> str:
+def _sources(privilege: Privilege, words: Words) -> str:
     sources = ["direct" if path == () else "via " + " > ".join(path) for path in privilege.paths]
     if not privilege.via_default_role:
-        sources.append("not a default role")
+        sources.append(words.source)
     return ", ".join(sources)
 
 
-def _detail(one: AccountPrivileges) -> list[str]:
+def _detail(one: AccountPrivileges, words: Words) -> list[str]:
     lines = [f"  {one.account}  ({one.kind})"]
     if one.roles:
         lines.append(f"    roles: {_roles(one.roles)}")
@@ -188,11 +221,11 @@ def _detail(one: AccountPrivileges) -> list[str]:
             continue
         rows.extend(
             [
-                label if p.level is None else f"{label} ({p.level})",
+                label if p.level in (None, label) else f"{label} ({p.level})",
                 p.privilege,
                 ".".join(x for x in (p.owner, p.name, p.column) if x) or ABSENT,
                 SCHEMA_TYPE if p.kind == SCHEMA else p.object_type or ABSENT,
-                _sources(p),
+                _sources(p, words),
                 "yes" if p.grantable else "no",
             ]
             for p in part
@@ -260,6 +293,7 @@ def _result(one: AccountPrivileges, unreadable: Sequence[str]) -> dict[str, Any]
                     "role": role.role,
                     "admin_option": role.admin_option,
                     "default_role": role.default_role,
+                    "set_option": role.set_option,
                     "authentication": role.authentication,
                 }
                 for role in one.roles

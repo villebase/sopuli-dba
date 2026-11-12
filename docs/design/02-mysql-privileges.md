@@ -304,11 +304,15 @@ reads as locked, but not by somebody.
     is `additional_password`, which the view does not select.
 
   The view gives every row of `mysql.user` and no stored value: the probe
-  looked for every fixture value in all the tool account read, refusals
-  included, and found none. The tool account is refused `SHOW CREATE VIEW`,
-  `1142`, and `EXPLAIN`, `1345`, and cannot create a view or a procedure
-  over the view, or update it. The view and what it gives survive the
-  image's upgrade from 8.0.46 to 8.4.13 and 9.7.4.
+  looked for every fixture value, as hex and as the digest a client would
+  print, in all the tool account read, refusals included, and found none.
+  The tool account is refused `SHOW CREATE VIEW`, `1142`, and `EXPLAIN`,
+  `1345`. It holds no privilege to create a view or a procedure over the
+  view, or to update it. A tool account given `CREATE VIEW` on the schema
+  could create a view over the view, but that view reads with the tool
+  account's own grants: the same six columns, and a view over the hash is
+  refused, `1143`. The view and what it gives survive the image's upgrade
+  from 8.0.46 to 8.4.13 and 9.7.4, with `partial_revokes` kept on.
 - **The view's shape and presence, as the tool account sees them.**
   `information_schema.COLUMNS` and `SHOW COLUMNS` list the view's columns
   before any row is read. Under a column grant they list only the columns

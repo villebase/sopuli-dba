@@ -25,8 +25,10 @@ otherwise. Root creates the view:
        anything the tool account read in DV1 to DV9, rows and refusals and
        their messages, holds a stored value: root reads each fixture
        account's authentication_string and additional_password as hex, and
-       the probe looks for those and for the "$A$0" that begins every
-       caching_sha2_password value, and prints only whether one was found
+       the probe looks for each as hex, for each one's 43-character ASCII
+       digest, which is how a client prints a leaked value, and for the
+       "$A$0" that begins every caching_sha2_password value. It prints only
+       whether one was found
   DV2  the failed-login limit, M1: both keys for an account created with
        neither, one created with FAILED_LOGIN_ATTEMPTS 3 PASSWORD_LOCK_TIME
        2, one created with PASSWORD_LOCK_TIME UNBOUNDED, and one altered from
@@ -56,16 +58,19 @@ otherwise. Root creates the view:
        grant, and whether root can drop the definer
   DV8  the cost, #1457 Q5: how many rows the view gives against mysql.user.
        The tool account's CREATE VIEW over it, CREATE PROCEDURE, CREATE
-       TRIGGER on a table, and UPDATE of the view. A column grant on part of
+       TRIGGER on a table, and UPDATE of the view. Then, with CREATE VIEW on
+       sopuli_probe.* granted for the step, a view of its own over the view,
+       and one over mysql.user's authentication_string. A column grant on part of
        the view. WITH CHECK OPTION. A DBA with every privilege on
        sopuli_probe.* and SELECT on mysql.user, and neither SET_USER_ID nor
        SET_ANY_DEFINER: CREATE DEFINER = root@localhost VIEW, and the view
        with itself as the definer
   DV9  upgrades: a volume of its own, run on mysql:8.0 with the fixture of
-       DV2, DV4 and DV5 and the view, then started on mysql:8.4 and mysql:9
-       in turn. After each start: VERSION(), whether SHOW CREATE VIEW, as
-       root, is the text 8.0 gave, and what the tool account reads through
-       the view
+       DV2, DV4 and DV5 and the view, and partial_revokes set ON with SET
+       PERSIST, then stopped and started on mysql:8.4 and mysql:9 in turn.
+       After each start: VERSION(), which must be the matrix server's of the
+       same tag, partial_revokes, whether SHOW CREATE VIEW, as root, is the
+       text 8.0 gave, and what the tool account reads through the view
 
 The fixture, which root creates on each server, all at '%' unless named:
 
@@ -92,7 +97,8 @@ value is found in what the tool account read.
 STATUS: run on 8.0.46, 8.4.13 and 9.7.4, the mysql:8.0, mysql:8.4 and
 mysql:9 images of test/compose.yaml profile mysql-matrix, on 2026-11-12
 (#1490), with Python 3.13.12 on Windows 11 AMD64. Twice, exit 0, the same
-result both times.
+result both times. Earlier runs are not counted: their leak check compared
+only hex, and they did not have DV8's view of its own or DV9's checks.
 
 RESULTS -- the same on every release, except where noted
 
@@ -100,9 +106,9 @@ RESULTS -- the same on every release, except where noted
        VIEW, 1142 (42000), and EXPLAIN, 1345 (HY000).
        information_schema.VIEWS shows it the view's row with an empty
        VIEW_DEFINITION and SECURITY_TYPE DEFINER. No stored value was in
-       anything the tool account read, and no output held "$A$0": 114
-       outputs on 8.0.46 and 8.4.13, 118 on 9.7.4 and 30 in DV9, against 11
-       values each
+       anything the tool account read, as hex or as a digest, and no output
+       held "$A$0": 120 outputs on 8.0.46 and 8.4.13, 124 on 9.7.4 and 30 in
+       DV9, against 22 values each
   DV2  failed_login_attempts and password_lock_time_days are NULL for an
        account created with neither, 3 and 2 as created, and 2 and -1 for
        PASSWORD_LOCK_TIME UNBOUNDED. The tool account's ALTER USER to 4 and
@@ -138,16 +144,21 @@ RESULTS -- the same on every release, except where noted
   DV8  the view gives every row of mysql.user, 21 of 21, the role and root's
        two among them. The tool account's CREATE VIEW over it is refused,
        1142 (42000), CREATE PROCEDURE 1044 (42000), and UPDATE of the view
-       1142 (42000). CREATE TRIGGER on table t is refused 1419 (HY000), the
-       binary log's check, which runs first on the matrix; the account holds
-       no TRIGGER privilege either. With a column grant on User, Host and
+       1142 (42000): it holds none of those privileges. CREATE TRIGGER on
+       table t is refused 1419 (HY000), the binary log's check, which runs
+       first on the matrix; the account holds no TRIGGER privilege either.
+       Granted CREATE VIEW on the schema, it creates a view over the view,
+       which has the same six columns, and is refused one over mysql.user's
+       authentication_string, 1143 (42000): a view it owns reads with its own
+       grants. With a column grant on User, Host and
        retained_password, those read, restrictions is refused 1143 (42000)
        and SELECT * 1142 (42000). WITH CHECK OPTION is accepted. The DBA
        without SET_USER_ID or SET_ANY_DEFINER is refused CREATE DEFINER =
        root@localhost VIEW, 1227 (42000); its CREATE VIEW with itself as the
        definer runs, and after root's grant the tool account reads it
-  DV9  on one volume, 8.0.46, then 8.4.13 and 9.7.4: SHOW CREATE VIEW is the
-       text 8.0 gave, and the view reads the same for each account: the
+  DV9  on one volume, 8.0.46, then 8.4.13 and 9.7.4, each the matrix's
+       release, with partial_revokes 1 after each start: SHOW CREATE VIEW is
+       the text 8.0 gave, and the view reads the same for each account: the
        limit 3 and 2, UNBOUNDED -1, the partial revoke, the retained
        password 1
 
@@ -169,8 +180,9 @@ needs the three images pulled and docker run; it uses the container
 {COMPOSE_PROJECT_NAME}-dv-upgrade, and removes both.
 
 THROWAWAY SERVERS ONLY. It creates the accounts, role and schema above and
-drops them at the end. It turns partial_revokes on for DV4 and puts it back
-after dropping the accounts, also after a failed step. Before it starts, it
+drops them at the end. It turns partial_revokes on for DV4 and puts back the
+server's own setting after dropping the accounts, also after a failed step.
+Before it starts, it
 drops what an interrupted run left.
 """
 
@@ -229,9 +241,11 @@ root = rr.root
 
 
 def _answer(returncode: int, out: str, err: str, service: str, who: str) -> tuple[bool, str]:
+    """``ch.mysql``'s parsing, on the client's whole output: the leak check
+    needs the whole message, which ``ch.mysql`` cuts short."""
     if returncode == 0:
         return True, out
-    found = re.search(r"^ERROR (\d+ \(\w+\))(?: at line \d+)?: (.*)", err, re.MULTILINE)
+    found = re.search(r"^ERROR (\d+ \(\w+\))(?: at line \d+)?: (.*)", err, re.DOTALL | re.MULTILINE)
     if found is None:
         raise ch.StepError(f"{service}: {who}: {(err or out)[:200]}")
     return False, f"{found[1]}: {found[2][:110]}"
@@ -260,8 +274,15 @@ def as_account(service: str, user: str, statement: str) -> str:
     return f"ok {answer}".strip() if ok else answer.split(":")[0]
 
 
+#: A caching_sha2_password value: "$A$005$", a 20-byte salt, and the digest,
+#: 43 characters of ASCII. The digest is the part a client prints as text.
+DIGEST = 43
+
+
 def remember(service: str) -> None:
-    """Add the fixture's stored values, as hex, to STORED."""
+    """Add the fixture's stored values to STORED: each as hex, which is how
+    root reads them, and each one's ASCII digest, which is how a client would
+    print one that leaked."""
     rows = root(
         service,
         "SELECT HEX(authentication_string),"
@@ -272,6 +293,7 @@ def remember(service: str) -> None:
         for value in line.split("\t"):
             if value and value != "NULL":
                 STORED.add(value.upper())
+                STORED.add(bytes.fromhex(value)[-DIGEST:].decode("latin-1"))
 
 
 def row(service: str, user: str, view: str = VIEW, host: str = "%") -> str:
@@ -287,11 +309,19 @@ def row(service: str, user: str, view: str = VIEW, host: str = "%") -> str:
     return out or "no row"
 
 
+#: Each server's own partial_revokes, read before the probe first sets it.
+PARTIAL_REVOKES: dict[str, str] = {}
+#: Each matrix server's VERSION(), which DV9's image of the same tag must give.
+RELEASES: dict[str, str] = {}
+
+
 def clean(service: str) -> None:
     """Drop what this probe creates, whatever an earlier run left, and put
-    partial_revokes back to OFF once no account holds a restriction."""
+    partial_revokes back to the server's own setting once no fixture account
+    holds a restriction."""
     rr.clean(service)
-    root(service, "SET GLOBAL partial_revokes = OFF")
+    if service in PARTIAL_REVOKES:
+        root(service, f"SET GLOBAL partial_revokes = {PARTIAL_REVOKES[service]}")
 
 
 def create(account: str, extra: str = "") -> str:
@@ -529,6 +559,21 @@ def dv8(service: str) -> None:
     }
     for label, statement in attempts.items():
         print(f"  DV8  the tool account's {label}: {sent(service, statement)}")
+    # The refusals above are the tool account's grants: it holds no CREATE
+    # VIEW. With CREATE VIEW on the schema, a view over the view is the tool
+    # account's own, SQL SECURITY DEFINER with itself as the definer.
+    root(service, f"GRANT CREATE VIEW ON {SCHEMA}.* TO {TOOL}")
+    wrapped = sent(service, f"CREATE VIEW {SCHEMA}.wrap AS SELECT * FROM {VIEW}")
+    print(f"  DV8  with CREATE VIEW on the schema, a view over it: {wrapped}")
+    if wrapped == "ok":
+        root(service, f"GRANT SELECT ON {SCHEMA}.wrap TO {TOOL}")
+        print(f"  DV8    its columns: {columns(service, 'wrap')}")
+        reached = sent(
+            service,
+            f"CREATE VIEW {SCHEMA}.wrap2 AS SELECT authentication_string FROM mysql.user",
+        )
+        print(f"  DV8    a view of its own over mysql.user's hash: {reached}")
+    root(service, f"REVOKE CREATE VIEW ON {SCHEMA}.* FROM {TOOL}")
     root(
         service,
         f"CREATE SQL SECURITY DEFINER VIEW {SCHEMA}.cols AS {VIEW_SQL};"
@@ -571,8 +616,10 @@ def check_leaks(service: str) -> None:
     remember(service)
     if not STORED:
         raise ch.StepError(f"{service}: no stored value read to compare with")
-    seen = [text.upper() for text in SEEN]
-    found = [value for value in STORED if any(value in text for text in seen)]
+    # A hex value is matched without case, a digest exactly.
+    found = [
+        value for value in STORED if any(value in text or value in text.upper() for text in SEEN)
+    ]
     marked = sum(1 for text in SEEN if HASH_MARK in text)
     print(
         f"  DV1  stored values in anything the tool account read ({len(SEEN)} outputs,"
@@ -584,9 +631,11 @@ def check_leaks(service: str) -> None:
 
 def probe(service: str) -> None:
     release = root(service, "SELECT VERSION()")
+    RELEASES[service] = release
     print(f"\n== {service}: {release}")
     SEEN.clear()
     STORED.clear()
+    PARTIAL_REVOKES.setdefault(service, root(service, "SELECT @@global.partial_revokes"))
     clean(service)
 
     def steps() -> None:
@@ -661,7 +710,8 @@ def dv9() -> None:
     try:
         start(IMAGES[0])
         setup(UPGRADE)
-        root(UPGRADE, "SET GLOBAL partial_revokes = ON")
+        # PERSIST, so each later image starts with it on, as DV4 measured it.
+        root(UPGRADE, "SET PERSIST partial_revokes = ON")
         revoke = f"'{P}revoke'@'%'"
         root(
             UPGRADE,
@@ -677,13 +727,22 @@ def dv9() -> None:
         remember(UPGRADE)
         ddl = root(UPGRADE, f"SHOW CREATE VIEW {VIEW}")
         container, _ = upgrade_names()
-        for image in IMAGES:
+        for image, service in zip(IMAGES, ch.SERVICES, strict=True):
             if image != IMAGES[0]:
-                docker("stop", "-t", "60", container)
+                stopped = docker("stop", "-t", "60", container)
+                if stopped.returncode:
+                    raise ch.StepError(f"docker stop: {stopped.stderr.strip()[:200]}")
                 start(image)
             release = root(UPGRADE, "SELECT VERSION()")
+            # A floating tag must give the release the matrix measured.
+            if release != RELEASES.get(service, release):
+                raise ch.StepError(f"{image} is {release}, but {service} is {RELEASES[service]}")
+            partial = root(UPGRADE, "SELECT @@global.partial_revokes")
             same = root(UPGRADE, f"SHOW CREATE VIEW {VIEW}") == ddl
-            print(f"  DV9  {image}: {release}; view text as 8.0 gave it: {same}")
+            print(
+                f"  DV9  {image}: {release}; partial_revokes {partial};"
+                f" view text as 8.0 gave it: {same}"
+            )
             for user in ("limit", "unbound", "revoke", "roll", "plain"):
                 print(f"  DV9    {P}{user}: {row(UPGRADE, P + user)}")
         check_leaks(UPGRADE)

@@ -28,7 +28,7 @@ takes. Nothing here connects or imports PyMySQL.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 
 from sopuli.driver.grants import COLUMN, OBJECT, SCHEMA, SYSTEM, GrantRow, GrantSurvey, RoleGrant
@@ -36,6 +36,10 @@ from sopuli.driver.mysql_family.accounts import Principal, split
 
 #: A role has no authentication of its own on MySQL or MariaDB.
 NO_AUTHENTICATION = "NONE"
+#: The grantee MariaDB's ``PUBLIC`` is listed under, as the privilege report
+#: names it on every product.
+PUBLIC_GRANTEE = "PUBLIC"
+
 
 PARTS = (SYSTEM, SCHEMA, OBJECT, COLUMN)
 
@@ -82,11 +86,15 @@ class Activation:
     is MySQL's ``@@activate_all_roles_on_login``. ``mandatory`` are the roles
     every account holds: only those that exist, because MySQL takes a name
     in ``@@mandatory_roles`` that names no role, and ignores it at login.
+    ``always_active`` holds the key of each role active at login for every
+    account, whatever its default role: on MariaDB, each role ``PUBLIC``
+    reaches (``10_role_reads_probe.py``, RR3).
     """
 
     defaults: frozenset[tuple[tuple[str, str], tuple[str, str]]] | None
     all_active: bool = False
     mandatory: tuple[Principal, ...] = ()
+    always_active: frozenset[tuple[str, str]] = frozenset()
 
 
 @dataclass(frozen=True, order=True)
@@ -109,6 +117,8 @@ def survey(
     *,
     unread: Mapping[str, str] | None = None,
     reasons: Sequence[str] = (),
+    public: Principal | None = None,
+    named: Callable[[Principal], str] = str,
 ) -> GrantSurvey:
     """Every grant ``accounts`` hold, one row per path.
 
@@ -117,6 +127,15 @@ def survey(
     be read to the reason, and the part is ``None``. ``reasons`` are added to
     :attr:`GrantSurvey.unreadable` as they are, such as default roles that
     could not be read.
+
+    ``public`` is MariaDB's ``PUBLIC``, a role every account holds, always
+    active (``10_role_reads_probe.py``, RR3). Where it is given, its grants
+    are listed once, under :data:`PUBLIC_GRANTEE`, as Oracle's are, and not
+    on each account's paths. A role granted to it is active at login.
+
+    ``named`` is how a role is named in the roles list and in each path:
+    ``user@host`` by default, as MySQL names a role. MariaDB's driver passes
+    its own, because a MariaDB role has no host.
     """
     unread = dict(unread or {})
     by_member: dict[tuple[str, str], list[Edge]] = {}
@@ -129,26 +148,37 @@ def survey(
     roles: list[RoleGrant] = []
     rows: dict[str, list[GrantRow]] = {part: [] for part in PARTS}
     unknown_activation = False
-    for name in accounts:
-        account = Principal(*split(name))
-        firsts = _first_roles(account, by_member, activation)
+
+    def add(name: str, account: Principal, firsts: list[_FirstRole], checked: bool) -> None:
         for first in firsts:
-            unknown_activation = unknown_activation or first.active is None
             roles.append(
                 RoleGrant(
                     grantee=name,
-                    role=str(first.role),
+                    role=named(first.role),
                     admin_option=first.admin_option,
                     default_role=first.default,
                     authentication=NO_AUTHENTICATION,
-                    default_role_checked=activation.defaults is not None,
+                    default_role_checked=checked,
                 )
             )
         for path, active in _paths(account, firsts, by_member):
             holder = path[-1] if path else account
             for grant in by_holder.get(holder.key(), ()):
                 if grant.kind not in unread:
-                    rows[grant.kind].append(_row(name, grant, path, active))
+                    rows[grant.kind].append(_row(name, grant, path, active, named))
+
+    for name in accounts:
+        account = Principal(*split(name))
+        firsts = _first_roles(account, by_member, activation)
+        unknown_activation = unknown_activation or any(f.active is None for f in firsts)
+        add(name, account, firsts, activation.defaults is not None)
+    if public is not None:
+        # Always active, and so is each role granted to it (RR3).
+        granted = [
+            _FirstRole(edge.role, edge.admin_option, default=True, active=True)
+            for edge in by_member.get(public.key(), ())
+        ]
+        add(PUBLIC_GRANTEE, public, sorted(granted), True)
 
     unreadable = [*reasons]
     if unknown_activation and activation.defaults is not None:
@@ -196,7 +226,7 @@ def _first_roles(
             activation.defaults is not None and (account.key(), role.key()) in activation.defaults
         )
         active: bool | None
-        if activation.all_active or default:
+        if activation.all_active or default or role.key() in activation.always_active:
             active = True
         elif activation.defaults is None or mandatory:
             # Not read, or a mandatory role that one release activates at
@@ -233,7 +263,13 @@ def _paths(
     return found
 
 
-def _row(grantee: str, grant: Held, path: tuple[Principal, ...], active: bool | None) -> GrantRow:
+def _row(
+    grantee: str,
+    grant: Held,
+    path: tuple[Principal, ...],
+    active: bool | None,
+    named: Callable[[Principal], str],
+) -> GrantRow:
     return GrantRow(
         grantee=grantee,
         kind=grant.kind,
@@ -242,7 +278,7 @@ def _row(grantee: str, grant: Held, path: tuple[Principal, ...], active: bool | 
         name=grant.name,
         object_type=grant.object_type,
         column=grant.column,
-        path=tuple(str(role) for role in path),
+        path=tuple(named(role) for role in path),
         first_role_default=active if path else None,
         grantable=grant.grantable,
         level=grant.level,

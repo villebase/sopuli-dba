@@ -13,6 +13,7 @@ from sopuli.driver.grants import COLUMN, OBJECT, SCHEMA, SYSTEM, GrantSurvey, Pr
 from sopuli.driver.mysql import privilege_survey as reads
 from sopuli.driver.mysql.admin import DB_PRIV_COLUMNS, MANDATORY_ROLES, PRIV_COLUMNS
 from sopuli.driver.mysql.session import MysqlSession
+from sopuli.driver.mysql_family import privilege_reads as shared
 from sopuli.driver.mysql_family.privilege_survey import MANDATORY_UNKNOWN
 from sopuli.driver.protocol import DriverError
 
@@ -47,10 +48,10 @@ class _Cursor:
             reads.PRINCIPALS: [row[:2] for row in tables.get("users", [])],
             reads.DYNAMIC: tables.get("dynamic", []),
             reads.SCHEMA_ROWS: tables.get("db", []),
-            reads.TABLES: tables.get("tables", []),
-            reads.COLUMNS: tables.get("columns", []),
-            reads.ROUTINES: tables.get("routines", []),
-            reads.PROXIES: tables.get("proxies", []),
+            shared.TABLES: tables.get("tables", []),
+            shared.COLUMNS: tables.get("columns", []),
+            shared.ROUTINES: tables.get("routines", []),
+            shared.PROXIES: tables.get("proxies", []),
         }
         self.queries: list[str] = []
 

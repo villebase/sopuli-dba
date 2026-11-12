@@ -279,8 +279,8 @@ count:
 
 ## 5. The privilege report
 
-**Built, on Oracle, PostgreSQL and MySQL** (MySQL's and PostgreSQL's terms are
-at the end of this section): `sopuli report privileges [--detail] [--account NAME]
+**Built, on Oracle, PostgreSQL, MySQL and MariaDB** (the other products' terms
+are at the end of this section): `sopuli report privileges [--detail] [--account NAME]
 [--public]`, for the same accounts `report accounts` covers, and also for the
 common accounts it leaves out on a PDB target: their grants made in the PDB
 are read there. Each account has the kind `report accounts` gives it,
@@ -323,7 +323,7 @@ to one column. Where a product has more than one level in a part, such as
 MySQL's static and dynamic global privileges, each privilege names its level,
 is counted per level, and is listed by level, then by privilege. A scope the target
 cannot reach, such as another database of a PostgreSQL cluster, is listed as
-*not checked* on that target. The report is not built on MariaDB yet (#1483).
+*not checked* on that target.
 
 **Built, on MySQL** ([#1482](../decisions/log.md#1482)). Each account is a
 `user@host`, as in `report accounts`. Its privileges are read by level from
@@ -380,6 +380,24 @@ where the account can `SET ROLE` to that role. A target reads the database it
 connects to: the cluster's other databases, except templates, are named as
 *not checked* on every target, so the run exits 4 on a cluster with more than
 one such database, even where a target is declared for each.
+
+**On MariaDB** ([#1483](../decisions/log.md#1483)), from the grant tables,
+with the grants of `02-mariadb-privileges.md` §2.1, as on MySQL: *schemas*
+is `database`, *objects* `table`, `routine` and `proxy`, and *columns*
+`column`. A role has no host, so it is named alone. A privilege is held
+without `SET ROLE` where the path's first role is the account's default role,
+the `mysql.user` view's `default_role`. Two things are *not checked*, with
+the reason, and the run exits 4:
+
+- **the global level**, always for now. The privileges split from `SUPER`,
+  such as `CONNECTION ADMIN`, set no column the tool account reads, so an
+  account that holds only one would read as holding nothing. The optional
+  view `sopuli.global_privileges` is to read it (decision C);
+- **whether a role is a default role**, without the optional column grant on
+  `default_role`. The roles list then reads *default not checked*.
+
+`--public` lists `PUBLIC`'s grants once: a role every account holds, always
+active, so a role granted to it is active too.
 
 ---
 
@@ -550,7 +568,7 @@ cluster's other databases as not checked (§5). Measured on 13.23 to 18.6
 (`02-postgres-privileges.md` §2.5, #1443).
 
 On MySQL (#1461) and MariaDB (#1462), `report accounts` and `report history`
-(§6) are built, and the privilege report is not. An account is a user
+(§6) are built, and so is the privilege report (§5, #1482, #1483). An account is a user
 name at a host, so one name can be several accounts, each with its own
 state, and the report shows one row for each. A role is left out. The
 product's own accounts, such as `mysql.sys@localhost` and

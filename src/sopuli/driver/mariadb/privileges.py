@@ -74,8 +74,8 @@ COLUMNS = (
 
 #: Columns of the view the tool account may also read, with a column grant,
 #: and does without: held where granted, never missing (§2.1). The default
-#: role, for the privilege report, which does not read it yet (#1411, R3). It
-#: holds a role's name only.
+#: role, for the privilege report (#1411, R3, #1483). It holds a role's name
+#: only.
 OPTIONAL_COLUMNS = ("default_role",)
 
 #: Views the tool account may also read, with ``SELECT`` on each, and does

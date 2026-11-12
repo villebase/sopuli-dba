@@ -332,7 +332,8 @@ When the grant is present, the tool probes it as a capability at plan time
   [#1454](../decisions/log.md#1454)). Under a `PASSWORD_LOCK_TIME` of
   `UNLIMITED` that the profile sets itself, an `LCOUNT` at the profile's own
   `FAILED_LOGIN_ATTEMPTS` makes the refusal say that failed logins may have set
-  the lock. A common account read from a PDB, a limit the profile takes from
+  the lock. A common account, in any container, an account whose `COMMON`
+  cannot be read (11.2 has no such column), a limit the profile takes from
   `DEFAULT`, or a read that fails gives the wording without the count. The
   reset refuses either way.
 

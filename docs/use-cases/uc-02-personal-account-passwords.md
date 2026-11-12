@@ -1284,7 +1284,7 @@ asks for. Measured on 26ai 23.26.2.0.0
   plain `LOCKED`** (`02-oracle-privileges.md` §2, #1447). The reset refuses it
   too, because the status alone cannot tell it from a lock somebody set
   ([#1454](../decisions/log.md#1454)). Where the session can read
-  `SYS.USER$` (the optional grant), the account is not common, and its
+  `SYS.USER$` (the optional grant), `DBA_USERS.COMMON` reads `NO`, and its
   `LCOUNT` has reached the `FAILED_LOGIN_ATTEMPTS` its profile sets itself,
   the refusal says so: failed logins may
   have set the lock. It asks the DBA to check with the owner, unlock by hand

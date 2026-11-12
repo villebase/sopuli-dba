@@ -1382,13 +1382,15 @@ def read_lockout_evidence(
     """
     if profile is None or not deliberately_locked(status):
         return None
+    # `is_common` fails closed on its own; `None` (no COMMON column, as on
+    # 11.2) gives no evidence too.
+    if is_common(cursor, name) is not False:
+        return None
     try:
-        if is_common(cursor, name) is not False:
-            return None
         cursor.execute(OWN_LOCK_LIMITS_QUERY, {"profile": profile})
         own = {str(resource): str(limit) for resource, limit in cursor.fetchall() if limit}
         failed = failed_logins(cursor, name)
-    except Exception:  # noqa: BLE001 -- evidence for wording only; never fails the read
+    except Exception:  # noqa: BLE001 -- evidence for wording only; a lost session fails the next read
         return None
     return lockout_evidence(
         status,

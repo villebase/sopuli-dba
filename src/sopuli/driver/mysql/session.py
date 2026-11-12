@@ -15,8 +15,10 @@ keeps the old one working for `rotate --strategy rollover` until `creds
 finish-rollover` discards it, verifies one by login where only the declared
 account can answer, and names the server by its ``server_uuid``. For UC-2 it
 resolves a `role:` rule (:mod:`~sopuli.driver.mysql.roles`), resets a
-password, suspends an account and expires a password. The registry lists
-`doctor`, the `creds` commands and every `account` command.
+password, suspends an account and expires a password. For UC-5 it surveys
+every account and every privilege, for `report accounts` and `report
+privileges`. The registry lists `doctor`, the `creds` commands, every
+`account` command and the `report` commands.
 :meth:`MysqlSession.apply_attributes`, which a policy's `account:` block needs,
 refuses with ``SOPULI-20006`` without a round trip.
 """
@@ -26,7 +28,7 @@ from __future__ import annotations
 import logging
 import re
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
@@ -36,14 +38,17 @@ import pymysql
 
 from sopuli.config.model import ExpandedTarget, Runtime
 from sopuli.config.products import same_mysql_account
+from sopuli.driver.grants import SYSTEM, GrantSurvey
 from sopuli.driver.mysql import accounts as accounts_module
 from sopuli.driver.mysql import password as password_module
+from sopuli.driver.mysql import privilege_survey as privilege_module
 from sopuli.driver.mysql import roles, verification
 from sopuli.driver.mysql import survey as survey_module
 from sopuli.driver.mysql.errors import UNKNOWN_SYSTEM_VARIABLE, from_error
 from sopuli.driver.mysql.limits import LIMIT
 from sopuli.driver.mysql.privileges import audit as privilege_audit
 from sopuli.driver.mysql.scope import observe, require_read_write
+from sopuli.driver.mysql_family import privilege_survey as privilege_rows
 from sopuli.driver.mysql_family.accounts import Principal, current_user, split
 from sopuli.driver.mysql_family.client import client_lines
 from sopuli.driver.mysql_family.connection import (
@@ -335,6 +340,50 @@ class MysqlSession(ClosesConnection):
             else:
                 raise
         return self._read_grants(lambda cursor: survey_module.survey(cursor, locks)), frozenset()
+
+    def survey_privileges(self, accounts: Sequence[str], *, public: bool) -> GrantSurvey:
+        """Every privilege ``accounts`` hold, one row per path, for `report
+        privileges` (:mod:`~sopuli.driver.mysql.privilege_survey`).
+
+        :class:`~sopuli.driver.grants.PrivilegeSurvey`. Each row names its
+        level in MySQL's words. MySQL has no grants to everyone: a mandatory
+        role goes to every account, and its paths are each account's, so
+        ``public`` adds nothing to read. The default roles are an optional
+        read (#1411, M4): without the grant the server refuses it, ``1142``,
+        and whether a role is active without ``SET ROLE`` is not checked. Any
+        other error fails the read.
+        """
+        del public
+        partial, all_active = self._read_grants(privilege_module.read_settings)
+        defaults = None
+        reasons: list[str] = []
+        # Read also where every role is active at login: the roles list says
+        # which are default roles, and a role whose status is not read gets
+        # this reason.
+        try:
+            defaults = self._read_grants(privilege_module.read_defaults)
+        except DriverError as error:
+            if error.code != str(TABLE_ACCESS_DENIED):
+                raise
+            reasons.append(privilege_module.NO_DEFAULTS)
+
+        def read(cursor: Any) -> GrantSurvey:
+            held = privilege_module.read_objects(cursor)
+            unread = {}
+            if partial:
+                unread[SYSTEM] = privilege_module.PARTIAL_REVOKES
+            else:
+                held += privilege_module.read_system(cursor)
+            return privilege_rows.survey(
+                accounts,
+                privilege_module.read_edges(cursor),
+                held,
+                privilege_module.activation(cursor, defaults, all_active=all_active),
+                unread=unread,
+                reasons=reasons,
+            )
+
+        return self._read_grants(read)
 
     def _read(self, reader: Callable[[Any], T], *, scrub: Callable[[str], str] | None = None) -> T:
         """Run ``reader`` on a cursor of this session. A closed session is a

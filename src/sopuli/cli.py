@@ -6052,14 +6052,15 @@ def _privileges_target(
             )
         except Exception as error:  # noqa: BLE001 -- a per-target finding
             return privileges_view.TargetPrivileges(target=target.name, error=_finding(error))
-        survey_accounts = getattr(session, "survey_accounts", None)
-        if survey_accounts is None or not isinstance(session, PrivilegeSurvey):
+        if not isinstance(session, AccountSurvey) or not isinstance(session, PrivilegeSurvey):
             missing = DriverError(f"{target.name}: this driver cannot survey its privileges")
             return privileges_view.TargetPrivileges(
                 target=target.name, error=_finding(missing), unsupported=True
             )
         try:
-            surveyed = survey_accounts()
+            # The accounts `report accounts` reads, by the same protocol, so
+            # the two reports never disagree about which accounts exist.
+            surveyed, _profiles = session.survey_with_profiles()
             # A common account in a PDB stays: its grants made in the PDB are
             # read here, though its lock and limits are not (#1438).
             members = _personal_role_members(session, config, target)

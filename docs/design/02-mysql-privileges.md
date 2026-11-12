@@ -136,13 +136,14 @@ Two grants are optional. The tool works without them, and `doctor
 ```sql
 -- report accounts: the failed-login count, on 9.7.4 and later (#1461).
 GRANT SELECT ON performance_schema.temporary_account_locks TO 'sopuli_admin'@'192.0.2.10';
--- report privileges, when it is built for MySQL: each account's default roles.
+-- report privileges: which roles are active at login (#1482).
 GRANT SELECT ON mysql.default_roles TO 'sopuli_admin'@'192.0.2.10';
 ```
 
 Neither table holds a hash. Without the first, or on a server that has no
-such table, such as 8.0 and 8.4, the count is `unknown` (§2.4). No command
-reads `mysql.default_roles` yet.
+such table, such as 8.0 and 8.4, the count is `unknown` (§2.4). Without the
+second, `report privileges` says whether a role is active at login is *not
+checked*, unless `activate_all_roles_on_login` is on, and exits 4.
 
 Give the account no other privilege, and no role.
 
@@ -217,8 +218,9 @@ statements that grant it.
 
 ### 2.4 What the reports can read
 
-`report accounts` (#1461) and `report history` (#1460) run on MySQL. `report
-privileges` is not built here yet (#1411). This is what the tool account can
+`report accounts` (#1461), `report history` (#1460) and `report privileges`
+(#1482) run on MySQL. `report privileges` reads each level's table whole,
+once (`sopuli/driver/mysql/privilege_survey.py`). This is what the tool account can
 read for them with §2.1's grants, and what each further read would cost. It
 was measured on 8.0.46, 8.4.13 and 9.7.4 (`10_report_read_probe.py`, #1448).
 

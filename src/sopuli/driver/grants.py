@@ -82,9 +82,12 @@ class RoleGrant:
     ``PASSWORD`` and ``APPLICATION``.
 
     ``default_role`` is whether the role's privileges are active without
-    ``SET ROLE``: Oracle's default role, and PostgreSQL's ``INHERIT`` option.
-    ``set_option`` is PostgreSQL's ``SET`` option, whether the member may
-    ``SET ROLE`` to it, and ``None`` on a product that has no such option.
+    ``SET ROLE``: Oracle's and MySQL's default role, and PostgreSQL's
+    ``INHERIT`` option. ``default_role_checked`` is ``False`` where whether it
+    is a default role could not be read, such as on MySQL without ``SELECT`` on
+    ``mysql.default_roles``; ``default_role`` is then ``False`` and says
+    nothing. ``set_option`` is PostgreSQL's ``SET`` option, whether the member
+    may ``SET ROLE`` to it, and ``None`` on a product that has no such option.
     """
 
     grantee: str
@@ -92,6 +95,7 @@ class RoleGrant:
     admin_option: bool
     default_role: bool
     authentication: str
+    default_role_checked: bool = True
     set_option: bool | None = None
 
 

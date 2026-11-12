@@ -5530,3 +5530,32 @@ the register.
      declared by predicate shows as undeclared and gets no checks.
   2. A query of the report's own: a third way to resolve one set, which
      could disagree with the other two.
+
+## #1482
+
+- **Decided:** 2026-11-12, #1482
+- **Question:** on MySQL, `report privileges` cannot always tell whether a
+  privilege held through a role is held without `SET ROLE`. Without the
+  optional `SELECT` on `mysql.default_roles`, the default roles are
+  unknown. A mandatory role that is not a default role is active at login on
+  9.7.4 and not on 8.0.46 or 8.4.13 (`11_role_activation_probe.py`), and
+  nothing the tool account reads says which a server does. How does the
+  JSON say this, when `via_default_role` is a required boolean?
+- **Decision:** the maintainer's: a new optional property,
+  `active_at_login_checked`, present and `false` only where it was not
+  checked, in run schema 1.97, a minor bump. `via_default_role` stays a
+  boolean, means "shown to be held without `SET ROLE`", and is `false`
+  there. The text view says *not checked whether active at login*, and the
+  target's reason makes the run exit 4. The roles list gets the same, as the
+  build applied the decision: `default_role_checked`, present and `false`
+  where the default roles were not read, and *default not checked* in the
+  text, because `default_role` would otherwise say *not default* of a role
+  that may be one.
+- **Why:** every entry a 1.96 consumer read keeps its value and meaning, and
+  a consumer that reads the new property can tell *not shown* from *not
+  held*.
+- **Rejected:**
+  1. A nullable `via_default_role`: a change of type, which is a major bump
+     (`03-json-output.md` §8).
+  2. Only the target's reason and exit 4: the privilege's own entry would
+     say `false` with nothing beside it to show it was not checked.

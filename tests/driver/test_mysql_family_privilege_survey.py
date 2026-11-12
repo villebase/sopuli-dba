@@ -94,7 +94,7 @@ def test_unread_default_roles_leave_activation_unknown() -> None:
     )
     assert found.objects is not None
     assert [row.first_role_default for row in found.objects] == [None]
-    assert found.roles[0].default_role is False
+    assert (found.roles[0].default_role, found.roles[0].default_role_checked) == (False, False)
     assert found.unreadable == ("no default roles",)
 
 

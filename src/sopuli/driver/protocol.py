@@ -832,6 +832,12 @@ class UserState:
     #: a driver whose lock has no timed form sets this instead, as PostgreSQL
     #: does for ``NOLOGIN`` (#1201).
     deliberately_locked: bool = False
+    #: Why a lock the status shows as deliberate looks set by failed logins, in
+    #: the driver's words, and ``None`` otherwise. Oracle shows a lockout under a
+    #: ``PASSWORD_LOCK_TIME`` of ``UNLIMITED`` as ``LOCKED``, the same as a lock
+    #: a person set. A reset still refuses it (H4). This sentence only lets the
+    #: refusal say what the failed-login count shows (#1454).
+    lockout_evidence: str | None = None
     #: The password has **stopped working**. Deliberately not true of an account
     #: in its grace period, which is :attr:`in_grace` -- Oracle spells that
     #: ``EXPIRED(GRACE)``, and the token ``EXPIRED`` is inside it. Reading the two

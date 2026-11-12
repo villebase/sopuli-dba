@@ -16,7 +16,7 @@ from typing import Any
 import pytest
 
 from sopuli.config.model import ExpandedTarget, Target, TargetMysql
-from sopuli.driver.mysql_family.accounts import Principal
+from sopuli.driver.mysql_family.accounts import LOCKED, Principal
 from sopuli.driver.protocol import Credential
 from sopuli.secrets import Secret
 
@@ -105,7 +105,7 @@ def test_describe_reads_a_locked_account_at_its_host(stage: Stage) -> None:
     assert state is not None
     assert state.name == f"{user}@10.%"
     assert state.locked is True
-    assert state.status == accounts_module.LOCKED
+    assert state.status == LOCKED
     assert state.password_changed_at is not None
     assert stage.session.describe_user(f"{user}@192.0.2.%") is None
 

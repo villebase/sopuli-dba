@@ -68,6 +68,9 @@ def stage(live_mariadb: Any) -> Iterator[Stage]:
             with suppress(pymysql.Error):
                 staged.root(f"DROP USER '{name}'@'%'")
         for statement in (
+            # MariaDB keeps a table grant after DROP VIEW, and doctor's audit
+            # on the same service would then see it.
+            "REVOKE SELECT ON sopuli.account_state FROM 'sopuli_admin'@'%'",
             "DROP VIEW IF EXISTS sopuli.account_state",
             "DROP SCHEMA IF EXISTS sopuli",
             "DROP USER IF EXISTS 'sopuli_view_definer'@'localhost'",

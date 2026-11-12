@@ -133,7 +133,9 @@ of the last change from `mysql.global_priv`, and never the stored value.
 account does. Without it, those are *not checked*. §2.4 says
 what it gives. Edit the two `SET` lines at its top to name the tool account,
 and run it as an administrator who may name another definer (`SET USER` or
-`SUPER`).
+`SUPER`). `doctor --check-privileges` counts `SELECT` on the view as held
+where it is granted, and never as missing; any other privilege on it is
+over-granted.
 
 Give the account no other privilege, and no role.
 

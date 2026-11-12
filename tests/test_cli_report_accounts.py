@@ -300,8 +300,20 @@ def test_only_not_checked_exits_4(
     assert result.exit_code == ExitCode.PARTIAL, result.output
 
 
-def test_a_mariadb_target_is_refused_before_connecting(write_config: WriteConfig) -> None:
-    """The driver registry lists `report.accounts` for Oracle, PostgreSQL and MySQL only."""
+def test_a_target_whose_driver_lacks_the_report_is_refused_before_connecting(
+    write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every product lists `report.accounts` in the driver registry now
+    (#1462), so one entry is patched to lack it."""
+    from dataclasses import replace
+
+    from sopuli.driver.registry import DRIVERS
+
+    entry = DRIVERS["mariadb"]
+    assert entry.commands is not None
+    monkeypatch.setitem(
+        DRIVERS, "mariadb", replace(entry, commands=entry.commands - {"report.accounts"})
+    )
     config = write_config(
         "version: 1\n"
         "targets:\n"

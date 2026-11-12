@@ -5807,7 +5807,9 @@ def report_accounts_command(
     check found a problem or a profile a rule or policy expects is missing on a
     target, and 4 when something could not be checked. An account
     the config does not declare is listed as information and never changes the
-    exit code. Only Oracle, PostgreSQL and MySQL can run this report yet.
+    exit code. It runs on Oracle, PostgreSQL, MySQL and MariaDB. MariaDB keeps
+    the lock and the lifetime where the tool does not read them, so there they
+    are not checked.
     """
     document = run.document
     selection = selected(selectors, targets, (), groups, ())
@@ -5841,7 +5843,8 @@ def _report_target(
     A target that cannot be reached is one unreachable section and not a failed
     run: the report still covers the others (UC-5 §3). A product whose driver
     does not list this command in the registry never gets here: ``_open_session``
-    refuses it first, and it is not checked. Oracle, PostgreSQL and MySQL list it.
+    refuses it first, and it is not checked. Oracle, PostgreSQL, MySQL and
+    MariaDB list it.
     """
     session = None
     try:

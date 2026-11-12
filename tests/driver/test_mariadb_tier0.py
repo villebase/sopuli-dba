@@ -224,6 +224,21 @@ def test_section_2_1_exactly_is_held_and_nothing_is_missing_or_over() -> None:
     assert audit.unaudited == (privileges.PUBLIC_UNAUDITED,)
 
 
+def test_the_optional_default_role_column_is_held_and_never_missing() -> None:
+    """#1411, R3: for the privilege report. It holds a role's name only."""
+    grants = privileges.Grants(
+        global_=FULL.global_,
+        table=FULL.table,
+        column=(*FULL.column, (privileges.USER_TABLE, "default_role", "SELECT", False)),
+    )
+
+    audit = privileges.classify(user="sopuli_admin@%", grants=grants, roles=())
+
+    assert audit.over_granted == ()
+    assert "SELECT (default_role) ON mysql.user" in audit.held
+    assert not any("default_role" in missing for missing in audit.missing)
+
+
 def test_a_grant_that_reads_every_stored_value_is_over_granted() -> None:
     grants = privileges.Grants(
         global_=(("CREATE USER", False), ("SET USER", False)),
@@ -394,6 +409,8 @@ def test_a_broad_select_holds_what_it_covers_and_is_over_granted() -> None:
 
     assert audit.missing == ("CREATE USER",)
     assert "SELECT ON mysql.*" in audit.over_granted
+    # It covers the optional column too, as a column grant on it would.
+    assert "SELECT (default_role) ON mysql.user" in audit.held
 
 
 # ----------------------------------------------------------------- survey ---

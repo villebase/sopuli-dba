@@ -72,6 +72,12 @@ COLUMNS = (
     "Delete_history_priv",
 )
 
+#: Columns of the view the tool account may also read, with a column grant,
+#: and does without: held where granted, never missing (§2.1). The default
+#: role, for the privilege report, which does not read it yet (#1411, R3). It
+#: holds a role's name only.
+OPTIONAL_COLUMNS = ("default_role",)
+
 #: §2.1's whole-table reads: roles, and the privilege tables guardrail 9 reads.
 #: None holds a stored value (checked on 10.11.19, 11.4.13, 11.8.9 and 12.3.3).
 TABLES_READ = (
@@ -186,7 +192,7 @@ def classify(
         over.add(f"{privilege} ON {schema}.*")
         broad = broad or (_covers_mysql(schema) and privilege == "SELECT")
     if broad:
-        held.update(_column(name) for name in COLUMNS)
+        held.update(_column(name) for name in (*COLUMNS, *OPTIONAL_COLUMNS))
         held.update(_table(table) for table in TABLES_READ)
     for table, privilege, grantable in grants.table:
         if grantable:
@@ -196,7 +202,7 @@ def classify(
             continue
         if table == USER_TABLE and privilege == "SELECT":
             # The whole view: every §2.1 column, and the stored values too.
-            held.update(_column(name) for name in COLUMNS)
+            held.update(_column(name) for name in (*COLUMNS, *OPTIONAL_COLUMNS))
         over.add(f"{privilege} ON {table}")
     for table, column, privilege, grantable in grants.column:
         if grantable:
@@ -264,9 +270,9 @@ def _covers_mysql(schema: str) -> bool:
 
 
 def _needed_column(column: str) -> str | None:
-    """§2.1's spelling of ``column``, or ``None`` where §2.1 does not grant it.
-    Column names compare without case."""
-    for name in COLUMNS:
+    """§2.1's spelling of ``column``, or ``None`` where §2.1 does not grant it,
+    either as needed or as optional. Column names compare without case."""
+    for name in (*COLUMNS, *OPTIONAL_COLUMNS):
         if name.lower() == column.lower():
             return name
     return None

@@ -17,9 +17,11 @@ holds, sets its password by the value its plugin stores and verifies it by
 login (#1270). It resolves a role and lists its members, suspends an account,
 resets its password and expires it (#1272). It opens a rollover by sending
 the new and the old value joined by ``OR``, and finishes it by sending the
-current value alone (#1271). The registry lists `doctor`, UC-1's `creds
-generate`, `apply`, `check`, `rotate` and `status`, and UC-2's four verbs.
-Every other method refuses with ``SOPULI-20006``.
+current value alone (#1271). It surveys every account for `report accounts`
+(:mod:`~sopuli.driver.mariadb.survey`, #1462). The registry lists `doctor`,
+UC-1's `creds generate`, `apply`, `check`, `rotate` and `status`, UC-2's four
+verbs, and UC-5's `report accounts` and `report history`. Every other method
+refuses with ``SOPULI-20006``.
 
 The session names its server by ``@@server_uid``, so the CLI refuses two
 targets that are one server, as on MySQL (#1286). MariaDB has no
@@ -42,6 +44,7 @@ from sopuli.driver.clusters import Identity
 from sopuli.driver.mariadb import accounts as accounts_module
 from sopuli.driver.mariadb import password as password_module
 from sopuli.driver.mariadb import roles, verification
+from sopuli.driver.mariadb import survey as survey_module
 from sopuli.driver.mariadb.errors import from_error
 from sopuli.driver.mariadb.limits import LIMIT
 from sopuli.driver.mariadb.privileges import audit as privilege_audit
@@ -89,6 +92,7 @@ from sopuli.driver.protocol import (
     require_capability,
 )
 from sopuli.driver.registry import NotWrittenError
+from sopuli.driver.survey import SurveyedAccount
 from sopuli.output.debug import logger
 from sopuli.passwords import ByteLimit
 from sopuli.secrets import Secret
@@ -435,6 +439,14 @@ class MariadbSession(ClosesConnection):
         # `accounts_matching` lists by the same grants the other way.
         user, host = split(state.name)
         return replace(state, roles=frozenset(roles.granted(cursor, Principal(user, host))))
+
+    def survey_with_profiles(self) -> tuple[tuple[SurveyedAccount, ...], frozenset[str]]:
+        """Every account on the server, for `report accounts`
+        (:mod:`~sopuli.driver.mariadb.survey`), and no profile: MariaDB has
+        none, and the registry makes the profile check *not applicable*
+        (#1458). One read, by §2.1's column grant.
+        """
+        return self._read_grants(survey_module.survey), frozenset()
 
     def _read_grants(self, reader: Callable[[Any], T]) -> T:
         """:meth:`_read`, with the hint about §2.1's grants on a refused read."""

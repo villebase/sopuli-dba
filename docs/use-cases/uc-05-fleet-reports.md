@@ -6,9 +6,10 @@ Depends on: `../design/00-principles.md`, `../design/01-configuration.md`,
 This document specifies `sopuli report accounts`, `sopuli report privileges`
 and `sopuli report history`. **All three are built, on Oracle**, with the
 `reports:` rules (§4, §5, §7). **`report history` is built on PostgreSQL,
-MySQL and MariaDB** too (§6), and **`report accounts` on PostgreSQL** (§4)
-**and MySQL** (§8, #1461). The rest come later: until then they are refused
-before they connect. §9 lists the decisions.
+MySQL and MariaDB** too (§6), and **`report accounts` on PostgreSQL** (§4),
+**MySQL and MariaDB** (§8, #1461, #1462). The privilege report on those three
+comes later: until then it is refused before it connects. §9 lists the
+decisions.
 
 ---
 
@@ -462,13 +463,13 @@ is not built yet; #1411 lists what to decide first, such as what it does about
 a cluster's other databases. Measured on 13.23 to 18.6
 (`02-postgres-privileges.md` §2.5, #1443).
 
-On MySQL, `report accounts` (#1461) and `report history` (§6) are built, and
-the privilege report is not. On MariaDB only `report history` is built. An
-account is a user
+On MySQL (#1461) and MariaDB (#1462), `report accounts` and `report history`
+(§6) are built, and the privilege report is not. An account is a user
 name at a host, so one name can be several accounts, each with its own
-state, and the report shows one row for each. A role is left out. MySQL's own
-accounts, such as `mysql.sys@localhost`, are left out unless a rule names
-them, as Oracle's are. The failed-login limit is *not checked*, and the count
+state, and the report shows one row for each. A role is left out. The
+product's own accounts, such as `mysql.sys@localhost` and
+`mariadb.sys@localhost`, are left out unless a rule names them, as Oracle's
+are. On MySQL the failed-login limit is *not checked*, and the count
 is `unknown` without the optional grant of `02-mysql-privileges.md` §2.1. With
 the grants the tool account holds today, MySQL reads each
 account's lock, expiry, lifetime and date of the last change, and every
@@ -478,8 +479,15 @@ logins, which only 9.7.4 keeps in a table, behind a grant of its own. Nor a
 partial revoke, nor the default role without `SELECT` on
 `mysql.default_roles`. MariaDB reads only the expiry: the lock, the lifetime
 and the date of the last change are kept beside the hash, and a DBA would
-have to create a view to expose them. MariaDB has no failed-login limit per
-account, only the server's `max_password_errors`. Measured on 8.0.46 to
+have to create a view to expose them (#1457). So on MariaDB the lock and a
+rule's `password_lifetime` are *not checked*, and an account a rule names is
+*not checked* even without `login:`, because the lock is always compared.
+The status reads `OPEN` or `EXPIRED`, from `password_expired` alone, as
+`account list` shows it: a locked account, and one whose lifetime has run
+out, read `OPEN`. MariaDB has no failed-login limit per account, only the
+server's `max_password_errors`, so a rule's `failed_login_limit` is *not
+applicable*, and the count is `unknown`: the server shows it only to the
+account itself. Measured on 8.0.46 to
 9.7.4 and on 10.11.19 to 12.3.3 (`02-mysql-privileges.md` §2.4,
 `02-mariadb-privileges.md` §2.4, #1448).
 

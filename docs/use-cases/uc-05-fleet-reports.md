@@ -449,10 +449,13 @@ rotation, as information, and never compared with it
 `creds generate --promote` it changes the target after it. Oracle reads it from
 `DBA_USERS.PASSWORD_CHANGE_DATE` or `SYS.USER$.PTIME` (§8), and MySQL from
 `mysql.user.password_last_changed`, which a change by hash sets, and `ACCOUNT
-LOCK` and `PASSWORD EXPIRE` do not. PostgreSQL keeps no such date. MariaDB
-keeps it only beside the stored value, in `mysql.global_priv`, which the tool
-does not read (#1457 decides whether a view would expose it). On those two the
-date is `unknown`, with the reason, and the history is complete without it.
+LOCK` and `PASSWORD EXPIRE` do not. PostgreSQL keeps no such date, so it is
+`unknown` there, with the reason. MariaDB keeps it only beside the stored
+value, in `mysql.global_priv`, which the tool does not read. It reads the date
+from the optional view `sopuli.account_state` where a DBA has created it
+(#1491, §8). Without the view, and after `PASSWORD EXPIRE`, which clears the
+time, the date is `unknown`, with the reason. The history is complete without
+it.
 
 A store version does not carry the run's correlation id, so a version is tied
 to its run only through its stamps ([#1374](https://github.com/villebase/sopuli-dba/issues/1374)).
@@ -554,14 +557,21 @@ privilege level with the role path. It cannot read an account's
 `FAILED_LOGIN_ATTEMPTS`, which is kept beside a hash, nor its count of failed
 logins, which only 9.7.4 keeps in a table, behind a grant of its own. Nor a
 partial revoke, nor the default role without `SELECT` on
-`mysql.default_roles`. MariaDB reads only the expiry: the lock, the lifetime
-and the date of the last change are kept beside the hash, and a DBA would
-have to create a view to expose them (#1457). So on MariaDB the lock and a
-rule's `password_lifetime` are *not checked*, and an account a rule names is
-*not checked* even without `login:`, because the lock is always compared.
-The status reads `OPEN` or `EXPIRED`, from `password_expired` alone, as
-`account list` shows it: a locked account, and one whose lifetime has run
-out, read `OPEN`. MariaDB has no failed-login limit per account, only the
+`mysql.default_roles`. MariaDB's §2.1 grants read only the expiry: the lock,
+the lifetime and the date of the last change are kept beside the hash. A DBA
+can expose them with the optional view `sopuli.account_state`, which
+`sql/mariadb/account_state_view.sql` makes (#1457, #1491). The tool checks
+the view's columns every session, and reads it only where it has none but
+the six the script makes. With the view, the lock and a rule's
+`password_lifetime` are checked, and the status reads `LOCKED` where the
+account is locked. Without it they are *not checked*, with the reason, and an
+account a rule names is *not checked* even without `login:`, because the lock
+is always compared; the status then reads `OPEN` or `EXPIRED`, from
+`password_expired` alone. A view that exists and cannot be used, with another
+column or a definer that is gone, is not read either, and `SOPULI-W073` says
+what is wrong. The view's lock is only the one `ACCOUNT LOCK` sets: a block
+after failed logins is not in it. No verb that changes an account reads the
+view. MariaDB has no failed-login limit per account, only the
 server's `max_password_errors`, so a rule's `failed_login_limit` is *not
 applicable*, and the count is `unknown`: the server shows it only to the
 account itself. Measured on 8.0.46 to

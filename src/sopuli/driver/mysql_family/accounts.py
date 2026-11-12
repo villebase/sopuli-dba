@@ -24,6 +24,29 @@ from sopuli.exit_codes import ExitCode
 #: the account's own pattern (``%``), not the client's address.
 CURRENT_USER = "select current_user()"
 
+#: ``UserState.status`` and ``SurveyedAccount.status`` on MySQL and MariaDB,
+#: in the words Oracle uses for the same states.
+OPEN = "OPEN"
+LOCKED = "LOCKED"
+EXPIRED = "EXPIRED"
+EXPIRED_AND_LOCKED = "EXPIRED & LOCKED"
+
+#: The server's ``default_password_lifetime``, in days, for an account whose
+#: own lifetime is the default. ``0`` is no limit. Any account can read it.
+DEFAULT_LIFETIME = "select @@global.default_password_lifetime"
+
+
+def locked_status(*, locked: bool, expired: bool) -> str:
+    """``UserState.status`` and ``SurveyedAccount.status`` in Oracle's words,
+    where the lock was read: MySQL always, MariaDB through its optional view."""
+    if locked and expired:
+        return EXPIRED_AND_LOCKED
+    if locked:
+        return LOCKED
+    if expired:
+        return EXPIRED
+    return OPEN
+
 
 class BareAccountError(DriverError):
     """A MySQL or MariaDB account named without its host. The config refuses

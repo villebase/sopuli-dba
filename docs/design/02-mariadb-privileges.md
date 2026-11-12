@@ -125,6 +125,18 @@ where it is granted, and never as missing.
 GRANT SELECT (default_role) ON mysql.user TO 'sopuli_admin'@'192.0.2.10';
 ```
 
+**One optional view.** `sql/mariadb/account_state_view.sql` makes the view
+`sopuli.account_state` and grants `SELECT` on it to the tool account (#1491).
+The view reads, for each account, the lock, the password lifetime and the time
+of the last change from `mysql.global_priv`, and never the stored value.
+`report accounts` and `report history` read it, and nothing that changes an
+account does. Without it, those are *not checked*. §2.4 says
+what it gives. Edit the two `SET` lines at its top to name the tool account,
+and run it as an administrator who may name another definer (`SET USER` or
+`SUPER`). `doctor --check-privileges` counts `SELECT` on the view as held
+where it is granted, and never as missing; any other privilege on it is
+over-granted.
+
 Give the account no other privilege, and no role.
 
 ### 2.2 What the tool reads about itself
@@ -214,7 +226,10 @@ them with §2.1's grants, and what each further read would cost. It was
 measured on 10.11.19, 11.4.13, 11.8.9 and 12.3.3 (`15_report_read_probe.py`,
 #1448). `report accounts` reads `User`, `Host` and `password_expired` from
 the view, with `is_role = 'N'`
-(`sopuli/driver/mariadb/survey.py`), and nothing else.
+(`sopuli/driver/mariadb/survey.py`), and, where the optional view
+`sopuli.account_state` exists and passes its column check, the lock and the
+lifetime from it (#1491). `report history` reads the time of the last change
+from that view.
 
 - **An account is a user name at a host.** One name at three hosts is three
   rows of the `mysql.user` view. A role is a row with an empty host and
@@ -227,9 +242,10 @@ the view, with `is_role = 'N'`
   `global_priv` is refused, `1142`, and `SHOW CREATE USER` for another
   account, `1044`. Only the expiry, `password_expired`, reads.
 - **A view that a DBA creates reads them, and an open rollover**
-  (`16_definer_view_probe.py`, #1479, for #1457). Nothing reads the view
-  yet. It has `SQL SECURITY DEFINER` and selects `User`, `Host`, three keys
-  of `global_priv`'s `Priv` and one flag:
+  (`16_definer_view_probe.py`, #1479, for #1457). The tool reads it as
+  `sopuli.account_state`, which `sql/mariadb/account_state_view.sql` makes
+  (#1491). It has `SQL SECURITY DEFINER` and selects `User`, `Host`, three
+  keys of `global_priv`'s `Priv` and one flag. The probe's own copy:
 
   ```sql
   CREATE SQL SECURITY DEFINER VIEW sopuli_probe.account_state AS

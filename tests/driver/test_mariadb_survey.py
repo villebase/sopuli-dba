@@ -10,6 +10,7 @@ import pytest
 
 from sopuli.config.loading import build_config
 from sopuli.driver.mariadb import survey
+from sopuli.driver.mariadb.account_state import ABSENT, AccountStates
 from sopuli.driver.mariadb.session import MariadbSession
 from sopuli.driver.protocol import DriverError
 from sopuli.driver.survey import AccountSurvey
@@ -120,6 +121,11 @@ def test_mariadbs_own_account_is_vendor_maintained() -> None:
     assert not found["mariadb.sys@%"].vendor_maintained
 
 
+def _no_view() -> AccountStates:
+    """The session's view read, for a server without `sopuli.account_state`."""
+    return AccountStates(rows=None, reason=ABSENT)
+
+
 def test_the_session_reads_by_the_grants_and_has_no_profiles(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -130,6 +136,7 @@ def test_the_session_reads_by_the_grants_and_has_no_profiles(
         return reader(_Cursor([("acme_app", "%", "N")]))
 
     monkeypatch.setattr(session, "_read_grants", read)
+    monkeypatch.setattr(session, "account_states", _no_view)
     accounts, profiles = session.survey_with_profiles()
 
     assert [one.name for one in accounts] == ["acme_app@%"]
@@ -143,5 +150,6 @@ def test_the_session_raises_a_refused_read(monkeypatch: pytest.MonkeyPatch) -> N
         raise DriverError("refused", code="1143")
 
     monkeypatch.setattr(session, "_read_grants", read)
+    monkeypatch.setattr(session, "account_states", _no_view)
     with pytest.raises(DriverError, match="refused"):
         session.survey_with_profiles()

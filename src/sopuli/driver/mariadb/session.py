@@ -483,9 +483,7 @@ class MariadbSession(ClosesConnection):
         state = states.get(name, host)
         if state is None:
             return None, account_state.NO_ROW
-        if state.changed_at is None:
-            return None, account_state.NO_TIME
-        return state.changed_at, None
+        return state.changed_at, state.no_time
 
     def _read_grants(self, reader: Callable[[Any], T]) -> T:
         """:meth:`_read`, with the hint about §2.1's grants on a refused read."""

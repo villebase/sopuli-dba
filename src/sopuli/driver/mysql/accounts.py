@@ -32,20 +32,10 @@ from typing import Any
 from sopuli.config.products import same_mysql_account
 from sopuli.driver.mysql import admin
 from sopuli.driver.mysql_family.accounts import (
-    EXPIRED as EXPIRED,
-)
-from sopuli.driver.mysql_family.accounts import (
-    EXPIRED_AND_LOCKED as EXPIRED_AND_LOCKED,
-)
-from sopuli.driver.mysql_family.accounts import (
-    LOCKED as LOCKED,
-)
-from sopuli.driver.mysql_family.accounts import (
-    OPEN as OPEN,
-)
-from sopuli.driver.mysql_family.accounts import (
+    DEFAULT_LIFETIME,
     Principal,
     current_user,
+    locked_status,
     same_host,
     split,
     text,
@@ -65,10 +55,6 @@ ROWS_FOR_USERS = (
     "select User, Host, plugin, account_locked, password_expired, "
     "password_last_changed, password_lifetime from mysql.user where User in ({names})"
 )
-
-#: The lifetime, in days, of a password whose account's ``password_lifetime``
-#: is ``NULL``. ``0`` is no limit.
-DEFAULT_LIFETIME = "select @@global.default_password_lifetime"
 
 
 #: The system accounts a new server creates, by name (TG2). Each holds
@@ -207,13 +193,7 @@ def state_of(account: Account, *, now: datetime, default_days: int = 0) -> UserS
 
 def status(*, locked: bool, expired: bool) -> str:
     """``UserState.status`` in Oracle's words, as the verbs and the report show it."""
-    if locked and expired:
-        return EXPIRED_AND_LOCKED
-    if locked:
-        return LOCKED
-    if expired:
-        return EXPIRED
-    return OPEN
+    return locked_status(locked=locked, expired=expired)
 
 
 def read_one(cursor: Cursor, account: str, *, target: str) -> Account | None:

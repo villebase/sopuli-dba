@@ -14,12 +14,14 @@ import pytest
 from sopuli.driver.mariadb.account_state import (
     ABSENT,
     COLUMNS_QUERY,
-    DEFAULT_LIFETIME,
     EXPECTED,
+    NO_TIME,
+    NO_TIME_KEY,
     ROWS_QUERY,
     read,
 )
 from sopuli.driver.mariadb.survey import survey
+from sopuli.driver.mysql_family.accounts import DEFAULT_LIFETIME
 
 ALL = [(column,) for column in sorted(EXPECTED)]
 
@@ -98,9 +100,43 @@ def test_any_other_refusal_is_broken_and_names_only_the_number() -> None:
     assert "secret" not in states.reason
 
 
-def test_an_error_with_no_number_is_raised() -> None:
+@pytest.mark.parametrize(
+    "error",
+    [
+        ServerError("no number"),
+        # PyMySQL's own numbers for a lost connection and a server gone away.
+        ServerError(2013, "Lost connection to server during query"),
+        ServerError(2006, "MySQL server has gone away"),
+    ],
+)
+def test_a_client_fault_is_the_targets_never_a_broken_view(error: ServerError) -> None:
     with pytest.raises(ServerError):
-        read(Answers(ALL, (0,), ServerError("lost connection")))
+        read(Answers(ALL, (0,), error))
+    with pytest.raises(ServerError):
+        read(Answers(error))
+
+
+def test_column_names_are_compared_without_case() -> None:
+    # MariaDB's names are not case sensitive; COLUMNS gives the view's spelling.
+    lower = [(column.lower(),) for column in sorted(EXPECTED)]
+    states = read(Answers(lower, (0,), [("acme_app", "%", None, "0", "1762905600")]))
+    assert states.broken is None
+    assert states.rows is not None
+
+
+def test_no_time_says_whether_it_was_an_expiry() -> None:
+    states = read(
+        Answers(
+            ALL,
+            (0,),
+            [("acme_expired", "%", None, None, "0"), ("acme_old", "%", None, None, None)],
+        )
+    )
+    expired, old = states.get("acme_expired", "%"), states.get("acme_old", "%")
+    assert expired is not None
+    assert old is not None
+    assert (expired.changed_at, expired.no_time) == (None, NO_TIME)
+    assert (old.changed_at, old.no_time) == (None, NO_TIME_KEY)
 
 
 def test_a_value_that_is_not_an_integer_is_broken_and_not_repeated() -> None:

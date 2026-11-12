@@ -32,8 +32,8 @@ from __future__ import annotations
 from typing import Any
 
 from sopuli.driver.mariadb.account_state import NO_ROW, AccountStates
-from sopuli.driver.mariadb.accounts import SYSTEM_ACCOUNTS, status
-from sopuli.driver.mysql_family.accounts import EXPIRED_AND_LOCKED, LOCKED, text
+from sopuli.driver.mariadb.accounts import SYSTEM_ACCOUNTS
+from sopuli.driver.mysql_family.accounts import locked_status, text
 from sopuli.driver.survey import Limit, SurveyedAccount
 
 #: Every account, by §2.1's column grant, roles left out. No stored value.
@@ -90,7 +90,7 @@ def _account(user: str, host: str, *, expired: bool, states: AccountStates) -> S
         name=name,
         # The words `account list` shows; without the view the lock finding
         # says the lock was not checked.
-        status=_status(locked=bool(locked), expired=expired),
+        status=locked_status(locked=bool(locked), expired=expired),
         locked=locked,
         deliberately_locked=locked,
         profile="",
@@ -103,12 +103,3 @@ def _account(user: str, host: str, *, expired: bool, states: AccountStates) -> S
         failed_logins=None,
         unreadable=(*unread, NO_LIMIT, NO_COUNT_READ),
     )
-
-
-def _status(*, locked: bool, expired: bool) -> str:
-    """The verbs' words, with the lock the view read."""
-    if locked and expired:
-        return EXPIRED_AND_LOCKED
-    if locked:
-        return LOCKED
-    return status(expired=expired)

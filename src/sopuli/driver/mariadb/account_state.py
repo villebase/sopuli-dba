@@ -42,7 +42,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from sopuli.driver.mysql_family.accounts import text
+from sopuli.driver.mysql_family.accounts import DEFAULT_LIFETIME, text
 from sopuli.driver.mysql_family.errors import error_number
 from sopuli.driver.protocol import Cursor
 from sopuli.driver.survey import Limit
@@ -72,7 +72,6 @@ COLUMNS_QUERY = (
     f"where TABLE_SCHEMA = '{SCHEMA}' and TABLE_NAME = '{NAME}'"
 )
 ROWS_QUERY = f"select {', '.join(READ)} from {VIEW}"
-DEFAULT_LIFETIME = "select @@global.default_password_lifetime"
 
 #: ``ER_ACCESS_DENIED_ERROR``: the view's definer is gone (#1479).
 DEFINER_GONE = 1045
@@ -80,6 +79,10 @@ DEFINER_GONE = 1045
 VIEW_INVALID = 1356
 #: ``ER_TABLEACCESS_DENIED_ERROR``: no grant on the view, or no view.
 NO_GRANT = 1142
+#: The client's own error numbers (CR_*), such as a lost connection: not the
+#: server's answer about the view.
+CLIENT_ERRORS = range(2000, 3000)
+_EXPECTED_LOWER = frozenset(column.lower() for column in EXPECTED)
 
 ABSENT = (
     f"MariaDB keeps it in mysql.global_priv, beside the stored value, and the optional "
@@ -95,8 +98,9 @@ class State:
     locked: bool
     #: The days; ``"unlimited"`` for none.
     lifetime: Limit
-    #: ``None`` where the server keeps no time, after ``PASSWORD EXPIRE``.
+    #: ``None`` where the view gives no time, with :attr:`no_time` saying why.
     changed_at: datetime | None
+    no_time: str | None = None
 
 
 @dataclass(frozen=True)
@@ -118,6 +122,9 @@ class AccountStates:
 #: ``PASSWORD EXPIRE`` sets the time of the last change to 0, and so does an
 #: account created expired (#1479).
 NO_TIME = "MariaDB keeps no time of the last change after PASSWORD EXPIRE"
+#: An account whose ``Priv`` has no time key at all, such as one carried over
+#: from before 10.4: not an expiry.
+NO_TIME_KEY = f"the optional view {VIEW} gives no time of the last change for this account"
 #: An account the server has and the view does not show, such as one created
 #: after the session read the view.
 NO_ROW = f"the optional view {VIEW} has no row for this account"
@@ -125,25 +132,28 @@ NO_ROW = f"the optional view {VIEW} has no row for this account"
 
 def read(cursor: Cursor) -> AccountStates:
     """The view's rows, after its columns are checked."""
-    cursor.execute(COLUMNS_QUERY)
-    columns = {text(row[0]) for row in cursor.fetchall()}
-    if not columns:
-        return AccountStates(rows=None, reason=ABSENT)
-    extra = tuple(sorted(columns - EXPECTED))
-    if extra:
-        return _broken(f"it has columns the tool does not expect ({', '.join(extra)})")
-    missing = [column for column in READ if column not in columns]
-    if missing:
-        return _broken(f"the tool account cannot read its columns {', '.join(missing)}")
     try:
+        cursor.execute(COLUMNS_QUERY)
+        # MariaDB's column names are not case sensitive; COLUMNS gives them as
+        # the view's SELECT wrote them.
+        columns = {text(row[0]).lower() for row in cursor.fetchall()}
+        if not columns:
+            return AccountStates(rows=None, reason=ABSENT)
+        extra = tuple(sorted(columns - _EXPECTED_LOWER))
+        if extra:
+            return _broken(f"it has columns the tool does not expect ({', '.join(extra)})")
+        missing = [column for column in READ if column.lower() not in columns]
+        if missing:
+            return _broken(f"the tool account cannot read its columns {', '.join(missing)}")
         cursor.execute(DEFAULT_LIFETIME)
         (default,) = cursor.fetchone()
         cursor.execute(ROWS_QUERY)
         rows = cursor.fetchall()
     except Exception as error:  # noqa: BLE001 -- a server's answer is classified
         number = error_number(error)
-        if number is None:
-            # Not the server's answer, such as a lost connection: the target's.
+        if number is None or CLIENT_ERRORS.start <= number < CLIENT_ERRORS.stop:
+            # Not the server's answer, such as a lost connection (2013) or a
+            # server gone away (2006): the target's, as any read's would be.
             raise
         if number == NO_GRANT:
             return AccountStates(rows=None, reason=ABSENT)
@@ -186,6 +196,8 @@ def _state(locked: Any, lifetime: Any, changed: Any, default_days: int) -> State
         locked=_int(locked) == 1,
         lifetime="unlimited" if days == 0 else days,
         changed_at=datetime.fromtimestamp(seconds, UTC) if seconds else None,
+        # 0 is how PASSWORD EXPIRE marks it (#1479); NULL is no key at all.
+        no_time=None if seconds else NO_TIME if seconds == 0 else NO_TIME_KEY,
     )
 
 

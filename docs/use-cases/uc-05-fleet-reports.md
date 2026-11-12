@@ -144,16 +144,22 @@ undeclared), its profile, its status, its failed-login count (`unknown` where
 it cannot be read truthfully, never 0), its state, and what is wrong in plain
 words. The checks are the lock and whatever the rules state: a setting no rule
 names is not compared. A `personal_accounts:` rule over a **role** is resolved
-on Oracle and PostgreSQL with the two reads `account list` makes: whether the
-role exists, then its members through any chain. So the report and the
-mutating verbs admit the same accounts ([#1469](../decisions/log.md#1469)).
+on every product with the two reads `account list` makes: whether the role
+exists, then its members through any chain. So the report and the mutating
+verbs admit the same accounts ([#1469](../decisions/log.md#1469), #1495). On
+MySQL a role is `name@host`, as the rule names it. On MySQL and MariaDB a
+role's name is compared as written, so two rules that spell a name two ways
+name two roles; a MySQL host part is compared without case, as the server
+compares it. On MariaDB the account that created a role holds it, so it is a
+member, in the report as in `account list`.
 A role that does not exist admits nobody, and the report says nothing about
 it, as it says nothing about a personal rule's `profile:` that names no
 profile. Where the target lacks the `role_lookup` capability, the role is not
 resolved and its members show as undeclared. As with a profile predicate, a
 role does not bring back an account the report leaves out, such as one
-Oracle maintains. On MySQL and MariaDB a role predicate is not resolved yet,
-so its members show as undeclared.
+Oracle maintains. A role every account holds (a MySQL mandatory role, or a
+MariaDB role `PUBLIC` reaches) fails that target's report, as `account list`
+refuses it: it would make every account personal.
 Accounts that Oracle maintains (`ORACLE_MAINTAINED = 'Y'`) are left out unless a
 rule names them, as a rule for `DBSNMP` does. On 11.2, which has no such
 column, the report uses the same list of Oracle's own accounts that the

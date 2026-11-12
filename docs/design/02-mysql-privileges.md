@@ -225,7 +225,9 @@ read for them with §2.1's grants, and what each further read would cost. It
 was measured on 8.0.46, 8.4.13 and 9.7.4 (`10_report_read_probe.py`, #1448).
 
 `report accounts` reads one row per `user@host` from `mysql.user`, and leaves
-out each account that `mysql.role_edges` names as a granted role. Its lock is
+out each account that `mysql.role_edges` names as a granted role. Where a
+`personal_accounts:` rule names a `role:`, it also reads that role's members,
+as `account list` does (#1495). Its lock is
 `account_locked`. Its lifetime is `password_lifetime`, or
 `@@default_password_lifetime` where that is NULL. Its failed-login limit is
 *not checked*, for the reason below. Its failed-login count is read from

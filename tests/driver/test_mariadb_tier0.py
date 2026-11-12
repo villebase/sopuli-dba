@@ -409,6 +409,8 @@ def test_a_broad_select_holds_what_it_covers_and_is_over_granted() -> None:
 
     assert audit.missing == ("CREATE USER",)
     assert "SELECT ON mysql.*" in audit.over_granted
+    # It covers the optional column too, as a column grant on it would.
+    assert "SELECT (default_role) ON mysql.user" in audit.held
 
 
 # ----------------------------------------------------------------- survey ---

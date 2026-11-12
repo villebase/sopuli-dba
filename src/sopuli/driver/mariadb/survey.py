@@ -9,7 +9,8 @@ report matches names in the tool.
 - **A role is left out.** It is a row with ``is_role = 'Y'`` and an empty
   host, so it is never mistaken for an account.
 - **The expiry** is the view's ``password_expired``, which ``PASSWORD EXPIRE``
-  sets.
+  sets. A lifetime that has run out does not set it, so such an account reads
+  ``OPEN``.
 - **The lock and the lifetime are not read** (#1411, R2). MariaDB keeps them in
   ``mysql.global_priv`` beside the stored value, and in ``SHOW CREATE USER``,
   which prints it. So ``locked`` and ``password_lifetime`` are ``None``, and a
@@ -27,7 +28,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sopuli.driver.mariadb.accounts import EXPIRED, OPEN, SYSTEM_ACCOUNTS
+from sopuli.driver.mariadb.accounts import SYSTEM_ACCOUNTS, status
 from sopuli.driver.mysql_family.accounts import text
 from sopuli.driver.survey import SurveyedAccount
 
@@ -66,10 +67,9 @@ def _account(user: str, host: str, *, expired: bool) -> SurveyedAccount:
     name = f"{user}@{host}"
     return SurveyedAccount(
         name=name,
-        # The words `account list` shows. The lock is not read, so OPEN says
-        # only that the password has not expired; the lock finding says the
-        # lock was not checked.
-        status=EXPIRED if expired else OPEN,
+        # The words `account list` shows; the lock finding says the lock was
+        # not checked.
+        status=status(expired=expired),
         locked=None,
         profile="",
         common=False,

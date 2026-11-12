@@ -192,7 +192,7 @@ def classify(
         over.add(f"{privilege} ON {schema}.*")
         broad = broad or (_covers_mysql(schema) and privilege == "SELECT")
     if broad:
-        held.update(_column(name) for name in COLUMNS)
+        held.update(_column(name) for name in (*COLUMNS, *OPTIONAL_COLUMNS))
         held.update(_table(table) for table in TABLES_READ)
     for table, privilege, grantable in grants.table:
         if grantable:
@@ -202,7 +202,7 @@ def classify(
             continue
         if table == USER_TABLE and privilege == "SELECT":
             # The whole view: every §2.1 column, and the stored values too.
-            held.update(_column(name) for name in COLUMNS)
+            held.update(_column(name) for name in (*COLUMNS, *OPTIONAL_COLUMNS))
         over.add(f"{privilege} ON {table}")
     for table, column, privilege, grantable in grants.column:
         if grantable:

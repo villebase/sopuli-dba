@@ -474,8 +474,9 @@ and the date of the last change are kept beside the hash, and a DBA would
 have to create a view to expose them (#1457). So on MariaDB the lock and a
 rule's `password_lifetime` are *not checked*, and an account a rule names is
 *not checked* even without `login:`, because the lock is always compared.
-The status reads `OPEN` or `EXPIRED`, from the expiry alone, as `account
-list` shows it. MariaDB has no failed-login limit per account, only the
+The status reads `OPEN` or `EXPIRED`, from `password_expired` alone, as
+`account list` shows it: a locked account, and one whose lifetime has run
+out, read `OPEN`. MariaDB has no failed-login limit per account, only the
 server's `max_password_errors`, so a rule's `failed_login_limit` is *not
 applicable*, and the count is `unknown`: the server shows it only to the
 account itself. Measured on 8.0.46 to

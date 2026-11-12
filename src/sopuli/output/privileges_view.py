@@ -117,19 +117,23 @@ def _schemas(privileges: Sequence[Privilege] | None) -> str:
 
 
 def _where(privilege: Privilege) -> str:
-    """``global dynamic, direct``: the level, where the part has more than one, then the sources."""
+    """The level, where the part has more than one, then the sources."""
     sources = _sources(privilege)
     return sources if privilege.level is None else f"{privilege.level}, {sources}"
 
 
 def _counts(privileges: Sequence[Privilege] | None, *, noun: str | None = None) -> str:
-    """``SELECT on 42 table (30 direct, 12 via roles)``; ``noun`` overrides the type."""
+    """``SELECT on 42 table (30 direct, 12 via roles)``; ``noun`` overrides the type.
+
+    A level, where the part has more than one, comes first, followed by a
+    colon, so two levels of one privilege are two counts.
+    """
     if privileges is None:
         return "not checked"
     if not privileges:
         return "none"
     parts = []
-    for (privilege, object_type), (direct, via) in counts(privileges).items():
+    for (level, privilege, object_type), (direct, via) in counts(privileges).items():
         what = noun or (object_type.lower() if object_type != "-" else "object")
         total = direct + via
         plural = what if total == 1 else _plural(what)
@@ -138,12 +142,16 @@ def _counts(privileges: Sequence[Privilege] | None, *, noun: str | None = None) 
         inactive = sum(
             1
             for p in privileges
-            if p.privilege == privilege
+            if (p.level or "") == level
+            and p.privilege == privilege
             and (p.object_type or "-") == object_type
             and not p.via_default_role
         )
         note = f", {inactive} through a role that is not a default role" if inactive else ""
-        parts.append(f"{privilege} on {total} {plural} ({direct} direct, {via} via roles{note})")
+        prefix = f"{level}: " if level else ""
+        parts.append(
+            f"{prefix}{privilege} on {total} {plural} ({direct} direct, {via} via roles{note})"
+        )
     return "; ".join(parts)
 
 
@@ -180,7 +188,7 @@ def _detail(one: AccountPrivileges) -> list[str]:
             continue
         rows.extend(
             [
-                p.level or label,
+                label if p.level is None else f"{label} ({p.level})",
                 p.privilege,
                 ".".join(x for x in (p.owner, p.name, p.column) if x) or ABSENT,
                 SCHEMA_TYPE if p.kind == SCHEMA else p.object_type or ABSENT,

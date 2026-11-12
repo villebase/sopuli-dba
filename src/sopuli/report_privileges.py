@@ -115,14 +115,17 @@ def _text(value: object) -> str | None:
     return None if value is None else str(value)
 
 
-def counts(objects: Sequence[Privilege]) -> dict[tuple[str, str], tuple[int, int]]:
-    """``(privilege, object type) -> (direct, through roles only)``.
+def counts(objects: Sequence[Privilege]) -> dict[tuple[str, str, str], tuple[int, int]]:
+    """``(level, privilege, object type) -> (direct, through roles only)``.
 
     A privilege held both directly and through a role counts as direct, once.
+    The level is ``""`` where the part has one, as on Oracle; two levels of one
+    privilege and type are counted apart, so a PostgreSQL default privilege is
+    never counted as a grant on a table that exists.
     """
-    tally: dict[tuple[str, str], list[int]] = {}
+    tally: dict[tuple[str, str, str], list[int]] = {}
     for privilege in objects:
-        key = (privilege.privilege, privilege.object_type or "-")
+        key = (privilege.level or "", privilege.privilege, privilege.object_type or "-")
         slot = tally.setdefault(key, [0, 0])
         slot[0 if () in privilege.paths else 1] += 1
     return {key: (direct, via) for key, (direct, via) in sorted(tally.items())}

@@ -294,7 +294,8 @@ def test_a_level_is_shown_where_a_part_has_more_than_one(
     assert "system: SYSTEM_VARIABLES_ADMIN (global dynamic, direct)" in text
     detail = click.unstyle(report(write_config, "--detail").output)
     line = next(one for one in detail.splitlines() if "SYSTEM_VARIABLES_ADMIN" in one)
-    assert line.split()[:3] == ["global", "dynamic", "SYSTEM_VARIABLES_ADMIN"]
+    # The part first, so a reader can still tell the parts apart.
+    assert line.split()[:4] == ["system", "(global", "dynamic)", "SYSTEM_VARIABLES_ADMIN"]
     (privilege,) = json_run(write_config)["results"][0]["privileges"]["system"]
     assert privilege["level"] == "global dynamic"
 
@@ -320,6 +321,12 @@ def test_the_oracle_session_is_a_privilege_survey() -> None:
     from sopuli.driver.grants import PrivilegeSurvey
     from sopuli.driver.oracle.session import OracleSession
 
+    def typed(session: OracleSession) -> PrivilegeSurvey:
+        # mypy checks the signature here; isinstance, at run time, only the name.
+        # Each product's session gets the same line when it joins (#1481-#1483).
+        return session
+
+    assert typed is not None
     assert issubclass(OracleSession, PrivilegeSurvey)
     assert isinstance(FakeSession(GRANTS), PrivilegeSurvey)
 

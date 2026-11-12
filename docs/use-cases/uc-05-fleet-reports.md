@@ -313,7 +313,7 @@ applies to the whole database or cluster, *schemas* what applies to one schema
 or database, *objects* what applies to one object, and *columns* what applies
 to one column. Where a product has more than one level in a part, such as
 MySQL's static and dynamic global privileges, each privilege names its level,
-as in "SYSTEM_VARIABLES_ADMIN (global dynamic, direct)". A scope the target
+is counted per level, and is listed by level, then by privilege. A scope the target
 cannot reach, such as another database of a PostgreSQL cluster, is listed as
 *not checked* on that target. The report is not built on PostgreSQL, MySQL or
 MariaDB yet (#1481, #1482, #1483).

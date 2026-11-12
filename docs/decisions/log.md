@@ -5081,28 +5081,23 @@ the register.
 ## #1411
 
 - **Decided:** 2026-11-12, #1411
-- **Question:** question 4 of #1411. The privilege report counts Oracle's privileges by privilege
-  and object type. What does it count on PostgreSQL, MySQL and MariaDB, whose
-  privileges are shaped differently?
+- **Question:** question 4 of #1411. The privilege report counts Oracle's
+  privileges by privilege and object type. What does it count on PostgreSQL,
+  MySQL and MariaDB, whose privileges are shaped differently?
 - **Decision:** the maintainer's: each product in its own terms. On
   PostgreSQL, role attributes (`SUPERUSER`, `CREATEROLE`, `CREATEDB`,
   `REPLICATION`, `BYPASSRLS`), memberships with the path and their options,
   and object privileges with `PUBLIC` and default privileges; the cluster's
   other databases are listed as not checked. On MySQL and MariaDB, by level:
   global static, global dynamic, database, table, column, routine and proxy,
-  with the role path. Every product fills the same four parts (system,
-  schemas, objects, columns), and a privilege names its level where a part
-  holds more than one (#1480).
+  with the role path.
 - **Why:** a count in Oracle's words would misname what the other products
-  grant, and an auditor reads the report in the product's own words. One set
-  of parts keeps the output one contract for every product.
+  grant, and an auditor reads the report in the product's own words.
 - **Rejected:**
   1. Oracle's terms on every product: PostgreSQL has no system privileges,
      and MySQL's global privileges are not Oracle's.
   2. Summarise only the database a PostgreSQL target connects to, without
      naming the others: the report would read as complete when it is not.
-  3. Separate parts per product: every reader of the JSON would need a case
-     per product.
 
 ## #1415
 

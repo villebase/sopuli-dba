@@ -645,16 +645,9 @@ def login_state(cursor: Cursor, account: str, *, user_dollar: bool = False) -> U
     changed_at, changed_unknown = _password_changed(
         cursor, name, row, has_column=query == USER_QUERY, user_dollar=user_dollar
     )
-    # Only for an account the status shows as deliberately locked, and only
-    # behind the grant, so an open account costs no `SYS.USER$` read.
-    lockout = None
-    if user_dollar and deliberately_locked(status):
-        lockout = lockout_evidence(
-            status,
-            lock_time=limits.get(PASSWORD_LOCK_TIME),
-            limit=limits.get(FAILED_LOGIN_ATTEMPTS),
-            failed=failed_logins(cursor, name),
-        )
+    # Only behind the grant, and only for an account the status shows as
+    # deliberately locked, so an open account costs no `SYS.USER$` read.
+    lockout = read_lockout_evidence(cursor, name, status, profile) if user_dollar else None
 
     return UserState(
         name=name,
@@ -1363,6 +1356,48 @@ def _locked_by_somebody(
     return failed < limit
 
 
+#: A profile's own lock time and failed-login limit, **unresolved**: a limit the
+#: profile takes from ``DEFAULT`` reads as the word ``DEFAULT``. In a PDB, the
+#: ``DEFAULT`` that applies to a common profile is the root's, which the PDB
+#: cannot read (§2), so :func:`read_lockout_evidence` takes only values the
+#: profile sets itself.
+OWN_LOCK_LIMITS_QUERY = (
+    "select resource_name, limit from dba_profiles where profile = :profile "
+    "and resource_name in ('PASSWORD_LOCK_TIME', 'FAILED_LOGIN_ATTEMPTS')"
+)
+
+
+def read_lockout_evidence(
+    cursor: Cursor, name: str, status: str, profile: str | None
+) -> str | None:
+    """:func:`lockout_evidence` for one account, read from the database (#1454).
+
+    Only for an account the status shows as deliberately locked, and the
+    caller runs it only behind the ``SYS.USER$`` capability. It gives no
+    evidence for a common account, whose count and limits a PDB cannot read
+    (§2), nor where either limit is ``DEFAULT`` on the account's profile.
+    **A read that fails gives no evidence rather than an error.** The sentence
+    changes only the wording of a refusal, so it must never fail the read that
+    the refusal depends on. The refusal then reads as it did before #1454.
+    """
+    if profile is None or not deliberately_locked(status):
+        return None
+    try:
+        if is_common(cursor, name) is not False:
+            return None
+        cursor.execute(OWN_LOCK_LIMITS_QUERY, {"profile": profile})
+        own = {str(resource): str(limit) for resource, limit in cursor.fetchall() if limit}
+        failed = failed_logins(cursor, name)
+    except Exception:  # noqa: BLE001 -- evidence for wording only; never fails the read
+        return None
+    return lockout_evidence(
+        status,
+        lock_time=own.get(PASSWORD_LOCK_TIME),
+        limit=own.get(FAILED_LOGIN_ATTEMPTS),
+        failed=failed,
+    )
+
+
 def lockout_evidence(
     status: str, *, lock_time: str | None, limit: str | None, failed: int | None
 ) -> str | None:
@@ -1370,8 +1405,10 @@ def lockout_evidence(
 
     The rule is :func:`_locked_by_somebody`'s, as the report applies it
     (#1447), but stricter: the lock time must read ``UNLIMITED`` and the limit
-    must be a number. An unknown lock time is not enough here, because the
-    sentence tells a DBA that an unlock may be safe. It feeds only the wording
+    must be a number, each set on the profile itself
+    (:func:`read_lockout_evidence`). The survey's helpers read a different
+    row shape and resolve ``DEFAULT``. An unknown lock time is not enough
+    here, because the sentence tells a DBA that an unlock may be safe. It feeds only the wording
     of a refusal. A reset still refuses the account (#1454, option 3), so the
     guard does not depend on the optional ``SYS.USER$`` grant, nor on the
     profile's limit today.
@@ -1380,13 +1417,14 @@ def lockout_evidence(
         return None
     if lock_time is None or lock_time.strip().upper() != "UNLIMITED":
         return None
-    if limit is None or not limit.strip().isdigit() or failed is None:
+    digits = None if limit is None else limit.strip()
+    if digits is None or not (digits.isascii() and digits.isdigit()) or failed is None:
         return None
-    if _locked_by_somebody(status, lock_time_unlimited=True, limit=int(limit), failed=failed):
+    if _locked_by_somebody(status, lock_time_unlimited=True, limit=int(digits), failed=failed):
         return None
     return (
         f"its failed-login count, {failed}, has reached the profile's "
-        f"FAILED_LOGIN_ATTEMPTS, {limit.strip()}, under PASSWORD_LOCK_TIME UNLIMITED, "
+        f"FAILED_LOGIN_ATTEMPTS, {digits}, under PASSWORD_LOCK_TIME UNLIMITED, "
         "where Oracle shows a lockout as LOCKED, so failed logins may have set this "
         "lock rather than a person"
     )

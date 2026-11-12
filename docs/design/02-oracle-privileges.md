@@ -313,7 +313,7 @@ GRANT SELECT ON SYS.USER$ TO sopuli_svc;   -- or c##sopuli_svc CONTAINER=ALL
 ```
 
 When the grant is present, the tool probes it as a capability at plan time
-(invariant 3) and uses it for three things:
+(invariant 3) and uses it for these things:
 
 - **The `LCOUNT` guard.** It refuses a login attempt within `--lockout-margin`
   of the account's `FAILED_LOGIN_ATTEMPTS` limit (UC-1 §7 mitigation 2). This is
@@ -328,6 +328,13 @@ When the grant is present, the tool probes it as a capability at plan time
   value is for display only: `creds status`'s `DB_PW_CHANGED` and the run
   document's `password_age_days`. The driver never reads `PTIME` where the column
   exists. Without the grant the date is absent, and `SOPULI-W021` says so.
+- **The wording of a reset's refusal of a `LOCKED` account** (UC-2 §5,
+  [#1454](../decisions/log.md#1454)). Under a `PASSWORD_LOCK_TIME` of
+  `UNLIMITED` that the profile sets itself, an `LCOUNT` at the profile's own
+  `FAILED_LOGIN_ATTEMPTS` makes the refusal say that failed logins may have set
+  the lock. A common account read from a PDB, a limit the profile takes from
+  `DEFAULT`, or a read that fails gives the wording without the count. The
+  reset refuses either way.
 
 **Why the grant is optional.** It exposes every password verifier in the
 database. An account that holds `ALTER USER` can already set any password, so

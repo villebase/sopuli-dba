@@ -377,27 +377,22 @@ def decide(
         return Decision(proceed=False, state=SKIPPED, detail=application)
 
     if state.deliberately_locked or deliberately_locked(state.status):
-        if state.lockout_evidence is not None:
-            # Still refused (#1454, option 3): the sentence is evidence for a
-            # DBA to weigh, not a guard input.
-            return Decision(
-                proceed=False,
-                state=SKIPPED,
-                detail=(
-                    f"the account is {state.status.lower()}, and {state.lockout_evidence}; "
-                    f"a reset does not undo a lock it cannot tell from a deliberate one -- "
-                    f"check with the owner, then ALTER USER … ACCOUNT UNLOCK and reset again"
-                ),
+        # Refused either way (H4). The evidence, where the driver found some,
+        # only changes what the refusal says (#1454, option 3).
+        if state.lockout_evidence is None:
+            why = (
+                "; a reset does not undo a deliberate lock -- remove it by hand first if "
+                "that is what you mean (ALTER USER … ACCOUNT UNLOCK on Oracle and MySQL, "
+                "ALTER ROLE … LOGIN on PostgreSQL)"
+            )
+        else:
+            why = (
+                f", and {state.lockout_evidence}; a reset does not undo a lock it cannot "
+                "tell from a deliberate one -- check with the owner, then ALTER USER … "
+                "ACCOUNT UNLOCK and reset again"
             )
         return Decision(
-            proceed=False,
-            state=SKIPPED,
-            detail=(
-                f"the account is {state.status.lower()}; a reset does not undo a "
-                f"deliberate lock -- remove it by hand first if that is what you mean "
-                f"(ALTER USER … ACCOUNT UNLOCK on Oracle and MySQL, ALTER ROLE … LOGIN on "
-                f"PostgreSQL)"
-            ),
+            proceed=False, state=SKIPPED, detail=f"the account is {state.status.lower()}{why}"
         )
 
     found = review(state, declared=[state.name] if rule is not None else [], force=force)

@@ -248,8 +248,7 @@ reads as locked, but not by somebody.
   holds a retained password's hash, and in `SHOW CREATE USER`, which prints
   the hash. The tool account is refused both, `1143` and `1044`.
   `INFORMATION_SCHEMA.USER_ATTRIBUTES` shows `ATTRIBUTE` NULL for an account
-  with a limit. A view that a DBA creates with `SQL SECURITY DEFINER`, over the
-  two keys alone, is read with `SELECT` on the view.
+  with a limit. A view that a DBA creates reads them (below).
 - **The count of failed logins** is in no table on 8.0.46 and 8.4.13. A block
   answers `3955` to every password and changes nothing the tool account
   reads. 9.7.4 has `performance_schema.temporary_account_locks`, with the
@@ -285,9 +284,63 @@ reads as locked, but not by somebody.
   grants in `proxies_priv`. `information_schema`'s `*_PRIVILEGES` views show
   the tool account none of another account's grants, and `SHOW GRANTS FOR`
   another account is refused, `1142`.
-- **A partial revoke cannot be read.** With `partial_revokes` on, `SELECT ON
-  *.*` and then a revoke on one schema reads as `Select_priv = 'Y'`, with no
-  row in `db`, and nothing else the tool account reads shows the revoke.
+- **A partial revoke cannot be read with §2.1.** With `partial_revokes` on,
+  `SELECT ON *.*` and then a revoke on one schema reads as `Select_priv =
+  'Y'`, with no row in `db`, and nothing else the tool account reads shows
+  the revoke. It is `User_attributes`' `Restrictions`.
+- **A view that a DBA creates reads the limit, the partial revokes and a
+  retained password** (`12_definer_view_probe.py`, #1490, for #1457). Nothing
+  reads the view yet. It has `SQL SECURITY DEFINER` and selects `User`,
+  `Host`, three keys of `User_attributes` and one flag:
+
+  ```sql
+  CREATE SQL SECURITY DEFINER VIEW sopuli_probe.account_state AS
+  SELECT User, Host,
+    JSON_EXTRACT(User_attributes, '$.Password_locking.failed_login_attempts')
+      AS failed_login_attempts,
+    JSON_EXTRACT(User_attributes, '$.Password_locking.password_lock_time_days')
+      AS password_lock_time_days,
+    JSON_EXTRACT(User_attributes, '$.Restrictions') AS restrictions,
+    COALESCE(JSON_CONTAINS_PATH(User_attributes, 'one', '$.additional_password'), 0)
+      AS retained_password
+  FROM mysql.user;
+  ```
+
+  With `SELECT` on it, the tool account reads:
+  - the failed-login limit and lock days, `-1` for `UNBOUNDED`, and `NULL`
+    where neither is set: setting both to 0 removes the keys;
+  - the partial revokes, one entry per schema, such as `{"Database":
+    "acme", "Privileges": ["SELECT"]}`, gone when the privilege is granted
+    on that schema again;
+  - whether a password is retained: `1` from `RETAIN CURRENT PASSWORD`,
+    through `PASSWORD EXPIRE`, until `DISCARD OLD PASSWORD`. The hash itself
+    is `additional_password`, which the view does not select.
+
+  The view gives every row of `mysql.user` and no stored value: the probe
+  looked for every fixture value, as hex and as the digest a client would
+  print, in all the tool account read, refusals included, and found none.
+  The tool account is refused `SHOW CREATE VIEW`, `1142`, and `EXPLAIN`,
+  `1345`. It holds no privilege to create a view or a procedure over the
+  view, or to update it. A tool account given `CREATE VIEW` on the schema
+  could create a view over the view, but that view reads with the tool
+  account's own grants: the same six columns, and a view over the hash is
+  refused, `1143`. The view and what it gives survive the image's upgrade
+  from 8.0.46 to 8.4.13 and 9.7.4, with `partial_revokes` kept on.
+- **The view's shape and presence, as the tool account sees them.**
+  `information_schema.COLUMNS` and `SHOW COLUMNS` list the view's columns
+  before any row is read. Under a column grant they list only the columns
+  granted. An absent view, an absent schema and a view without the grant
+  all answer `1142`. A definer without `SELECT` on `mysql.user` answers
+  `1356`. Root may drop the definer, and the view then answers `1045
+  (28000)`, "Access denied", in a session that is already logged in. The
+  definer can be a locked account that holds only `SELECT` on `mysql.user`.
+  A DBA without `SET_USER_ID` or `SET_ANY_DEFINER` cannot name another
+  definer, `1227`.
+- **The view does not show a block after failed logins.** `User_attributes`
+  keeps the limit and the lock time, and no key changes when an account is
+  blocked or unlocked. The count is only in
+  `performance_schema.temporary_account_locks`, on 9.7.4, which §2.1's
+  optional grant already reads.
 - **Cost.** With about 510 accounts and roles and 1000 tables, after one
   untimed run, the role query took 0.04 s or less, and the table grants
   every account reaches through its roles 0.06 s or less.
@@ -562,7 +615,9 @@ plain connection the check sends the application's password encrypted with
 the RSA key the server sends, which nothing verifies
 ([#1407](../decisions/log.md#1407)).
 
-**There is no lockout guard.** `FAILED_LOGIN_ATTEMPTS` and its counter are in
+**There is no lockout guard.** `FAILED_LOGIN_ATTEMPTS` is in
 `User_attributes`, which the tool account does not read (#1202, decision 6).
+The count of failed logins is in no table on 8.0.46 and 8.4.13, and on 9.7.4
+only in `performance_schema.temporary_account_locks` (§2.4).
 A login goes ahead, as on Oracle without the `SYS.USER$` grant, and each
 result's detail says the guard is unavailable.

@@ -329,15 +329,17 @@ def test_a_target_that_verifies_the_server_does_not_warn(mysql: dict[str, str] |
 # --------------------------------------------------------- the driver ---
 
 
-def test_the_mysql_driver_is_written_for_every_command() -> None:
-    """UC-1 (#1223), UC-2 (#1225) and UC-5's `report history` (#1460).
-    Pinned so that the list changes by a reviewed line."""
+def test_the_commands_the_mysql_driver_is_written_for() -> None:
+    """UC-1 (#1223), UC-2 (#1225) and UC-5's `report accounts` (#1461) and
+    `report history` (#1460). Pinned so that the list changes by a reviewed
+    line."""
     target = server()
 
-    for command in ("doctor", "creds.apply", "account.list", "account.suspend"):
+    for command in ("doctor", "creds.apply", "account.list", "report.accounts"):
         require_command(target, command)
     assert DRIVERS["mysql"].commands == frozenset(
         {
+            "report.accounts",
             "account.list",
             "account.reset-password",
             "account.suspend",

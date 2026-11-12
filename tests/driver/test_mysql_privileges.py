@@ -78,6 +78,26 @@ def test_the_grants_of_section_2_are_held_and_nothing_is_missing() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("table", "line"),
+    [
+        # #1411, M2: `report accounts` reads the count with it on 9.7.4.
+        (
+            "performance_schema.temporary_account_locks",
+            "`performance_schema`.`temporary_account_locks`",
+        ),
+        # M4: for the privilege report.
+        ("mysql.default_roles", "`mysql`.`default_roles`"),
+    ],
+)
+def test_an_optional_read_is_held_and_never_missing(table: str, line: str) -> None:
+    found = _classify([*INSTALL, f"GRANT SELECT ON {line} TO {TOOL}"])
+
+    assert found.over_granted == ()
+    assert f"SELECT ON {table}" in found.held
+    assert f"SELECT ON {table}" not in _classify(INSTALL).missing
+
+
 def test_what_is_not_granted_is_missing() -> None:
     found = _classify([f"GRANT USAGE ON *.* TO {TOOL}"])
 

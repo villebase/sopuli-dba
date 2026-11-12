@@ -130,6 +130,20 @@ is granted to. `account list` follows `role_edges` down from the role to every
 account below it, and a verb follows it up from an account to its roles. So
 the session reports `role_lookup` and needs no other grant for it.
 
+Two grants are optional. The tool works without them, and `doctor
+--check-privileges` lists neither as missing:
+
+```sql
+-- report accounts: the failed-login count, on 9.7.4 and later (#1461).
+GRANT SELECT ON performance_schema.temporary_account_locks TO 'sopuli_admin'@'192.0.2.10';
+-- report privileges, when it is built for MySQL: each account's default roles.
+GRANT SELECT ON mysql.default_roles TO 'sopuli_admin'@'192.0.2.10';
+```
+
+Neither table holds a hash. Without the first, or on a server that has no
+such table, such as 8.0 and 8.4, the count is `unknown` (§2.4). No command
+reads `mysql.default_roles` yet.
+
 Give the account no other privilege, and no role.
 
 ### 2.2 What the tool reads about itself
@@ -203,10 +217,19 @@ statements that grant it.
 
 ### 2.4 What the reports can read
 
-The UC-5 `report` commands are not built on MySQL yet (#1411). This is what
-the tool account can read for them with §2.1's grants, and what each further
-read would cost. It was measured on 8.0.46, 8.4.13 and 9.7.4
-(`10_report_read_probe.py`, #1448).
+`report accounts` (#1461) and `report history` (#1460) run on MySQL. `report
+privileges` is not built here yet (#1411). This is what the tool account can
+read for them with §2.1's grants, and what each further read would cost. It
+was measured on 8.0.46, 8.4.13 and 9.7.4 (`10_report_read_probe.py`, #1448).
+
+`report accounts` reads one row per `user@host` from `mysql.user`, and leaves
+out each account that `mysql.role_edges` names as a granted role. Its lock is
+`account_locked`. Its lifetime is `password_lifetime`, or
+`@@default_password_lifetime` where that is NULL. Its failed-login limit is
+*not checked*, for the reason below. Its failed-login count is read from
+`performance_schema.temporary_account_locks` under §2.1's optional grant. A
+row there with `LOCKED` `YES` is a block after failed logins, and the account
+reads as locked, but not by somebody.
 
 - **An account is a user name at a host.** One name at three hosts is three
   rows of `mysql.user`, each with its own lock, expiry, lifetime and date of

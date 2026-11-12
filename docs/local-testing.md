@@ -2345,8 +2345,8 @@ suspended acme_dev_bob@localhost on 1 of 1 targets
 
 `report accounts` reads every account on each target and checks it against the
 `reports:` rules (`design/01-configuration.md` §8a). It changes nothing. It
-runs on Oracle and PostgreSQL. `report privileges` runs on Oracle only, and
-`report history` on every product.
+runs on Oracle, PostgreSQL and MySQL. `report privileges` runs on Oracle only,
+and `report history` on every product.
 
 Make two accounts on a profile whose passwords expire after 180 days, and one
 locked account that nothing declares. As SYS in the PDB:
@@ -2512,9 +2512,70 @@ count, so both read `-` and `unknown`. A rule's `password_lifetime`,
 application logs in as must be able to log in, so `NOLOGIN` on one is a
 problem with or without `login:`.
 
+On MySQL, `report accounts` shows one row per `user@host`, and a rule names
+each account that way. Use the tool account of §*A MySQL server*, with the
+grants of `design/02-mysql-privileges.md` §2.1. As root, make one name at two
+hosts, a locked owner, an owner blocked after failed logins, a role, and an
+account nothing declares:
+
+```sql
+CREATE USER 'acme_app'@'%' IDENTIFIED BY 'Acme-App-Rpt-1' PASSWORD EXPIRE INTERVAL 90 DAY;
+CREATE USER 'acme_app'@'192.0.2.%' IDENTIFIED BY 'Acme-App-Rpt-2' PASSWORD EXPIRE NEVER;
+CREATE USER 'acme_owner'@'%' IDENTIFIED BY 'Acme-Own-Rpt-1' ACCOUNT LOCK;
+CREATE USER 'acme_timed'@'%' IDENTIFIED BY 'Acme-Tim-Rpt-1' FAILED_LOGIN_ATTEMPTS 2 PASSWORD_LOCK_TIME 1;
+CREATE USER 'acme_stray'@'%' IDENTIFIED BY 'Acme-Str-Rpt-1';
+CREATE ROLE 'acme_read';
+GRANT 'acme_read' TO 'acme_app'@'%';
+```
+
+Log in twice as `acme_timed` with a wrong password, so that the server blocks
+it, `3955`. Then run the report with this config:
+
+```yaml
+version: 1
+targets:
+  - name: mysql-dev
+    type: mysql
+    environment: dev
+    dsn: "127.0.0.1:3306"
+    admin: { username: sopuli_admin, auth: { method: env } }
+    mysql: { ssl_mode: REQUIRED }
+reports:
+  accounts:
+    - accounts: ["acme_app@%", "acme_gone@%"]
+      settings: { password_lifetime: 60 }
+    - accounts: ["acme_owner@%", "acme_timed@%"]
+      login: refused
+```
+
+```
+$ sopuli --config mysql-report.yaml report accounts
+mysql-dev  (8.4.13, 11 accounts read, 3 with a problem, 5 undeclared)
+  ACCOUNT             KIND        PROFILE  STATUS  FAILED LOGINS  STATE            FINDING
+  acme_app@%          technical   -        OPEN    unknown        REPORT_PROBLEM   password_lifetime: 90 days, rule says at most 60 days
+  acme_timed@%        technical   -        OPEN    unknown        REPORT_PROBLEM   lock: can log in: OPEN, rule says login refused
+  acme_gone@%         technical   -        -       -              ACCOUNT_MISSING  present: not on this target
+  acme_app@192.0.2.%  undeclared  -        OPEN    unknown        UNDECLARED       not in config
+  acme_stray@%        undeclared  -        OPEN    unknown        UNDECLARED       not in config
+  root@%              undeclared  -        OPEN    unknown        UNDECLARED       not in config
+  root@localhost      undeclared  -        OPEN    unknown        UNDECLARED       not in config
+  sopuli_admin@%      undeclared  -        OPEN    unknown        UNDECLARED       not in config
+  1 account OK
+  failed logins unknown: the tool account has no SELECT on performance_schema.temporary_account_locks, or the server has no such table, as 8.0 and 8.4 have not
+```
+
+It exits 3. `acme_app@192.0.2.%` is another account than `acme_app@%`, so the
+rule for one does not reach the other. The role and MySQL's own accounts,
+such as `mysql.sys@localhost`, are left out. `acme_timed@%` reads `OPEN`: on
+8.4 a block after failed logins is in no table the tool account can read. On
+MySQL 9.7.4, with the optional `SELECT` on
+`performance_schema.temporary_account_locks` of
+`design/02-mysql-privileges.md` §2.1, the same account reads
+`LOCKED(TIMED)` with its count, and the lock is still a problem, because
+somebody tried to log in.
+
 `report privileges` shows each account's effective privileges, through every
-role, for the same accounts. The service account needs `SELECT` on
-`DBA_SYS_PRIVS`, `DBA_TAB_PRIVS`, `DBA_COL_PRIVS` and, on 23ai,
+role, for the Oracle accounts above. The service account needs `SELECT` on `DBA_SYS_PRIVS`, `DBA_TAB_PRIVS`, `DBA_COL_PRIVS` and, on 23ai,
 `DBA_SCHEMA_PRIVS`: run `sql/oracle/00_install.sql` with
 `grant_report_reads=Y`. Without them, those parts say `not checked` and the run
 exits 4. Make an account with a direct grant, a column grant, a default role

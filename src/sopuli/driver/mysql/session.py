@@ -39,6 +39,7 @@ from sopuli.config.products import same_mysql_account
 from sopuli.driver.mysql import accounts as accounts_module
 from sopuli.driver.mysql import password as password_module
 from sopuli.driver.mysql import roles, verification
+from sopuli.driver.mysql import survey as survey_module
 from sopuli.driver.mysql.errors import UNKNOWN_SYSTEM_VARIABLE, from_error
 from sopuli.driver.mysql.limits import LIMIT
 from sopuli.driver.mysql.privileges import audit as privilege_audit
@@ -100,6 +101,7 @@ from sopuli.driver.protocol import (
     require_capability,
 )
 from sopuli.driver.registry import NotWrittenError as NotWrittenError
+from sopuli.driver.survey import SurveyedAccount
 from sopuli.output.debug import logger
 from sopuli.passwords import ByteLimit
 from sopuli.secrets import Secret
@@ -313,6 +315,26 @@ class MysqlSession(ClosesConnection):
                 remedies=(*audit.remedies, f"the declared accounts were not read: {error}"),
             )
         return replace(audit, remedies=(*audit.remedies, *lines))
+
+    def survey_with_profiles(self) -> tuple[tuple[SurveyedAccount, ...], frozenset[str]]:
+        """Every account on the server, for `report accounts`
+        (:mod:`~sopuli.driver.mysql.survey`), and no profile: MySQL has none,
+        and the registry makes the profile check *not applicable* (#1458).
+
+        The failed-login counts are an optional read (#1411, M2): the server
+        refuses it without the grant, ``1142``, or has no such table, ``1146``,
+        and either leaves the counts unknown. Any other error fails the read.
+        """
+        try:
+            locks = self._read(survey_module.read_locks)
+        except DriverError as error:
+            if error.code == str(TABLE_ACCESS_DENIED):
+                locks = survey_module.Locks(None, survey_module.NO_GRANT)
+            elif error.code == str(survey_module.NO_SUCH_TABLE):
+                locks = survey_module.Locks(None, survey_module.NO_TABLE)
+            else:
+                raise
+        return self._read_grants(lambda cursor: survey_module.survey(cursor, locks)), frozenset()
 
     def _read(self, reader: Callable[[Any], T], *, scrub: Callable[[str], str] | None = None) -> T:
         """Run ``reader`` on a cursor of this session. A closed session is a

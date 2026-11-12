@@ -2,8 +2,9 @@
 
 Product-neutral types. A driver that can survey its accounts returns
 :class:`SurveyedAccount` values through :class:`AccountSurvey`, which
-``report accounts`` asks for. Oracle's and PostgreSQL's sessions implement it. The
-:class:`~sopuli.driver.protocol.Session` protocol does not list it, so a
+``report accounts`` asks for. Oracle's, PostgreSQL's and MySQL's sessions
+implement it. The :class:`~sopuli.driver.protocol.Session` protocol does not
+list it, so a
 session that lacks it is a target the report does not check (UC-5 §3). The
 privilege report also needs ``survey_accounts`` and ``survey_privileges``,
 which a caller finds with ``getattr``.

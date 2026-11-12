@@ -27,7 +27,7 @@ Exit 0 when nothing is wrong, 1 when a target could not be reached, 3 when a
 check found a problem or a profile a rule or policy expects is missing on a
 target, and 4 when something could not be checked. An account
 the config does not declare is listed as information and never changes the
-exit code. Only Oracle and PostgreSQL can run this report yet.
+exit code. Only Oracle, PostgreSQL and MySQL can run this report yet.
 
 Options:
 

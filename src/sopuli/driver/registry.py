@@ -234,8 +234,9 @@ DRIVERS: dict[str, DatabaseDriver] = {
     # (#1225); `account reset-password`, which refuses `--keep-rollover` by
     # capability; `account suspend`, by `ACCOUNT LOCK`; and `account
     # expire-password`, which discards a retained password first. UC-5: `report
-    # history`, from the store, with `mysql.user.password_last_changed` as the
-    # database's date (#1460).
+    # accounts`, one row per `user@host` (#1461); `report history`, from the
+    # store, with `mysql.user.password_last_changed` as the database's date
+    # (#1460). `report privileges` is not written for it yet.
     "mysql": DatabaseDriver(
         module="sopuli.driver.mysql.session",
         extra="mysql",
@@ -248,6 +249,7 @@ DRIVERS: dict[str, DatabaseDriver] = {
         not_applicable=frozenset({"profile", "valid_until"}),
         commands=frozenset(
             {
+                "report.accounts",
                 "account.list",
                 "account.reset-password",
                 "account.suspend",

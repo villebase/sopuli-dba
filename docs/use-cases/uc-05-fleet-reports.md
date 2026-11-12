@@ -6,9 +6,9 @@ Depends on: `../design/00-principles.md`, `../design/01-configuration.md`,
 This document specifies `sopuli report accounts`, `sopuli report privileges`
 and `sopuli report history`. **All three are built, on Oracle**, with the
 `reports:` rules (§4, §5, §7). **`report history` is built on PostgreSQL,
-MySQL and MariaDB** too (§6), and **`report accounts` on PostgreSQL** (§4).
-The rest come later: until then they are refused before they connect. §9
-lists the decisions.
+MySQL and MariaDB** too (§6), and **`report accounts` on PostgreSQL** (§4)
+**and MySQL** (§8, #1461). The rest come later: until then they are refused
+before they connect. §9 lists the decisions.
 
 ---
 
@@ -452,9 +452,15 @@ is not built yet; #1411 lists what to decide first, such as what it does about
 a cluster's other databases. Measured on 13.23 to 18.6
 (`02-postgres-privileges.md` §2.5, #1443).
 
-On MySQL and MariaDB only `report history` is built (§6). An account is a user
+On MySQL, `report accounts` (#1461) and `report history` (§6) are built, and
+the privilege report is not. On MariaDB only `report history` is built. An
+account is a user
 name at a host, so one name can be several accounts, each with its own
-state. With the grants the tool account holds today, MySQL reads each
+state, and the report shows one row for each. A role is left out. MySQL's own
+accounts, such as `mysql.sys@localhost`, are left out unless a rule names
+them, as Oracle's are. The failed-login limit is *not checked*, and the count
+is `unknown` without the optional grant of `02-mysql-privileges.md` §2.1. With
+the grants the tool account holds today, MySQL reads each
 account's lock, expiry, lifetime and date of the last change, and every
 privilege level with the role path. It cannot read an account's
 `FAILED_LOGIN_ATTEMPTS`, which is kept beside a hash, nor its count of failed

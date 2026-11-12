@@ -186,7 +186,7 @@ def state_of(account: Account, *, now: datetime, default_days: int = 0) -> UserS
     expired = account.expired or (expires_at is not None and expires_at <= now)
     return UserState(
         name=account.name,
-        status=_status(locked=account.locked, expired=expired),
+        status=status(locked=account.locked, expired=expired),
         locked=account.locked,
         deliberately_locked=account.locked,
         expired=expired,
@@ -198,7 +198,8 @@ def state_of(account: Account, *, now: datetime, default_days: int = 0) -> UserS
     )
 
 
-def _status(*, locked: bool, expired: bool) -> str:
+def status(*, locked: bool, expired: bool) -> str:
+    """``UserState.status`` in Oracle's words, as the verbs and the report show it."""
     if locked and expired:
         return EXPIRED_AND_LOCKED
     if locked:

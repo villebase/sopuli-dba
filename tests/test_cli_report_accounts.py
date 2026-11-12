@@ -300,14 +300,14 @@ def test_only_not_checked_exits_4(
     assert result.exit_code == ExitCode.PARTIAL, result.output
 
 
-def test_a_mysql_target_is_refused_before_connecting(write_config: WriteConfig) -> None:
-    """The driver registry lists `report.accounts` for Oracle and PostgreSQL only."""
+def test_a_mariadb_target_is_refused_before_connecting(write_config: WriteConfig) -> None:
+    """The driver registry lists `report.accounts` for Oracle, PostgreSQL and MySQL only."""
     config = write_config(
         "version: 1\n"
         "targets:\n"
-        "  - name: mysql-dev\n"
-        "    type: mysql\n"
-        "    dsn: mysql-dev.example.com:3306\n"
+        "  - name: mariadb-dev\n"
+        "    type: mariadb\n"
+        "    dsn: mariadb-dev.example.com:3306\n"
         "    admin: { username: sopuli_svc, auth: { method: env } }\n"
     )
     result = CliRunner().invoke(
@@ -322,7 +322,7 @@ def test_a_mysql_target_is_refused_before_connecting(write_config: WriteConfig) 
     text = click.unstyle(
         CliRunner().invoke(cli, ["--config", str(config), "report", "accounts"]).output
     )
-    assert text.startswith("mysql-dev  not supported: ")
+    assert text.startswith("mariadb-dev  not supported: ")
 
 
 def test_an_unsupported_target_beside_a_reached_one_is_not_checked(

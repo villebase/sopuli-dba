@@ -204,9 +204,12 @@ DRIVERS: dict[str, DatabaseDriver] = {
         # suspend`, which sets NOLOGIN; and `account expire-password`, which is
         # refused by the same capability at plan time (#1201). UC-5: `report
         # accounts`, from `pg_roles` (#1459); `report history`, from the store,
-        # with no database date, because PostgreSQL keeps none (#1460).
+        # with no database date, because PostgreSQL keeps none (#1460); `report
+        # privileges`, from the catalogs' ACLs of the database the target
+        # connects to, with the cluster's other databases not checked (#1481).
         commands=frozenset(
             {
+                "report.privileges",
                 "account.list",
                 "account.reset-password",
                 "account.suspend",

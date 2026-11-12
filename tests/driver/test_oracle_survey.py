@@ -539,11 +539,11 @@ def test_the_session_passes_its_scope_to_the_survey(
 
     def fake_survey(
         cursor: Any, *, own_container: bool, user_dollar: bool, application: bool
-    ) -> tuple[SurveyedAccount, ...]:
+    ) -> tuple[tuple[SurveyedAccount, ...], frozenset[str]]:
         seen.update(own_container=own_container, user_dollar=user_dollar, application=application)
-        return ()
+        return (), frozenset()
 
-    monkeypatch.setattr(session_module, "survey", fake_survey)
+    monkeypatch.setattr(session_module, "survey_with_profiles", fake_survey)
     session = session_module.OracleSession(
         connection=_Connection(),
         target=ExpandedTarget(
@@ -553,7 +553,7 @@ def test_the_session_passes_its_scope_to_the_survey(
         correlation_id="00000000-0000-0000-0000-000000000000",
     )
     session._scope = Scope(type=scope_type, capabilities=capabilities)
-    assert session.survey_accounts() == ()
+    assert session.survey_with_profiles() == ((), frozenset())
     assert seen == {
         "own_container": own_container,
         "user_dollar": user_dollar,

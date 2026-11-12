@@ -142,7 +142,7 @@ def test_the_survey_reads_every_account_and_resolves_default(account: Any) -> No
         (default_lifetime,) = cursor.fetchone()
     expected = "unlimited" if default_lifetime == "UNLIMITED" else int(default_lifetime)
 
-    surveyed = account.survey_accounts()
+    surveyed, _ = account.survey_with_profiles()
     names = [row.name for row in surveyed]
     assert names == sorted(names)
     by_name = {row.name: row for row in surveyed}

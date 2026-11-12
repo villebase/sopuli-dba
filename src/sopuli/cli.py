@@ -5979,8 +5979,10 @@ def report_privileges_command(
     too, and is marked. The report judges nothing.
 
     Exit 0 when every part was read, 1 when a target could not be reached, and 4
-    when a part could not be read, such as without the optional grant on the
-    privilege views. Only Oracle can run this report yet.
+    when a part could not be read, such as without the optional grant on
+    Oracle's privilege views, or another database of a PostgreSQL cluster,
+    which a target cannot see into. Oracle, PostgreSQL and MySQL can run this
+    report.
     """
     document = run.document
     selection = selected(selectors, targets, (), groups, ())
@@ -6083,6 +6085,7 @@ def _privileges_target(
             accounts=privilege_states.per_account(target.name, rows, grants, public=public),
             unreadable=grants.unreadable,
             absent=absent,
+            product=target.target.type,
         )
     finally:
         if session is not None:

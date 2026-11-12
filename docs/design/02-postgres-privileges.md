@@ -249,7 +249,10 @@ Of the UC-5 `report` commands, `report accounts` is built on PostgreSQL
 (#1459), and reads `pg_roles`. Where a `personal_accounts:` rule names a
 `role:`, it also reads that role's members from `pg_auth_members`, as
 `account list` does (#1469). `report history` is built too (#1460), and reads
-no catalog. The privilege report is not built yet (#1411).
+no catalog. `report privileges` is built too (#1481): it walks
+`pg_auth_members` with each grant's options, reads `pg_roles`' attributes, and
+reads the ACLs of every catalog listed below, with `acldefault()` where an ACL
+is NULL (`sopuli/driver/postgres/grants.py`). It needs no grant beyond §2.1.
 This is what the tool account, `LOGIN CREATEROLE` and nothing else, can read
 for them.
 It was measured on 13.23 to 18.6 (`10_report_read_probe.py`, #1443). Each

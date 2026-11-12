@@ -2345,7 +2345,7 @@ suspended acme_dev_bob@localhost on 1 of 1 targets
 
 `report accounts` reads every account on each target and checks it against the
 `reports:` rules (`design/01-configuration.md` §8a). It changes nothing. It
-runs on every product. `report privileges` runs on Oracle and MySQL,
+runs on every product. `report privileges` runs on Oracle, PostgreSQL and MySQL,
 and `report history` on every product.
 
 Make two accounts on a profile whose passwords expire after 180 days, and one
@@ -2778,6 +2778,59 @@ mysql-84  (8.4.13, 1 account)
     schemas: SELECT on acme (database, via acme_read@%, not checked whether active at login)
   not checked: whether a role is a default role, and so active without SET ROLE: the tool account has no SELECT on mysql.default_roles, the optional grant of 02-mysql-privileges.md §2.1
 ```
+
+On *A PostgreSQL cluster*, the report needs no grant beyond `CREATEROLE`. Make
+the same shape as `postgres`, with one grant `WITH INHERIT FALSE` and one
+built-in role:
+
+```sql
+CREATE ROLE acme_rp_owner;
+CREATE ROLE acme_rp_read;
+CREATE ROLE acme_rp_app;
+CREATE ROLE acme_rp_batch;
+CREATE ROLE acme_rp_user LOGIN;
+CREATE SCHEMA acme_rp AUTHORIZATION acme_rp_owner;
+SET ROLE acme_rp_owner;
+CREATE TABLE acme_rp.orders (n int);
+CREATE TABLE acme_rp.items (n int);
+CREATE FUNCTION acme_rp.post_order() RETURNS void LANGUAGE sql AS 'SELECT';
+REVOKE EXECUTE ON FUNCTION acme_rp.post_order() FROM PUBLIC;
+GRANT USAGE ON SCHEMA acme_rp TO acme_rp_read, acme_rp_batch, acme_rp_user;
+GRANT SELECT ON acme_rp.orders, acme_rp.items TO acme_rp_read;
+GRANT EXECUTE ON FUNCTION acme_rp.post_order() TO acme_rp_app;
+GRANT INSERT ON acme_rp.orders TO acme_rp_batch;
+GRANT SELECT ON acme_rp.orders TO acme_rp_user;
+GRANT UPDATE (n) ON acme_rp.items TO acme_rp_user;
+ALTER DEFAULT PRIVILEGES IN SCHEMA acme_rp GRANT SELECT ON TABLES TO acme_rp_read;
+RESET ROLE;
+GRANT acme_rp_read TO acme_rp_app;
+GRANT acme_rp_app TO acme_rp_user;
+GRANT acme_rp_batch TO acme_rp_user WITH INHERIT FALSE;
+GRANT pg_read_all_stats TO acme_rp_user;
+```
+
+With `postgres.yaml`'s target and a rule naming `acme_rp_user`:
+
+```
+$ sopuli --config postgres.yaml report privileges --account acme_rp_user
+pg-dev  (16.15, 1 account)
+  acme_rp_user  (technical)
+    roles: acme_rp_app (inherit, set), acme_rp_batch (no inherit, set), pg_read_all_stats (inherit, set)
+    system: pg_read_all_stats (predefined role, via pg_read_all_stats)
+    objects: EXECUTE on 3 functions (0 direct, 3 via roles); INSERT on 1 table (0 direct, 1 via roles, 1 only after SET ROLE); SELECT on 2 tables (1 direct, 1 via roles); SELECT on 2 views (0 direct, 2 via roles); default for acme_rp_owner: SELECT on 1 table (0 direct, 1 via roles)
+    columns: UPDATE on 1 column (1 direct, 0 via roles)
+    schemas: USAGE on acme_rp (schema, direct, via acme_rp_app > acme_rp_read, via acme_rp_batch)
+  not checked: the schemas and objects of the cluster's other databases were not read (sopuli): a target reads only the database it connects to; a target declared for another database reports on that one
+```
+
+It exits 4: the stack's cluster has a second database, `sopuli`, which a
+target on `postgres` cannot see into. `INSERT` comes through the grant
+`WITH INHERIT FALSE`, so the account has it only after `SET ROLE
+acme_rp_batch`. `pg_read_all_stats` gives privileges no ACL shows, so it is
+listed under its own name, and the functions and views it is granted on are
+counted too. The default privilege is what `acme_rp_owner`'s future tables
+will grant. `--detail` lists each one, with `KIND` naming the level, such as
+`object (default for acme_rp_owner)`.
 
 `report history` shows when each password the tool manages was rotated or
 reset, from the store's versions, with the database's own date of the last

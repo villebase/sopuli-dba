@@ -106,7 +106,8 @@ class FakeSession:
         return (SurveyedAccount(APP, "OPEN", False, "DEFAULT", False, False, 180, 10, 0),)
 
     def survey_with_profiles(self) -> tuple[tuple[SurveyedAccount, ...], frozenset[str]]:
-        # The protocol the report asks for, as every product's session has it.
+        # The protocol the report asks for, as every product's session has it;
+        # through survey_accounts, so a test can replace that one method.
         return self.survey_accounts(), frozenset({"DEFAULT"})
 
     def survey_privileges(self, accounts: Sequence[str], *, public: bool) -> GrantSurvey:
@@ -460,3 +461,45 @@ def test_a_common_account_in_a_pdb_keeps_its_privileges_read(
     assert result.exit_code == ExitCode.SUCCESS, result.output
     asked, _ = session["session"].asked
     assert "C##ACME_MONITOR" in asked
+
+
+def test_postgresql_names_its_membership_options_and_set_role() -> None:
+    """A role shows INHERIT and SET, and a path that does not inherit "needs SET
+    ROLE": PostgreSQL's words, where Oracle's are "default" and "not a default
+    role" (#1481)."""
+    from sopuli.output import privileges_view
+    from sopuli.report_accounts import AccountRow
+    from sopuli.report_privileges import per_account
+
+    grants = GrantSurvey(
+        roles=(
+            RoleGrant(APP, "acme_rp_app", False, True, "NONE", set_option=True),
+            RoleGrant(APP, "acme_rp_batch", False, False, "NONE", set_option=True),
+        ),
+        system=(),
+        objects=(row("INSERT", "T1", path=("acme_rp_batch",), first_role_default=False),),
+        columns=(),
+        schemas=(),
+    )
+    row_ = AccountRow("pg-dev", APP, "technical", None, None, (), "REPORT_OK")
+    accounts = per_account("pg-dev", [row_], grants)
+
+    def text(product: str) -> str:
+        report = privileges_view.TargetPrivileges(
+            target="pg-dev", release="16.15", accounts=accounts, product=product
+        )
+        return click.unstyle(privileges_view.render([report], detail=False))
+
+    postgres = text("postgresql")
+    assert "acme_rp_app (inherit, set), acme_rp_batch (no inherit, set)" in postgres
+    assert "INSERT on 1 table (0 direct, 1 via roles, 1 only after SET ROLE)" in postgres
+    assert "through a role that is not a default role" in text("oracle")
+    (entry,) = privileges_view.build_results(
+        [privileges_view.TargetPrivileges(target="pg-dev", accounts=accounts, product="postgresql")]
+    )
+    assert [role["set_option"] for role in entry["privileges"]["roles"]] == [True, True]
+
+
+def test_oracle_roles_have_no_set_option(write_config: WriteConfig, session: Any) -> None:
+    entry = json_run(write_config)["results"][0]
+    assert {role["set_option"] for role in entry["privileges"]["roles"]} == {None}

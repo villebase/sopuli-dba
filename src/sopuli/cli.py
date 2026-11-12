@@ -5852,7 +5852,6 @@ def report_accounts_command(
     return report_view.render(reports, show_all=show_all)
 
 
-
 def _role_key(role: str) -> str:
     """A MySQL or MariaDB role as the server tells roles apart: the name as
     written, and a host part, where there is one, without case."""

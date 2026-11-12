@@ -2776,7 +2776,7 @@ mysql-84  (8.4.13, 1 account)
     objects: routine: EXECUTE on 1 procedure (1 direct, 0 via roles); table: INSERT on 2 tables (1 direct, 1 via roles, 1 through a role not checked for being active at login); table: SELECT on 1 table (0 direct, 1 via roles, 1 through a role not checked for being active at login)
     columns: column: UPDATE on 1 column (1 direct, 0 via roles)
     schemas: SELECT on acme (database, via acme_read@%, not checked whether active at login)
-  not checked: whether a role is active without SET ROLE: the tool account has no SELECT on mysql.default_roles, the optional grant of 02-mysql-privileges.md §2.1
+  not checked: whether a role is a default role, and so active without SET ROLE: the tool account has no SELECT on mysql.default_roles, the optional grant of 02-mysql-privileges.md §2.1
 ```
 
 `report history` shows when each password the tool manages was rotated or

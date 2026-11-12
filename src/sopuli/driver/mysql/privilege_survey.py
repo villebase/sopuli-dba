@@ -13,8 +13,9 @@ The levels, as :attr:`~sopuli.driver.grants.GrantRow.level` names them:
 - ``global static``: the ``*_priv`` columns of ``mysql.user``, and
   ``global dynamic``: ``mysql.global_grants``. The ``system`` part.
 - ``database``: ``mysql.db``. The ``schemas`` part, with the schema as the
-  owner. A schema grant may name a pattern, such as ``acme%``, and the
-  owner is the pattern as stored.
+  owner, as stored. With ``partial_revokes`` off it may be a pattern, such
+  as ``acme%``. With it on, the server reads ``%`` and ``_`` as themselves,
+  so it is one schema's name.
 - ``table``, ``routine`` and ``proxy``: ``tables_priv``, ``procs_priv`` and
   ``proxies_priv``. The ``objects`` part. ``tables_priv`` does not say
   whether the object is a table or a view, so its type is ``TABLE``. A proxy
@@ -22,7 +23,9 @@ The levels, as :attr:`~sopuli.driver.grants.GrantRow.level` names them:
 - ``column``: ``columns_priv``. The ``columns`` part.
 
 ``GRANT OPTION`` is listed as a privilege of its level, as ``SHOW GRANTS``
-spells it, and each privilege of the same holder and level is grantable.
+spells it, and each privilege of the same holder and level is grantable. A
+column grant's ``GRANT OPTION`` is kept on its table in ``tables_priv``, so
+it makes the table's column privileges grantable too.
 
 **Not checked:**
 
@@ -32,9 +35,10 @@ spells it, and each privilege of the same holder and level is grantable.
   privilege may not reach every schema. The ``system`` part is ``None``.
 - **default roles, without the optional ``SELECT`` on
   ``mysql.default_roles``** (M4). Without it, the server refuses the read,
-  ``1142``, and whether a role is active without ``SET ROLE`` is unknown, not
-  checked. With ``@@activate_all_roles_on_login`` on, every role is active
-  and the table is not read.
+  ``1142``, and whether a role is a default role is not checked, nor,
+  unless ``@@activate_all_roles_on_login`` is on, whether it is active
+  without ``SET ROLE``. The table is read in either case, so the roles list
+  says which are default roles.
 """
 
 from __future__ import annotations
@@ -78,8 +82,8 @@ PARTIAL_REVOKES = (
     "which the tool account does not read"
 )
 NO_DEFAULTS = (
-    "whether a role is active without SET ROLE: the tool account has no SELECT on "
-    f"{DEFAULTS_TABLE}, the optional grant of 02-mysql-privileges.md §2.1"
+    "whether a role is a default role, and so active without SET ROLE: the tool account "
+    f"has no SELECT on {DEFAULTS_TABLE}, the optional grant of 02-mysql-privileges.md §2.1"
 )
 
 
@@ -161,26 +165,29 @@ def read_objects(cursor: Any) -> list[Held]:
         names = _flagged(DB_PRIV_COLUMNS, flags)
         held += _level(Principal(text(user), text(host)), SCHEMA, DATABASE, names, owner=text(db))
     cursor.execute(TABLES)
+    # A column grant's GRANT OPTION is kept in tables_priv, on its table, and
+    # not in columns_priv (measured on 8.4.13, #1482).
+    grant_option: set[tuple[tuple[str, str], str, str]] = set()
     for user, host, db, table, privileges in cursor.fetchall():
+        holder = Principal(text(user), text(host))
+        names = list(set_members(privileges))
+        if GRANT_OPTION in names:
+            grant_option.add((holder.key(), text(db), text(table)))
         held += _level(
-            Principal(text(user), text(host)),
-            OBJECT,
-            TABLE,
-            list(set_members(privileges)),
-            owner=text(db),
-            name=text(table),
-            object_type="TABLE",
+            holder, OBJECT, TABLE, names, owner=text(db), name=text(table), object_type="TABLE"
         )
     cursor.execute(COLUMNS)
     for user, host, db, table, column, privileges in cursor.fetchall():
+        holder = Principal(text(user), text(host))
         held += _level(
-            Principal(text(user), text(host)),
+            holder,
             COLUMN,
             COLUMN_LEVEL,
             list(set_members(privileges)),
             owner=text(db),
             name=text(table),
             column=text(column),
+            grantable=(holder.key(), text(db), text(table)) in grant_option,
         )
     cursor.execute(ROUTINES)
     for user, host, db, routine, kind, privileges in cursor.fetchall():
@@ -219,10 +226,11 @@ def _level(
     name: str | None = None,
     object_type: str | None = None,
     column: str | None = None,
+    grantable: bool = False,
 ) -> list[Held]:
     """One :class:`Held` per privilege of one grant, each grantable where the
-    grant holds ``GRANT OPTION``."""
-    grantable = GRANT_OPTION in names
+    grant holds ``GRANT OPTION``, or where ``grantable`` says so."""
+    grantable = grantable or GRANT_OPTION in names
     return [
         Held(
             holder=holder,

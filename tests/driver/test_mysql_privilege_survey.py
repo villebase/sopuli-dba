@@ -183,7 +183,22 @@ def test_any_other_error_on_the_default_roles_fails_the_read() -> None:
         session.survey_privileges(["acme_app@%"], public=False)
 
 
-def test_with_every_role_active_the_default_roles_are_not_read() -> None:
+def test_with_every_role_active_the_default_roles_are_still_read() -> None:
+    cursor = _Cursor(
+        all_active="ON",
+        users=[APP, REPORT],
+        edges=[("acme_report", "%", "acme_app", "%", "N")],
+        tables=[("acme_report", "%", "acme", "orders", "Select")],
+    )
+    found = survey(cursor)
+
+    assert [row.first_role_default for row in found.objects or ()] == [True]
+    (role,) = found.roles
+    assert (role.default_role, role.default_role_checked) == (False, True)
+    assert found.unreadable == ()
+
+
+def test_with_every_role_active_a_refused_default_roles_read_has_its_reason() -> None:
     cursor = _Cursor(
         all_active="ON",
         users=[APP, REPORT],
@@ -192,9 +207,23 @@ def test_with_every_role_active_the_default_roles_are_not_read() -> None:
     )
     found = survey(cursor, refuse_defaults=True)
 
-    assert reads.DEFAULTS not in cursor.queries
+    # Every role is active, so each path is; only the default status is unread.
     assert [row.first_role_default for row in found.objects or ()] == [True]
-    assert found.unreadable == ()
+    assert found.roles[0].default_role_checked is False
+    assert found.unreadable == (reads.NO_DEFAULTS,)
+
+
+def test_a_column_grant_with_grant_option_is_grantable() -> None:
+    # GRANT SELECT (total) ON acme.orders ... WITH GRANT OPTION, as 8.4.13 keeps it.
+    cursor = _Cursor(
+        users=[APP],
+        tables=[("acme_app", "%", "acme", "orders", "Grant")],
+        columns=[("acme_app", "%", "acme", "orders", "total", "Select")],
+    )
+    found = survey(cursor)
+
+    (column,) = found.columns or ()
+    assert (column.privilege, column.column, column.grantable) == ("SELECT", "total", True)
 
 
 def test_a_mandatory_role_reaches_every_account_and_one_that_does_not_exist_is_left_out() -> None:

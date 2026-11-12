@@ -357,13 +357,15 @@ class MysqlSession(ClosesConnection):
         partial, all_active = self._read_grants(privilege_module.read_settings)
         defaults = None
         reasons: list[str] = []
-        if not all_active:
-            try:
-                defaults = self._read(privilege_module.read_defaults)
-            except DriverError as error:
-                if error.code != str(TABLE_ACCESS_DENIED):
-                    raise
-                reasons.append(privilege_module.NO_DEFAULTS)
+        # Read also where every role is active at login: the roles list says
+        # which are default roles, and a role whose status is not read gets
+        # this reason.
+        try:
+            defaults = self._read_grants(privilege_module.read_defaults)
+        except DriverError as error:
+            if error.code != str(TABLE_ACCESS_DENIED):
+                raise
+            reasons.append(privilege_module.NO_DEFAULTS)
 
         def read(cursor: Any) -> GrantSurvey:
             held = privilege_module.read_objects(cursor)

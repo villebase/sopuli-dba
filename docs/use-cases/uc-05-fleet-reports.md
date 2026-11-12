@@ -323,8 +323,8 @@ MariaDB yet (#1481, #1483).
 the grant tables, with the grants of `02-mysql-privileges.md` §2.1:
 
 - *system*: `global static` and `global dynamic`;
-- *schemas*: `database`, with the schema as stored, a pattern such as
-  `acme%` included;
+- *schemas*: `database`, with the schema as stored: a pattern such as
+  `acme%`, or, where `@@partial_revokes` is on, one schema's name;
 - *objects*: `table`, `routine` and `proxy`, where a proxy's object is the
   account it proxies;
 - *columns*: `column`.
@@ -345,7 +345,9 @@ reason, and the run exits 4:
   `active_at_login_checked: false`. Without the grant, each role in the roles
   list reads *default not checked*, with `default_role_checked: false`.
 
-MySQL has no grants to everyone, so `--public` adds nothing there.
+MySQL has no grants to everyone. A mandatory role is the nearest thing,
+and it is listed under each account, with its path. So `--public` lists
+`PUBLIC` holding nothing, which is what the server keeps.
 
 ---
 

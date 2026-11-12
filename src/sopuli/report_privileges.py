@@ -91,6 +91,7 @@ def collapse(rows: Sequence[GrantRow]) -> tuple[Privilege, ...]:
         grouped.setdefault(key, []).append(row)
     collapsed = []
     for (kind, level, privilege, owner, name, object_type, column), group in grouped.items():
+        active = _active(group)
         collapsed.append(
             Privilege(
                 kind=str(kind),
@@ -101,8 +102,8 @@ def collapse(rows: Sequence[GrantRow]) -> tuple[Privilege, ...]:
                 object_type=_text(object_type),
                 column=_text(column),
                 paths=tuple(sorted({row.path for row in group})),
-                via_default_role=_active(group) is True,
-                active_at_login_checked=_active(group) is not None,
+                via_default_role=active is True,
+                active_at_login_checked=active is not None,
                 grantable=any(row.grantable for row in group),
             )
         )

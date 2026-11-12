@@ -4139,8 +4139,9 @@ def account_list_command(
         rows.extend(found)
         errors += failed
         unanswered += sum(1 for row in found if row.target_failed)
-        # MySQL only. What `account list` says of a lock and a block on MariaDB,
-        # which it cannot read at all, is #1272's (#1267, decision 2).
+        # MySQL only. On MariaDB the lock is shown from the optional view where
+        # it is readable (#1491), and a block after failed logins is in no
+        # place the tool reads; what `account list` says of that is #1272's.
         if target.target.type == MYSQL and any(
             row.state is not None and not row.state.locked for row in found
         ):
@@ -4251,6 +4252,8 @@ def _list_one(
             return [_unreachable_row(target, _finding(error))], 1
 
         named = _declared_names(session, config, target, wanted=wanted)
+        if named:
+            _warn_if_view_broken(run, target, session)
         journal = _open_journal(run, config, unread) if named else None
         rows: list[account_list.Row] = []
         failed = 0
@@ -4512,11 +4515,22 @@ def _describe_row(
         account=state.name if state is not None else name,
         target=target.name,
         rule=admitted,
-        state=state,
+        # The lock is shown after the guardrails ran on what `describe_user`
+        # gave, so the notices say what a verb would do, and a verb does not
+        # read the view (#1491).
+        state=_with_view_lock(session, state),
         reset_at=_reset_at(journal, config, target, name, unread=unread),
         notices=tuple(notices),
         product=target.target.type,
     )
+
+
+def _with_view_lock(session: Any, state: UserState | None) -> UserState | None:
+    """``state``, locked where MariaDB's optional view says so (#1491).
+    Only a :class:`~sopuli.driver.survey.StateView` has one."""
+    if state is None or not isinstance(session, StateView):
+        return state
+    return session.report_lock(state)
 
 
 def _undescribed_row(

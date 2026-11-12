@@ -2282,6 +2282,19 @@ root@localhost          mariadb-dev  role 'acme_dev_team'  OPEN    -            
 ...
 ```
 
+`STATUS` says nothing of the lock here: without the optional view `sopuli.account_state` (§9a),
+`OPEN` means only that nobody expired the password. With the view installed,
+a locked account shows `LOCKED`:
+
+```
+$ sopuli --config mariadb.yaml account list
+ACCOUNT                 TARGET       DECLARED BY           STATUS  DB_PW_CHANGED  RESET_AT
+acme_dev_alice@%        mariadb-dev  role 'acme_dev_team'  OPEN    -              -
+acme_dev_bob@localhost  mariadb-dev  role 'acme_dev_team'  LOCKED  -              -
+root@localhost          mariadb-dev  role 'acme_dev_team'  OPEN    -              -
+...
+```
+
 `account suspend --account 'root@localhost'` reports `SKIPPED` with the same
 reason. A reset sets the value for the account's own plugin:
 

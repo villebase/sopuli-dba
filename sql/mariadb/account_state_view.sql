@@ -14,10 +14,11 @@
 -- nothing else. The tool account reads it with SELECT on the view, never on
 -- mysql.global_priv (#1457, measured by 16_definer_view_probe.py, #1479).
 --
--- Who reads it. report accounts (the lock and the lifetime) and report
--- history (the time of the last change). No verb that changes an account
--- reads it. Without the view those are "not checked",
--- with the reason, and the reports still run.
+-- Who reads it. report accounts (the lock and the lifetime), report
+-- history (the time of the last change) and account list (the lock). No
+-- verb that changes an account reads it. Without the view the reports say
+-- "not checked", with the reason, and still run; account list shows OPEN or
+-- EXPIRED, which say nothing of the lock.
 --
 -- What it creates, each step safe to run again:
 --   1. the schema sopuli, holding only this view;

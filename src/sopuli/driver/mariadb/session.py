@@ -465,8 +465,9 @@ class MariadbSession(ClosesConnection):
         :class:`~sopuli.driver.grants.PrivilegeSurvey`. The global level comes
         from the optional view ``sopuli.global_privileges`` where it is read
         (:mod:`~sopuli.driver.mariadb.global_privileges`, #1483, option C), for
-        accounts and ``PUBLIC``; a role has no row there, so where the surveyed
-        accounts hold a role its global level is not checked. Without the view
+        accounts. A role and ``PUBLIC`` have no row there, so where the
+        surveyed accounts hold a role, or ``public`` asks for ``PUBLIC``, their
+        global level is not checked. Without the view
         the global level is not checked (option A). The default roles are an
         optional read (R3): without the column grant the server refuses it,
         ``1143``, and whether a role is active without ``SET ROLE`` is not
@@ -481,12 +482,13 @@ class MariadbSession(ClosesConnection):
             if error.code != str(COLUMN_ACCESS_DENIED):
                 raise
             reasons.append(privilege_module.NO_DEFAULTS)
-        view = self.global_privileges()
+        # Nothing to look up: the view is not read (an empty report).
+        view = self.global_privileges() if accounts or public else GlobalPrivileges(rows={})
 
         def read(cursor: Any) -> GrantSurvey:
+            # Accounts only: USER_PRIVILEGES has no row for PUBLIC, though it
+            # may hold global privileges (measured on 11.8.9), nor for a role.
             holders = [Principal(*split(account)) for account in accounts]
-            if public:
-                holders.append(PUBLIC)
             edges = privilege_module.read_edges(cursor)
             objects = privilege_module.read_objects(cursor)
             if view.rows is None:
@@ -506,7 +508,7 @@ class MariadbSession(ClosesConnection):
                 public=PUBLIC if public else None,
                 named=privilege_module.role_name,
             )
-            if view.rows is not None and survey.roles:
+            if view.rows is not None and (survey.roles or public):
                 survey = replace(
                     survey, unreadable=(*survey.unreadable, global_privileges.NO_ROLE_ROWS)
                 )

@@ -122,25 +122,30 @@ def test_without_the_view_the_global_level_is_not_checked() -> None:
     assert found.unreadable == (f"{reads.GLOBAL_NOT_CHECKED}; {GLOBAL_ABSENT}",)
 
 
-def test_with_the_view_the_global_level_is_read_for_accounts_and_public() -> None:
-    """#1483, C: each account's own rows and PUBLIC's, at level `global`."""
+def test_with_the_view_the_global_level_is_read_for_accounts() -> None:
+    """#1483, C: each account's own rows, at level `global`."""
     view = GlobalPrivileges(
-        rows={
-            "'acme_ops'@'localhost'": (("CONNECTION ADMIN", False), ("PROCESS", True)),
-            "'PUBLIC'@''": (("SHOW DATABASES", False),),
-        }
+        rows={"'acme_ops'@'localhost'": (("CONNECTION ADMIN", False), ("PROCESS", True))}
     )
-    found = survey(_Cursor(), public=True, view=view)
+    found = survey(_Cursor(), view=view)
 
     assert found.system is not None
     rows = {(row.grantee, row.privilege, row.level, row.grantable) for row in found.system}
     assert rows == {
         ("acme_ops@localhost", "CONNECTION ADMIN", "global", False),
         ("acme_ops@localhost", "PROCESS", "global", True),
-        ("PUBLIC", "SHOW DATABASES", "global", False),
     }
-    # No account here holds a role, so nothing is left unchecked.
+    # No account here holds a role, and PUBLIC is not asked for.
     assert found.unreadable == ()
+
+
+def test_with_the_view_publics_global_level_is_not_checked() -> None:
+    """USER_PRIVILEGES has no row for PUBLIC, though PUBLIC can hold a global
+    privilege (measured on 11.8.9): never shown as holding none."""
+    found = survey(_Cursor(), public=True, view=GlobalPrivileges(rows={}))
+
+    assert not any(row.grantee == "PUBLIC" for row in found.system or ())
+    assert NO_ROLE_ROWS in found.unreadable
 
 
 def test_with_the_view_a_roles_global_level_is_not_checked() -> None:

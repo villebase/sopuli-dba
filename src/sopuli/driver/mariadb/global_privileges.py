@@ -133,9 +133,14 @@ def read(cursor: Cursor, *, user: str, host: str) -> GlobalPrivileges:
     found: dict[str, list[tuple[str, bool]]] = {}
     for who, privilege, grantable in rows:
         held = found.setdefault(text(who), [])
-        name = text(privilege)
+        name, option = text(privilege), text(grantable).upper() == "YES"
         if name != USAGE:
-            held.append((name, text(grantable).upper() == "YES"))
+            held.append((name, option))
+        if option and (GRANT_OPTION, True) not in held:
+            # The grant option covers the whole global level, so it is one
+            # privilege of its own, as on the other levels: also where it is
+            # held alone, as USAGE ... WITH GRANT OPTION.
+            held.append((GRANT_OPTION, True))
     if grantee(user, host) not in found:
         # A definer below SELECT on mysql.* answers with its own row alone,
         # and no error (probe 17, GP3).
@@ -149,9 +154,12 @@ LEVEL = "global"
 #: Why a role's global privileges are not checked, where the view was read:
 #: ``USER_PRIVILEGES`` has no row for a role (probe 17).
 NO_ROLE_ROWS = (
-    "a role's global privileges: information_schema.USER_PRIVILEGES, which the optional "
-    f"view {VIEW} reads, has no row for a role"
+    "the global privileges of a role and of PUBLIC: information_schema.USER_PRIVILEGES, "
+    f"which the optional view {VIEW} reads, has no row for either"
 )
+#: The privilege a grantable global grant gives, listed as the other levels
+#: list it (``privilege_reads``), as ``SHOW GRANTS`` spells it.
+GRANT_OPTION = "GRANT OPTION"
 
 
 def held(found: GlobalPrivileges, holders: Iterable[Principal]) -> list[Held]:

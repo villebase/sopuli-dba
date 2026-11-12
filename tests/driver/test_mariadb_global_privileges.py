@@ -70,10 +70,23 @@ def test_each_accounts_privileges_with_usage_left_out() -> None:
     )
     states = read(cursor, user="sopuli_admin", host="%")
     assert cursor.executed == [COLUMNS_QUERY, ROWS_QUERY]
-    assert states.of("acme_ops", "localhost") == (("CONNECTION ADMIN", False), ("PROCESS", True))
+    # A grantable global grant gives GRANT OPTION, listed as a privilege, as
+    # the other levels list it.
+    assert states.of("acme_ops", "localhost") == (
+        ("CONNECTION ADMIN", False),
+        ("GRANT OPTION", True),
+        ("PROCESS", True),
+    )
     # USAGE alone is no privilege; an account with no row holds none.
     assert states.of("acme_app", "%") == ()
     assert states.of("acme_nobody", "%") == ()
+
+
+def test_a_grant_option_held_alone_is_listed() -> None:
+    # GRANT USAGE ON *.* ... WITH GRANT OPTION gives (USAGE, YES), measured
+    # on 11.8.9: the account can pass on any privilege it later gets.
+    states = _read(ALL, [TOOL_ROW, ("'acme_go'@'%'", "USAGE", "YES")])
+    assert states.of("acme_go", "%") == (("GRANT OPTION", True),)
 
 
 def test_no_columns_is_absent() -> None:

@@ -391,7 +391,8 @@ the `mysql.user` view's `default_role`.
 **The global level** comes from the optional view `sopuli.global_privileges`,
 which `sql/mariadb/global_privileges_view.sql` makes (decision C): each
 account's global privileges as the server applies them, at level `global`,
-and `PUBLIC`'s with `--public`. The tool checks the view's columns every
+with `GRANT OPTION` listed as a privilege where the account holds it, as on
+the other levels. The tool checks the view's columns every
 session, and that its own row is there: a definer that reads less than
 `mysql.*` answers with its own row alone, and no error. A view that exists
 and cannot be used is not read, and `SOPULI-W074` says what is wrong. These
@@ -401,8 +402,10 @@ are *not checked*, with the reason, and the run exits 4:
   The privileges split from `SUPER`, such as `CONNECTION ADMIN`, set no
   column the tool account reads, so an account that holds only one would
   read as holding nothing;
-- **a role's global level**, with the view too: the server's list has no row
-  for a role. It is said only where the accounts surveyed hold a role;
+- **the global level of a role and of `PUBLIC`**, with the view too: the
+  server's list has no row for either, though `PUBLIC` can hold a global
+  privilege. It is said only where the accounts surveyed hold a role, or
+  `--public` asks for `PUBLIC`;
 - **whether a role is a default role**, without the optional column grant on
   `default_role`. The roles list then reads *default not checked*.
 

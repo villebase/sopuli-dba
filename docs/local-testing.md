@@ -2945,7 +2945,7 @@ mariadb-dev  (11.8.9, 1 account)
     objects: table: SELECT on 1 table (0 direct, 1 via roles, 1 through a role that is not a default role)
     columns: none
     schemas: none
-  not checked: a role's global privileges: information_schema.USER_PRIVILEGES, which the optional view sopuli.global_privileges reads, has no row for a role
+  not checked: the global privileges of a role and of PUBLIC: information_schema.USER_PRIVILEGES, which the optional view sopuli.global_privileges reads, has no row for either
 ```
 
 `CONNECTION ADMIN` is one of the privileges split from `SUPER`, which only the

@@ -59,6 +59,10 @@ class Held:
     column: str | None = None
     grantable: bool = False
 
+    def __post_init__(self) -> None:
+        if self.kind not in PARTS:
+            raise ValueError(f"a held privilege's kind is one of {PARTS}, not {self.kind!r}")
+
 
 @dataclass(frozen=True)
 class Edge:
@@ -76,12 +80,25 @@ class Activation:
     ``defaults`` holds a ``(member key, role key)`` pair for each default
     role, or is ``None`` where the default roles were not read. ``all_active``
     is MySQL's ``@@activate_all_roles_on_login``. ``mandatory`` are the roles
-    every account holds.
+    every account holds: only those that exist, because MySQL takes a name
+    in ``@@mandatory_roles`` that names no role, and ignores it at login.
     """
 
     defaults: frozenset[tuple[tuple[str, str], tuple[str, str]]] | None
     all_active: bool = False
     mandatory: tuple[Principal, ...] = ()
+
+
+@dataclass(frozen=True, order=True)
+class _FirstRole:
+    """A role ``account`` holds itself, by a grant or as a mandatory role."""
+
+    role: Principal
+    admin_option: bool
+    #: Whether it is a default role, as read; ``False`` where not read.
+    default: bool
+    #: Whether it is active at login; ``None`` where nothing read says.
+    active: bool | None
 
 
 def survey(
@@ -115,22 +132,22 @@ def survey(
     for name in accounts:
         account = Principal(*split(name))
         firsts = _first_roles(account, by_member, activation)
-        for role, admin_option, mandatory in firsts:
-            active = _active(account, role, mandatory, activation)
-            unknown_activation = unknown_activation or active is None
+        for first in firsts:
+            unknown_activation = unknown_activation or first.active is None
             roles.append(
                 RoleGrant(
                     grantee=name,
-                    role=str(role),
-                    admin_option=admin_option,
-                    default_role=_is_default(account, role, activation),
+                    role=str(first.role),
+                    admin_option=first.admin_option,
+                    default_role=first.default,
                     authentication=NO_AUTHENTICATION,
                 )
             )
-        for path, active in _paths(account, firsts, by_member, activation):
+        for path, active in _paths(account, firsts, by_member):
             holder = path[-1] if path else account
             for grant in by_holder.get(holder.key(), ()):
-                rows[grant.kind].append(_row(name, grant, path, active))
+                if grant.kind not in unread:
+                    rows[grant.kind].append(_row(name, grant, path, active))
 
     unreadable = [*reasons]
     if unknown_activation and activation.defaults is not None:
@@ -162,9 +179,9 @@ def _first_roles(
     account: Principal,
     by_member: Mapping[tuple[str, str], list[Edge]],
     activation: Activation,
-) -> list[tuple[Principal, bool, bool]]:
+) -> list[_FirstRole]:
     """The roles granted to ``account``, then each mandatory role not also
-    granted: ``(role, admin option, mandatory)``, sorted by role."""
+    granted, sorted by role, each with whether it is active at login."""
     granted = {
         edge.role.key(): (edge.role, edge.admin_option, False)
         for edge in by_member.get(account.key(), ())
@@ -172,42 +189,38 @@ def _first_roles(
     for role in activation.mandatory:
         if role.key() != account.key():
             granted.setdefault(role.key(), (role, False, True))
-    return sorted(granted.values())
-
-
-def _is_default(account: Principal, role: Principal, activation: Activation) -> bool:
-    """Whether ``role`` is a default role of ``account``; ``False`` where the
-    default roles were not read, which the survey's reasons then say."""
-    if activation.defaults is None:
-        return False
-    return (account.key(), role.key()) in activation.defaults
-
-
-def _active(
-    account: Principal, role: Principal, mandatory: bool, activation: Activation
-) -> bool | None:
-    """Whether ``role``, held by ``account`` itself, is active at login."""
-    if activation.all_active:
-        return True
-    if activation.defaults is None:
-        return None
-    if (account.key(), role.key()) in activation.defaults:
-        return True
-    return None if mandatory else False
+    firsts = []
+    for role, admin_option, mandatory in granted.values():
+        default = (
+            activation.defaults is not None and (account.key(), role.key()) in activation.defaults
+        )
+        active: bool | None
+        if activation.all_active or default:
+            active = True
+        elif activation.defaults is None or mandatory:
+            # Not read, or a mandatory role that one release activates at
+            # login and two do not (11_role_activation_probe.py).
+            active = None
+        else:
+            active = False
+        firsts.append(_FirstRole(role, admin_option, default, active))
+    return sorted(firsts)
 
 
 def _paths(
     account: Principal,
-    firsts: Sequence[tuple[Principal, bool, bool]],
+    firsts: Sequence[_FirstRole],
     by_member: Mapping[tuple[str, str], list[Edge]],
-    activation: Activation,
 ) -> list[tuple[tuple[Principal, ...], bool | None]]:
     """Every path from ``account``, ``()`` first, each with whether its first
-    role is active at login (``None`` for the account's own grants)."""
+    role is active at login (``None`` for the account's own grants).
+
+    One path per row is the contract, as Oracle's recursive query gives it,
+    so a role reached by two paths gives two."""
     found: list[tuple[tuple[Principal, ...], bool | None]] = [((), None)]
-    for role, _admin, mandatory in firsts:
-        active = _active(account, role, mandatory, activation)
-        pending: list[tuple[Principal, ...]] = [(role,)]
+    for first in firsts:
+        active = first.active
+        pending: list[tuple[Principal, ...]] = [(first.role,)]
         while pending:
             path = pending.pop()
             found.append((path, active))

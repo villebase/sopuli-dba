@@ -46,8 +46,11 @@ class GrantRow:
 
     ``path`` lists the roles from the grantee down to the role that holds the
     privilege, and is ``()`` for a direct grant. ``first_role_default`` is
-    whether ``path[0]`` is a default role of the grantee, so the privilege is
-    active without ``SET ROLE``; it is ``None`` for a direct grant.
+    whether ``path[0]`` is active at login, so the privilege is held without
+    ``SET ROLE``: a default role of the grantee, or any role where the product
+    activates every role at login, as MySQL's ``activate_all_roles_on_login``
+    does. It is ``None`` for a direct grant, and for a path the target cannot
+    say this for, such as one whose default roles were not read.
     ``grantable`` is whether the holder may grant it on: ``GRANTABLE`` for an
     object or column privilege, ``ADMIN_OPTION`` for a system or schema
     privilege, on the last grant of the path. ``level`` is the product's own

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from sopuli.driver.grants import COLUMN, OBJECT, SCHEMA, SYSTEM
 from sopuli.driver.mysql_family.accounts import Principal
 from sopuli.driver.mysql_family.privilege_survey import (
@@ -200,3 +202,16 @@ def test_an_account_with_nothing_has_empty_parts() -> None:
     found = survey(["acme_app@%"], [], [grant(MID)], Activation(defaults()))
     assert (found.system, found.schemas, found.objects, found.columns) == ((), (), (), ())
     assert found.roles == ()
+
+
+def test_a_held_privilege_of_no_known_part_is_refused() -> None:
+    with pytest.raises(ValueError, match="routine"):
+        Held(holder=APP, kind="routine", level="routine", privilege="EXECUTE")
+
+
+def test_all_roles_active_at_login_is_not_a_default_role() -> None:
+    found = survey(["acme_app@%"], NESTED, [grant(MID)], Activation(None, all_active=True))
+    assert found.objects is not None
+    assert [row.first_role_default for row in found.objects] == [True]
+    # The roles line says what was read: the role is not a default role.
+    assert found.roles[0].default_role is False

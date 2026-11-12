@@ -215,3 +215,15 @@ def test_all_roles_active_at_login_is_not_a_default_role() -> None:
     assert [row.first_role_default for row in found.objects] == [True]
     # The roles line says what was read: the role is not a default role.
     assert found.roles[0].default_role is False
+
+
+def test_a_mysql_role_at_an_empty_host_keeps_its_at_sign() -> None:
+    """MySQL can make a role at host '', and `r` alone would name `r@%` there,
+    another role. The engine names a role `user@host` unless the driver
+    passes its own naming, as MariaDB's does for its hostless roles."""
+    empty = Principal("acme_bare", "")
+    edges = [Edge(member=APP, role=empty, admin_option=False)]
+    found = survey(["acme_app@%"], edges, [grant(empty)], Activation(defaults()))
+    assert [role.role for role in found.roles] == ["acme_bare@"]
+    assert found.objects is not None
+    assert [row.path for row in found.objects] == [("acme_bare@",)]

@@ -476,14 +476,18 @@ class MariadbSession(ClosesConnection):
             reasons.append(privilege_module.NO_DEFAULTS)
 
         def read(cursor: Any) -> GrantSurvey:
+            edges = privilege_module.read_edges(cursor)
             return privilege_rows.survey(
                 accounts,
-                privilege_module.read_edges(cursor),
+                edges,
                 privilege_module.read_objects(cursor),
-                privilege_rows.Activation(defaults=defaults),
+                privilege_rows.Activation(
+                    defaults=defaults, always_active=privilege_module.public_reach(edges)
+                ),
                 unread={SYSTEM: privilege_module.GLOBAL_NOT_CHECKED},
                 reasons=reasons,
                 public=PUBLIC if public else None,
+                named=privilege_module.role_name,
             )
 
         return self._read_grants(read)

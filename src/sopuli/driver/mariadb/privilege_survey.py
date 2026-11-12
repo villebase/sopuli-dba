@@ -19,11 +19,15 @@ The levels, as :attr:`~sopuli.driver.grants.GrantRow.level` names them:
 **Roles.** ``mysql.roles_mapping`` holds each grant of a role. A role has no
 host, so it is named alone. An account's default role is the ``mysql.user``
 view's ``default_role``: it is active at login, and so is every role it
-holds. Any other role is not active until ``SET ROLE``.
+holds. The server takes only a role granted to the account itself as its
+default: one held through another role is refused, ``1959`` (checked on
+10.11.19, 11.4.13, 11.8.9 and 12.3.3). Any other role is not active until
+``SET ROLE``, unless ``PUBLIC`` reaches it.
 
-**``PUBLIC``** is a role every account holds, always active (RR3). Its grants
-are rows whose user is ``PUBLIC`` and whose host is empty (RE3). They are
-listed once, under ``PUBLIC``, when the report asks for them.
+**``PUBLIC``** is a role every account holds, always active (RR3), and so is
+every role it reaches, also where an account holds that role itself. Its
+grants are rows whose user is ``PUBLIC`` and whose host is empty (RE3). They
+are listed once, under ``PUBLIC``, when the report asks for them.
 
 **Not checked:**
 
@@ -43,17 +47,12 @@ listed once, under ``PUBLIC``, when the report asks for them.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Any
 
-from sopuli.driver.grants import SCHEMA
-from sopuli.driver.mariadb.admin import db_columns, privilege
+from sopuli.driver.mariadb.admin import PUBLIC, db_columns, privilege
 from sopuli.driver.mysql_family.accounts import Principal, text
-from sopuli.driver.mysql_family.privilege_reads import (
-    DATABASE,
-    level,
-    read_object_tables,
-    yes,
-)
+from sopuli.driver.mysql_family.privilege_reads import read_object_tables, read_schema_rows, yes
 from sopuli.driver.mysql_family.privilege_survey import Edge, Held
 
 EDGES = "select User, Host, Role, Admin_option from mysql.roles_mapping"
@@ -99,10 +98,29 @@ def read_defaults(cursor: Any) -> frozenset[tuple[tuple[str, str], tuple[str, st
 def read_objects(cursor: Any) -> list[Held]:
     """The ``database``, ``table``, ``column``, ``routine`` and ``proxy`` levels."""
     columns = db_columns(cursor)
-    held: list[Held] = []
-    cursor.execute(SCHEMA_ROWS.format(columns=", ".join(columns)))
-    for user, host, db, *flags in cursor.fetchall():
-        pairs = zip(columns, flags, strict=True)
-        names = [privilege(column) for column, flag in pairs if yes(flag)]
-        held += level(Principal(text(user), text(host)), SCHEMA, DATABASE, names, owner=text(db))
-    return held + read_object_tables(cursor)
+    query = SCHEMA_ROWS.format(columns=", ".join(columns))
+    return read_schema_rows(cursor, query, columns, privilege) + read_object_tables(cursor)
+
+
+def role_name(role: Principal) -> str:
+    """A role as the report names it: alone, because a MariaDB role has no
+    host (``05_identity_grants_probe.py``, TG7) and ``GRANT`` names it so.
+    ``PUBLIC`` is a role too."""
+    return role.user
+
+
+def public_reach(edges: Iterable[Edge]) -> frozenset[tuple[str, str]]:
+    """The key of each role ``PUBLIC`` holds, directly or through another
+    role. Each is active at login for every account (RR3), whatever the
+    account's default role."""
+    by_member: dict[tuple[str, str], list[Principal]] = {}
+    for edge in edges:
+        by_member.setdefault(edge.member.key(), []).append(edge.role)
+    reached: set[tuple[str, str]] = set()
+    pending = list(by_member.get(PUBLIC.key(), ()))
+    while pending:
+        role = pending.pop()
+        if role.key() not in reached:
+            reached.add(role.key())
+            pending += by_member.get(role.key(), ())
+    return frozenset(reached)

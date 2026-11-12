@@ -42,10 +42,15 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Any
 
-from sopuli.driver.grants import SCHEMA, SYSTEM
+from sopuli.driver.grants import SYSTEM
 from sopuli.driver.mysql.admin import DB_PRIV_COLUMNS, PRIV_COLUMNS, read_mandatory_roles
 from sopuli.driver.mysql_family.accounts import Principal, text
-from sopuli.driver.mysql_family.privilege_reads import DATABASE, level, read_object_tables, yes
+from sopuli.driver.mysql_family.privilege_reads import (
+    level,
+    read_object_tables,
+    read_schema_rows,
+    yes,
+)
 from sopuli.driver.mysql_family.privilege_survey import Activation, Edge, Held
 
 GLOBAL_STATIC = "global static"
@@ -144,11 +149,7 @@ def read_system(cursor: Any) -> list[Held]:
 
 def read_objects(cursor: Any) -> list[Held]:
     """The ``database``, ``table``, ``column``, ``routine`` and ``proxy`` levels."""
-    held: list[Held] = []
-    cursor.execute(SCHEMA_ROWS)
-    for user, host, db, *flags in cursor.fetchall():
-        names = _flagged(DB_PRIV_COLUMNS, flags)
-        held += level(Principal(text(user), text(host)), SCHEMA, DATABASE, names, owner=text(db))
+    held = read_schema_rows(cursor, SCHEMA_ROWS, DB_PRIV_COLUMNS, PRIV_COLUMNS.__getitem__)
     return held + read_object_tables(cursor)
 
 

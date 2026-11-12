@@ -137,25 +137,57 @@ def test_a_default_role_and_the_role_it_holds_are_active_and_another_is_not() ->
     }
 
 
-@pytest.mark.parametrize("code", ["1143", "1142"])
-def test_refused_default_roles_are_not_checked(code: str) -> None:
-    """Without the optional column grant the server answers 1143 (RE2); 1142
-    is the table's refusal and fails the read."""
-    cursor = _Cursor(
+def _one_role() -> _Cursor:
+    return _Cursor(
         edges=[("acme_app", "%", "acme_mid", "N")],
         tables=[("acme_mid", "", "acme", "orders", "Select")],
     )
-    if code != "1143":
-        with pytest.raises(DriverError):
-            survey(cursor, refuse_defaults=code)
-        return
-    found = survey(cursor, refuse_defaults=code)
+
+
+def test_a_table_refusal_of_the_default_roles_fails_the_read() -> None:
+    """1142 refuses the table, not the optional column: the grants §2.1
+    requires are missing, so the read fails, as any other refusal does."""
+    with pytest.raises(DriverError) as raised:
+        survey(_one_role(), refuse_defaults="1142")
+    assert raised.value.code == "1142"
+
+
+def test_refused_default_roles_are_not_checked() -> None:
+    """Without the optional column grant the server answers 1143 (RE2)."""
+    found = survey(_one_role(), refuse_defaults="1143")
 
     (row,) = found.objects or ()
     assert row.first_role_default is None
     (role,) = found.roles
     assert (role.default_role, role.default_role_checked) == (False, False)
     assert reads.NO_DEFAULTS in found.unreadable
+
+
+def test_a_role_public_reaches_is_active_for_an_account_that_holds_it_too() -> None:
+    """RR3: a role granted to PUBLIC, or to a role PUBLIC holds, is active at
+    login for every account, so an account that also holds it itself, not as
+    its default role, has it without SET ROLE."""
+    found = survey(
+        _Cursor(
+            edges=[
+                ("PUBLIC", "", "acme_wide", "N"),
+                ("acme_wide", "", "acme_read", "N"),
+                ("acme_app", "%", "acme_read", "N"),
+                ("acme_ops", "localhost", "acme_mid", "N"),
+            ],
+            defaults=[],
+            tables=[
+                ("acme_read", "", "acme", "orders", "Select"),
+                ("acme_mid", "", "acme", "orders", "Insert"),
+            ],
+        )
+    )
+
+    paths = {(r.grantee, r.path, r.first_role_default) for r in found.objects or ()}
+    assert paths == {
+        ("acme_app@%", ("acme_read",), True),
+        ("acme_ops@localhost", ("acme_mid",), False),
+    }
 
 
 def test_public_is_listed_once_when_asked_for() -> None:

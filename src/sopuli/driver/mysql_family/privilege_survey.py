@@ -28,7 +28,7 @@ takes. Nothing here connects or imports PyMySQL.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 
 from sopuli.driver.grants import COLUMN, OBJECT, SCHEMA, SYSTEM, GrantRow, GrantSurvey, RoleGrant
@@ -39,13 +39,6 @@ NO_AUTHENTICATION = "NONE"
 #: The grantee MariaDB's ``PUBLIC`` is listed under, as the privilege report
 #: names it on every product.
 PUBLIC_GRANTEE = "PUBLIC"
-
-
-def role_name(role: Principal) -> str:
-    """A role as the report names it: ``user@host`` on MySQL, and the name
-    alone on MariaDB, where a role has no host (``05_identity_grants_probe.py``,
-    TG7) and ``GRANT`` names it so."""
-    return str(role) if role.host else role.user
 
 
 PARTS = (SYSTEM, SCHEMA, OBJECT, COLUMN)
@@ -93,11 +86,15 @@ class Activation:
     is MySQL's ``@@activate_all_roles_on_login``. ``mandatory`` are the roles
     every account holds: only those that exist, because MySQL takes a name
     in ``@@mandatory_roles`` that names no role, and ignores it at login.
+    ``always_active`` holds the key of each role active at login for every
+    account, whatever its default role: on MariaDB, each role ``PUBLIC``
+    reaches (``10_role_reads_probe.py``, RR3).
     """
 
     defaults: frozenset[tuple[tuple[str, str], tuple[str, str]]] | None
     all_active: bool = False
     mandatory: tuple[Principal, ...] = ()
+    always_active: frozenset[tuple[str, str]] = frozenset()
 
 
 @dataclass(frozen=True, order=True)
@@ -121,6 +118,7 @@ def survey(
     unread: Mapping[str, str] | None = None,
     reasons: Sequence[str] = (),
     public: Principal | None = None,
+    named: Callable[[Principal], str] = str,
 ) -> GrantSurvey:
     """Every grant ``accounts`` hold, one row per path.
 
@@ -134,6 +132,10 @@ def survey(
     active (``10_role_reads_probe.py``, RR3). Where it is given, its grants
     are listed once, under :data:`PUBLIC_GRANTEE`, as Oracle's are, and not
     on each account's paths. A role granted to it is active at login.
+
+    ``named`` is how a role is named in the roles list and in each path:
+    ``user@host`` by default, as MySQL names a role. MariaDB's driver passes
+    its own, because a MariaDB role has no host.
     """
     unread = dict(unread or {})
     by_member: dict[tuple[str, str], list[Edge]] = {}
@@ -152,7 +154,7 @@ def survey(
             roles.append(
                 RoleGrant(
                     grantee=name,
-                    role=role_name(first.role),
+                    role=named(first.role),
                     admin_option=first.admin_option,
                     default_role=first.default,
                     authentication=NO_AUTHENTICATION,
@@ -163,7 +165,7 @@ def survey(
             holder = path[-1] if path else account
             for grant in by_holder.get(holder.key(), ()):
                 if grant.kind not in unread:
-                    rows[grant.kind].append(_row(name, grant, path, active))
+                    rows[grant.kind].append(_row(name, grant, path, active, named))
 
     for name in accounts:
         account = Principal(*split(name))
@@ -224,7 +226,7 @@ def _first_roles(
             activation.defaults is not None and (account.key(), role.key()) in activation.defaults
         )
         active: bool | None
-        if activation.all_active or default:
+        if activation.all_active or default or role.key() in activation.always_active:
             active = True
         elif activation.defaults is None or mandatory:
             # Not read, or a mandatory role that one release activates at
@@ -261,7 +263,13 @@ def _paths(
     return found
 
 
-def _row(grantee: str, grant: Held, path: tuple[Principal, ...], active: bool | None) -> GrantRow:
+def _row(
+    grantee: str,
+    grant: Held,
+    path: tuple[Principal, ...],
+    active: bool | None,
+    named: Callable[[Principal], str],
+) -> GrantRow:
     return GrantRow(
         grantee=grantee,
         kind=grant.kind,
@@ -270,7 +278,7 @@ def _row(grantee: str, grant: Held, path: tuple[Principal, ...], active: bool | 
         name=grant.name,
         object_type=grant.object_type,
         column=grant.column,
-        path=tuple(role_name(role) for role in path),
+        path=tuple(named(role) for role in path),
         first_role_default=active if path else None,
         grantable=grant.grantable,
         level=grant.level,

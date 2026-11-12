@@ -18,15 +18,18 @@ The levels, as :attr:`~sopuli.driver.grants.GrantRow.level` names them:
 ``GRANT OPTION`` is listed as a privilege of its level, as ``SHOW GRANTS``
 spells it, and each privilege of the same holder and level is grantable. A
 column grant's ``GRANT OPTION`` is kept on its table in ``tables_priv``, so
-it makes the table's column privileges grantable too (measured on MySQL
-8.4.13, #1482).
+it makes the table's column privileges grantable too. Measured on MySQL
+8.4.13 (#1482), and by hand on MariaDB 10.11.19, 11.4.13, 11.8.9 and 12.3.3
+(#1483): ``GRANT UPDATE (total) ... WITH GRANT OPTION`` writes ``Grant`` in
+``tables_priv`` and ``Update`` alone in ``columns_priv``.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable, Sequence
 from typing import Any
 
-from sopuli.driver.grants import COLUMN, OBJECT
+from sopuli.driver.grants import COLUMN, OBJECT, SCHEMA
 from sopuli.driver.mysql_family.accounts import Principal, text
 from sopuli.driver.mysql_family.grant_tables import set_members
 from sopuli.driver.mysql_family.privilege_survey import Held
@@ -43,6 +46,22 @@ TABLES = "select User, Host, Db, Table_name, Table_priv from mysql.tables_priv"
 COLUMNS = "select User, Host, Db, Table_name, Column_name, Column_priv from mysql.columns_priv"
 ROUTINES = "select User, Host, Db, Routine_name, Routine_type, Proc_priv from mysql.procs_priv"
 PROXIES = "select User, Host, Proxied_user, Proxied_host, With_grant from mysql.proxies_priv"
+
+
+def read_schema_rows(
+    cursor: Any, query: str, columns: Sequence[str], named: Callable[[str], str]
+) -> list[Held]:
+    """The ``database`` level: ``query`` reads ``User, Host, Db`` and then
+    ``columns``, the ``*_priv`` columns of ``mysql.db``, whose privileges
+    ``named`` spells. The owner is the schema as stored, which may be a
+    pattern."""
+    held: list[Held] = []
+    cursor.execute(query)
+    for user, host, db, *flags in cursor.fetchall():
+        pairs = zip(columns, flags, strict=True)
+        names = [named(column) for column, flag in pairs if yes(flag)]
+        held += level(Principal(text(user), text(host)), SCHEMA, DATABASE, names, owner=text(db))
+    return held
 
 
 def read_object_tables(cursor: Any) -> list[Held]:

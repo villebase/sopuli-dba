@@ -1,7 +1,8 @@
 """Every privilege an account holds, as a report reads it (UC-5).
 
 Product-neutral types. A session that serves the privilege report implements
-:class:`PrivilegeSurvey`; only Oracle's does yet. The
+:class:`PrivilegeSurvey`, and the registry lists ``report.privileges`` for its
+product. The
 :class:`~sopuli.driver.protocol.Session` protocol does not list it, so the
 report checks for it per target (#1480).
 
@@ -46,8 +47,9 @@ class GrantRow:
 
     ``path`` lists the roles from the grantee down to the role that holds the
     privilege, and is ``()`` for a direct grant. ``first_role_default`` is
-    whether ``path[0]`` is a default role of the grantee, so the privilege is
-    active without ``SET ROLE``; it is ``None`` for a direct grant.
+    whether the privilege is active without ``SET ROLE``: on Oracle, whether
+    ``path[0]`` is a default role of the grantee; on PostgreSQL, whether every
+    grant on the path inherits. It is ``None`` for a direct grant.
     ``grantable`` is whether the holder may grant it on: ``GRANTABLE`` for an
     object or column privilege, ``ADMIN_OPTION`` for a system or schema
     privilege, on the last grant of the path. ``level`` is the product's own

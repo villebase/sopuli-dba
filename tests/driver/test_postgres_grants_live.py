@@ -60,6 +60,8 @@ def roles(live_postgres: Any) -> Iterator[dict[str, str]]:
         "batch": f"acme_{suffix}_batch",
         "admin": f"acme_{suffix}_admin",
         "watch": f"acme_{suffix}_watch",
+        "hop": f"acme_{suffix}_hop",
+        "deep": f"acme_{suffix}_deep",
         "user": f"acme_{suffix}_user",
     }
     schema = f"acme_{suffix}"
@@ -97,6 +99,12 @@ def roles(live_postgres: Any) -> Iterator[dict[str, str]]:
         f"grant {n['batch']} to {n['user']} with inherit false",
         f"grant {n['admin']} to {n['user']} with inherit false",
         f"grant {n['watch']} to {n['user']} with inherit false, set false",
+        f"create role {n['hop']}",
+        f"create role {n['deep']}",
+        f"grant truncate on {schema}.orders to {n['deep']}",
+        f"grant {n['deep']} to {n['hop']} with inherit true, set false",
+        f"grant {n['hop']} to {n['user']} with inherit false, set true",
+        f"grant pg_read_all_data to {n['user']}",
         f"grant select on {schema}.orders to {n['user']}",
         f"grant update (n) on {schema}.items to {n['user']}",
         f"create table {schema}.notes (n int)",
@@ -193,6 +201,34 @@ def test_default_privileges_name_whose_future_objects(session: Any, roles: dict[
     ]
 
 
+def test_set_role_then_inheriting_reaches_the_deeper_role(
+    live_postgres: Any, session: Any, roles: dict[str, str]
+) -> None:
+    """user can SET ROLE hop, and hop inherits deep: so TRUNCATE is reachable."""
+    survey = session.survey_privileges([roles["user"]], public=False)
+    path = (roles["hop"], roles["deep"])
+    assert ("TRUNCATE", "orders", None, path, False) in _mine(survey.objects, roles["schema"])
+    # The server agrees: after SET ROLE hop, the session holds deep's privilege.
+    # By oid: a name in a schema the role has no USAGE on is refused (§2.5).
+    with _superuser(live_postgres) as admin:
+        (table,) = admin.execute(
+            "select %s::regclass::oid", (f"{roles['schema']}.orders",)
+        ).fetchone()
+        admin.execute(f'set role "{roles["user"]}"')
+        admin.execute(f'set role "{roles["hop"]}"')
+        held = admin.execute("select has_table_privilege(%s, 'TRUNCATE')", (table,)).fetchone()
+    assert held == (True,)
+
+
+def test_a_predefined_role_is_a_privilege_of_its_name(session: Any, roles: dict[str, str]) -> None:
+    survey = session.survey_privileges([roles["user"]], public=False)
+    assert ("pg_read_all_data", ("pg_read_all_data",), True) in {
+        (row.privilege, row.path, row.first_role_default)
+        for row in survey.system
+        if row.level == "predefined role"
+    }
+
+
 def test_attributes_own_and_by_set_role(session: Any, roles: dict[str, str]) -> None:
     survey = session.survey_privileges([roles["user"]], public=False)
     found = {(row.privilege, row.path, row.first_role_default) for row in survey.system}
@@ -208,6 +244,8 @@ def test_the_memberships_and_their_options(session: Any, roles: dict[str, str]) 
         (roles["batch"], False, True),
         (roles["admin"], False, True),
         (roles["watch"], False, False),
+        (roles["hop"], False, True),
+        ("pg_read_all_data", True, True),
     }
 
 

@@ -36,13 +36,23 @@ is grantee 0, which ``pg_roles`` has no row for; it is listed as
 **Through roles.** Memberships are walked from each surveyed role, with the
 path. A role's privileges reach the member when every grant on the path
 inherits, and are active without ``SET ROLE``. They are reachable by ``SET
-ROLE`` when every grant on the path has the ``SET`` option, and are then
+ROLE`` when the member can ``SET ROLE`` to a role on the path (every grant up
+to it has the ``SET`` option) and every grant after it inherits; they are then
 marked as not active. A path with neither gives the member nothing, so its
 privileges are not listed, though the membership is. Before 16, a grant has
 neither option: it inherits when the member is ``INHERIT``, and every member
 may ``SET ROLE``. The options are read through ``to_jsonb``, so one query
-serves every release (invariant 3). An attribute is never inherited, so a
-role's attributes reach a member only by ``SET ROLE``.
+serves every release (invariant 3). From 16, one role can be granted to
+another by several grantors, each with its own options; the grants of one
+pair are merged first, each option held by any of them. An attribute is never
+inherited, so a role's attributes reach a member only by ``SET ROLE`` to that
+role itself.
+
+**Predefined roles.** ``pg_read_all_data``, ``pg_write_all_data``,
+``pg_maintain`` and the other built-in ``pg_*`` roles give privileges that no
+ACL shows. Each one a surveyed role reaches is listed in ``system`` as a
+privilege of its own name (level ``predefined role``), with its path, so a
+member of ``pg_read_all_data`` never reads as holding nothing.
 
 **One database.** A session reads the schemas and objects of the database it
 is connected to. The cluster's other databases are named in ``unreadable``,
@@ -68,6 +78,11 @@ PARAMETER = "parameter"
 DATABASE = "database"
 SCHEMA_LEVEL = "schema"
 DEFAULT_FOR = "default for "
+PREDEFINED = "predefined role"
+
+#: The first oid ``initdb`` does not use: a role below it is built in
+#: (:data:`sopuli.driver.postgres.roles.BUILT_IN`).
+FIRST_NORMAL_OID = 16384
 
 #: The five attributes that are privileges, with ``pg_roles``' column for each.
 ATTRIBUTES = (
@@ -78,26 +93,38 @@ ATTRIBUTES = (
     ("BYPASSRLS", "rolbypassrls"),
 )
 
-_INHERIT = "coalesce((to_jsonb(m) ->> 'inherit_option')::boolean, x.rolinherit)"
-_SET = "coalesce((to_jsonb(m) ->> 'set_option')::boolean, true)"
+#: One row per member and role, the grants of every grantor merged: whether
+#: any inherits, any has ``SET``, and any has ``ADMIN OPTION``. ``x`` is the
+#: member.
+_EDGES = (
+    "select m.member, m.roleid, "
+    "bool_or(coalesce((to_jsonb(m) ->> 'inherit_option')::boolean, x.rolinherit)) as inherits, "
+    "bool_or(coalesce((to_jsonb(m) ->> 'set_option')::boolean, true)) as sets, "
+    "bool_or(m.admin_option) as admin "
+    "from pg_auth_members m join pg_roles x on x.oid = m.member group by m.member, m.roleid"
+)
 
 #: Every chain of memberships from each surveyed role: the path of role
-#: names, whether every grant on it inherits, whether every one has ``SET``,
-#: and, for the first grant only, ``ADMIN OPTION``. ``x`` is the member of
-#: each grant. The path stops at a role already on it.
+#: names; whether every grant on it inherits (``inherits``); whether every one
+#: has ``SET``, so the member can ``SET ROLE`` to the last role (``sets``);
+#: whether the last role's privileges are reachable by ``SET ROLE`` to a role on
+#: the path and inheriting after it (``reach``); ``ADMIN OPTION`` on the first
+#: grant only; and whether the last role is a built-in ``pg_*`` role. The path
+#: stops at a role already on it.
 WALK_QUERY = (
-    "with recursive walk(account, roleid, path, inherits, sets, admin) as ("
-    f"select x.rolname::text, m.roleid, array[g.rolname::text], {_INHERIT}, {_SET}, "
-    "m.admin_option "
-    "from pg_roles x join pg_auth_members m on m.member = x.oid "
-    "join pg_roles g on g.oid = m.roleid where x.rolname = any(%s) "
+    f"with recursive edge as ({_EDGES}), "
+    "walk(account, roleid, path, inherits, sets, reach, admin, predefined) as ("
+    "select x.rolname::text, e.roleid, array[g.rolname::text], e.inherits, e.sets, e.sets, "
+    f"e.admin, g.oid < {FIRST_NORMAL_OID} "
+    "from pg_roles x join edge e on e.member = x.oid "
+    "join pg_roles g on g.oid = e.roleid where x.rolname = any(%s) "
     "union all "
-    f"select w.account, m.roleid, w.path || g.rolname::text, w.inherits and {_INHERIT}, "
-    f"w.sets and {_SET}, false "
-    "from walk w join pg_auth_members m on m.member = w.roleid "
-    "join pg_roles x on x.oid = m.member join pg_roles g on g.oid = m.roleid "
+    "select w.account, e.roleid, w.path || g.rolname::text, w.inherits and e.inherits, "
+    "w.sets and e.sets, (w.sets and e.sets) or (w.reach and e.inherits), false, "
+    f"g.oid < {FIRST_NORMAL_OID} "
+    "from walk w join edge e on e.member = w.roleid join pg_roles g on g.oid = e.roleid "
     "where not g.rolname::text = any(w.path)"
-    ") select account, path, inherits, sets, admin from walk"
+    ") select account, path, inherits, sets, reach, admin, predefined from walk"
 )
 
 #: The attributes of each named role.
@@ -129,7 +156,8 @@ _PROKIND = (
 )
 _DEFACLTYPE = (
     "case d.defaclobjtype when 'r' then 'TABLE' when 'S' then 'SEQUENCE' "
-    "when 'f' then 'FUNCTION' when 'T' then 'TYPE' when 'n' then 'SCHEMA' end"
+    "when 'f' then 'FUNCTION' when 'T' then 'TYPE' when 'n' then 'SCHEMA' "
+    "when 'L' then 'LARGE OBJECT' end"
 )
 
 
@@ -219,8 +247,8 @@ _ACLS = (
         "coalesce(l.lanacl, acldefault('l', l.lanowner))",
         "pg_language l",
     ),
-    # A type's array type and a table's row type follow the type or the table,
-    # and are not listed.
+    # A type's array type, a range's multirange type and a table's row type
+    # follow the type, the range or the table, and are not listed.
     _acl(
         f"'{OBJECT}'",
         "null",
@@ -230,7 +258,7 @@ _ACLS = (
         "null",
         "coalesce(t.typacl, acldefault('T', t.typowner))",
         "pg_type t join pg_namespace n on n.oid = t.typnamespace "
-        "and t.typcategory <> 'A' and not exists "
+        "and t.typcategory <> 'A' and t.typtype <> 'm' and not exists "
         "(select 1 from pg_class rc where rc.oid = t.typrelid and rc.relkind <> 'c')",
     ),
     _acl(
@@ -339,13 +367,14 @@ def survey_grants(cursor: Cursor, accounts: Sequence[str], *, public: bool) -> G
         rows.extend(_attributes(name, attributes.get(name), (), active=None))
         rows.extend(_rows(name, held.get(name, ()), (), active=None))
     for walk in walks:
-        if not (walk.inherits or walk.sets):
-            continue
-        active = bool(walk.inherits)
         role = walk.path[-1]
         if walk.sets:
             rows.extend(_attributes(walk.account, attributes.get(role), walk.path, active=False))
-        rows.extend(_rows(walk.account, held.get(role, ()), walk.path, active=active))
+        if not (walk.inherits or walk.reach):
+            continue
+        rows.extend(_rows(walk.account, held.get(role, ()), walk.path, active=walk.inherits))
+        if walk.predefined:
+            rows.append(_predefined(walk))
     if public:
         rows.extend(_rows(PUBLIC, held.get(PUBLIC, ()), (), active=None))
 
@@ -370,12 +399,41 @@ def survey_grants(cursor: Cursor, accounts: Sequence[str], *, public: bool) -> G
 class _Walk:
     """One :data:`WALK_QUERY` row."""
 
-    def __init__(self, account: Any, path: Any, inherits: Any, sets: Any, admin: Any) -> None:
+    def __init__(
+        self,
+        account: Any,
+        path: Any,
+        inherits: Any,
+        sets: Any,
+        reach: Any,
+        admin: Any,
+        predefined: Any,
+    ) -> None:
         self.account = str(account)
         self.path = tuple(str(role) for role in path)
         self.inherits = bool(inherits)
         self.sets = bool(sets)
+        self.reach = bool(reach)
         self.admin = bool(admin)
+        self.predefined = bool(predefined)
+
+
+def _predefined(walk: _Walk) -> GrantRow:
+    """A built-in ``pg_*`` role the member reaches, as a privilege of its name:
+    what it gives is in no ACL."""
+    return GrantRow(
+        grantee=walk.account,
+        kind=SYSTEM,
+        privilege=walk.path[-1],
+        owner=None,
+        name=None,
+        object_type=None,
+        column=None,
+        path=walk.path,
+        first_role_default=walk.inherits,
+        grantable=False,
+        level=PREDEFINED,
+    )
 
 
 def _attributes(
@@ -424,23 +482,25 @@ def _rows(
 
 
 def _roles(walks: Sequence[_Walk]) -> tuple[RoleGrant, ...]:
-    """Each role granted straight to a surveyed role. Two grants of one role, by
-    two grantors, are one membership with each option held by either."""
-    merged: dict[tuple[str, str], RoleGrant] = {}
-    for walk in walks:
-        if len(walk.path) != 1:
-            continue
-        key = (walk.account, walk.path[0])
-        before = merged.get(key)
-        merged[key] = RoleGrant(
-            grantee=walk.account,
-            role=walk.path[0],
-            admin_option=walk.admin or (before is not None and before.admin_option),
-            default_role=walk.inherits or (before is not None and before.default_role),
-            authentication="NONE",
-            set_option=walk.sets or (before is not None and bool(before.set_option)),
+    """Each role granted straight to a surveyed role, with its options. The
+    query has merged the grants of several grantors already."""
+    return tuple(
+        sorted(
+            (
+                RoleGrant(
+                    grantee=walk.account,
+                    role=walk.path[0],
+                    admin_option=walk.admin,
+                    default_role=walk.inherits,
+                    authentication="NONE",
+                    set_option=walk.sets,
+                )
+                for walk in walks
+                if len(walk.path) == 1
+            ),
+            key=lambda grant: (grant.grantee, grant.role),
         )
-    return tuple(merged[key] for key in sorted(merged))
+    )
 
 
 def _part(rows: Sequence[GrantRow], kind: str) -> tuple[GrantRow, ...]:
@@ -456,7 +516,10 @@ def _part(rows: Sequence[GrantRow], kind: str) -> tuple[GrantRow, ...]:
                 row.owner or "",
                 row.name or "",
                 row.column or "",
+                row.object_type or "",
                 row.path,
+                row.first_role_default is True,
+                row.grantable,
             ),
         )
     )

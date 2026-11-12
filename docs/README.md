@@ -1056,8 +1056,8 @@ only place that lists the accounts the config does not declare
 ([#1376](decisions/log.md#1376)).
 
 `report history` and `report accounts` are built on every product (#1459,
-#1460, #1461, #1462). The privilege report is built on Oracle and PostgreSQL
-(#1481). #1411 tracks the MySQL and MariaDB work,
+#1460, #1461, #1462). The privilege report is built on Oracle, PostgreSQL
+and MySQL (#1481, #1482). #1411 tracks the MariaDB work,
 and lists the questions to decide before each report is specified there. What
 each product can read is measured (`pg-report-reads`, `mysql-report-reads`,
 `mariadb-report-reads`).

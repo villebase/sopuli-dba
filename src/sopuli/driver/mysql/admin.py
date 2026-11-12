@@ -135,8 +135,9 @@ TABLES_READ = (
 #: Tables the tool account may also read, with ``SELECT`` on the table, and
 #: does without: held where granted, never missing (§2.1). ``report accounts``
 #: reads the failed-login count from ``temporary_account_locks`` on 9.7.4
-#: (#1411, M2); without it the count is unknown. ``default_roles`` is for the
-#: privilege report, which does not read it yet (M4). Neither holds a hash.
+#: (#1411, M2); without it the count is unknown. `report privileges` reads
+#: ``default_roles`` for which roles are active at login (M4, #1482); without
+#: it that is not checked. Neither holds a hash.
 OPTIONAL_TABLES_READ = (
     "performance_schema.temporary_account_locks",
     "mysql.default_roles",

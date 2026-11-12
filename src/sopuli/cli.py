@@ -5981,7 +5981,8 @@ def report_privileges_command(
     Exit 0 when every part was read, 1 when a target could not be reached, and 4
     when a part could not be read, such as without the optional grant on
     Oracle's privilege views, or another database of a PostgreSQL cluster,
-    which a target cannot see into. Oracle and PostgreSQL can run this report.
+    which a target cannot see into. Oracle, PostgreSQL and MySQL can run this
+    report.
     """
     document = run.document
     selection = selected(selectors, targets, (), groups, ())
@@ -6053,15 +6054,15 @@ def _privileges_target(
             )
         except Exception as error:  # noqa: BLE001 -- a per-target finding
             return privileges_view.TargetPrivileges(target=target.name, error=_finding(error))
-        # The accounts through the same protocol `report accounts` uses, so the
-        # two reports read one set of accounts on every product.
         if not isinstance(session, AccountSurvey) or not isinstance(session, PrivilegeSurvey):
             missing = DriverError(f"{target.name}: this driver cannot survey its privileges")
             return privileges_view.TargetPrivileges(
                 target=target.name, error=_finding(missing), unsupported=True
             )
         try:
-            surveyed, _ = session.survey_with_profiles()
+            # The accounts `report accounts` reads, by the same protocol, so
+            # the two reports never disagree about which accounts exist.
+            surveyed, _profiles = session.survey_with_profiles()
             # A common account in a PDB stays: its grants made in the PDB are
             # read here, though its lock and limits are not (#1438).
             members = _personal_role_members(session, config, target)

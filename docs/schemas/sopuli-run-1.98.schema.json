@@ -182,7 +182,12 @@
           },
           "via_default_role": {
             "type": "boolean",
-            "description": "Whether the account holds it without SET ROLE: directly, or on Oracle through a default role, on PostgreSQL through a path where every grant inherits."
+            "description": "Whether the account is shown to hold it without SET ROLE: directly, or through a role active at login, a default role or, where the product activates every role at login, any role; on PostgreSQL, through a path where every grant inherits. Where `active_at_login_checked` is present it is false, and whether the account holds it without SET ROLE was not checked."
+          },
+          "active_at_login_checked": {
+            "type": "boolean",
+            "const": false,
+            "description": "Present, and false, only where `via_default_role` is false and a path's first role could not be checked for being active at login: on MySQL, where the tool account has no SELECT on mysql.default_roles, or for a mandatory role that is not a default role (added in 1.97, #1482). Absent where it was checked."
           },
           "grantable": {"type": "boolean"}
         }
@@ -1927,11 +1932,16 @@
                   "admin_option": {"type": "boolean"},
                   "default_role": {
                     "type": "boolean",
-                    "description": "Whether the role's privileges are active without SET ROLE: on Oracle, whether it is a default role; on PostgreSQL, the membership's INHERIT option."
+                    "description": "Whether the role's privileges are active without SET ROLE, as read: on Oracle and MySQL, whether it is a default role; on PostgreSQL, the membership's INHERIT option. Where `default_role_checked` is present it is false and says nothing."
                   },
                   "set_option": {
                     "type": ["boolean", "null"],
-                    "description": "PostgreSQL's SET option: whether the member may SET ROLE to the role (added in 1.98, #1481). `null` on a product without it, such as Oracle."
+                    "description": "PostgreSQL's SET option: whether the member may SET ROLE to the role (added in 1.98, #1481). `null` on a product without it, such as Oracle and MySQL."
+                  },
+                  "default_role_checked": {
+                    "type": "boolean",
+                    "const": false,
+                    "description": "Present, and false, only where whether the role is a default role could not be read: on MySQL without SELECT on mysql.default_roles (added in 1.97, #1482). Absent where it was read."
                   },
                   "authentication": {
                     "type": "string",

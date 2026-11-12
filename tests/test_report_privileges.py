@@ -109,6 +109,28 @@ def test_collapse_gives_one_privilege_per_object_with_every_path() -> None:
 def test_a_non_default_role_still_counts_and_is_marked() -> None:
     insert = next(p for p in collapse(RR4) if p.privilege == "INSERT")
     assert insert.via_default_role is False
+    assert insert.active_at_login_checked is True
+
+
+def test_a_path_whose_first_role_is_unknown_is_not_checked() -> None:
+    # MySQL without SELECT on mysql.default_roles, or a mandatory role (#1482).
+    (unknown,) = collapse((grant("SELECT", "T9", path=("R",), default=None),))
+    assert (unknown.via_default_role, unknown.active_at_login_checked) == (False, False)
+    (mixed,) = collapse(
+        (
+            grant("SELECT", "T9", path=("R",), default=None),
+            grant("SELECT", "T9", path=("S",), default=False),
+        )
+    )
+    assert (mixed.via_default_role, mixed.active_at_login_checked) == (False, False)
+    # One active path is enough, whatever the others are.
+    (active,) = collapse(
+        (
+            grant("SELECT", "T9", path=("R",), default=None),
+            grant("SELECT", "T9", path=("S",), default=True),
+        )
+    )
+    assert (active.via_default_role, active.active_at_login_checked) == (True, True)
 
 
 def test_counts_split_direct_and_via_roles() -> None:

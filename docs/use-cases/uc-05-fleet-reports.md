@@ -8,8 +8,9 @@ and `sopuli report history`. **All three are built, on Oracle**, with the
 `reports:` rules (§4, §5, §7). **`report history` is built on PostgreSQL,
 MySQL and MariaDB** too (§6), **`report accounts` on PostgreSQL** (§4),
 **MySQL and MariaDB** (§8, #1461, #1462), and **`report privileges` on
-PostgreSQL** (§5, #1481). The privilege report on MySQL and MariaDB comes
-later: until then it is refused before it connects. §9 lists the decisions.
+PostgreSQL and MySQL** (§5, #1481, #1482). The privilege report on MariaDB
+comes later: until then it is refused before it connects. §9 lists the
+decisions.
 
 ---
 
@@ -272,8 +273,8 @@ count:
 
 ## 5. The privilege report
 
-**Built, on Oracle and PostgreSQL** (PostgreSQL's terms are at the end of this
-section): `sopuli report privileges [--detail] [--account NAME]
+**Built, on Oracle, PostgreSQL and MySQL** (MySQL's and PostgreSQL's terms are
+at the end of this section): `sopuli report privileges [--detail] [--account NAME]
 [--public]`, for the same accounts `report accounts` covers, and also for the
 common accounts it leaves out on a PDB target: their grants made in the PDB
 are read there. Each account has the kind `report accounts` gives it,
@@ -316,8 +317,38 @@ to one column. Where a product has more than one level in a part, such as
 MySQL's static and dynamic global privileges, each privilege names its level,
 is counted per level, and is listed by level, then by privilege. A scope the target
 cannot reach, such as another database of a PostgreSQL cluster, is listed as
-*not checked* on that target. The report is not built on MySQL or MariaDB yet
-(#1482, #1483).
+*not checked* on that target. The report is not built on MariaDB yet (#1483).
+
+**Built, on MySQL** ([#1482](../decisions/log.md#1482)). Each account is a
+`user@host`, as in `report accounts`. Its privileges are read by level from
+the grant tables, with the grants of `02-mysql-privileges.md` §2.1:
+
+- *system*: `global static` and `global dynamic`;
+- *schemas*: `database`, with the schema as stored: a pattern such as
+  `acme%`, or, where `@@partial_revokes` is on, one schema's name;
+- *objects*: `table`, `routine` and `proxy`, where a proxy's object is the
+  account it proxies;
+- *columns*: `column`.
+
+`GRANT OPTION` is listed as a privilege of its level, and makes the level's
+other privileges grantable. Each role path is followed to the end, and a role
+in `@@mandatory_roles` reaches every account. A privilege is held without `SET
+ROLE` where the path's first role is a default role, or where
+`activate_all_roles_on_login` is on. Two things are *not checked*, with the
+reason, and the run exits 4:
+
+- **global privileges where `@@partial_revokes` is on**, because a revoke on
+  one schema is kept beside a retained password's hash;
+- **whether a role is active at login**, without the optional `SELECT` on
+  `mysql.default_roles`, and for a mandatory role that is not a default role,
+  which 9.7.4 activates at login and 8.0.46 and 8.4.13 do not
+  (`11_role_activation_probe.py`). The JSON entry then has
+  `active_at_login_checked: false`. Without the grant, each role in the roles
+  list reads *default not checked*, with `default_role_checked: false`.
+
+MySQL has no grants to everyone. A mandatory role is the nearest thing,
+and it is listed under each account, with its path. So `--public` lists
+`PUBLIC` holding nothing, which is what the server keeps.
 
 **On PostgreSQL** (#1481), from catalogs the tool account reads with its own
 grants (`02-postgres-privileges.md` §2.5):

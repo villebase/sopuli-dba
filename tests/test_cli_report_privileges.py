@@ -106,9 +106,9 @@ class FakeSession:
         return (SurveyedAccount(APP, "OPEN", False, "DEFAULT", False, False, 180, 10, 0),)
 
     def survey_with_profiles(self) -> tuple[tuple[SurveyedAccount, ...], frozenset[str]]:
-        # The report reads the accounts as `report accounts` does; through
-        # survey_accounts here, so a test can replace that one method.
-        return self.survey_accounts(), frozenset()
+        # The protocol the report asks for, as every product's session has it;
+        # through survey_accounts, so a test can replace that one method.
+        return self.survey_accounts(), frozenset({"DEFAULT"})
 
     def survey_privileges(self, accounts: Sequence[str], *, public: bool) -> GrantSurvey:
         self.asked = (tuple(accounts), public)
@@ -305,6 +305,42 @@ def test_a_level_is_shown_where_a_part_has_more_than_one(
     assert privilege["level"] == "global dynamic"
 
 
+def test_a_path_not_checked_for_being_active_is_said_and_flagged(
+    write_config: WriteConfig, session: dict[str, FakeSession]
+) -> None:
+    # MySQL, where the default roles could not be read (#1482).
+    session["session"] = FakeSession(
+        GrantSurvey(
+            roles=(
+                RoleGrant(APP, "acme_read@%", False, False, "NONE", default_role_checked=False),
+            ),
+            system=(),
+            objects=(
+                row("SELECT", "T1", path=("acme_read@%",), first_role_default=None),
+                row("INSERT", "T1", path=("acme_read@%",), first_role_default=False),
+            ),
+            columns=(),
+            schemas=(),
+            unreadable=("whether a role is active without SET ROLE: no SELECT",),
+        )
+    )
+    result = report(write_config)
+    text = click.unstyle(result.output)
+    assert result.exit_code == ExitCode.PARTIAL, result.output
+    assert "1 through a role not checked for being active at login" in text
+    assert "acme_read@% (default not checked)" in text
+    (role,) = json_run(write_config)["results"][0]["privileges"]["roles"]
+    assert (role["default_role"], role["default_role_checked"]) == (False, False)
+    detail = click.unstyle(report(write_config, "--detail").output)
+    assert "not checked whether active at login" in detail
+    objects = json_run(write_config)["results"][0]["privileges"]["objects"]
+    by_name = {one["privilege"]: one for one in objects}
+    assert by_name["SELECT"]["active_at_login_checked"] is False
+    assert by_name["SELECT"]["via_default_role"] is False
+    # Absent where it was checked: an older entry is unchanged.
+    assert "active_at_login_checked" not in by_name["INSERT"]
+
+
 def test_a_driver_without_a_privilege_survey_is_not_supported(
     write_config: WriteConfig, session: dict[str, Any]
 ) -> None:
@@ -341,6 +377,19 @@ def test_the_oracle_session_is_a_privilege_survey() -> None:
     assert issubclass(OracleSession, PrivilegeSurvey)
     assert issubclass(PostgresSession, PrivilegeSurvey)
     assert isinstance(FakeSession(GRANTS), PrivilegeSurvey)
+
+
+def test_the_mysql_session_is_a_privilege_survey() -> None:
+    pytest.importorskip("pymysql")
+    from sopuli.driver.grants import PrivilegeSurvey
+    from sopuli.driver.mysql.session import MysqlSession
+
+    def typed(session: MysqlSession) -> PrivilegeSurvey:
+        # mypy checks the signature here, as for Oracle's above.
+        return session
+
+    assert typed is not None
+    assert issubclass(MysqlSession, PrivilegeSurvey)
 
 
 def test_the_json_validates(write_config: WriteConfig, session: Any) -> None:

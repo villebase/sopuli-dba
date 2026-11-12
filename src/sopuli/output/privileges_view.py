@@ -122,6 +122,8 @@ def _roles(roles: Sequence[RoleGrant], words: Words) -> str:
                 "inherit" if role.default_role else "no inherit",
                 "set" if role.set_option else "no set",
             ]
+        elif not role.default_role_checked:
+            marks = ["default not checked"]
         else:
             marks = ["default" if role.default_role else "not default"]
         if role.admin_option:
@@ -174,16 +176,20 @@ def _counts(
         total = direct + via
         plural = what if total == 1 else _plural(what)
         # Held only through a path that is not active: counted, and said,
-        # because the account has it only after SET ROLE (UC-5 §5).
-        inactive = sum(
-            1
+        # because the account has it only after SET ROLE (UC-5 §5). One whose
+        # role is not known to be active either way is said apart.
+        same = [
+            p
             for p in privileges
             if (p.level or "") == level
             and p.privilege == privilege
             and (p.object_type or "-") == object_type
-            and not p.via_default_role
-        )
+        ]
+        inactive = sum(1 for p in same if not p.via_default_role and p.active_at_login_checked)
+        unknown = sum(1 for p in same if not p.active_at_login_checked)
         note = f", {inactive} {words.count}" if inactive else ""
+        if unknown:
+            note += f", {unknown} through a role not checked for being active at login"
         prefix = f"{level}: " if level else ""
         parts.append(
             f"{prefix}{privilege} on {total} {plural} ({direct} direct, {via} via roles{note})"
@@ -202,7 +208,9 @@ def _plural(noun: str) -> str:
 
 def _sources(privilege: Privilege, words: Words) -> str:
     sources = ["direct" if path == () else "via " + " > ".join(path) for path in privilege.paths]
-    if not privilege.via_default_role:
+    if not privilege.active_at_login_checked:
+        sources.append("not checked whether active at login")
+    elif not privilege.via_default_role:
         sources.append(words.source)
     return ", ".join(sources)
 
@@ -291,16 +299,7 @@ def _result(one: AccountPrivileges, unreadable: Sequence[str]) -> dict[str, Any]
             # Why a part is null, as the target's survey said it.
             "unreadable": list(unreadable),
             "schema_privileges_read": one.schemas is not None,
-            "roles": [
-                {
-                    "role": role.role,
-                    "admin_option": role.admin_option,
-                    "default_role": role.default_role,
-                    "set_option": role.set_option,
-                    "authentication": role.authentication,
-                }
-                for role in one.roles
-            ],
+            "roles": [_role_json(role) for role in one.roles],
             "system": _privileges_json(one.system),
             "objects": _privileges_json(one.objects),
             "columns": _privileges_json(one.columns),
@@ -309,23 +308,44 @@ def _result(one: AccountPrivileges, unreadable: Sequence[str]) -> dict[str, Any]
     }
 
 
+def _role_json(role: RoleGrant) -> dict[str, Any]:
+    entry: dict[str, Any] = {
+        "role": role.role,
+        "admin_option": role.admin_option,
+        "default_role": role.default_role,
+        # PostgreSQL's SET option; null elsewhere (run schema 1.98, #1481).
+        "set_option": role.set_option,
+        "authentication": role.authentication,
+    }
+    # Only where it was not read (run schema 1.97, #1482).
+    if not role.default_role_checked:
+        entry["default_role_checked"] = False
+    return entry
+
+
 def _privileges_json(part: Sequence[Privilege] | None) -> list[dict[str, Any]] | None:
     if part is None:
         return None
-    return [
-        {
-            "privilege": p.privilege,
-            "level": p.level,
-            "owner": p.owner,
-            "name": p.name,
-            "object_type": p.object_type,
-            "column": p.column,
-            "paths": [list(path) for path in p.paths],
-            "via_default_role": p.via_default_role,
-            "grantable": p.grantable,
-        }
-        for p in part
-    ]
+    return [_privilege_json(p) for p in part]
+
+
+def _privilege_json(p: Privilege) -> dict[str, Any]:
+    entry: dict[str, Any] = {
+        "privilege": p.privilege,
+        "level": p.level,
+        "owner": p.owner,
+        "name": p.name,
+        "object_type": p.object_type,
+        "column": p.column,
+        "paths": [list(path) for path in p.paths],
+        "via_default_role": p.via_default_role,
+        "grantable": p.grantable,
+    }
+    # Only where it was not checked (run schema 1.97, #1482): every older
+    # entry stays as it was.
+    if not p.active_at_login_checked:
+        entry["active_at_login_checked"] = False
+    return entry
 
 
 def summarise(reports: Sequence[TargetPrivileges]) -> Summary:

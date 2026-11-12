@@ -86,7 +86,8 @@ too, and is marked. The report judges nothing.
 Exit 0 when every part was read, 1 when a target could not be reached, and 4
 when a part could not be read, such as without the optional grant on
 Oracle's privilege views, or another database of a PostgreSQL cluster,
-which a target cannot see into. Oracle and PostgreSQL can run this report.
+which a target cannot see into. Oracle, PostgreSQL and MySQL can run this
+report.
 
 Options:
 

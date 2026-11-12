@@ -228,8 +228,10 @@ measured on 10.11.19, 11.4.13, 11.8.9 and 12.3.3 (`15_report_read_probe.py`,
 the view, with `is_role = 'N'`
 (`sopuli/driver/mariadb/survey.py`), and, where the optional view
 `sopuli.account_state` exists and passes its column check, the lock and the
-lifetime from it (#1491). `report history` reads the time of the last change
-from that view.
+lifetime from it (#1491). Where a `personal_accounts:` rule names a `role:`,
+it also reads that role's members from `mysql.roles_mapping`, as `account
+list` does (#1495). `report history` reads the time of the last change from
+that view.
 
 - **An account is a user name at a host.** One name at three hosts is three
   rows of the `mysql.user` view. A role is a row with an empty host and

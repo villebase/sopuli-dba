@@ -5854,7 +5854,7 @@ def report_accounts_command(
 #: The products where the report resolves a personal rule's `role:` (#1469).
 #: MySQL and MariaDB name a role `user@host` or leave mandatory roles out, so
 #: they follow in their own change.
-_REPORT_ROLE_TYPES = frozenset({ORACLE, POSTGRESQL})
+_REPORT_ROLE_TYPES = frozenset({ORACLE, POSTGRESQL, MYSQL, MARIADB})
 
 
 def _personal_role_members(session: Any, config: Config, target: ExpandedTarget) -> tuple[str, ...]:
@@ -5874,13 +5874,21 @@ def _personal_role_members(session: Any, config: Config, target: ExpandedTarget)
     two roles whose names differ only in case, is the target's read failure,
     as the survey's is: without the members the report cannot say which
     accounts the file declares, and listing them as undeclared would be a
-    wrong answer rather than a missing one.
+    wrong answer rather than a missing one. On MySQL and MariaDB that includes
+    a role every account holds (a mandatory role, or one ``PUBLIC`` reaches),
+    which `account list` refuses too (#1495).
     """
     if target.target.type not in _REPORT_ROLE_TYPES:
         return ()
     # One resolution per role, however many rules name it, compared as the
-    # config compares role names.
-    roles = {rule.role.upper(): rule.role for rule in rules_for(config, target.name) if rule.role}
+    # config compares role names: by upper() on Oracle and PostgreSQL, as
+    # written on MySQL and MariaDB, where a role is `name@host` (#1465).
+    exact = target.target.type in USER_AT_HOST_TYPES
+    roles = {
+        rule.role if exact else rule.role.upper(): rule.role
+        for rule in rules_for(config, target.name)
+        if rule.role
+    }
     members: list[str] = []
     for role in roles.values():
         try:

@@ -213,14 +213,19 @@ def test_a_role_that_does_not_exist_declares_nobody(
     assert by_name["ACME_STRAY_USER"]["state"] == "UNDECLARED"
 
 
-#: A role as each product's config names it: a MySQL role is an account.
-ROLES = {"postgresql": "acme_developers", "mysql": "acme_developers@%"}
+#: A role as each product's config names it: a MySQL role is an account, and
+#: a MariaDB role a name alone.
+ROLES = {
+    "oracle": "acme_developers",
+    "postgresql": "acme_developers",
+    "mysql": "acme_developers@%",
+    "mariadb": "acme_developers",
+}
 
 
-@pytest.mark.parametrize(("product", "asked"), [("postgresql", True), ("mysql", False)])
-def test_roles_are_resolved_only_where_built(product: str, asked: bool) -> None:
-    """#1469 resolves on Oracle and PostgreSQL. MySQL and MariaDB name a role
-    `user@host` and leave mandatory roles out, so they follow on their own."""
+@pytest.mark.parametrize("product", sorted(ROLES))
+def test_roles_are_resolved_on_every_product(product: str) -> None:
+    """#1469 on Oracle and PostgreSQL, and #1495 on MySQL and MariaDB."""
     config = build_config(
         {
             "version": 1,
@@ -232,7 +237,38 @@ def test_roles_are_resolved_only_where_built(product: str, asked: bool) -> None:
     session.roles = {name.upper(): ("acme_dev_alice",) for name in ROLES.values()}
     members = _personal_role_members(session, config, config.expanded_targets[0])
 
-    assert bool(members) is asked
+    assert members == ("acme_dev_alice",)
+
+
+class _AskedRoles(_RoleSession):
+    def __init__(self, target: str) -> None:
+        super().__init__(target)
+        self.asked: list[str] = []
+
+    def resolve_role(self, role: str) -> str | None:
+        self.asked.append(role)
+        return role
+
+
+@pytest.mark.parametrize(
+    ("product", "asked"),
+    [("postgresql", ["acme_dev@%"]), ("mysql", ["acme_Dev@%", "acme_dev@%"])],
+)
+def test_roles_are_told_apart_as_the_config_tells_them(product: str, asked: list[str]) -> None:
+    """By upper() on Oracle and PostgreSQL; as written on MySQL and MariaDB,
+    where two spellings are two roles (#1465)."""
+    config = build_config(
+        {
+            "version": 1,
+            "targets": [{"name": "t", "type": product, "dsn": "t.example.com:5432"}],
+            "personal_accounts": [{"role": "acme_Dev@%"}, {"role": "acme_dev@%"}],
+        }
+    )
+    session = _AskedRoles("t")
+    session.roles = {"ACME_DEV@%": ()}
+    _personal_role_members(session, config, config.expanded_targets[0])
+
+    assert session.asked == asked
 
 
 def test_without_role_lookup_the_report_runs_and_the_role_is_not_resolved(

@@ -48,7 +48,8 @@ unless a step says otherwise.
        mariadb:10.6, mariadb:10.11, mariadb:11.4, mariadb:11.8 and
        mariadb:12.3 in turn with MARIADB_AUTO_UPGRADE=1. After each start:
        each account's access and version_id as root reads them, and whether
-       the view gives the tool account what root's SHOW GRANTS gives
+       the view gives the tool account what root's SHOW GRANTS gives. Then
+       GP5's check over everything the tool account read in GP7
 
 It MEASURES and decides nothing.
 
@@ -57,8 +58,8 @@ mariadb:10.11, mariadb:11.4, mariadb:11.8 and mariadb:12.3 images of
 test/compose.yaml profile mariadb-matrix, on 2026-11-12 (#1483), with Python
 3.13.12 on Windows 11 AMD64. GP7 run on the images mariadb:10.4, 10.4.34,
 and mariadb:10.6, 10.6.28, pulled on 2026-11-12, and then the same four.
-Twice, exit 0, and the same results both times but the timings. A first run
-had the same results; its clean-up failed on the name with a quote.
+Twice, exit 0, and the same results both times but the timings. Run twice
+again after review fixes, with the same results, GP7's leak check included.
 
 RESULTS
 
@@ -99,7 +100,8 @@ RESULTS
        as SUPER on 10.6.28, as SUPER and READ_ONLY ADMIN on 10.11.19, and as
        SUPER and all ten from 11.4.13. REPLICATION CLIENT written by 10.4.34
        reads as BINLOG MONITOR and SLAVE MONITOR from 10.6.28. On every
-       release, for every account, the view gives what SHOW GRANTS gives
+       release, for every account, the view gives what SHOW GRANTS gives,
+       and no stored value reached the tool account: 80 outputs, 2 values
 
   So the access bits are not a reading of the privileges: the same stored
   value means different privileges on different releases, and only the
@@ -329,33 +331,34 @@ def bit(value: str) -> str:
 
 
 def gp1(service: str) -> None:
-    user = f"{P}bits"
-    bits = []
-    for line in root(service, "SHOW PRIVILEGES").splitlines():
-        name = line.split("\t")[0]
-        if name.upper() in ("USAGE", "PROXY"):
-            continue
-        root(
-            service,
-            f"DROP USER IF EXISTS {account(user)}; CREATE USER {account(user)};"
-            f"GRANT {name} ON *.* TO {account(user)}",
-        )
-        value = root(
-            service,
-            f"SELECT JSON_VALUE(Priv, '$.access') FROM mysql.global_priv WHERE User = '{user}'",
-        )
-        bits.append((bit(value), name))
-    root(
+    names = [
+        line.split("\t")[0]
+        for line in root(service, "SHOW PRIVILEGES").splitlines()
+        if line.split("\t")[0].upper() not in ("USAGE", "PROXY")
+    ]
+    # One account per privilege, bit0, bit1, ..., and `every` for ALL PRIVILEGES.
+    statements = []
+    for n, name in enumerate(names):
+        user = account(f"{P}bit{n}")
+        statements += [f"CREATE USER {user}", f"GRANT {name} ON *.* TO {user}"]
+    every_user = account(f"{P}every")
+    statements += [
+        f"CREATE USER {every_user}",
+        f"GRANT ALL PRIVILEGES ON *.* TO {every_user} WITH GRANT OPTION",
+    ]
+    root(service, ";".join(statements))
+    read = root(
         service,
-        f"DROP USER {account(user)}; CREATE USER {account(user)};"
-        f"GRANT ALL PRIVILEGES ON *.* TO {account(user)} WITH GRANT OPTION",
+        "SELECT User, JSON_VALUE(Priv, '$.access'), JSON_VALUE(Priv, '$.version_id')"
+        f" FROM mysql.global_priv WHERE User LIKE '{P}bit%' OR User = '{P}every'",
     )
-    every, version = root(
-        service,
-        "SELECT JSON_VALUE(Priv, '$.access'), JSON_VALUE(Priv, '$.version_id')"
-        f" FROM mysql.global_priv WHERE User = '{user}'",
-    ).split("\t")
-    root(service, f"DROP USER {account(user)}")
+    values = {}
+    for line in read.splitlines():
+        user, value, version = (line.split("\t") + ["", "", ""])[:3]
+        values[user] = (value, version)
+    every, version = values.pop(f"{P}every")
+    bits = [(bit(values[f"{P}bit{n}"][0]), name) for n, name in enumerate(names)]
+    root(service, "DROP USER " + ", ".join(account(user) for user in [*values, f"{P}every"]))
     order = sorted(
         bits, key=lambda pair: int(pair[0].split()[1]) if pair[0].startswith("bit") else 99
     )
@@ -439,13 +442,13 @@ def gp4(service: str) -> None:
     state("schema absent")
 
 
-def gp5(service: str) -> None:
-    remember(service)
+def gp5(service: str, step: str = "GP5") -> None:
+    """Whether a stored value reached the tool account. setup() and gp7() fill STORED."""
     if not STORED:
         raise ch.StepError(f"{service}: no stored value read to compare with")
     found = [value for value in STORED if any(value in text for text in SEEN)]
     print(
-        f"  GP5  stored values in anything the tool account read ({len(SEEN)} outputs,"
+        f"  {step}  stored values in anything the tool account read ({len(SEEN)} outputs,"
         f" {len(STORED)} values): {len(found) or 'none'}"
     )
     if found:
@@ -534,13 +537,13 @@ def start(image: str) -> None:
         raise ch.StepError(f"docker run {image}: {started.stderr.strip()[:200]}")
     for _ in range(90):
         time.sleep(2)
+        # The entrypoint first starts a temporary server without networking, which
+        # logs "port: 0". The real server logs the port it listens on.
+        if "port: 3306" not in docker("logs", container).stderr:
+            continue
         ready = docker("exec", container, "healthcheck.sh", "--connect", "--innodb_initialized")
         if ready.returncode == 0:
-            # The entrypoint starts a temporary server first; wait for the real one.
-            time.sleep(3)
-            ready = docker("exec", container, "healthcheck.sh", "--connect", "--innodb_initialized")
-            if ready.returncode == 0:
-                return
+            return
     raise ch.StepError(
         f"{image}: not healthy after 3 minutes:"
         f" {docker('logs', '--tail', '5', container).stderr[-300:]}"
@@ -550,6 +553,8 @@ def start(image: str) -> None:
 def gp7() -> None:
     print(f"\n== GP7: upgrades, {' > '.join(IMAGES)}")
     upgrade_clean()
+    SEEN.clear()
+    STORED.clear()
     container, _ = upgrade_names()
     users: list[str] = []
     try:
@@ -567,7 +572,8 @@ def gp7() -> None:
                     users.append(user)
                     root(
                         UPGRADE,
-                        f"CREATE USER {account(user)}; GRANT {grant} ON *.* TO {account(user)}",
+                        f"CREATE USER {account(user)} IDENTIFIED BY {ch.quote(PASSWORD)};"
+                        f"GRANT {grant} ON *.* TO {account(user)}",
                     )
             if image == "mariadb:10.6":
                 root(
@@ -590,12 +596,11 @@ def gp7() -> None:
                 )
                 names, _ = shown(UPGRADE, account(user), everything)
                 listed = "ALL" if names == everything else ", ".join(sorted(names))
-                view = (
-                    agree(UPGRADE, user, "%", everything)
-                    if image not in IMAGES[:1]
-                    else "no view yet"
-                )
+                # The view is created on the second image.
+                view = agree(UPGRADE, user, "%", everything) if n > 0 else "no view yet"
                 print(f"  GP7    {user}: access {stored}; SHOW GRANTS {listed}; view {view}")
+            remember(UPGRADE)
+        gp5(UPGRADE, "GP7")
     finally:
         upgrade_clean()
 
@@ -606,12 +611,12 @@ def main() -> int:
     for service in ch.base.SERVICES:
         try:
             probe(service)
-        except (ch.StepError, ValueError) as exc:
+        except (ch.StepError, ValueError, IndexError) as exc:
             print(f"STEP FAILED: {service}: {type(exc).__name__}: {exc}")
             failed = True
     try:
         gp7()
-    except (ch.StepError, ValueError) as exc:
+    except (ch.StepError, ValueError, IndexError) as exc:
         print(f"STEP FAILED: GP7: {type(exc).__name__}: {exc}")
         failed = True
     if LEAKED:

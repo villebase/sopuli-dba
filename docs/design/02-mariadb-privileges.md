@@ -302,10 +302,14 @@ the view, with `is_role = 'N'`
 - **A second view that a DBA creates reads the global level**
   (`17_global_privileges_view_probe.py`, #1483). Nothing reads it yet. It
   has `SQL SECURITY DEFINER`, and a locked definer that holds `SELECT` on
-  `mysql.*`:
+  `mysql.*`. The probe created it in its own schema; the build's install
+  script will create it as `sopuli.global_privileges`:
 
   ```sql
-  CREATE SQL SECURITY DEFINER VIEW sopuli_probe.global_privileges AS
+  CREATE USER 'sopuli_probe_gp_definer'@'localhost' ACCOUNT LOCK;
+  GRANT SELECT ON mysql.* TO 'sopuli_probe_gp_definer'@'localhost';
+  CREATE DEFINER = 'sopuli_probe_gp_definer'@'localhost'
+    SQL SECURITY DEFINER VIEW sopuli_probe.global_privileges AS
   SELECT GRANTEE, PRIVILEGE_TYPE, IS_GRANTABLE
     FROM information_schema.USER_PRIVILEGES;
   ```

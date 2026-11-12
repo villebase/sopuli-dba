@@ -333,6 +333,8 @@ checks their headers against the table below in the same way.
 | `11.4.13` | The `mariadb:11.4` image, the same profile, as pulled on 2026-11-04. 11.4 is a long-term support release |
 | `11.8.9` | The `mariadb:11.8` image, the same profile, as pulled on 2026-11-04. 11.8 is a long-term support release |
 | `12.3.3` | The `mariadb:12.3` image, the same profile, as pulled on 2026-11-01. 12.3 is the current long-term support release |
+| `10.4.34` | The `mariadb:10.4` image, pulled on 2026-11-12, started by `17_global_privileges_view_probe.py` on a data directory of its own and upgraded from there. 10.4 is past its end of life; it is measured only as the release accounts were written by |
+| `10.6.28` | The `mariadb:10.6` image, pulled on 2026-11-12, in the same upgrade, and only there |
 
 Not measured: every other release, and every managed service. Galera is
 measured only as `14_galera_identity_probe.py` runs it, on the image's own
@@ -407,3 +409,9 @@ library in docker.
 | `16_definer_view_probe.py` | `11.4.13` | 2026-11-12 | #1479 | As on 10.11.19 |
 | `16_definer_view_probe.py` | `11.8.9` | 2026-11-12 | #1479 | As on 10.11.19, and root reads `PASSWORD_ERRORS` 2 for the blocked account in `information_schema.USERS`, which `Priv` does not hold |
 | `16_definer_view_probe.py` | `12.3.3` | 2026-11-12 | #1479 | As on 11.8.9 |
+| `17_global_privileges_view_probe.py` | `10.11.19` | 2026-11-12 | #1483 | Each privilege has one bit of `global_priv`'s `access`: `SUPER` 15, `SET USER` 30 to `SLAVE MONITOR` 38. A view that root creates with `SQL SECURITY DEFINER` over `information_schema.USER_PRIVILEGES`, whose locked definer holds `SELECT` on `mysql.*`, gives the tool account each account's global privileges as `SHOW GRANTS` gives them, split privileges and `ALL PRIVILEGES` included, with `IS_GRANTABLE` `YES` for `WITH GRANT OPTION`, and no stored value. A role has no row, and a member shows `USAGE`, not its role's privilege. `GRANTEE` does not escape a quote in the name. A definer holding `SELECT` on only `mysql.global_priv` or `mysql.user` gives no error: the view shows the definer's row alone. An absent view, an absent schema and a view without the grant answer `1142`; a dropped definer `1045 (28000)`; a dropped view whose grant is left `1146`. About 525 accounts and roles in 0.001 s |
+| `17_global_privileges_view_probe.py` | `11.4.13` | 2026-11-12 | #1483 | As on 10.11.19, and `SHOW CREATE ROUTINE` is bit 39 |
+| `17_global_privileges_view_probe.py` | `11.8.9` | 2026-11-12 | #1483 | As on 11.4.13 |
+| `17_global_privileges_view_probe.py` | `12.3.3` | 2026-11-12 | #1483 | As on 11.4.13 |
+| `17_global_privileges_view_probe.py` | `10.4.34` | 2026-11-12 | #1483 | Only as GP7's first image: accounts granted `SUPER`, `REPLICATION CLIENT`, `REPLICATION SLAVE` and `ALL PRIVILEGES` keep `version_id` `NULL` and their `access` through every later upgrade. Their `SUPER` reads as `SUPER` and seven split privileges on 10.6.28 and 10.11.19, and as `SUPER` and all ten from 11.4.13. The view gives what `SHOW GRANTS` gives, on each release |
+| `17_global_privileges_view_probe.py` | `10.6.28` | 2026-11-12 | #1483 | Only in GP7: the same four grants keep `version_id` `100628`. `SUPER` reads as `SUPER` on 10.6.28, as `SUPER` and `READ_ONLY ADMIN` on 10.11.19, and as `SUPER` and all ten split privileges from 11.4.13. The view, created here, survives each upgrade and gives what `SHOW GRANTS` gives |

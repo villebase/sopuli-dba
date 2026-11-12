@@ -801,8 +801,14 @@ in `sql/mariadb/`, and the matrix of 10.11, 11.4, 11.8 and 12.3 is the
   `mysql.global_priv`, and `SHOW GRANTS` prints the hash. A role has no row in
   `USER_PRIVILEGES` at all, also for root, whether or not its privilege has a
   column. An account that holds privileges through a role shows only its own
-  there, `USAGE`.
-  `sql/mariadb/08_split_privileges_probe.py` measures it.
+  there, `USAGE`. A view that a DBA creates reads them for accounts: a
+  `SQL SECURITY DEFINER` view over `USER_PRIVILEGES`, whose locked definer
+  holds `SELECT` on `mysql.*`, gives the tool account each account's
+  privileges as `SHOW GRANTS` does, with no hash. `global_priv`'s access bits
+  are not a reading: an upgrade keeps them, and each release reads them
+  differently.
+  `sql/mariadb/08_split_privileges_probe.py` and
+  `17_global_privileges_view_probe.py` (#1483) measure it.
 - `verified` `mariadb-report-reads` (#1448) — **What can UC-5's report
   commands read on MariaDB, with the tool account's grants?**
   Each account, a user name at a host, with its `password_expired`; a role is

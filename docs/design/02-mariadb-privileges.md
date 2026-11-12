@@ -209,7 +209,7 @@ be refused as one ([#1346](../decisions/log.md#1346)).
 ### 2.4 What the reports can read
 
 `report accounts` (#1462) and `report history` (#1460) are built on MariaDB,
-and the privilege report is not. This is what the tool account can read for
+and the privilege report is not (#1483). This is what the tool account can read for
 them with §2.1's grants, and what each further read would cost. It was
 measured on 10.11.19, 11.4.13, 11.8.9 and 12.3.3 (`15_report_read_probe.py`,
 #1448). `report accounts` reads `User`, `Host` and `password_expired` from
@@ -299,6 +299,45 @@ the view, with `is_role = 'N'`
   holds only `CONNECTION ADMIN` reads as holding nothing.
   `information_schema`'s `*_PRIVILEGES` views show the tool account none of
   another account's grants.
+- **A second view that a DBA creates reads the global level**
+  (`17_global_privileges_view_probe.py`, #1483). Nothing reads it yet. It
+  has `SQL SECURITY DEFINER`, and a locked definer that holds `SELECT` on
+  `mysql.*`:
+
+  ```sql
+  CREATE SQL SECURITY DEFINER VIEW sopuli_probe.global_privileges AS
+  SELECT GRANTEE, PRIVILEGE_TYPE, IS_GRANTABLE
+    FROM information_schema.USER_PRIVILEGES;
+  ```
+
+  With `SELECT` on it, the tool account reads each account's global
+  privileges as the server applies them. They were the same as `SHOW GRANTS`
+  for every account the probe made, on every release in the matrix, split
+  privileges and `ALL PRIVILEGES` included, and `IS_GRANTABLE` was `YES`
+  where the grant had `WITH GRANT OPTION`. The probe found no stored value in
+  anything the tool account read.
+  - **Not `global_priv`'s access bits.** The bit of each privilege is the same
+    on every release, but an upgrade does not rewrite them, and the release
+    that reads them decides what they mean. `SUPER` stored by 10.6.28 reads
+    as `SUPER` there, as `SUPER` and `READ_ONLY ADMIN` on 10.11.19, and as
+    `SUPER` and all ten split privileges from 11.4.13. Only the server knows
+    which, so the tool would have to copy each release's rules. The view
+    gives what `SHOW GRANTS` gives on each of those releases.
+  - **Accounts only.** A role has no row, and a privilege an account holds
+    through a role is not in the account's rows. The account shows `USAGE`.
+  - **`GRANTEE` is `'user'@'host'`, and a quote in the name is not
+    escaped**: `'sopuli_probe_gp_o'q'@'192.0.2.%'`. Compare it with the
+    string built from `User` and `Host`, never split it.
+  - **A definer with less than `SELECT` on `mysql.*` gives no error.** With
+    `SELECT` on `mysql.global_priv` or `mysql.user` only, the view answers
+    with one row, the definer's own. The tool account's own row is missing,
+    and that is how to tell.
+  - **Presence**, as for `account_state`: an absent view, an absent schema
+    and a view without the grant answer `1142`, and a dropped definer
+    `1045 (28000)` in a logged-in session. A view dropped while the tool
+    account's grant on it is left answers `1146`.
+  - **Cost.** About 525 accounts and roles: the whole view in 0.001 s or
+    less.
 - **Cost.** With about 510 accounts and roles and 1000 tables, after one
   untimed run, the role query took 0.16 s or less, and the table grants every
   account reaches through its roles 1.5 to 3.2 s.

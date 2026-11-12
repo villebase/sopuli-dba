@@ -5460,3 +5460,26 @@ the register.
   undeclared. Part 3 warns only where the rule covers MySQL and MariaDB
   alone. Refusing there too was not chosen, because a warning keeps every
   file that loaded before loading.
+
+## #1468
+
+- **Decided:** 2026-11-12, #1468
+- **Question:** on PostgreSQL, does a `VALID UNTIL` in the past meet a rule's
+  `login: refused`, and is a past date a problem on a `NOLOGIN` role?
+- **Decision:** the maintainer's, in two parts.
+  1. An expired date does not meet `login: refused`, and the expiry stays a
+     problem. The lock finding says the role can log in, and that `NOLOGIN`
+     refuses every login.
+  2. A past date on a `NOLOGIN` role is not a problem. A rule's
+     `postgresql.valid_until` still compares the date there.
+- **Why:** `VALID UNTIL` limits password logins only. `trust`, `peer` and
+  `cert` lines in `pg_hba.conf`, which the tool cannot read, still let the
+  role in, so an expired date is no proof that logins are refused. A role
+  that cannot log in is made safer by an expired date, not riskier, and
+  flagging it made group roles and suspended roles exit 3. If the role gets
+  `LOGIN`, the date is a problem again.
+- **Rejected:**
+  1. An expired date meets `login: refused`, as `NO AUTHENTICATION` does on
+     Oracle: the report would call a role that can log in refused.
+  2. A past date stays a problem on a `NOLOGIN` role: noise on every old
+     group role.

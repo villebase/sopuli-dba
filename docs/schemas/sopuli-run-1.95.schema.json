@@ -1869,7 +1869,7 @@
                   "failed_login_limit",
                   "present"
                 ],
-                "description": "`valid_until` (added in 1.94, #1459) is a PostgreSQL role's `VALID UNTIL`, against a rule's `postgresql.valid_until`. A date in the past is a problem with or without the key."
+                "description": "`valid_until` (added in 1.94, #1459) is a PostgreSQL role's `VALID UNTIL`, against a rule's `postgresql.valid_until`. A date in the past is a problem with or without the key on a role that can log in; on a `NOLOGIN` role only the key judges it (#1468)."
               },
               "outcome": {
                 "type": "string",

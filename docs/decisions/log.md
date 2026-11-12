@@ -5398,6 +5398,31 @@ the register.
   5. A maximum number of days for `valid_until`. It punishes a DBA who set a
      long date once.
 
+## #1454
+
+- **Decided:** 2026-11-12, #1454
+- **Question:** under a `PASSWORD_LOCK_TIME` of `UNLIMITED`, Oracle shows a
+  lockout after failed logins as `LOCKED`, as it does a lock somebody set.
+  `report accounts` tells them apart by `SYS.USER$.LCOUNT` ([#1447](#1447)),
+  and `account reset-password` reads the status alone, so it refuses a
+  lockout as a deliberate lock (H4). Should the reset read the count too?
+- **Decision:** the maintainer's, option 3. The reset still refuses. Where
+  the session can read `SYS.USER$` and the count has reached the profile's
+  `FAILED_LOGIN_ATTEMPTS`, the refusal says that failed logins may have set
+  the lock, and tells the DBA to check with the owner, unlock by hand and
+  reset again. The lock time must read `UNLIMITED` and the limit must be a
+  number; otherwise the refusal is worded as before.
+- **Why:** the guard of a mutating verb keeps reading only the status. The
+  count only changes the wording, so a wrong count can mislead a DBA but
+  cannot let a reset clear a lock.
+- **Rejected:**
+  1. Leave it, and only document it: the refusal would keep calling a
+     lockout a deliberate lock.
+  2. The reset clears such a lockout, as it clears `LOCKED(TIMED)`. The
+     guard would depend on the optional `SYS.USER$` grant and on the
+     profile's limit today: a limit lowered after a lock somebody set would
+     let a reset clear that lock. It can still be chosen later.
+
 ## #1461
 
 - **Decided:** 2026-11-11, #1461

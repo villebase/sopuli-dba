@@ -1280,6 +1280,15 @@ asks for. Measured on 26ai 23.26.2.0.0
   guardrails that `--force` overrides; it is somebody's offboarding decision. The
   unseen path has no confirmation prompt to catch it (only the seen path confirms,
   §2), so the refusal is the only place it can show.
+- **Under a `PASSWORD_LOCK_TIME` of `UNLIMITED`, Oracle shows a lockout as
+  plain `LOCKED`** (`02-oracle-privileges.md` §2, #1447). The reset refuses it
+  too, because the status alone cannot tell it from a lock somebody set
+  ([#1454](../decisions/log.md#1454)). Where the session can read
+  `SYS.USER$` (the optional grant) and the account's `LCOUNT` has reached its
+  profile's `FAILED_LOGIN_ATTEMPTS`, the refusal says so: failed logins may
+  have set the lock. It asks the DBA to check with the owner, unlock by hand
+  and reset again. The count only changes the wording. It never lets a reset
+  through.
 
 **The unlock is its own statement, issued first**, in UC-1 §5's order:
 guardrails, unlock, then the password. It is not folded into one

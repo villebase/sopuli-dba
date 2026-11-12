@@ -377,6 +377,18 @@ def decide(
         return Decision(proceed=False, state=SKIPPED, detail=application)
 
     if state.deliberately_locked or deliberately_locked(state.status):
+        if state.lockout_evidence is not None:
+            # Still refused (#1454, option 3): the sentence is evidence for a
+            # DBA to weigh, not a guard input.
+            return Decision(
+                proceed=False,
+                state=SKIPPED,
+                detail=(
+                    f"the account is {state.status.lower()}, and {state.lockout_evidence}; "
+                    f"a reset does not undo a lock it cannot tell from a deliberate one -- "
+                    f"check with the owner, then ALTER USER … ACCOUNT UNLOCK and reset again"
+                ),
+            )
         return Decision(
             proceed=False,
             state=SKIPPED,

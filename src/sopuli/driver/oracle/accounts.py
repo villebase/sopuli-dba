@@ -645,12 +645,23 @@ def login_state(cursor: Cursor, account: str, *, user_dollar: bool = False) -> U
     changed_at, changed_unknown = _password_changed(
         cursor, name, row, has_column=query == USER_QUERY, user_dollar=user_dollar
     )
+    # Only for an account the status shows as deliberately locked, and only
+    # behind the grant, so an open account costs no `SYS.USER$` read.
+    lockout = None
+    if user_dollar and deliberately_locked(status):
+        lockout = lockout_evidence(
+            status,
+            lock_time=limits.get(PASSWORD_LOCK_TIME),
+            limit=limits.get(FAILED_LOGIN_ATTEMPTS),
+            failed=failed_logins(cursor, name),
+        )
 
     return UserState(
         name=name,
         status=status,
         locked=LOCKED in status,
         deliberately_locked=deliberately_locked(status),
+        lockout_evidence=lockout,
         # `EXPIRED(GRACE)` carries the token `EXPIRED`, so the two are read
         # together or the grace period comes out as a hard expiry. Every caller
         # tests `locked` before either, and every locked form carries `LOCKED`,
@@ -1350,6 +1361,35 @@ def _locked_by_somebody(
     if limit is None or failed is None:
         return None
     return failed < limit
+
+
+def lockout_evidence(
+    status: str, *, lock_time: str | None, limit: str | None, failed: int | None
+) -> str | None:
+    """Why a ``LOCKED`` status looks set by failed logins, or ``None``.
+
+    The rule is :func:`_locked_by_somebody`'s, as the report applies it
+    (#1447), but stricter: the lock time must read ``UNLIMITED`` and the limit
+    must be a number. An unknown lock time is not enough here, because the
+    sentence tells a DBA that an unlock may be safe. It feeds only the wording
+    of a refusal. A reset still refuses the account (#1454, option 3), so the
+    guard does not depend on the optional ``SYS.USER$`` grant, nor on the
+    profile's limit today.
+    """
+    if not deliberately_locked(status):
+        return None
+    if lock_time is None or lock_time.strip().upper() != "UNLIMITED":
+        return None
+    if limit is None or not limit.strip().isdigit() or failed is None:
+        return None
+    if _locked_by_somebody(status, lock_time_unlimited=True, limit=int(limit), failed=failed):
+        return None
+    return (
+        f"its failed-login count, {failed}, has reached the profile's "
+        f"FAILED_LOGIN_ATTEMPTS, {limit.strip()}, under PASSWORD_LOCK_TIME UNLIMITED, "
+        "where Oracle shows a lockout as LOCKED, so failed logins may have set this "
+        "lock rather than a person"
+    )
 
 
 #: Why no failed-login count was read, where the optional grant was not made.

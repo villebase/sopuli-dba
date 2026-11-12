@@ -131,7 +131,7 @@ from sopuli.config.scope import refuse_personal_on
 from sopuli.config.secret_refs import SecretRef
 from sopuli.config.selection import LeftOut, narrow, narrow_to_pairs
 from sopuli.config.sharing import native_layouts, pinned_versions, unsure_layouts
-from sopuli.config.targets import MARIADB, MYSQL, USER_AT_HOST_TYPES
+from sopuli.config.targets import MARIADB, MYSQL, ORACLE, POSTGRESQL, USER_AT_HOST_TYPES
 from sopuli.config.vault_env import ADDR_FLAG, DEFAULT_STORE_VARIABLE
 from sopuli.constraints import AccountConstraints, Constraints, reuse_restricted
 from sopuli.delivery import DeliveryBackend, Handover, Receipt
@@ -4325,9 +4325,23 @@ def _resolve_rule(
         return tuple(session.accounts_matching(profile=rule.profile))
 
     assert rule.role is not None
-    if session.resolve_role(rule.role) is None:
+    members = role_members(session, rule.role)
+    if members is None:
         raise _no_such_predicate(target, "role", rule.role)
-    return tuple(session.accounts_matching(role=rule.role))
+    return members
+
+
+def role_members(session: Any, role: str) -> tuple[str, ...] | None:
+    """Every account a `role:` predicate admits, or ``None`` where the role does not exist.
+
+    The two reads UC-2 §2 asks for: whether the role exists, then its members
+    through any chain. `account list` refuses ``None`` as a misspelling;
+    `report accounts` takes it as no members (#1469). One function for both,
+    so the listing and the report admit the same accounts.
+    """
+    if session.resolve_role(role) is None:
+        return None
+    return tuple(session.accounts_matching(role=role))
 
 
 def _no_such_predicate(target: ExpandedTarget, noun: str, name: str) -> click.ClickException:
@@ -5835,6 +5849,46 @@ def report_accounts_command(
     return report_view.render(reports, show_all=show_all)
 
 
+#: The products where the report resolves a personal rule's `role:` (#1469).
+#: MySQL and MariaDB name a role `user@host` or leave mandatory roles out, so
+#: they follow in their own change.
+_REPORT_ROLE_TYPES = frozenset({ORACLE, POSTGRESQL})
+
+
+def _personal_role_members(session: Any, config: Config, target: ExpandedTarget) -> tuple[str, ...]:
+    """Every account a personal rule's `role:` admits on ``target`` (#1469).
+
+    The same two reads `account list` makes (:func:`role_members`), so the
+    report and the listing admit the same accounts: whether the role exists,
+    then its members through any chain. A role that does not exist has
+    no members, and the report says nothing about it, as it says nothing about
+    a personal rule's `profile:` that names no profile (#1390). `account list`
+    refuses both, because there the rule is the whole answer.
+
+    Where the target lacks `role_lookup` (on Oracle, `SELECT ON DBA_ROLES`),
+    the role is not resolved and its members show as undeclared, as before
+    #1469. The report still runs: a report that lacks a capability does not
+    fail the target over it (invariant 4, #1376). Any other failure, such as
+    two roles whose names differ only in case, is the target's read failure,
+    as the survey's is: without the members the report cannot say which
+    accounts the file declares, and listing them as undeclared would be a
+    wrong answer rather than a missing one.
+    """
+    if target.target.type not in _REPORT_ROLE_TYPES:
+        return ()
+    # One resolution per role, however many rules name it, compared as the
+    # config compares role names.
+    roles = {rule.role.upper(): rule.role for rule in rules_for(config, target.name) if rule.role}
+    members: list[str] = []
+    for role in roles.values():
+        try:
+            found = role_members(session, role)
+        except UnsupportedCapabilityError:
+            continue
+        members.extend(found or ())
+    return tuple(members)
+
+
 def _report_target(
     target: ExpandedTarget, run: Invocation, config: Config
 ) -> report_view.TargetReport:
@@ -5870,6 +5924,7 @@ def _report_target(
             )
         try:
             surveyed, profiles = session.survey_with_profiles()
+            members = _personal_role_members(session, config, target)
         except Exception as error:  # noqa: BLE001 -- a per-target finding
             # Connected, then could not read: said as such, not as "could not
             # connect", though the target still gave no answer (exit 1).
@@ -5880,7 +5935,7 @@ def _report_target(
             target=target.name,
             release=session.scope().release,
             read=len(surveyed),
-            rows=report_states.evaluate(target.name, config, surveyed),
+            rows=report_states.evaluate(target.name, config, surveyed, role_members=members),
             missing=report_states.missing_profiles(target.name, config, profiles),
         )
     finally:
@@ -6007,7 +6062,10 @@ def _privileges_target(
             surveyed = survey_accounts()
             # A common account in a PDB stays: its grants made in the PDB are
             # read here, though its lock and limits are not (#1438).
-            rows = report_states.evaluate(target.name, config, surveyed, keep_kept_in_root=True)
+            members = _personal_role_members(session, config, target)
+            rows = report_states.evaluate(
+                target.name, config, surveyed, keep_kept_in_root=True, role_members=members
+            )
             absent = None
             if wanted is not None:
                 rows = _wanted_rows(target.name, rows, surveyed, wanted)

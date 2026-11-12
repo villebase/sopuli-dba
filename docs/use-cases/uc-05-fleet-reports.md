@@ -142,9 +142,17 @@ Every row has the account, its kind (application, technical, personal, or
 undeclared), its profile, its status, its failed-login count (`unknown` where
 it cannot be read truthfully, never 0), its state, and what is wrong in plain
 words. The checks are the lock and whatever the rules state: a setting no rule
-names is not compared. A `personal_accounts:` rule over a **role** is not
-resolved here, because the survey reads no roles, so such an account shows as
-undeclared.
+names is not compared. A `personal_accounts:` rule over a **role** is resolved
+on Oracle and PostgreSQL with the two reads `account list` makes: whether the
+role exists, then its members through any chain. So the report and the
+mutating verbs admit the same accounts ([#1469](../decisions/log.md#1469)).
+A role that does not exist admits nobody, and the report says nothing about
+it, as it says nothing about a personal rule's `profile:` that names no
+profile. Where the target lacks the `role_lookup` capability, the role is not
+resolved and its members show as undeclared. As with a profile predicate, a
+role does not bring back an account the report leaves out, such as one
+Oracle maintains. On MySQL and MariaDB a role predicate is not resolved yet,
+so its members show as undeclared.
 Accounts that Oracle maintains (`ORACLE_MAINTAINED = 'Y'`) are left out unless a
 rule names them, as a rule for `DBSNMP` does. On 11.2, which has no such
 column, the report uses the same list of Oracle's own accounts that the
@@ -267,7 +275,8 @@ count:
 **Built, on Oracle:** `sopuli report privileges [--detail] [--account NAME]
 [--public]`, for the same accounts `report accounts` covers, and also for the
 common accounts it leaves out on a PDB target: their grants made in the PDB
-are read there.
+are read there. Each account has the kind `report accounts` gives it,
+including a personal rule's `role:` resolved as §4 says.
 `docs/local-testing.md` §9a has a run. It needs the optional grant on the
 privilege views (`00_install.sql`, `grant_report_reads=Y`); without it, the
 part it could not read is *not checked* and the run exits 4. It judges nothing,
@@ -454,7 +463,8 @@ Each extra grant is `SELECT` only and optional, and the tool probes for it. A
 report that cannot read a view says *not checked* for what it needed.
 
 On PostgreSQL the tool account reads what the reports need with the grants it
-already has: `report accounts` reads only `pg_roles`. PostgreSQL keeps no date
+already has: `report accounts` reads `pg_roles`, and `pg_auth_members` for a
+personal rule's `role:` (§4). PostgreSQL keeps no date
 of a role's last password change, no last login and no failed logins, so the
 failed-login count is `unknown` there, and `report history` shows only the
 store's records. Object privileges are per database: a session can read only

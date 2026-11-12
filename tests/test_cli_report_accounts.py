@@ -19,7 +19,7 @@ from jsonschema import Draft202012Validator
 
 from conftest import WriteConfig
 from sopuli.cli import cli
-from sopuli.driver.protocol import DriverError, Scope
+from sopuli.driver.protocol import ROLE_LOOKUP, DriverError, Scope, UnsupportedCapabilityError
 from sopuli.driver.survey import SurveyedAccount
 from sopuli.exit_codes import ExitCode
 from sopuli.output.document import SCHEMA_VERSION
@@ -156,6 +156,92 @@ def test_problems_first_then_the_count(write_config: WriteConfig, sessions: Any)
     assert "SYSTEM" not in body
     assert "ACME_BATCH_USER" not in body
     assert "2 accounts OK" in text
+
+
+class _RoleSession(FakeSession):
+    """Answers `account list`'s two reads: whether a role exists, then its members."""
+
+    roles: dict[str, tuple[str, ...]] = {"ACME_DEVELOPERS": ("ACME_STRAY_USER",)}
+
+    def resolve_role(self, role: str) -> str | None:
+        return role.upper() if role.upper() in self.roles else None
+
+    def accounts_matching(
+        self, *, profile: str | None = None, role: str | None = None
+    ) -> tuple[str, ...]:
+        assert role is not None
+        return self.roles[role.upper()]
+
+
+def role_report(write_config: WriteConfig, role: str) -> Result:
+    config = write_config(f"{CONFIG}personal_accounts:\n  - role: {role}\n")
+    return CliRunner().invoke(
+        cli,
+        [
+            "--config",
+            str(config),
+            "--output",
+            "json",
+            "report",
+            "accounts",
+            "--target",
+            "prod-alpha",
+        ],
+    )
+
+
+def test_a_role_predicates_members_are_personal_accounts(
+    write_config: WriteConfig, sessions: Any
+) -> None:
+    """#1469: resolved with `account list`'s reads, so both admit the same accounts."""
+    sessions["prod-alpha"] = lambda *_: _RoleSession("prod-alpha")
+    result = role_report(write_config, "acme_developers")
+
+    by_name = {row["account"]: row for row in json.loads(result.output)["results"]}
+    assert by_name["ACME_STRAY_USER"]["kind"] == "personal"
+
+
+def test_a_role_that_does_not_exist_declares_nobody(
+    write_config: WriteConfig, sessions: Any
+) -> None:
+    """As a personal rule's `profile:` naming no profile, it is not reported (#1390)."""
+    sessions["prod-alpha"] = lambda *_: _RoleSession("prod-alpha")
+    result = role_report(write_config, "acme_no_such_role")
+
+    by_name = {row["account"]: row for row in json.loads(result.output)["results"]}
+    assert by_name["ACME_STRAY_USER"]["state"] == "UNDECLARED"
+
+
+def test_without_role_lookup_the_report_runs_and_the_role_is_not_resolved(
+    write_config: WriteConfig, sessions: Any
+) -> None:
+    """On Oracle without `SELECT ON DBA_ROLES`: the report does not fail the
+    target over a capability (invariant 4, #1376); the members show as before."""
+
+    class _NoLookup(_RoleSession):
+        def resolve_role(self, role: str) -> str | None:
+            raise UnsupportedCapabilityError(ROLE_LOOKUP, target=self.target)
+
+    sessions["prod-alpha"] = lambda *_: _NoLookup("prod-alpha")
+    result = role_report(write_config, "acme_developers")
+
+    assert result.exit_code == ExitCode.DRIFT, result.output
+    by_name = {row["account"]: row for row in json.loads(result.output)["results"]}
+    assert by_name["ACME_STRAY_USER"]["state"] == "UNDECLARED"
+
+
+def test_a_role_read_that_fails_is_a_read_failure_on_the_target(
+    write_config: WriteConfig, sessions: Any
+) -> None:
+    class _Refused(_RoleSession):
+        def accounts_matching(self, **_: Any) -> tuple[str, ...]:
+            raise DriverError("ORA-01031: insufficient privileges")
+
+    sessions["prod-alpha"] = lambda *_: _Refused("prod-alpha")
+    result = role_report(write_config, "acme_developers")
+
+    assert result.exit_code == ExitCode.FAILURE, result.output
+    assert "insufficient privileges" in result.output
 
 
 class _NoSurvey:

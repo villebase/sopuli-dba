@@ -567,6 +567,39 @@ def test_a_profile_predicate_does_not_bring_in_oracles_own_accounts() -> None:
     assert found["ACME_DEV_ALICE"].kind == "personal"
 
 
+def test_a_role_predicates_members_are_personal() -> None:
+    """#1469: the caller reads the members with `account list`'s query; the
+    report gives each the lock check and the rules, as a personal account."""
+    cfg = config(personal_accounts=[{"role": "ACME_DEVELOPERS"}])
+    survey = (account("ACME_DEV_ALICE"), account("ACME_STRAY_USER"))
+    found = {
+        row.account: row for row in evaluate(TARGET, cfg, survey, role_members=("ACME_DEV_ALICE",))
+    }
+
+    assert found["ACME_DEV_ALICE"].kind == "personal"
+    assert found["ACME_DEV_ALICE"].state == NO_RULE
+    assert found["ACME_STRAY_USER"].state == UNDECLARED
+
+
+def test_without_its_members_a_role_predicate_declares_nobody() -> None:
+    """What the report did before #1469, and still does where the caller reads none."""
+    cfg = config(personal_accounts=[{"role": "ACME_DEVELOPERS"}])
+    assert rows(cfg, account("ACME_DEV_ALICE"))["ACME_DEV_ALICE"].state == UNDECLARED
+
+
+def test_a_role_predicate_does_not_bring_in_oracles_own_accounts() -> None:
+    """As a profile predicate does not: a role SYSTEM holds would bring it in."""
+    cfg = config(personal_accounts=[{"role": "DBA"}])
+    survey = (account("SYSTEM", vendor_maintained=True), account("ACME_DEV_ALICE"))
+    found = {
+        row.account: row
+        for row in evaluate(TARGET, cfg, survey, role_members=("SYSTEM", "ACME_DEV_ALICE"))
+    }
+
+    assert "SYSTEM" not in found
+    assert found["ACME_DEV_ALICE"].kind == "personal"
+
+
 def test_a_not_checked_finding_says_the_surveys_reason() -> None:
     cfg = config(**rule(accounts=["C##ACME_ADM"], settings={"failed_login_limit": 5}))
     surveyed = account(

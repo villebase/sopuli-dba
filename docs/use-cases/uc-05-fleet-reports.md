@@ -142,9 +142,17 @@ Every row has the account, its kind (application, technical, personal, or
 undeclared), its profile, its status, its failed-login count (`unknown` where
 it cannot be read truthfully, never 0), its state, and what is wrong in plain
 words. The checks are the lock and whatever the rules state: a setting no rule
-names is not compared. A `personal_accounts:` rule over a **role** is not
-resolved here, because the survey reads no roles, so such an account shows as
-undeclared.
+names is not compared. A `personal_accounts:` rule over a **role** is resolved
+on Oracle and PostgreSQL with the two reads `account list` makes: whether the
+role exists, then its members through any chain. So the report and the
+mutating verbs admit the same accounts ([#1469](../decisions/log.md#1469)).
+A role that does not exist admits nobody, and the report says nothing about
+it, as it says nothing about a personal rule's `profile:` that names no
+profile. Where the target lacks the `role_lookup` capability, the role is not
+resolved and its members show as undeclared. As with a profile predicate, a
+role does not bring back an account the report leaves out, such as one
+Oracle maintains. On MySQL and MariaDB a role predicate is not resolved yet,
+so its members show as undeclared.
 Accounts that Oracle maintains (`ORACLE_MAINTAINED = 'Y'`) are left out unless a
 rule names them, as a rule for `DBSNMP` does. On 11.2, which has no such
 column, the report uses the same list of Oracle's own accounts that the

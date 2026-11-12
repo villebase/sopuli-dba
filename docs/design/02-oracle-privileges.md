@@ -797,6 +797,11 @@ account, so none binds anything, and none reads a password or verifier column.
 | `PASSWORD_LIFE_TIME`, `FAILED_LOGIN_ATTEMPTS` and `PASSWORD_LOCK_TIME` for every profile, as shown, resolved through this container's `DEFAULT` profile, and the profile's `COMMON`. Every profile has these rows, so they also give the target's profile names, which `report accounts` compares with the profiles the config expects (`survey_with_profiles`, #1390) | `DBA_PROFILES` | the grants above |
 | `NAME` and `LCOUNT` for every user | `SYS.USER$` | the optional grant; sent only with `offline_verify` |
 
+Where a `personal_accounts:` rule on the target names a `role:`, the report
+also makes `account list`'s two reads for it (#1469): whether the role exists,
+in `DBA_ROLES`, and its members through any chain, in `DBA_ROLE_PRIVS`.
+Without `role_lookup` the role is not resolved, and the report still runs.
+
 On a release that answers `ORA-00904` to `COMMON` or `ORACLE_MAINTAINED`, as
 11.2.0.2.0 does, the first two statements are sent again with `NULL` in those
 positions, and in place of `AUTHENTICATION_TYPE`: its value `NONE`, for an

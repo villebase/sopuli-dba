@@ -178,6 +178,7 @@ def evaluate(
     survey: Sequence[SurveyedAccount],
     *,
     keep_kept_in_root: bool = False,
+    role_members: Collection[str] = (),
 ) -> tuple[AccountRow, ...]:
     """Every row the report shows for ``target``, worst first.
 
@@ -188,11 +189,18 @@ def evaluate(
     in a PDB (:attr:`SurveyedAccount.kept_in_root`), unless
     ``keep_kept_in_root``: the privilege report keeps it, because its grants
     made in the PDB are read there, though its lock and limits are not.
+
+    ``role_members`` are the accounts a personal rule's ``role:`` admits on
+    this target, as the caller read them with ``account list``'s query
+    (#1469). Each is a personal account. Like a predicate over a profile, a
+    role does not bring back an account that is left out: a role that ``SYS``
+    holds would bring in ``SYS``.
     """
     naming = _naming(config, target)
     rules = _rules_on(config, target)
     applications = _application_profiles(config, target, naming)
     personal_names, personal_profiles = _personal_on(config, target, naming)
+    members = {naming.key(member) for member in role_members}
     not_applicable = not_applicable_on(config, target)
 
     built: list[AccountRow] = []
@@ -213,7 +221,11 @@ def evaluate(
             continue
         if name in applications:
             kind = APPLICATION
-        elif name in personal_names or surveyed.profile.upper() in personal_profiles:
+        elif (
+            name in personal_names
+            or name in members
+            or surveyed.profile.upper() in personal_profiles
+        ):
             kind = PERSONAL
         elif matching:
             kind = TECHNICAL
@@ -425,8 +437,8 @@ def _application_profiles(config: Config, target: str, naming: _Naming) -> dict[
 def _personal_on(config: Config, target: str, naming: _Naming) -> tuple[set[object], set[str]]:
     """Personal accounts on ``target``: name keys, and the profiles a predicate names.
 
-    A predicate over a **role** is not resolved here: the survey reads no roles,
-    so such an account shows as undeclared until the report reads them.
+    A predicate over a **role** is resolved by the caller, which reads its
+    members from the database and passes them to :func:`evaluate` (#1469).
     """
     names: set[object] = set()
     profiles: set[str] = set()

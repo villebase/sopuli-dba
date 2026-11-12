@@ -5483,3 +5483,25 @@ the register.
      Oracle: the report would call a role that can log in refused.
   2. A past date stays a problem on a `NOLOGIN` role: noise on every old
      group role.
+
+## #1469
+
+- **Decided:** 2026-11-12, #1469
+- **Question:** `report accounts` listed an account that a personal rule
+  declares by a `role:` as undeclared, because the survey reads no roles. On
+  PostgreSQL, `role:` is the only predicate a personal rule can use. Should
+  the report resolve it?
+- **Decision:** the maintainer's: yes, on Oracle and PostgreSQL, with the
+  two reads `account list` makes (whether the role exists, then its members
+  through any chain). MySQL and MariaDB follow in their own change. A role
+  that does not exist admits nobody and is not reported, as a personal
+  rule's `profile:` naming no profile is not (#1390). Without `role_lookup`
+  the role is not resolved, and the report still runs (invariant 4,
+  [#1376](#1376)). A role does not bring back an account the report leaves
+  out, as a profile predicate does not.
+- **Why:** a listing must show exactly the accounts a mutating verb would
+  admit. With one query for both, the report and the verbs cannot disagree.
+- **Rejected:**
+  1. Leave a role predicate unresolved: on PostgreSQL every personal account
+     declared by predicate shows as undeclared and gets no checks.
+  2. A query of the report's own: two queries for one set could disagree.

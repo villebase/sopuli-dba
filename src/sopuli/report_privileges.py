@@ -41,13 +41,17 @@ class Privilege:
     column: str | None
     #: Each path from the account down through its roles; ``()`` is a direct grant.
     paths: tuple[tuple[str, ...], ...]
-    #: Whether the account holds it without ``SET ROLE``: directly, or through a
-    #: role that is a default role.
+    #: Whether the account is shown to hold it without ``SET ROLE``: directly,
+    #: or through a role active at login.
     via_default_role: bool
     grantable: bool
     #: The product's word for its level inside the part, such as ``global
     #: dynamic`` on MySQL; ``None`` where the part has one level, as on Oracle.
     level: str | None = None
+    #: ``False`` where ``via_default_role`` is false and a path's first role is
+    #: not known to be active or not, such as a MySQL role whose default status
+    #: was not read: whether it is held without ``SET ROLE`` was not checked.
+    active_at_login_checked: bool = True
 
 
 @dataclass(frozen=True)
@@ -97,9 +101,8 @@ def collapse(rows: Sequence[GrantRow]) -> tuple[Privilege, ...]:
                 object_type=_text(object_type),
                 column=_text(column),
                 paths=tuple(sorted({row.path for row in group})),
-                via_default_role=any(
-                    row.path == () or row.first_role_default is True for row in group
-                ),
+                via_default_role=_active(group) is True,
+                active_at_login_checked=_active(group) is not None,
                 grantable=any(row.grantable for row in group),
             )
         )
@@ -109,6 +112,17 @@ def collapse(rows: Sequence[GrantRow]) -> tuple[Privilege, ...]:
             key=lambda p: (p.level or "", p.privilege, p.owner or "", p.name or "", p.column or ""),
         )
     )
+
+
+def _active(group: Sequence[GrantRow]) -> bool | None:
+    """True if one path is direct or starts with a role active at login;
+    otherwise ``None`` if one path's first role is not known either way;
+    otherwise False."""
+    if any(row.path == () or row.first_role_default is True for row in group):
+        return True
+    if any(row.first_role_default is None for row in group):
+        return None
+    return False
 
 
 def _text(value: object) -> str | None:

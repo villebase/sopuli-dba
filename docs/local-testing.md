@@ -2345,7 +2345,7 @@ suspended acme_dev_bob@localhost on 1 of 1 targets
 
 `report accounts` reads every account on each target and checks it against the
 `reports:` rules (`design/01-configuration.md` §8a). It changes nothing. It
-runs on every product. `report privileges` runs on Oracle only,
+runs on every product. `report privileges` runs on Oracle and MySQL,
 and `report history` on every product.
 
 Make two accounts on a profile whose passwords expire after 180 days, and one
@@ -2699,6 +2699,85 @@ Without `--detail` the same account reads as a summary:
 
 `SELECT` on `ORDERS` is granted directly and through a role, and is counted
 once, as direct. `--public` adds the grants to `PUBLIC`, once per target.
+
+On MySQL, `report privileges` names each privilege's level and reads it with
+the grants of `design/02-mysql-privileges.md` §2.1. The optional `SELECT` on
+`mysql.default_roles` there says which roles are active at login. Use the
+tool account of §*A MySQL server*. As root, make an account with a direct
+table, column and routine grant, a default role holding a nested role, and a
+role that is not a default role. Then make an account with global privileges
+and a proxy:
+
+```sql
+CREATE DATABASE acme;
+CREATE TABLE acme.orders (n int, total int);
+CREATE TABLE acme.items (n int);
+CREATE PROCEDURE acme.close_day() SELECT 1;
+CREATE ROLE 'acme_read', 'acme_nested', 'acme_batch';
+GRANT SELECT ON acme.* TO 'acme_read';
+GRANT SELECT ON acme.items TO 'acme_nested';
+GRANT 'acme_nested' TO 'acme_read';
+GRANT INSERT ON acme.items TO 'acme_batch';
+CREATE USER 'acme_app'@'%' IDENTIFIED BY 'Acme-App-Rpt-1';
+GRANT INSERT ON acme.orders TO 'acme_app'@'%';
+GRANT UPDATE (total) ON acme.orders TO 'acme_app'@'%';
+GRANT EXECUTE ON PROCEDURE acme.close_day TO 'acme_app'@'%';
+GRANT 'acme_read', 'acme_batch' TO 'acme_app'@'%';
+SET DEFAULT ROLE 'acme_read' TO 'acme_app'@'%';
+CREATE USER 'acme_ops'@'localhost' IDENTIFIED BY 'Acme-Ops-Rpt-1';
+GRANT PROCESS ON *.* TO 'acme_ops'@'localhost' WITH GRANT OPTION;
+GRANT CONNECTION_ADMIN ON *.* TO 'acme_ops'@'localhost';
+GRANT PROXY ON 'acme_app'@'%' TO 'acme_ops'@'localhost';
+```
+
+`GRANT PROXY` goes over the socket: in the image only `root@localhost` holds
+`PROXY WITH GRANT OPTION`. With a rule naming `acme_app@%` and
+`acme_ops@localhost` in the config:
+
+```
+$ sopuli --config mysql-priv.yaml report privileges --target mysql-84 --account acme_app@% --detail
+mysql-84  (8.4.13, 1 account)
+  acme_app@%  (technical)
+    roles: acme_batch@% (not default), acme_read@% (default)
+    KIND               PRIVILEGE  OBJECT             TYPE       FROM                                  GRANTABLE
+    object (routine)   EXECUTE    acme.close_day     PROCEDURE  direct                                no
+    object (table)     INSERT     acme.items         TABLE      via acme_batch@%, not a default role  no
+    object (table)     INSERT     acme.orders        TABLE      direct                                no
+    object (table)     SELECT     acme.items         TABLE      via acme_read@% > acme_nested@%       no
+    column (column)    UPDATE     acme.orders.total  -          direct                                no
+    schema (database)  SELECT     acme               SCHEMA     via acme_read@%                       no
+```
+
+```
+$ sopuli --config mysql-priv.yaml report privileges --target mysql-84 --account acme_ops@localhost --detail
+mysql-84  (8.4.13, 1 account)
+  acme_ops@localhost  (technical)
+    KIND                     PRIVILEGE         OBJECT      TYPE     FROM    GRANTABLE
+    system (global dynamic)  CONNECTION_ADMIN  -           -        direct  no
+    system (global static)   GRANT OPTION      -           -        direct  yes
+    system (global static)   PROCESS           -           -        direct  yes
+    object (proxy)           PROXY             acme_app@%  ACCOUNT  direct  no
+```
+
+Both exit 0. The same accounts read the same on 8.0.46 and 9.7.4. `SELECT`
+on `acme.*` is a database grant, under *schemas*; the one on `acme.items` is
+reached through the nested role. `GRANT OPTION` is listed with its level and
+makes `PROCESS` grantable. Without the optional `SELECT` on
+`mysql.default_roles`, whether each role is a default is *not checked*, each
+privilege reached through a role is *not checked whether active at login*,
+the summary counts it apart, and the run exits 4:
+
+```
+$ sopuli --config mysql-priv.yaml report privileges --target mysql-84 --account acme_app@%
+mysql-84  (8.4.13, 1 account)
+  acme_app@%  (technical)
+    roles: acme_batch@% (default not checked), acme_read@% (default not checked)
+    system: none
+    objects: routine: EXECUTE on 1 procedure (1 direct, 0 via roles); table: INSERT on 2 tables (1 direct, 1 via roles, 1 through a role not checked for being active at login); table: SELECT on 1 table (0 direct, 1 via roles, 1 through a role not checked for being active at login)
+    columns: column: UPDATE on 1 column (1 direct, 0 via roles)
+    schemas: SELECT on acme (database, via acme_read@%, not checked whether active at login)
+  not checked: whether a role is active without SET ROLE: the tool account has no SELECT on mysql.default_roles, the optional grant of 02-mysql-privileges.md §2.1
+```
 
 `report history` shows when each password the tool manages was rotated or
 reset, from the store's versions, with the database's own date of the last

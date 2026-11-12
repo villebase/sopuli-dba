@@ -141,6 +141,7 @@ def survey(
                     admin_option=first.admin_option,
                     default_role=first.default,
                     authentication=NO_AUTHENTICATION,
+                    default_role_checked=activation.defaults is not None,
                 )
             )
         for path, active in _paths(account, firsts, by_member):

@@ -77,7 +77,10 @@ class RoleGrant:
 
     ``authentication`` is the role's own: ``NONE`` for an ordinary role, or
     the database's word for one that needs more to enable, such as Oracle's
-    ``PASSWORD`` and ``APPLICATION``.
+    ``PASSWORD`` and ``APPLICATION``. ``default_role_checked`` is ``False``
+    where whether it is a default role could not be read, such as on MySQL
+    without ``SELECT`` on ``mysql.default_roles``; ``default_role`` is then
+    ``False`` and says nothing.
     """
 
     grantee: str
@@ -85,6 +88,7 @@ class RoleGrant:
     admin_option: bool
     default_role: bool
     authentication: str
+    default_role_checked: bool = True
 
 
 @dataclass(frozen=True)

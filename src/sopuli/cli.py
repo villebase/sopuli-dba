@@ -121,6 +121,7 @@ from sopuli.config.password_keys import declared_password_key, place_of
 from sopuli.config.products import (
     account_key,
     account_matcher,
+    fold_mysql_host,
     mysql_account,
     product_name,
     quoted_or_padded,
@@ -131,7 +132,7 @@ from sopuli.config.scope import refuse_personal_on
 from sopuli.config.secret_refs import SecretRef
 from sopuli.config.selection import LeftOut, narrow, narrow_to_pairs
 from sopuli.config.sharing import native_layouts, pinned_versions, unsure_layouts
-from sopuli.config.targets import MARIADB, MYSQL, ORACLE, POSTGRESQL, USER_AT_HOST_TYPES
+from sopuli.config.targets import MARIADB, MYSQL, USER_AT_HOST_TYPES
 from sopuli.config.vault_env import ADDR_FLAG, DEFAULT_STORE_VARIABLE
 from sopuli.constraints import AccountConstraints, Constraints, reuse_restricted
 from sopuli.delivery import DeliveryBackend, Handover, Receipt
@@ -5851,10 +5852,12 @@ def report_accounts_command(
     return report_view.render(reports, show_all=show_all)
 
 
-#: The products where the report resolves a personal rule's `role:` (#1469).
-#: MySQL and MariaDB name a role `user@host` or leave mandatory roles out, so
-#: they follow in their own change.
-_REPORT_ROLE_TYPES = frozenset({ORACLE, POSTGRESQL, MYSQL, MARIADB})
+
+def _role_key(role: str) -> str:
+    """A MySQL or MariaDB role as the server tells roles apart: the name as
+    written, and a host part, where there is one, without case."""
+    name, at, host = role.rpartition("@")
+    return f"{name}@{fold_mysql_host(host)}" if at else role
 
 
 def _personal_role_members(session: Any, config: Config, target: ExpandedTarget) -> tuple[str, ...]:
@@ -5876,16 +5879,16 @@ def _personal_role_members(session: Any, config: Config, target: ExpandedTarget)
     accounts the file declares, and listing them as undeclared would be a
     wrong answer rather than a missing one. On MySQL and MariaDB that includes
     a role every account holds (a mandatory role, or one ``PUBLIC`` reaches),
-    which `account list` refuses too (#1495).
+    which `account list` refuses too (#1495); the target's finding is that
+    refusal's own message.
     """
-    if target.target.type not in _REPORT_ROLE_TYPES:
-        return ()
     # One resolution per role, however many rules name it, compared as the
-    # config compares role names: by upper() on Oracle and PostgreSQL, as
-    # written on MySQL and MariaDB, where a role is `name@host` (#1465).
+    # config compares role names (#1465): by upper() on Oracle and PostgreSQL;
+    # as written on MySQL and MariaDB, where role names are case-sensitive,
+    # with a MySQL role's host part folded as the server compares it.
     exact = target.target.type in USER_AT_HOST_TYPES
     roles = {
-        rule.role if exact else rule.role.upper(): rule.role
+        _role_key(rule.role) if exact else rule.role.upper(): rule.role
         for rule in rules_for(config, target.name)
         if rule.role
     }

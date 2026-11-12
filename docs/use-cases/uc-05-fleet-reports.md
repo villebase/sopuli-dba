@@ -147,8 +147,11 @@ names is not compared. A `personal_accounts:` rule over a **role** is resolved
 on every product with the two reads `account list` makes: whether the role
 exists, then its members through any chain. So the report and the mutating
 verbs admit the same accounts ([#1469](../decisions/log.md#1469), #1495). On
-MySQL a role is `name@host`, as the rule names it, and on MySQL and MariaDB
-two rules that spell a role two ways name two roles.
+MySQL a role is `name@host`, as the rule names it. On MySQL and MariaDB a
+role's name is compared as written, so two rules that spell a name two ways
+name two roles; a MySQL host part is compared without case, as the server
+compares it. On MariaDB the account that created a role holds it, so it is a
+member, in the report as in `account list`.
 A role that does not exist admits nobody, and the report says nothing about
 it, as it says nothing about a personal rule's `profile:` that names no
 profile. Where the target lacks the `role_lookup` capability, the role is not

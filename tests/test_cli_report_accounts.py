@@ -252,20 +252,28 @@ class _AskedRoles(_RoleSession):
 
 @pytest.mark.parametrize(
     ("product", "asked"),
-    [("postgresql", ["acme_dev@%"]), ("mysql", ["acme_Dev@%", "acme_dev@%"])],
+    [
+        ("postgresql", ["acme_dev@Example.com"]),
+        ("mysql", ["acme_Dev@example.com", "acme_dev@Example.com"]),
+    ],
 )
 def test_roles_are_told_apart_as_the_config_tells_them(product: str, asked: list[str]) -> None:
-    """By upper() on Oracle and PostgreSQL; as written on MySQL and MariaDB,
-    where two spellings are two roles (#1465)."""
+    """By upper() on Oracle and PostgreSQL; on MySQL and MariaDB the name as
+    written, where two spellings are two roles (#1465), and a MySQL host part
+    without case, as the server compares it: three rules, two roles."""
     config = build_config(
         {
             "version": 1,
             "targets": [{"name": "t", "type": product, "dsn": "t.example.com:5432"}],
-            "personal_accounts": [{"role": "acme_Dev@%"}, {"role": "acme_dev@%"}],
+            "personal_accounts": [
+                {"role": "acme_Dev@example.com"},
+                {"role": "acme_dev@example.com"},
+                {"role": "acme_dev@Example.com"},
+            ],
         }
     )
     session = _AskedRoles("t")
-    session.roles = {"ACME_DEV@%": ()}
+    session.roles = {"ACME_DEV@EXAMPLE.COM": ()}
     _personal_role_members(session, config, config.expanded_targets[0])
 
     assert session.asked == asked
@@ -301,6 +309,27 @@ def test_a_role_read_that_fails_is_a_read_failure_on_the_target(
 
     assert result.exit_code == ExitCode.FAILURE, result.output
     assert "insufficient privileges" in result.output
+
+
+def test_a_role_every_account_holds_fails_the_target_with_its_own_reason(
+    write_config: WriteConfig, sessions: Any
+) -> None:
+    """#1495: a MySQL mandatory role would make every account personal, so the
+    target fails, as #1469 decided for a failed role read, and the finding is
+    the refusal `account list` gives for the same rule."""
+    from sopuli.driver.mysql.roles import MandatoryRoleError
+
+    class _Mandatory(_RoleSession):
+        def resolve_role(self, role: str) -> str | None:
+            raise MandatoryRoleError(role, through=role, target=self.target)
+
+    sessions["prod-alpha"] = lambda *_: _Mandatory("prod-alpha")
+    result = role_report(write_config, "acme_developers")
+
+    assert result.exit_code == ExitCode.FAILURE, result.output
+    by_target = json.loads(result.output)["results"]
+    assert by_target[0]["state"] == "ERROR"
+    assert "every account" in by_target[0]["error"]["message"]
 
 
 class _NoSurvey:

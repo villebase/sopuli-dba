@@ -479,8 +479,7 @@ class MariadbSession(ClosesConnection):
         states = self.account_states()
         if states.rows is None:
             return None, states.reason
-        name, host = user.name.rsplit("@", 1)
-        state = states.get(name, host)
+        state = states.get(*split(user.name))
         if state is None:
             return None, account_state.NO_ROW
         return state.changed_at, state.no_time
@@ -491,12 +490,21 @@ class MariadbSession(ClosesConnection):
         or ``EXPIRED``; a locked account becomes ``LOCKED`` or ``EXPIRED &
         LOCKED``, as on MySQL. Unchanged where the view is absent or broken,
         or has no row for the account. ``user`` is as ``describe_user`` gave
-        it, so its name is the server's spelling."""
-        name, host = user.name.rsplit("@", 1)
-        state = self.account_states().get(name, host)
+        it, so its name is the server's spelling.
+
+        The view's ``account_locked`` is ``ACCOUNT LOCK``'s: a block after
+        failed logins is not in it (#1479). So the lock is a deliberate one,
+        as MySQL's ``account_locked`` and the report survey take it.
+        """
+        state = self.account_states().get(*split(user.name))
         if state is None or not state.locked:
             return user
-        return replace(user, locked=True, status=locked_status(locked=True, expired=user.expired))
+        return replace(
+            user,
+            locked=True,
+            deliberately_locked=True,
+            status=locked_status(locked=True, expired=user.expired),
+        )
 
     def _read_grants(self, reader: Callable[[Any], T]) -> T:
         """:meth:`_read`, with the hint about §2.1's grants on a refused read."""

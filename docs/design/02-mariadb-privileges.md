@@ -130,7 +130,9 @@ GRANT SELECT (default_role) ON mysql.user TO 'sopuli_admin'@'192.0.2.10';
 The view reads, for each account, the lock, the password lifetime and the time
 of the last change from `mysql.global_priv`, and never the stored value.
 `report accounts`, `report history` and `account list` read it, and nothing
-that changes an account does. Without it, those are *not checked*. §2.4 says
+that changes an account does. Without it, the reports say those are *not
+checked*, and `account list` shows `OPEN` or `EXPIRED`, which say nothing of
+the lock. §2.4 says
 what it gives. Edit the two `SET` lines at its top to name the tool account,
 and run it as an administrator who may name another definer (`SET USER` or
 `SUPER`). `doctor --check-privileges` counts `SELECT` on the view as held

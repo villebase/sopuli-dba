@@ -4138,8 +4138,9 @@ def account_list_command(
         rows.extend(found)
         errors += failed
         unanswered += sum(1 for row in found if row.target_failed)
-        # MySQL only. What `account list` says of a lock and a block on MariaDB,
-        # which it cannot read at all, is #1272's (#1267, decision 2).
+        # MySQL only. On MariaDB the lock is shown from the optional view where
+        # it is readable (#1491), and a block after failed logins is in no
+        # place the tool reads; what `account list` says of that is #1272's.
         if target.target.type == MYSQL and any(
             row.state is not None and not row.state.locked for row in found
         ):

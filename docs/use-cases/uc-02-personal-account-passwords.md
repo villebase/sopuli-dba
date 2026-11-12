@@ -558,7 +558,9 @@ on every run and reports `changed: true`, because no verb that changes an
 account reads the lock ([#1267](../decisions/log.md#1267), decision 2).
 `account list` shows it where the DBA has created the optional view
 `sopuli.account_state` (`02-mariadb-privileges.md` §2.1): a locked account
-is `LOCKED`, or `EXPIRED & LOCKED`, as on MySQL. Without the view a MariaDB
+is `LOCKED`, or `EXPIRED & LOCKED`, as on MySQL. With the view, `OPEN` means
+no `ACCOUNT LOCK`; a block after failed logins is in no place the tool reads,
+so an `OPEN` account may still be blocked. Without the view a MariaDB
 account's `status` is `OPEN` or `EXPIRED`, from the `mysql.user` view's
 `password_expired` alone, and says nothing of the lock. A view that exists
 and cannot be used adds `SOPULI-W073` for the target

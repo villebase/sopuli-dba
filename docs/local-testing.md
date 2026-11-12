@@ -2345,8 +2345,8 @@ suspended acme_dev_bob@localhost on 1 of 1 targets
 
 `report accounts` reads every account on each target and checks it against the
 `reports:` rules (`design/01-configuration.md` §8a). It changes nothing. It
-runs on Oracle and PostgreSQL. `report privileges` and `report history` run on
-Oracle only.
+runs on Oracle and PostgreSQL. `report privileges` runs on Oracle only, and
+`report history` on every product.
 
 Make two accounts on a profile whose passwords expire after 180 days, and one
 locked account that nothing declares. As SYS in the PDB:
@@ -2631,6 +2631,42 @@ free-pdb  (23.0.0.0.0, 1 account)
 stamp. A version that is listed and cannot be read, a gap in the numbers, or a
 store that keeps no versions makes the history *not checked*, and the run exits
 4.
+
+The history comes from the store on every product. This run used the tool
+accounts from §7's PostgreSQL, MySQL and MariaDB sections, one application
+account on each (`acme_rh_pg`, `acme_rh_my@%`, `acme_rh_maria@%`), then `creds
+generate`, `creds apply` and one `creds rotate --confirm`:
+
+```
+$ sopuli --config history.yaml report history
+pg-dev  (16.15, 1 account)
+  acme_rh_pg  (application)
+    database changed: unknown, PostgreSQL does not record when a role's password was changed
+    WHEN                  CHANGE    VERSION  BY
+    2026-11-11T20:55:50Z  rotation  v4       jdba@admin-ws
+    2026-11-11T20:55:39Z  rotation  v2       jdba@admin-ws
+    history from v1 (2026-11-11T20:55:36Z); 0 earlier versions gone
+
+mysql-dev  (8.4.13, 1 account)
+  acme_rh_my@%  (application)
+    database changed: 2026-11-11T20:55:50Z
+    WHEN                  CHANGE    VERSION  BY
+    2026-11-11T20:55:50Z  rotation  v4       jdba@admin-ws
+    2026-11-11T20:55:39Z  rotation  v2       jdba@admin-ws
+    history from v1 (2026-11-11T20:55:37Z); 0 earlier versions gone
+
+mariadb-dev  (11.8.9, 1 account)
+  acme_rh_maria@%  (application)
+    database changed: unknown, MariaDB keeps the time of a password change beside the stored value, which the tool does not read
+    WHEN                  CHANGE    VERSION  BY
+    2026-11-11T20:55:50Z  rotation  v4       jdba@admin-ws
+    2026-11-11T20:55:39Z  rotation  v2       jdba@admin-ws
+    history from v1 (2026-11-11T20:55:37Z); 0 earlier versions gone
+```
+
+It exits 0. MySQL's date is `mysql.user.password_last_changed`. PostgreSQL
+keeps no such date, and MariaDB keeps it where the tool does not read it, so
+there the date is `unknown`, with the reason; the history is still complete.
 
 ---
 

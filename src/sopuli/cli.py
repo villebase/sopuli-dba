@@ -6054,7 +6054,9 @@ def report_history_command(
 
     Exit 0 when every history was read, 1 when a target or a store gave no
     answer, and 4 when a history has a gap or the store keeps no versions.
-    Only Oracle can run this report yet.
+    Oracle, PostgreSQL, MySQL and MariaDB can run it. The database's date comes
+    from Oracle and MySQL; PostgreSQL keeps none, and MariaDB keeps it where the
+    tool does not read it, so there the report says why it is unknown.
     """
     document = run.document
     selection = selected(selectors, targets, (), groups, ())
@@ -6062,6 +6064,10 @@ def report_history_command(
     config = _narrow(run.config, selection)
     document.selection = selection.as_json() or None
     config = binding_stores.complete(config, env=os.environ, estate=run.config)
+    if account is not None:
+        # A bare name names no MySQL or MariaDB account: refused before
+        # anything connects, as every other `--account` is (invariant 4).
+        _refuse_a_bare_mysql_name(account, config.expanded_targets)
 
     stores = _HistoryStores(config, run)
     reports = [
@@ -6252,11 +6258,13 @@ def _history_target(
             target=target.name, error=_finding(refused), unsupported=True
         )
 
-    spelled = wanted.upper() if wanted is not None else None
+    product = target.target.type
+    spelled = _account_key(wanted, product) if wanted is not None else None
     bindings = [
         one
         for one in config.bindings
-        if one.target == target.name and (spelled is None or one.account.upper() == spelled)
+        if one.target == target.name
+        and (spelled is None or _account_key(one.account, product) == spelled)
     ]
     found, failures = _application_histories(target.name, bindings, stores)
     if wanted is None or not bindings:
@@ -6295,10 +6303,7 @@ def _history_target(
         if session is not None:
             try:
                 release = session.scope().db_version
-                found = [
-                    history_states.with_database(one, session.describe_user(one.account))
-                    for one in found
-                ]
+                found = [_database_date(one, session) for one in found]
             except Exception as failed:  # noqa: BLE001 -- a per-target finding
                 error, read_failed = _finding(failed), True
         absent = None
@@ -6317,6 +6322,33 @@ def _history_target(
         if session is not None:
             with suppress(Exception):
                 session.close()
+
+
+def _account_key(account: str, product: str) -> object:
+    """One value for every spelling of one account, as the config compares
+    names (:func:`~sopuli.config.products.account_key`): ``upper()`` on Oracle
+    and PostgreSQL, and on MySQL and MariaDB the user exactly and the host
+    without case, because ``jdoe@%`` and ``JDOE@%`` are two accounts there."""
+    return account_key(product)(account)
+
+
+def _database_date(
+    one: history_states.AccountHistory, session: Session
+) -> history_states.AccountHistory:
+    """``one`` with the database's date, or why there is none.
+
+    The date is information (UC-5 §6), so a refusal the driver marks as about
+    this account alone (:attr:`~sopuli.driver.protocol.DriverError.about_account`),
+    such as a MySQL account on another plugin, becomes that account's reason and
+    never the target's failure. Any other error is the target's, as before.
+    """
+    try:
+        user = session.describe_user(one.account)
+    except DriverError as refused:
+        if not refused.about_account:
+            raise
+        return history_states.without_database(one, refused.message)
+    return history_states.with_database(one, user)
 
 
 def _missing_unmanaged(one: history_states.AccountHistory) -> bool:
@@ -6406,12 +6438,13 @@ def _personal_histories(
     record's path is matched before it is read.
     """
     kind = history_states.PERSONAL
-    spelled = wanted.upper() if wanted is not None else None
+    product = target.target.type
+    spelled = _account_key(wanted, product) if wanted is not None else None
     named = {
-        name.upper(): name
+        _account_key(name, product): name
         for rule in rules_for(config, target.name)
         for name in rule.accounts
-        if spelled is None or name.upper() == spelled
+        if spelled is None or _account_key(name, product) == spelled
     }
     records = config.reset_records
     if records is None:
@@ -6431,16 +6464,19 @@ def _personal_histories(
         return [], _records_failed(named, _finding(failed))
 
     if wanted is not None:
-        segment = reset_record.account_segment(wanted, target.target.type)
+        segment = reset_record.account_segment(wanted, product)
         paths = tuple(path for path in paths if path.rsplit("/", 1)[-1] == segment)
+    # A record's path names its account only by segment, so a rule's names are
+    # looked up by segment where a record does not name its account.
+    by_segment = {reset_record.account_segment(name, product): name for name in named.values()}
 
     found: list[history_states.AccountHistory] = []
     failures: list[history_view.StoreFailure] = []
-    seen: set[str] = set()
+    seen: set[object] = set()
     for path in paths:
         read = _read_once(stores, records.vault, path, raw=True)
-        name = _record_account(read, path)
-        seen.add(name.upper())
+        name = _record_account(read, path, named=by_segment, product=product)
+        seen.add(_account_key(name, product))
         if isinstance(read, Error):
             failures.append(history_view.StoreFailure(name, kind, read))
             continue
@@ -6464,13 +6500,13 @@ def _personal_histories(
         )
     found.extend(
         history_states.AccountHistory(target.name, name, kind, note="no reset record")
-        for upper, name in sorted(named.items())
-        if upper not in seen
+        for key, name in sorted(named.items(), key=lambda item: item[1])
+        if key not in seen
     )
     return found, failures
 
 
-def _records_failed(named: Mapping[str, str], error: Error) -> list[history_view.StoreFailure]:
+def _records_failed(named: Mapping[object, str], error: Error) -> list[history_view.StoreFailure]:
     """The records store gave no answer: one failure per named account, or one
     for the records themselves where no rule names an account here."""
     accounts = list(named.values()) or [RESET_RECORDS]
@@ -6479,13 +6515,25 @@ def _records_failed(named: Mapping[str, str], error: Error) -> list[history_view
     ]
 
 
-def _record_account(read: _Read, path: str) -> str:
-    """The account a reset record is for, as its newest readable version says."""
+def _record_account(read: _Read, path: str, *, named: Mapping[str, str], product: str) -> str:
+    """The account a reset record is for, as its newest readable version says.
+
+    Where no version says, the path's last segment, which
+    :func:`~sopuli.reset_record.account_segment` wrote: the account a rule
+    names with that segment, or, on Oracle and PostgreSQL, the segment in upper
+    case. On MySQL and MariaDB the segment is kept as it is: its host is a
+    token (``%`` written ``any``), which cannot be read back to one host. Only
+    a record no version of which could be read lacks the field, and its
+    history is *not checked* then anyway.
+    """
     if isinstance(read, _SecretVersions):
         for document in [read.latest, *(read.documents[v] for v in sorted(read.documents))][::-1]:
             if isinstance(document, Mapping) and isinstance(document.get("account"), str):
                 return str(document["account"])
-    return path.rsplit("/", 1)[-1].upper()
+    segment = path.rsplit("/", 1)[-1]
+    if segment in named:
+        return named[segment]
+    return segment if product in USER_AT_HOST_TYPES else segment.upper()
 
 
 @cli.group("creds")

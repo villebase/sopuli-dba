@@ -92,7 +92,7 @@ driver registry says which checks each product lacks, from the target's
 | Code | When |
 |---|---|
 | 0 | every target was reached, no check found a problem, and every check that had a rule ran |
-| 1 | a target could not be reached |
+| 1 | a target could not be reached, or was reached and could not be read |
 | 3 | every target was reached, and at least one problem was found |
 | 4 | every target was reached and no problem was found, but something was not checked |
 | 5 | at plan time: no target can run a check the command needs (below) |
@@ -100,9 +100,10 @@ driver registry says which checks each product lacks, from the target's
 *No rule* and information never change the exit code. An undeclared account
 that no rule names is shown, and a fleet full of them still exits 0.
 
-An unreachable target outranks a problem, as in `creds check`
-(UC-1 §7): a report that reached nine targets of ten must not exit 3 as if the
-survey were complete. A problem outranks *not checked*, because the target was
+An unreachable or unread target outranks a problem, as in `creds check`
+(UC-1 §7): a report that read nine targets of ten must not exit 3 as if the
+survey were complete. The other targets' problems are still in the output and
+the run document. A problem outranks *not checked*, because the target was
 reached and the problem is certain. None of 1, 3 and 4 reads as clean, and the
 run document carries every count.
 

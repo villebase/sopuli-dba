@@ -1920,9 +1920,11 @@ def global_privileges_view_broken(target: str, what: str) -> Diagnostic:
 
 def role_not_resolved(target: str, role: str, refused: UnsupportedCapabilityError) -> Diagnostic:
     """`SOPULI-W075`, once per target and role, where a personal rule's `role:`
-    is not resolved for want of a capability (#1478). The refusal's hint names
-    the grant."""
-    fix = f": {refused.hint}" if refused.hint else ""
+    is not resolved for want of a capability (#1478).
+
+    The fix is the refusal's ``remedy``, not its hint: the hint is written for
+    `account list`, where the rule is the whole answer."""
+    fix = refused.remedy
     return Diagnostic(
         level="warning",
         code=ROLE_NOT_RESOLVED,
@@ -1930,7 +1932,7 @@ def role_not_resolved(target: str, role: str, refused: UnsupportedCapabilityErro
         message=(
             f"{target}: the role {role} of a personal_accounts: rule was not resolved, "
             f"because the target does not support {refused.capability}, so its members "
-            f"show as undeclared{fix}"
+            "show as undeclared." + (f" {fix}" if fix else "")
         ),
     )
 

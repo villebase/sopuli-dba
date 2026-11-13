@@ -228,23 +228,59 @@ def test_a_role_predicates_member_is_personal_in_the_privilege_report(
 def test_an_unresolved_role_warns_in_the_privilege_report(
     write_config: WriteConfig, session: dict[str, FakeSession]
 ) -> None:
-    """Without `role_lookup` the member is undeclared, and W075 says why (#1478)."""
-
-    class _NoLookup(_RoleSession):
-        def resolve_role(self, role: str) -> str | None:
-            raise UnsupportedCapabilityError(ROLE_LOOKUP, target="free-pdb")
-
+    """Without `role_lookup` the member is undeclared, and W075 says why, in
+    JSON and in text (#1478). The report runs as it would without the role."""
     session["session"] = _NoLookup(GRANTS)
     config = write_config(f"{CONFIG}personal_accounts:\n  - role: acme_developers\n")
-    result = CliRunner().invoke(
-        cli, ["--config", str(config), "--output", "json", "report", "privileges"]
-    )
+    base = ["--config", str(config)]
+    result = CliRunner().invoke(cli, [*base, "--output", "json", "report", "privileges"])
 
+    assert result.exit_code == ExitCode.SUCCESS, result.output
     document = json.loads(result.output)
     kinds = {entry["account"]: entry["kind"] for entry in document["results"]}
     assert kinds["ACME_DEV_ALICE"] == "undeclared"
-    codes = [warning["code"] for warning in document["diagnostics"]]
-    assert codes.count("SOPULI-W075") == 1
+    [warning] = [w for w in document["diagnostics"] if w["code"] == "SOPULI-W075"]
+    assert warning["target"] == "free-pdb"
+    assert "GRANT SELECT ON SYS.DBA_ROLES to the service account" in warning["message"]
+
+    session["session"] = _NoLookup(GRANTS)
+    text = click.unstyle(CliRunner().invoke(cli, [*base, "report", "privileges"]).output)
+    assert "the role acme_developers of a personal_accounts: rule was not resolved" in text
+
+
+def test_an_unresolved_role_gives_no_warning_for_an_account_outside_it(
+    write_config: WriteConfig, session: dict[str, FakeSession]
+) -> None:
+    """`--account` naming a declared account alone: no undeclared row, so the
+    role cannot have changed what the report shows."""
+    session["session"] = _NoLookup(GRANTS)
+    config = write_config(f"{CONFIG}personal_accounts:\n  - role: acme_developers\n")
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--config",
+            str(config),
+            "--output",
+            "json",
+            "report",
+            "privileges",
+            "--account",
+            "ACME_APP_USER",
+        ],
+    )
+
+    document = json.loads(result.output)
+    assert [entry["account"] for entry in document["results"]] == ["ACME_APP_USER"]
+    assert "SOPULI-W075" not in [w["code"] for w in document.get("diagnostics", [])]
+
+
+class _NoLookup(_RoleSession):
+    def resolve_role(self, role: str) -> str | None:
+        raise UnsupportedCapabilityError(
+            ROLE_LOOKUP,
+            target="free-pdb",
+            remedy="GRANT SELECT ON SYS.DBA_ROLES to the service account",
+        )
 
 
 def test_public_json_validates_and_is_not_counted_as_an_account(

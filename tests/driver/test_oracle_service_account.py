@@ -451,6 +451,10 @@ def test_an_install_without_the_grant_is_refused_naming_it(
 
     assert raised.value.capability == ROLE_LOOKUP
     assert "GRANT SELECT ON SYS.DBA_ROLES" in (raised.value.hint or "")
+    # The reports' W075 words its own message around this (#1478).
+    assert raised.value.remedy == (
+        "GRANT SELECT ON SYS.DBA_ROLES to the service account, as sql/oracle/00_install.sql does"
+    )
 
 
 def test_an_install_without_the_grant_still_describes_accounts(

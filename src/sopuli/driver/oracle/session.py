@@ -630,6 +630,9 @@ class OracleSession(ClosesConnection):
                 "cannot be told from one that does not exist: GRANT SELECT ON SYS.DBA_ROLES "
                 f"to it (02-oracle-privileges.md section 2, or {INSTALL_SCRIPT})"
             ),
+            remedy=(
+                f"GRANT SELECT ON SYS.DBA_ROLES to the service account, as {INSTALL_SCRIPT} does"
+            ),
         )
         with traced_cursor(self.connection) as cursor:
             return resolve_role(cursor, role)

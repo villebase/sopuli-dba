@@ -88,3 +88,8 @@ ACCOUNT_STATE_VIEW_BROKEN = "SOPULI-W073"
 #: that reads less than ``mysql.*`` (#1483). The global privileges are not
 #: checked on that target.
 GLOBAL_PRIVILEGES_VIEW_BROKEN = "SOPULI-W074"
+
+#: A ``personal_accounts:`` rule's ``role:`` was not resolved on a target that
+#: lacks the capability the read needs, such as ``role_lookup`` on Oracle
+#: (#1478). The role's members show as undeclared in the report.
+ROLE_NOT_RESOLVED = "SOPULI-W075"

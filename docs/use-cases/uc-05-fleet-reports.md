@@ -156,7 +156,10 @@ member, in the report as in `account list`.
 A role that does not exist admits nobody, and the report says nothing about
 it, as it says nothing about a personal rule's `profile:` that names no
 profile. Where the target lacks the `role_lookup` capability, the role is not
-resolved and its members show as undeclared. As with a profile predicate, a
+resolved and its members show as undeclared. Where the target's report then
+shows an undeclared account, `SOPULI-W075` names the role and the grant, once
+per target and role, in this report and in `report privileges`
+([#1478](../decisions/log.md#1478)). As with a profile predicate, a
 role does not bring back an account the report leaves out, such as one
 Oracle maintains. A role every account holds (a MySQL mandatory role, or a
 MariaDB role `PUBLIC` reaches) fails that target's report, as `account list`

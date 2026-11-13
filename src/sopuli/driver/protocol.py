@@ -543,13 +543,20 @@ class UnsupportedCapabilityError(DriverError):
     category = "capability"
     exit_code = ExitCode.UNSUPPORTED_CAPABILITY
 
-    def __init__(self, capability: str, *, target: str, hint: str | None = None) -> None:
+    def __init__(
+        self, capability: str, *, target: str, hint: str | None = None, remedy: str | None = None
+    ) -> None:
         super().__init__(
             f'target "{target}" does not support {capability}',
             hint=hint,
         )
         self.capability = capability
         self.target = target
+        #: How to give the target the capability, as one sentence, for a
+        #: caller that words its own message around the refusal rather than
+        #: repeating ``hint``: a report's warning (#1478). ``None`` where the
+        #: driver has none to give.
+        self.remedy = remedy
 
 
 class AuthenticationError(DriverError):
@@ -1675,7 +1682,12 @@ class DriverContext:
 
 
 def require_capability(
-    scope: Scope, capability: str, *, target: str, hint: str | None = None
+    scope: Scope,
+    capability: str,
+    *,
+    target: str,
+    hint: str | None = None,
+    remedy: str | None = None,
 ) -> None:
     """Refuse unless ``scope`` reported ``capability`` (invariant 4).
 
@@ -1690,10 +1702,11 @@ def require_capability(
     instead of an absent capability depends entirely on which capability it was,
     and a generic "this target cannot do that" adds nothing an operator can act
     on -- which is what the style rule about hints is for. A caller with nothing
-    useful to say passes nothing.
+    useful to say passes nothing. ``remedy`` is
+    :attr:`UnsupportedCapabilityError.remedy`.
     """
     if not scope.supports(capability):
-        raise UnsupportedCapabilityError(capability, target=target, hint=hint)
+        raise UnsupportedCapabilityError(capability, target=target, hint=hint, remedy=remedy)
 
 
 class Cursor(Protocol):

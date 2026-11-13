@@ -181,6 +181,7 @@ from sopuli.diagnostics import (
     refusing_targets,
     reset_journal_unread,
     reset_record_unwritten,
+    role_not_resolved,
     rollback_reuse,
     rollover_caveat,
     second_method_unseen,
@@ -5874,7 +5875,28 @@ def _role_key(role: str) -> str:
     return f"{name}@{fold_mysql_host(host)}" if at else role
 
 
-def _personal_role_members(session: Any, config: Config, target: ExpandedTarget) -> tuple[str, ...]:
+@dataclass(frozen=True)
+class _RoleMembers:
+    """What :func:`_personal_role_members` read: every member, and each role
+    the target lacked the capability to resolve, with the refusal."""
+
+    members: tuple[str, ...]
+    unresolved: tuple[tuple[str, UnsupportedCapabilityError], ...] = ()
+
+    def warn(self, run: Invocation, target: str, rows: Sequence[report_states.AccountRow]) -> None:
+        """`SOPULI-W075` per unresolved role, where the report shows an
+        undeclared account (#1478). Without the role's members, any undeclared
+        account may be one, so any counts; a report of declared accounts alone
+        has nothing the role could change. Called once the target's reads have
+        all passed, so a target that fails later carries no warning about rows
+        it does not show."""
+        if not any(row.kind == report_states.UNDECLARED_KIND for row in rows):
+            return
+        for role, refused in self.unresolved:
+            run.document.warn_in_text(role_not_resolved(target, role, refused))
+
+
+def _personal_role_members(session: Any, config: Config, target: ExpandedTarget) -> _RoleMembers:
     """Every account a personal rule's `role:` admits on ``target`` (#1469).
 
     The same two reads `account list` makes (:func:`role_members`), so the
@@ -5885,9 +5907,10 @@ def _personal_role_members(session: Any, config: Config, target: ExpandedTarget)
     refuses both, because there the rule is the whole answer.
 
     Where the target lacks `role_lookup` (on Oracle, `SELECT ON DBA_ROLES`),
-    the role is not resolved and its members show as undeclared, as before
-    #1469. The report still runs: a report that lacks a capability does not
-    fail the target over it (invariant 4, #1376). Any other failure, such as
+    the role is not resolved and its members show as undeclared, and the
+    caller warns with `SOPULI-W075` (:meth:`_RoleMembers.warn`, #1478). The report still runs:
+    a report that lacks a capability does not fail the target over it
+    (invariant 4, #1376). Any other failure, such as
     two roles whose names differ only in case, is the target's read failure,
     as the survey's is: without the members the report cannot say which
     accounts the file declares, and listing them as undeclared would be a
@@ -5907,13 +5930,15 @@ def _personal_role_members(session: Any, config: Config, target: ExpandedTarget)
         if rule.role
     }
     members: list[str] = []
+    unresolved: list[tuple[str, UnsupportedCapabilityError]] = []
     for role in roles.values():
         try:
             found = role_members(session, role)
-        except UnsupportedCapabilityError:
+        except UnsupportedCapabilityError as refused:
+            unresolved.append((role, refused))
             continue
         members.extend(found or ())
-    return tuple(members)
+    return _RoleMembers(tuple(members), tuple(unresolved))
 
 
 def _report_target(
@@ -5952,18 +5977,20 @@ def _report_target(
         try:
             surveyed, profiles = session.survey_with_profiles()
             _warn_if_view_broken(run, target, session)
-            members = _personal_role_members(session, config, target)
+            roles = _personal_role_members(session, config, target)
         except Exception as error:  # noqa: BLE001 -- a per-target finding
             # Connected, then could not read: said as such, not as "could not
             # connect", though the target still gave no answer (exit 1).
             return report_view.TargetReport(
                 target=target.name, error=_finding(error), read_failed=True
             )
+        rows = report_states.evaluate(target.name, config, surveyed, role_members=roles.members)
+        roles.warn(run, target.name, rows)
         return report_view.TargetReport(
             target=target.name,
             release=session.scope().release,
             read=len(surveyed),
-            rows=report_states.evaluate(target.name, config, surveyed, role_members=members),
+            rows=rows,
             missing=report_states.missing_profiles(target.name, config, profiles),
         )
     finally:
@@ -6092,9 +6119,9 @@ def _privileges_target(
             surveyed, _profiles = session.survey_with_profiles()
             # A common account in a PDB stays: its grants made in the PDB are
             # read here, though its lock and limits are not (#1438).
-            members = _personal_role_members(session, config, target)
+            roles = _personal_role_members(session, config, target)
             rows = report_states.evaluate(
-                target.name, config, surveyed, keep_kept_in_root=True, role_members=members
+                target.name, config, surveyed, keep_kept_in_root=True, role_members=roles.members
             )
             absent = None
             if wanted is not None:
@@ -6111,6 +6138,9 @@ def _privileges_target(
             return privileges_view.TargetPrivileges(
                 target=target.name, error=_finding(error), read_failed=True
             )
+        # After --account's narrowing: accounts the config declares, named
+        # alone, get no warning about a role.
+        roles.warn(run, target.name, rows)
         return privileges_view.TargetPrivileges(
             target=target.name,
             release=session.scope().release,

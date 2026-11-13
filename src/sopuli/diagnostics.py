@@ -40,6 +40,7 @@ from sopuli.config.codes import (
     NOTIFY_UNSERVICEABLE,
     PROFILE_NAMED_AFTER_ENVIRONMENT,
     RELAXATION_DEFEATED,
+    ROLE_NOT_RESOLVED,
     THIRD_PARTY_ADDR_OVERRIDES,
     THIRD_PARTY_ADDR_USERINFO,
     THIRD_PARTY_NAMESPACE_OVERRIDES,
@@ -60,7 +61,12 @@ from sopuli.constraints import (
 )
 from sopuli.driver.guardrails import PASSWORD_FILE, Caveat
 from sopuli.driver.oracle.wallet import AUTO_LOGIN, WalletReport
-from sopuli.driver.protocol import ENCRYPTION_NONE, Encryption, UserState
+from sopuli.driver.protocol import (
+    ENCRYPTION_NONE,
+    Encryption,
+    UnsupportedCapabilityError,
+    UserState,
+)
 from sopuli.driver.protocol import UNKNOWN as ENCRYPTION_UNKNOWN_METHOD
 from sopuli.install_shape import INSTALLED, Component, InstallShape
 from sopuli.lock.inspect import SkippedPath
@@ -1121,6 +1127,14 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "checked there, and the report says why. One per target. A warning and not a "
             "refusal: the view is optional, and the report still runs."
         ),
+        ROLE_NOT_RESOLVED: (
+            "A `personal_accounts:` rule's `role:` was not resolved on a target, because "
+            "the target lacks the capability the read needs: on Oracle, `role_lookup`, "
+            "`SELECT ON SYS.DBA_ROLES`. The role's members then show as undeclared in "
+            "`report accounts` and `report privileges`. One per target and role, naming "
+            "the grant. A warning and not a refusal: a report that lacks a capability "
+            "still runs."
+        ),
         ROTATION_OVERDUE: (
             "`creds status --max-age-days`: the vault last rotated this credential longer "
             "ago than the threshold. The age is the vault's, not the database's, which is "
@@ -1900,6 +1914,25 @@ def global_privileges_view_broken(target: str, what: str) -> Diagnostic:
             "global privileges are not checked here. Recreate it with "
             "sql/mariadb/global_privileges_view.sql, which makes it with only the expected "
             "columns, owned by a locked definer that can read mysql.*"
+        ),
+    )
+
+
+def role_not_resolved(target: str, role: str, refused: UnsupportedCapabilityError) -> Diagnostic:
+    """`SOPULI-W075`, once per target and role, where a personal rule's `role:`
+    is not resolved for want of a capability (#1478).
+
+    The fix is the refusal's ``remedy``, not its hint: the hint is written for
+    `account list`, where the rule is the whole answer."""
+    fix = refused.remedy
+    return Diagnostic(
+        level="warning",
+        code=ROLE_NOT_RESOLVED,
+        target=target,
+        message=(
+            f"{target}: the role {role} of a personal_accounts: rule was not resolved, "
+            f"because the target does not support {refused.capability}, so any member of "
+            "it shows as undeclared." + (f" {fix}" if fix else "")
         ),
     )
 

@@ -1907,17 +1907,19 @@ def no_reset_record() -> Diagnostic:
 def account_state_view_broken(target: str, what: str, *, product: str) -> Diagnostic:
     """`SOPULI-W073`, once per target, where the optional view
     ``sopuli.account_state`` exists and is not used (#1491, #1502): ``what`` is
-    what is wrong with it. ``product`` says what the view gives there."""
-    fields, script, source = _ACCOUNT_STATE_VIEWS[product]
-    return Diagnostic(
-        level="warning",
-        code=ACCOUNT_STATE_VIEW_BROKEN,
-        target=target,
-        message=(
-            f"{target}: the optional view sopuli.account_state is not used: {what}. "
-            f"{fields} not checked here. Recreate it with {script}, which makes it with "
+    what is wrong with it. ``product`` says what the view gives there; a
+    product without the view's install script gets the warning without the
+    fix, never an error."""
+    known = _ACCOUNT_STATE_VIEWS.get(product)
+    message = f"{target}: the optional view sopuli.account_state is not used: {what}"
+    if known is not None:
+        fields, script, source = known
+        message += (
+            f". {fields} not checked here. Recreate it with {script}, which makes it with "
             f"only the expected columns, owned by a locked definer that can read {source}"
-        ),
+        )
+    return Diagnostic(
+        level="warning", code=ACCOUNT_STATE_VIEW_BROKEN, target=target, message=message
     )
 
 

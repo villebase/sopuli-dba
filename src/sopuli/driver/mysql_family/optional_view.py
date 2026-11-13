@@ -13,7 +13,7 @@ MySQL and MariaDB answer alike (``12_definer_view_probe.py``,
 
 - no row in ``COLUMNS``, or ``1142`` on the read: the view is absent, its
   schema is absent, or the tool account has no grant on it. The server tells
-  none of these apart;
+  none of these apart. ``1146`` is a view dropped while the grant is left;
 - ``1045`` on the read, in a session already logged in: its definer is gone;
 - ``1356``: its definer cannot read what the view selects.
 
@@ -34,6 +34,10 @@ DEFINER_GONE = 1045
 VIEW_INVALID = 1356
 #: ``ER_TABLEACCESS_DENIED_ERROR``: no grant on the view, or no view.
 NO_GRANT = 1142
+#: ``ER_NO_SUCH_TABLE``: the view was dropped after its columns were read,
+#: with the grant left, as the install script's own re-run can do. Absent,
+#: as MariaDB's ``sopuli.global_privileges`` reader takes it.
+NO_SUCH_TABLE = 1146
 #: The client's own error numbers (CR_*), such as a lost connection: not the
 #: server's answer about the view.
 CLIENT_ERRORS = range(2000, 3000)
@@ -80,7 +84,7 @@ def refusal(error: Exception, *, source: str) -> str | None:
     number = error_number(error)
     if number is None or CLIENT_ERRORS.start <= number < CLIENT_ERRORS.stop:
         raise error
-    if number == NO_GRANT:
+    if number in (NO_GRANT, NO_SUCH_TABLE):
         return None
     if number == DEFINER_GONE:
         return f"its definer no longer exists ({DEFINER_GONE})"

@@ -155,7 +155,8 @@ class OptionalView(Protocol):
 
     def view_broken(self) -> str | None:
         """What is wrong with a view that exists and cannot be used, for
-        ``SOPULI-W073``; ``None`` where it is absent or was read."""
+        ``SOPULI-W073``; ``None`` where it is absent, was read, or was not
+        needed by this session."""
         ...
 
 

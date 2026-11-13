@@ -11,7 +11,9 @@
 --         administrator holding only CREATE USER, SET_ANY_DEFINER, SELECT on
 --         mysql.user and CREATE, DROP, CREATE VIEW and SELECT on sopuli.*,
 --         all with GRANT OPTION where it passes them on. Without the DROP
---         VIEW below, that run answered 4006.
+--         VIEW below, that run answered 4006. An administrator without
+--         SET_ANY_DEFINER stops at CREATE USER with 4006, even with the
+--         definer present, and the view it found stays readable.
 --
 -- What it is for. MySQL keeps an account's failed-login limit only in
 -- mysql.user.User_attributes, beside a retained password's hash, which the
@@ -20,10 +22,12 @@
 -- The tool account reads it with SELECT on the view, never on mysql.user
 -- (#1457, measured by 12_definer_view_probe.py, #1490).
 --
--- Who reads it. report accounts, for the failed-login limit. No verb that
--- changes an account reads it. Without the view the report says "not
--- checked", with the reason, and still runs. The lock time, the partial
--- revokes and the retained-password flag are in the view for later reads.
+-- Who reads it. report accounts, for the failed-login limit and the lock
+-- time, which the limit needs to block. No verb that changes an account reads
+-- it. Without the view the report says "not checked", with the reason, and
+-- still runs. The partial revokes and the retained-password flag are in the
+-- view for later reads. A column grant must include every column the tool
+-- reads, or the tool does not read the view.
 --
 -- What it creates, each step safe to run again:
 --   1. the schema sopuli, which holds only the tool's views;
@@ -49,11 +53,20 @@ SET @tool_host = '192.0.2.10';
 
 CREATE SCHEMA IF NOT EXISTS sopuli;
 
--- Dropped first, so the script mends a view whose definer was dropped: while
--- the view names a missing definer, CREATE USER of it answers 4006 unless the
--- administrator holds ALLOW_NONEXISTENT_DEFINER (8.2 and later) or
--- SET_USER_ID (8.0).
-DROP VIEW IF EXISTS sopuli.account_state;
+-- A view whose definer was dropped is dropped first, so the script mends it:
+-- while the view names a missing definer, CREATE USER of it answers 4006
+-- unless the administrator holds ALLOW_NONEXISTENT_DEFINER (8.2 and later) or
+-- SET_USER_ID (8.0). Only then: a view whose definer exists is replaced below,
+-- and left as it is if this run stops before that.
+SET @drop_view = IF(
+  (SELECT COUNT(*) FROM mysql.user
+    WHERE User = 'sopuli_view_definer' AND Host = 'localhost') = 0,
+  'DROP VIEW IF EXISTS sopuli.account_state',
+  'DO 0'
+);
+PREPARE drop_view FROM @drop_view;
+EXECUTE drop_view;
+DEALLOCATE PREPARE drop_view;
 
 CREATE USER IF NOT EXISTS 'sopuli_view_definer'@'localhost' ACCOUNT LOCK;
 ALTER USER 'sopuli_view_definer'@'localhost' ACCOUNT LOCK;

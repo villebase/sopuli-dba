@@ -363,8 +363,10 @@ class MysqlSession(ClosesConnection):
 
     def view_broken(self) -> str | None:
         """:class:`~sopuli.driver.survey.OptionalView`: what is wrong with a
-        view that exists and is not used, for ``SOPULI-W073``."""
-        return self.account_states().broken
+        view that exists and is not used, for ``SOPULI-W073``. ``None`` until
+        this session's survey has read it: only `report accounts` reads it, so
+        no other command warns about a view it did not use."""
+        return None if self._account_states is None else self._account_states.broken
 
     def survey_privileges(self, accounts: Sequence[str], *, public: bool) -> GrantSurvey:
         """Every privilege ``accounts`` hold, one row per path, for `report

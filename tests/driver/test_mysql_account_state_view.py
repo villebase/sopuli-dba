@@ -132,10 +132,18 @@ def test_a_refusal_is_broken_and_names_only_the_number(number: int, broken: str)
     assert "secret" not in (states.reason or "")
 
 
-def test_no_grant_is_absent() -> None:
-    # DV7: no view, no schema and no grant all answer 1142.
-    states = read(Answers(ALL, ServerError(1142, "denied")))
+@pytest.mark.parametrize("number", [1142, 1146])
+def test_no_grant_or_a_view_dropped_after_its_columns_were_read_is_absent(number: int) -> None:
+    # DV7: no view, no schema and no grant all answer 1142. A view dropped
+    # between the COLUMNS read and the SELECT, grant left, answers 1146.
+    states = read(Answers(ALL, ServerError(number, "denied")))
     assert (states.rows, states.reason, states.broken) == (None, ABSENT, None)
+
+
+@pytest.mark.parametrize("lock_days", [0, 1])
+def test_a_negative_limit_is_broken_whatever_the_lock_time(lock_days: int) -> None:
+    states = read(Answers(ALL, [("acme_app", "%", -7, lock_days)]))
+    assert states.broken == "a column holds values the tool does not expect"
 
 
 @pytest.mark.parametrize(

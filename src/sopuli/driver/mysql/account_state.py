@@ -131,8 +131,9 @@ def _limit(attempts: object, lock_days: object) -> Limit:
     8.4.13, #1508). ``-1`` is ``UNBOUNDED``, which blocks."""
     value = integer(attempts)
     days = integer(lock_days)
-    if value is None or value == 0 or days is None or days == 0:
-        return "unlimited"
-    if value < 0 or days < -1:
+    # Checked first, so one bad value reads the same with any partner.
+    if (value is not None and value < 0) or (days is not None and days < -1):
         raise ValueError("not a limit")
+    if not value or not days:
+        return "unlimited"
     return value

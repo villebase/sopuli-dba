@@ -5975,7 +5975,7 @@ def _report_target(
             )
         try:
             surveyed, profiles = session.survey_with_profiles()
-            _warn_if_view_broken(run, target, session, by_survey=True)
+            _warn_if_view_broken(run, target, session)
             roles = _personal_role_members(session, config, target)
         except Exception as error:  # noqa: BLE001 -- a per-target finding
             # Connected, then could not read: said as such, not as "could not
@@ -6465,19 +6465,12 @@ def _warn_if_view_broken(
     run: Invocation,
     target: ExpandedTarget,
     session: object,
-    *,
-    by_survey: bool = False,
 ) -> None:
     """`SOPULI-W073` where a target's optional view ``sopuli.account_state``
-    exists and is not used (#1491, #1502), for a command that reads it.
-
-    `report history` and `account list` read it through a
-    :class:`~sopuli.driver.survey.StateView` (MariaDB). `report accounts`
-    passes ``by_survey``: its survey reads the view on every
-    :class:`~sopuli.driver.survey.OptionalView` (MariaDB and MySQL)."""
+    exists and is not used (#1491, #1502). Each
+    :class:`~sopuli.driver.survey.OptionalView` says so only for a view it
+    read: MySQL's only after `report accounts`' survey has."""
     if not isinstance(session, OptionalView):
-        return
-    if not by_survey and not isinstance(session, StateView):
         return
     broken = session.view_broken()
     if broken is not None:

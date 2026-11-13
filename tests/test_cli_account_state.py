@@ -299,21 +299,22 @@ def test_a_broken_view_is_warned_about() -> None:
     assert "its definer no longer exists (1045)" in warning.message
 
 
-class _MysqlView:
-    """MySQL's session: the view's warning, and nothing for `report history`
-    or `account list` (#1502)."""
+def test_a_broken_mysql_view_is_warned_about_only_once_the_survey_read_it() -> None:
+    """MySQL reads the view only in `report accounts`' survey (#1502): before
+    that, `report history` and `account list` hear nothing of it."""
+    from sopuli.driver.mysql import account_state as mysql_view
+    from sopuli.driver.mysql.session import MysqlSession
 
-    def view_broken(self) -> str | None:
-        return "its definer cannot read mysql.user (1356)"
-
-
-def test_a_broken_mysql_view_is_warned_about_by_report_accounts_only() -> None:
+    session = MysqlSession.__new__(MysqlSession)
+    session._account_states = None
     run = _run()
-    # `report history` and `account list` ask for a StateView, which MySQL is not.
-    _warn_if_view_broken(run, _target("mysql"), _MysqlView())
+    _warn_if_view_broken(run, _target("mysql"), session)
     assert run.document.diagnostics == []
 
-    _warn_if_view_broken(run, _target("mysql"), _MysqlView(), by_survey=True)
+    session._account_states = mysql_view.AccountStates(
+        rows=None, reason="x", broken="its definer cannot read mysql.user (1356)"
+    )
+    _warn_if_view_broken(run, _target("mysql"), session)
     (warning,) = run.document.diagnostics
     assert warning.code == ACCOUNT_STATE_VIEW_BROKEN
     assert warning.message == (
@@ -321,6 +322,15 @@ def test_a_broken_mysql_view_is_warned_about_by_report_accounts_only() -> None:
         "read mysql.user (1356). The failed-login limit is not checked here. Recreate it "
         "with sql/mysql/account_state_view.sql, which makes it with only the expected "
         "columns, owned by a locked definer that can read mysql.user"
+    )
+
+
+def test_a_product_without_the_view_gets_the_warning_without_the_fix() -> None:
+    from sopuli.diagnostics import account_state_view_broken
+
+    warning = account_state_view_broken("pg-dev", "it is broken", product="postgresql")
+    assert warning.message == (
+        "pg-dev: the optional view sopuli.account_state is not used: it is broken"
     )
 
 

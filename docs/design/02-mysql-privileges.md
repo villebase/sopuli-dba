@@ -303,11 +303,14 @@ reads as locked, but not by somebody.
   `mysql.user`, and selects `User`, `Host`, three keys of `User_attributes`
   and one flag: `failed_login_attempts`, `password_lock_time_days`,
   `restrictions` and `retained_password`. `report accounts` reads `User`,
-  `Host` and `failed_login_attempts` alone
+  `Host`, `failed_login_attempts` and `password_lock_time_days`
   (`sopuli/driver/mysql/account_state.py`), after it has checked the view's
-  columns, every session. A view with a column outside the six, or that
-  cannot be read, is not read, and `SOPULI-W073` names what is wrong. No
-  verb that changes an account reads it. With `SELECT` on it, the tool
+  columns, every session. A limit counts only with a lock time: the server
+  blocks after failed logins only when both are non-zero (measured on
+  8.4.13, #1508). A view with a column outside the six, one the tool account
+  cannot read all four of, or one that cannot be read, is not read, and
+  `SOPULI-W073` names what is wrong. No verb that changes an account reads
+  it. With `SELECT` on it, the tool
   account reads:
   - the failed-login limit and lock days, `-1` for `UNBOUNDED`, and `NULL`
     where neither is set: setting both to 0 removes the keys;

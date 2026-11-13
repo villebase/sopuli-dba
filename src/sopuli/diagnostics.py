@@ -48,6 +48,7 @@ from sopuli.config.codes import (
     UNVERIFIED_DATABASE,
     UNVERIFIED_TRANSPORT,
 )
+from sopuli.config.targets import MARIADB, MYSQL
 from sopuli.constraints import (
     NAMED,
     POLICY,
@@ -1800,11 +1801,18 @@ def unaddressable_lock_paths(skipped: Sequence[SkippedPath]) -> list[Diagnostic]
     ]
 
 
-#: Each product's block after failed logins, for ``SOPULI-W063``: the error a
-#: blocked login gets, and what ends the block besides ``ACCOUNT UNLOCK``.
+#: Each product's ``SOPULI-W063`` text, after the target's name.
 _FAILED_LOGIN_BLOCKS = {
-    "mysql": ("MySQL", "3955", "PASSWORD_LOCK_TIME ends or "),
-    "mariadb": ("MariaDB", "4150", ""),
+    MYSQL: (
+        "MySQL keeps a block after failed logins (error 3955) outside mysql.user, so the "
+        "tool cannot read it, and an account shown as OPEN may be blocked until "
+        "PASSWORD_LOCK_TIME ends or somebody runs ALTER USER … ACCOUNT UNLOCK"
+    ),
+    MARIADB: (
+        "MariaDB keeps a block after failed logins (error 4150) where the tool cannot read "
+        "it, so an account shown as OPEN may be blocked until somebody runs ALTER USER … "
+        "ACCOUNT UNLOCK"
+    ),
 }
 
 
@@ -1818,16 +1826,11 @@ def failed_login_block_unread(target: str, product: str) -> Diagnostic:
     can say whether it has one. On MariaDB the optional view
     ``sopuli.account_state`` does not hold it either (#1479).
     """
-    name, error, ends = _FAILED_LOGIN_BLOCKS[product]
     return Diagnostic(
         level="warning",
         code=FAILED_LOGIN_BLOCK_UNREAD,
         target=target,
-        message=(
-            f"{target}: {name} keeps a block after failed logins (error {error}) where the "
-            "tool cannot read it, so an account shown as OPEN may be blocked until "
-            f"{ends}somebody runs ALTER USER … ACCOUNT UNLOCK"
-        ),
+        message=f"{target}: {_FAILED_LOGIN_BLOCKS[product]}",
     )
 
 

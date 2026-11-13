@@ -4525,13 +4525,11 @@ def _describe_row(
 
 def _with_view_state(session: Any, state: UserState | None) -> UserState | None:
     """``state``, locked where MariaDB's optional view says so (#1491), with
-    the time of the last change from the view, or why there is none, as
-    `report history` reads it (#1500). Only a
-    :class:`~sopuli.driver.survey.StateView` has one."""
-    if state is None or not isinstance(session, StateView):
-        return state
-    when, why = session.report_changed_at(state)
-    dated = replace(state, password_changed_at=when, password_changed_unknown=why)
+    the time of the last change from the view (:func:`_with_view_date`,
+    #1500). Only a :class:`~sopuli.driver.survey.StateView` has one."""
+    dated = _with_view_date(session, state)
+    if dated is None or not isinstance(session, StateView):
+        return dated
     return session.report_lock(dated)
 
 
@@ -6457,12 +6455,19 @@ def _database_date(
         if not refused.about_account:
             raise
         return history_states.without_database(one, refused.message)
-    # MariaDB's date is in its optional view only, which `describe_user` does
-    # not read, so no verb acts on it (#1491).
-    if user is not None and isinstance(session, StateView):
-        when, why = session.report_changed_at(user)
-        user = replace(user, password_changed_at=when, password_changed_unknown=why)
-    return history_states.with_database(one, user)
+    return history_states.with_database(one, _with_view_date(session, user))
+
+
+def _with_view_date(session: Any, user: UserState | None) -> UserState | None:
+    """``user`` with the time of the last change from MariaDB's optional view,
+    or why there is none, for `report history` and `account list`, so the
+    two never disagree about one account (#1491, #1500). The date is in the
+    view only, which `describe_user` does not read, so no verb acts on it.
+    Only a :class:`~sopuli.driver.survey.StateView` has one."""
+    if user is None or not isinstance(session, StateView):
+        return user
+    when, why = session.report_changed_at(user)
+    return replace(user, password_changed_at=when, password_changed_unknown=why)
 
 
 def _missing_unmanaged(one: history_states.AccountHistory) -> bool:

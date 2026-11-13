@@ -559,9 +559,9 @@ class MariadbSession(ClosesConnection):
 
     def report_changed_at(self, user: UserState) -> tuple[datetime | None, str | None]:
         """When ``user``'s password last changed, by the server's clock, from
-        the optional view, for `report history` (#1491): the time, or ``None``
-        and why. ``user`` is as ``describe_user`` gave it, so its name is the
-        server's spelling."""
+        the optional view, for `report history` (#1491) and `account list`
+        (#1500): the time, or ``None`` and why. ``user`` is as
+        ``describe_user`` gave it, so its name is the server's spelling."""
         states = self.account_states()
         if states.rows is None:
             return None, states.reason

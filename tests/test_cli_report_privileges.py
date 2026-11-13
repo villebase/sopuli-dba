@@ -283,6 +283,70 @@ def test_an_unread_part_is_not_checked_exit_4(
     assert "not checked: DBA_TAB_PRIVS could not be read" in text
 
 
+PG_CONFIG = """version: 1
+targets:
+  - name: pg-acme
+    type: postgresql
+    dsn: DB-DEV.example.com:5432
+    postgres: { database: acme }
+    admin: { username: sopuli_svc, auth: { method: env } }
+  - name: pg-postgres
+    type: postgresql
+    dsn: db-dev.example.com:5432
+    admin: { username: sopuli_svc, auth: { method: env } }
+  - name: pg-other-port
+    type: postgresql
+    dsn: db-dev.example.com:5433
+    postgres: { database: acme_batch }
+    admin: { username: sopuli_svc, auth: { method: env } }
+reports:
+  accounts:
+    - accounts: [ACME_RR_APP]
+      postgresql: { valid_until: forbidden }
+"""
+
+
+@pytest.mark.parametrize(
+    ("others", "named", "exit_code"),
+    [
+        # postgres has a target at the same host and port, whose report reads
+        # it; acme_batch's target is on another port, so it is not covered.
+        (("acme_batch", "postgres"), "(acme_batch)", ExitCode.PARTIAL),
+        (("postgres",), None, ExitCode.SUCCESS),
+    ],
+)
+def test_a_database_another_target_covers_is_not_named(
+    write_config: WriteConfig,
+    session: dict[str, FakeSession],
+    others: tuple[str, ...],
+    named: str | None,
+    exit_code: ExitCode,
+) -> None:
+    # #1501: "same cluster" is the same host and port in dsn:, the host in any
+    # case; the covering target need not be selected.
+    session["session"] = FakeSession(
+        GrantSurvey(
+            roles=GRANTS.roles,
+            system=GRANTS.system,
+            objects=GRANTS.objects,
+            columns=GRANTS.columns,
+            schemas=GRANTS.schemas,
+            other_databases=others,
+        )
+    )
+    config = write_config(PG_CONFIG)
+    result = CliRunner().invoke(
+        cli, ["--config", str(config), "report", "privileges", "--target", "pg-acme"]
+    )
+    text = click.unstyle(result.output)
+    assert result.exit_code == exit_code, result.output
+    assert "postgres)" not in text
+    if named is None:
+        assert "other databases" not in text
+    else:
+        assert f"other databases were not read {named}" in text
+
+
 def test_a_level_is_shown_where_a_part_has_more_than_one(
     write_config: WriteConfig, session: dict[str, FakeSession]
 ) -> None:

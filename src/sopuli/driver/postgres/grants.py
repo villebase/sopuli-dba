@@ -55,8 +55,9 @@ privilege of its own name (level ``predefined role``), with its path, so a
 member of ``pg_read_all_data`` never reads as holding nothing.
 
 **One database.** A session reads the schemas and objects of the database it
-is connected to. The cluster's other databases are named in ``unreadable``,
-so the report says what it could not see (#1411, question 4). Their own
+is connected to. The cluster's other databases are named in
+``other_databases``, so the report can say what it could not see (#1411,
+question 4), except where another declared target reads it (#1501). Their own
 database privileges are in ``pg_database``, which every database shares, and
 are read.
 """
@@ -397,22 +398,13 @@ def survey_grants(cursor: Cursor, accounts: Sequence[str], *, public: bool) -> G
             rows.append(_predefined(walk))
     if public:
         rows.extend(_rows(PUBLIC, held.get(PUBLIC, ()), (), active=None))
-
-    unreadable: tuple[str, ...] = ()
-    if others:
-        unreadable = (
-            "the schemas and objects of the cluster's other databases were not read ("
-            + ", ".join(others)
-            + "): a target reads only the database it connects to; a target "
-            "declared for another database reports on that one",
-        )
     return GrantSurvey(
         roles=_roles(walks),
         system=_part(rows, SYSTEM),
         objects=_part(rows, OBJECT),
         columns=_part(rows, COLUMN),
         schemas=_part(rows, SCHEMA),
-        unreadable=unreadable,
+        other_databases=tuple(others),
     )
 
 

@@ -279,11 +279,8 @@ def test_the_other_databases_are_named_as_not_read(live_postgres: Any, session: 
             ).fetchall()
         ]
     survey = session.survey_privileges([], public=False)
-    if not others:
-        assert survey.unreadable == ()
-        return
-    (reason,) = survey.unreadable
-    assert f"({', '.join(others)})" in reason
+    assert survey.other_databases == tuple(others)
+    assert survey.unreadable == ()
 
 
 def test_a_domain_over_an_array_and_a_function_by_its_input_types(

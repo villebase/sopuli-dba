@@ -26,7 +26,7 @@ the account holds no such privilege; ``None`` says nobody could look.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
@@ -116,6 +116,29 @@ class GrantSurvey:
     columns: tuple[GrantRow, ...] | None
     schemas: tuple[GrantRow, ...] | None
     unreadable: tuple[str, ...] = ()
+    #: The other databases of a PostgreSQL cluster, whose schemas and objects
+    #: the session could not read. :meth:`not_checked` names those no declared
+    #: target covers.
+    other_databases: tuple[str, ...] = ()
+
+    def not_checked(self, covered: Collection[str]) -> tuple[str, ...]:
+        """:attr:`unreadable`, and one reason naming the other databases that
+        are not in ``covered``.
+
+        ``covered`` are the databases another declared target connects to on
+        the same host and port, whose own report reads them (#1501). Leaving
+        them out lets a cluster with a target for each database exit 0.
+        """
+        left = [name for name in self.other_databases if name not in covered]
+        if not left:
+            return self.unreadable
+        return (
+            *self.unreadable,
+            "the schemas and objects of the cluster's other databases were not read ("
+            + ", ".join(left)
+            + "): a target reads only the database it connects to, and no declared "
+            "target connects to these at the same host and port",
+        )
 
 
 @runtime_checkable
@@ -137,9 +160,9 @@ class PrivilegeSurvey(Protocol):
     them. ``public`` asks for the grants to everyone too, once, under the
     product's name for them. A part the session could not read is ``None``,
     with one reason in :attr:`GrantSurvey.unreadable` naming what would make it
-    readable. So is a scope the session could not reach at all, such as another
-    database of a PostgreSQL cluster: the reason names it, and the report shows
-    it as not checked on that target.
+    readable. A PostgreSQL cluster's other databases, which the session cannot
+    reach at all, are in :attr:`GrantSurvey.other_databases`, and the report
+    shows those no other declared target covers as not checked on that target.
     """
 
     def survey_privileges(self, accounts: Sequence[str], *, public: bool) -> GrantSurvey:

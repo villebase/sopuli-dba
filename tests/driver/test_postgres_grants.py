@@ -267,11 +267,21 @@ def test_the_walk_merges_the_grants_of_every_grantor_first() -> None:
 
 def test_the_other_databases_are_named_as_not_read() -> None:
     result, _ = survey(others=["acme_rp_other", "postgres"])
-    (reason,) = result.unreadable
+    assert result.other_databases == ("acme_rp_other", "postgres")
+    assert result.unreadable == ()
+    (reason,) = result.not_checked(frozenset())
     assert "(acme_rp_other, postgres)" in reason
     assert "a target reads only the database it connects to" in reason
     alone, _ = survey()
-    assert alone.unreadable == ()
+    assert alone.not_checked(frozenset()) == ()
+
+
+def test_a_database_another_target_covers_is_not_named() -> None:
+    # #1501: its own target's report reads it.
+    result, _ = survey(others=["acme_rp_other", "postgres"])
+    (reason,) = result.not_checked(frozenset({"postgres"}))
+    assert "(acme_rp_other)" in reason
+    assert result.not_checked(frozenset({"postgres", "acme_rp_other"})) == ()
 
 
 def test_a_role_that_holds_nothing_reads_as_holding_nothing() -> None:

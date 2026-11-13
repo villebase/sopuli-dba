@@ -86,7 +86,8 @@ too, and is marked. The report judges nothing.
 Exit 0 when every part was read, 1 when a target could not be reached, and 4
 when a part could not be read, such as without the optional grant on
 Oracle's privilege views, or another database of a PostgreSQL cluster,
-which a target cannot see into, or MariaDB's global level. Oracle,
+which a target cannot see into and no other declared target connects to
+at the same host and port, or MariaDB's global level. Oracle,
 PostgreSQL, MySQL and MariaDB can run this report.
 
 Options:

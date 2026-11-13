@@ -132,7 +132,7 @@ from sopuli.config.scope import refuse_personal_on
 from sopuli.config.secret_refs import SecretRef
 from sopuli.config.selection import LeftOut, narrow, narrow_to_pairs
 from sopuli.config.sharing import native_layouts, pinned_versions, unsure_layouts
-from sopuli.config.targets import MARIADB, MYSQL, USER_AT_HOST_TYPES
+from sopuli.config.targets import MARIADB, MYSQL, POSTGRESQL, USER_AT_HOST_TYPES
 from sopuli.config.vault_env import ADDR_FLAG, DEFAULT_STORE_VARIABLE
 from sopuli.constraints import AccountConstraints, Constraints, reuse_restricted
 from sopuli.delivery import DeliveryBackend, Handover, Receipt
@@ -193,6 +193,7 @@ from sopuli.diagnostics import (
     worse_encryption,
 )
 from sopuli.driver import guardrails
+from sopuli.driver.address import host_and_port
 from sopuli.driver.clusters import ClusterIdentity, scope_and_claim
 from sopuli.driver.grants import PrivilegeSurvey, PrivilegeViewState
 from sopuli.driver.mariadb.roles import PublicRoleError
@@ -6008,7 +6009,8 @@ def report_privileges_command(
     Exit 0 when every part was read, 1 when a target could not be reached, and 4
     when a part could not be read, such as without the optional grant on
     Oracle's privilege views, or another database of a PostgreSQL cluster,
-    which a target cannot see into, or MariaDB's global level. Oracle,
+    which a target cannot see into and no other declared target connects to
+    at the same host and port, or MariaDB's global level. Oracle,
     PostgreSQL, MySQL and MariaDB can run this report.
     """
     document = run.document
@@ -6060,6 +6062,33 @@ def _wanted_rows(
     return tuple(
         report_states.undeclared_row(target, one) for one in surveyed if one.name.upper() == spelled
     )
+
+
+def _covered_databases(target: ExpandedTarget, config: Config) -> frozenset[str]:
+    """The databases other declared PostgreSQL targets connect to at ``target``'s
+    host and port, selected in this run or not (#1501): ``config`` is the
+    whole file's, not the run's narrowed one.
+
+    Each one's own report reads its schemas and objects, so ``target``'s report
+    does not name it as not checked. "Same cluster" is the same host and port
+    in ``dsn:``, compared without reading anything: #1061 refuses a second
+    target on one cluster in a run, and a target the selectors left out is
+    never connected to, so neither's ``system_identifier`` can be read. A
+    cluster reached under another name, such as an alias or a standby's
+    address, does not match, and its database stays not checked.
+    """
+    if target.target.type != POSTGRESQL:
+        return frozenset()
+    host, port = host_and_port(target.target.dsn)
+    here = (host.lower(), port)
+    covered: set[str] = set()
+    for other in config.expanded_targets:
+        if other.name == target.name or other.target.type != POSTGRESQL:
+            continue
+        other_host, other_port = host_and_port(other.target.dsn)
+        if (other_host.lower(), other_port) == here:
+            covered.add(other.target.postgres_settings.database)
+    return frozenset(covered)
 
 
 def _privileges_target(
@@ -6115,7 +6144,8 @@ def _privileges_target(
             target=target.name,
             release=session.scope().release,
             accounts=privilege_states.per_account(target.name, rows, grants, public=public),
-            unreadable=grants.unreadable,
+            # The declared targets, not only the selected ones (#1501).
+            unreadable=grants.not_checked(_covered_databases(target, run.config)),
             absent=absent,
             product=target.target.type,
         )

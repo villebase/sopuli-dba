@@ -5677,3 +5677,37 @@ the register.
      grant does not tell a creator from a later admin grant, so it would
      need a rule of its own and a measurement. A DBA who does not want the
      creator listed revokes the role from it.
+
+## #1501
+
+- **Decided:** 2026-11-13, #1501
+- **Question:** on PostgreSQL, `report privileges` names the cluster's other
+  databases as *not checked*, so every target on a cluster with more than
+  one database exits 4, even where each database has a target. What should
+  it name?
+- **Decision:** the maintainer's: option C, built as C1. A database is left
+  out where another declared PostgreSQL target connects to it at the same
+  host and port in its `dsn:`, the host compared in any case. That target
+  need not be selected in the run. A database no such target names is still
+  *not checked*, and the run exits 4.
+- **Why:** exit 4 then means a database nobody reports on, and a cluster
+  with a target for each database exits 0. "Same cluster" is read from the
+  config, not from `system_identifier`: #1061 refuses a second target on one
+  cluster in a run, and a target the selectors left out is never connected
+  to, so its identifier cannot be read. The comparison opens no connection,
+  and fits #1061's advice to run one such target per run with `--target`.
+  Its one error goes the safe way: a database reached under another
+  address, such as an alias or a standby's, does not match and stays *not
+  checked*.
+- **Rejected:**
+  1. A, keeping every other database *not checked*: exit 0 becomes rare on
+     PostgreSQL, so a scheduled job cannot tell a part that was unreadable
+     from a cluster that has a second database.
+  2. B, naming the other databases as information only: it hides a
+     database nobody reports on, and needs a new field in the run schema.
+  3. C2, exempting the reports from #1061's refusal so that both targets
+     can be read in one run: it narrows #1061, and every role would be
+     listed once per target.
+  4. C3, connecting to an unselected target only to read its identifier:
+     a run opens no connection to a target the selectors left out
+     (`01-configuration.md`).

@@ -155,7 +155,17 @@ def _schemas(privileges: Sequence[Privilege] | None, words: Words) -> str:
 def _where(privilege: Privilege, words: Words) -> str:
     """The level, where the part has more than one, then the sources."""
     sources = _sources(privilege, words)
-    return sources if privilege.level is None else f"{privilege.level}, {sources}"
+    where = sources if privilege.level is None else f"{privilege.level}, {sources}"
+    return _with_except(where, privilege)
+
+
+def _with_except(text: str, privilege: Privilege) -> str:
+    """``text; except on acme_hr, acme_pay``: the schemas a partial revoke
+    takes a global privilege away on (#1502), after a semicolon, so the list
+    of sources ends where they begin."""
+    if not privilege.except_schemas:
+        return text
+    return f"{text}; except on {', '.join(privilege.except_schemas)}"
 
 
 def _counts(
@@ -236,7 +246,8 @@ def _detail(one: AccountPrivileges, words: Words) -> list[str]:
                 p.privilege,
                 ".".join(x for x in (p.owner, p.name, p.column) if x) or ABSENT,
                 SCHEMA_TYPE if p.kind == SCHEMA else p.object_type or ABSENT,
-                _sources(p, words),
+                # With the sources, as the summary has it: not an object.
+                _with_except(_sources(p, words), p),
                 "yes" if p.grantable else "no",
             ]
             for p in part
@@ -345,6 +356,10 @@ def _privilege_json(p: Privilege) -> dict[str, Any]:
     # entry stays as it was.
     if not p.active_at_login_checked:
         entry["active_at_login_checked"] = False
+    # Only where a partial revoke takes it away on some schemas (run schema
+    # 1.104, #1502).
+    if p.except_schemas:
+        entry["except_schemas"] = list(p.except_schemas)
     return entry
 
 

@@ -138,8 +138,9 @@ Three grants are optional. The tool works without them, and `doctor
 GRANT SELECT ON performance_schema.temporary_account_locks TO 'sopuli_admin'@'192.0.2.10';
 -- report privileges: which roles are active at login (#1482).
 GRANT SELECT ON mysql.default_roles TO 'sopuli_admin'@'192.0.2.10';
--- report accounts: the failed-login limit (#1502). sql/mysql/account_state_view.sql
--- creates the view and makes this grant.
+-- report accounts: the failed-login limit; report privileges: the partial
+-- revokes (#1502). sql/mysql/account_state_view.sql creates the view and
+-- makes this grant.
 GRANT SELECT ON sopuli.account_state TO 'sopuli_admin'@'192.0.2.10';
 ```
 
@@ -147,7 +148,9 @@ None holds a hash. Without the first, or on a server that has no such table,
 such as 8.0 and 8.4, the count is `unknown` (§2.4). Without the second,
 `report privileges` says whether a role is active at login is *not checked*,
 unless `activate_all_roles_on_login` is on, and exits 4. Without the third,
-the failed-login limit is *not checked* (§2.4).
+the failed-login limit is *not checked*, and so are the global privileges
+where `partial_revokes` is on (§2.4). A column grant on the view must cover
+every column the tool reads.
 
 Give the account no other privilege, and no role.
 
@@ -294,7 +297,13 @@ reads as locked, but not by somebody.
 - **A partial revoke cannot be read with §2.1.** With `partial_revokes` on,
   `SELECT ON *.*` and then a revoke on one schema reads as `Select_priv =
   'Y'`, with no row in `db`, and nothing else the tool account reads shows
-  the revoke. It is `User_attributes`' `Restrictions`.
+  the revoke. It is `User_attributes`' `Restrictions`. `report privileges`
+  reads it from the view below, `restrictions`, only where `partial_revokes`
+  is on (#1502). A role's revokes are read too. A revoke takes away a static
+  global privilege only on the paths that carry it: on 8.4.13 an account
+  whose `SELECT ON *.*` was revoked on `acme_hr` was refused there, `1142`,
+  and read it once its default role, holding `SELECT ON *.*` with no revoke,
+  was active.
 - **A view that a DBA creates reads the limit, the partial revokes and a
   retained password** (`12_definer_view_probe.py`, #1490, for #1457). It is
   `sopuli.account_state`, the name MariaDB's view has, and
@@ -307,10 +316,15 @@ reads as locked, but not by somebody.
   (`sopuli/driver/mysql/account_state.py`), after it has checked the view's
   columns, every session. A limit counts only with a lock time: the server
   blocks after failed logins only when both are non-zero (measured on
-  8.4.13, #1508). A view with a column outside the six, one the tool account
-  cannot read all four of, or one that cannot be read, is not read, and
-  `SOPULI-W073` names what is wrong. No verb that changes an account reads
-  it. With `SELECT` on it, the tool
+  8.4.13, #1508). `report privileges` reads `User`, `Host` and
+  `restrictions`, where `partial_revokes` is on. A view with a column outside
+  the six, one whose columns a command reads the tool account cannot read,
+  or one that cannot be read, is not read by that command, and `SOPULI-W073`
+  names what is wrong. A principal with a static global privilege that the
+  view does not list leaves the global level *not checked*, with the reason:
+  no row is not the same as no revoke. No verb that changes an account reads
+  it.
+  With `SELECT` on it, the tool
   account reads:
   - the failed-login limit and lock days, `-1` for `UNBOUNDED`, and `NULL`
     where neither is set: setting both to 0 removes the keys;

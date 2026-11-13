@@ -2872,6 +2872,37 @@ mysql-84  (8.4.13, 1 account)
   not checked: whether a role is a default role, and so active without SET ROLE: the tool account has no SELECT on mysql.default_roles, the optional grant of 02-mysql-privileges.md §2.1
 ```
 
+With `partial_revokes` on, the global level is *not checked* unless the
+optional view of §*A MySQL server*'s `report accounts`,
+`sql/mysql/account_state_view.sql`, is installed. With it, a global privilege
+revoked on some schemas names them. On the tier-1 service, as root:
+
+```sql
+SET PERSIST partial_revokes = ON;
+CREATE SCHEMA acme_hr;
+CREATE USER 'acme_rev'@'%' IDENTIFIED BY 'Acme-Rev-1';
+GRANT SELECT ON *.* TO 'acme_rev'@'%';
+REVOKE SELECT ON acme_hr.* FROM 'acme_rev'@'%';
+```
+
+```
+$ sopuli --config mysql-report.yaml report privileges --account acme_rev@%
+mysql-dev  (8.4.13, 1 account)
+  acme_rev@%  (undeclared)
+    roles: none
+    system: SELECT (global static, direct; except on acme_hr)
+    objects: none
+    columns: none
+    schemas: none
+  not checked: whether a role is a default role, and so active without SET ROLE: the tool account has no SELECT on mysql.default_roles, the optional grant of 02-mysql-privileges.md §2.1
+```
+
+In JSON the row has `"except_schemas": ["acme_hr"]`. A role that holds the
+same privilege without the revoke gives the schema back: the account reads
+`acme_hr` through it, so the row names no exception. Afterwards, drop the
+account and schema, and run `SET GLOBAL partial_revokes = OFF` and `RESET
+PERSIST partial_revokes`.
+
 On *A PostgreSQL cluster*, the report needs no grant beyond `CREATEROLE`. Make
 the same shape as `postgres`, with one grant `WITH INHERIT FALSE` and one
 built-in role:

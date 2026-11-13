@@ -5715,17 +5715,27 @@ the register.
      `creds finish-rollover` decision.
   3. **A broken view** is not read: its fields are *not checked*, and
      `SOPULI-W073`, reworded to name the product, says what is wrong.
+  4. **A partial revoke** (decided later the same day, option A): the global
+     row stays, and an optional field, `except_schemas`, lists the schemas
+     the privilege is revoked on. In text: `SELECT (global static, direct;
+     except on acme_hr)`. Run schema 1.104.
 - **Why:** one name gives the operator one idea, one install step and one
   warning across the two products. The two gaps #1411 left *not checked*
   close where the view is installed. `account list` has no failed-login
   column on any product, so showing the limit there is a change of its own.
   W073 already means "the optional view `sopuli.account_state` exists and
   cannot be used", and the JSON carries the target, so the product is known.
+  A partial revoke is one grant on `*.*` minus some schemas, as `SHOW GRANTS`
+  prints it, and a field on that row cannot be mistaken for a privilege
+  held.
 - **Rejected:**
   1. A MySQL-only name, such as `sopuli.user_attributes`: two names for one
      idea.
   2. Showing the limit in `account list`: a new column on every product.
   3. A new warning code for MySQL: W073 already says it.
+  4. A row per revoke at a new level: a reader that counts rows counts a
+     revoke as a privilege held.
+  5. Leaving the global level *not checked* with the view installed.
 
 ## #1503
 

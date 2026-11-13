@@ -6129,11 +6129,17 @@ def _privileges_target(
                 absent = None if rows else wanted
             names = [row.account for row in rows if row.state != report_states.ACCOUNT_MISSING]
             grants = session.survey_privileges(names, public=public)
-            # MariaDB's optional view of the global privileges (#1483).
+            # The optional view of the global privileges: MariaDB's (#1483,
+            # W074), and MySQL's partial revokes (#1502, W073).
             if isinstance(session, PrivilegeViewState):
                 broken = session.privilege_view_broken()
                 if broken is not None:
-                    run.document.warn_in_text(global_privileges_view_broken(target.name, broken))
+                    warning = (
+                        account_state_view_broken(target.name, broken, product=MYSQL)
+                        if target.target.type == MYSQL
+                        else global_privileges_view_broken(target.name, broken)
+                    )
+                    run.document.warn_in_text(warning)
         except Exception as error:  # noqa: BLE001 -- a per-target finding
             return privileges_view.TargetPrivileges(
                 target=target.name, error=_finding(error), read_failed=True

@@ -62,6 +62,9 @@ class Held:
     object_type: str | None = None
     column: str | None = None
     grantable: bool = False
+    #: The schemas a MySQL partial revoke takes a global privilege away on
+    #: (#1502).
+    except_schemas: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if self.kind not in PARTS:
@@ -282,4 +285,5 @@ def _row(
         first_role_default=active if path else None,
         grantable=grant.grantable,
         level=grant.level,
+        except_schemas=grant.except_schemas,
     )

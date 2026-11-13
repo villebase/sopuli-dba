@@ -6,6 +6,7 @@ privilege granted directly and through two roles arrives three times.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 
 from sopuli.driver.grants import COLUMN, OBJECT, SCHEMA, SYSTEM, GrantRow, GrantSurvey, RoleGrant
@@ -54,6 +55,63 @@ RR4 = (
     grant("SELECT", "T4", path=("ACME_RR_OUTER", "ACME_RR_READ")),
     grant("SELECT", "T5", path=("ACME_RR_OUTER", "ACME_RR_READ")),
 )
+
+
+def test_a_schema_is_an_exception_only_where_every_path_revokes_it() -> None:
+    """Privileges add up: on 8.4.13, an account whose own SELECT ON *.* is
+    revoked on acme_hr reads acme_hr through an active role that holds SELECT
+    ON *.* without that revoke (#1502)."""
+    own = GrantRow(
+        grantee=APP,
+        kind=SYSTEM,
+        privilege="SELECT",
+        owner=None,
+        name=None,
+        object_type=None,
+        column=None,
+        path=(),
+        first_role_default=None,
+        grantable=False,
+        level="global static",
+        except_schemas=("acme_hr", "acme_pay"),
+    )
+    via_role = replace(
+        own, path=("acme_reader@%",), first_role_default=True, except_schemas=("acme_pay",)
+    )
+    (alone,) = collapse([own])
+    (both,) = collapse([own, via_role])
+    assert alone.except_schemas == ("acme_hr", "acme_pay")
+    assert both.except_schemas == ("acme_pay",)
+
+
+def test_a_role_not_active_at_login_gives_no_schema_back() -> None:
+    """At login, a role that is not a default role grants nothing, so its
+    unrevoked SELECT does not undo the account's own revoke (#1510). One not
+    known to be active may: the report then shows the wider reach."""
+    own = GrantRow(
+        grantee=APP,
+        kind=SYSTEM,
+        privilege="SELECT",
+        owner=None,
+        name=None,
+        object_type=None,
+        column=None,
+        path=(),
+        first_role_default=None,
+        grantable=False,
+        level="global static",
+        except_schemas=("acme_hr",),
+    )
+    role = replace(own, path=("acme_reader@%",), except_schemas=())
+    (not_default,) = collapse([own, replace(role, first_role_default=False)])
+    assert not_default.except_schemas == ("acme_hr",)
+    (not_known,) = collapse([own, replace(role, first_role_default=None)])
+    assert not_known.except_schemas == ()
+    # Held only through roles not active: every path counts.
+    first = replace(own, path=("acme_a@%",), first_role_default=False)
+    second = replace(first, path=("acme_b@%",), except_schemas=())
+    (only_roles,) = collapse([first, second])
+    assert only_roles.except_schemas == ()
 
 
 def test_one_privilege_at_two_levels_stays_two_privileges() -> None:

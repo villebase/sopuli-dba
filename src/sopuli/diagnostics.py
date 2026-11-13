@@ -1121,8 +1121,9 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "MariaDB that is the lock, the lifetime and the date of the last change, "
             "from `report accounts`, `report history` and `account list`, which then "
             "shows `OPEN` or `EXPIRED` without the lock. On MySQL it is the failed-login "
-            "limit, from `report accounts`. One per target. A warning and not a "
-            "refusal: the view is optional, and the commands still run."
+            "limit, from `report accounts`, and, where `@@partial_revokes` is on, the "
+            "global privileges, from `report privileges`. One per target and command. A "
+            "warning and not a refusal: the view is optional, and the commands still run."
         ),
         GLOBAL_PRIVILEGES_VIEW_BROKEN: (
             "The optional MariaDB view `sopuli.global_privileges` exists on a target and "
@@ -1932,7 +1933,7 @@ _ACCOUNT_STATE_VIEWS = {
         "mysql.global_priv",
     ),
     MYSQL: (
-        "The failed-login limit is",
+        "The failed-login limit and, with @@partial_revokes on, the global privileges are",
         mysql_account_state.INSTALL_SCRIPT,
         mysql_account_state.SOURCE,
     ),

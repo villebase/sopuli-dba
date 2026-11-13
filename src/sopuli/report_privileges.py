@@ -52,6 +52,9 @@ class Privilege:
     #: not known to be active or not, such as a MySQL role whose default status
     #: was not read: whether it is held without ``SET ROLE`` was not checked.
     active_at_login_checked: bool = True
+    #: The schemas a MySQL partial revoke takes this global privilege away on,
+    #: on every path (#1502); empty elsewhere.
+    except_schemas: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -105,6 +108,7 @@ def collapse(rows: Sequence[GrantRow]) -> tuple[Privilege, ...]:
                 via_default_role=active is True,
                 active_at_login_checked=active is not None,
                 grantable=any(row.grantable for row in group),
+                except_schemas=_excepted(group),
             )
         )
     return tuple(
@@ -113,6 +117,28 @@ def collapse(rows: Sequence[GrantRow]) -> tuple[Privilege, ...]:
             key=lambda p: (p.level or "", p.privilege, p.owner or "", p.name or "", p.column or ""),
         )
     )
+
+
+def _excepted(group: Sequence[GrantRow]) -> tuple[str, ...]:
+    """The schemas every path active at login revokes the grant on (#1502).
+
+    A schema that one active path still reaches is not an exception, because
+    the privileges of an account and its active roles add up: measured on
+    8.4.13. A role known not to be active at login gives nothing back then,
+    so a path whose first role is not a default role does not count. A path
+    whose first role may or may not be active (``first_role_default`` is
+    ``None``, such as a mandatory role 9.7.4 activates and 8.4.13 does not)
+    counts: the report then shows the wider reach, and the row already says
+    whether it is held at login was not checked. Where no path counts, every
+    path does: the privilege is held only after ``SET ROLE``, and the row says
+    so.
+    """
+    active = [row for row in group if row.path == () or row.first_role_default is not False]
+    paths = active or list(group)
+    schemas = set(paths[0].except_schemas)
+    for row in paths[1:]:
+        schemas &= set(row.except_schemas)
+    return tuple(sorted(schemas))
 
 
 def _active(group: Sequence[GrantRow]) -> bool | None:

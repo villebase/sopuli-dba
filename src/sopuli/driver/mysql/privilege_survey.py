@@ -25,10 +25,13 @@ spells it, and each privilege of the same holder and level is grantable.
 
 **Not checked:**
 
-- **global privileges, where ``@@partial_revokes`` is on** (#1411, M5). A
-  revoke on one schema of a global privilege is kept only in
-  ``User_attributes``, beside a retained password's hash, so a global
-  privilege may not reach every schema. The ``system`` part is ``None``.
+- **global privileges, where ``@@partial_revokes`` is on, without the
+  optional view** (#1411, M5). A revoke on one schema of a global privilege
+  is kept only in ``User_attributes``, beside a retained password's hash, so
+  a global privilege may not reach every schema. The ``system`` part is
+  ``None``. With the view ``sopuli.account_state`` (#1502), the revokes are
+  read from it, and each static global privilege names the schemas it is
+  revoked on (:attr:`~sopuli.driver.grants.GrantRow.except_schemas`).
 - **default roles, without the optional ``SELECT`` on
   ``mysql.default_roles``** (M4). Without it, the server refuses the read,
   ``1142``, and whether a role is a default role is not checked, nor,
@@ -40,9 +43,15 @@ spells it, and each privilege of the same holder and level is grantable.
 from __future__ import annotations
 
 from collections.abc import Iterable
+from dataclasses import replace
 from typing import Any
 
 from sopuli.driver.grants import SYSTEM
+from sopuli.driver.mysql.account_state import (
+    UNKNOWN_PRIVILEGE,
+    Restrictions,
+    RevokesNotKnownError,
+)
 from sopuli.driver.mysql.admin import DB_PRIV_COLUMNS, PRIV_COLUMNS, read_mandatory_roles
 from sopuli.driver.mysql_family.accounts import Principal, text
 from sopuli.driver.mysql_family.privilege_reads import (
@@ -66,11 +75,10 @@ PRINCIPALS = "select User, Host from mysql.user"
 DYNAMIC = "select USER, HOST, PRIV, WITH_GRANT_OPTION from mysql.global_grants"
 SCHEMA_ROWS = f"select User, Host, Db, {', '.join(DB_PRIV_COLUMNS)} from mysql.db"
 
-PARTIAL_REVOKES = (
-    "global privileges: @@partial_revokes is on, and a revoke of a global privilege on one "
-    "schema is kept only in mysql.user.User_attributes, beside a retained password's hash, "
-    "which the tool account does not read"
-)
+#: The start of the reason the global level is not checked, where
+#: ``@@partial_revokes`` is on and the optional view gave no revokes; the
+#: view's own reason follows.
+PARTIAL_REVOKES = "global privileges: @@partial_revokes is on"
 NO_DEFAULTS = (
     "whether a role is a default role, and so active without SET ROLE: the tool account "
     f"has no SELECT on {DEFAULTS_TABLE}, the optional grant of 02-mysql-privileges.md §2.1"
@@ -126,13 +134,33 @@ def activation(
     return Activation(defaults=defaults, all_active=all_active, mandatory=mandatory)
 
 
-def read_system(cursor: Any) -> list[Held]:
-    """The ``global static`` and ``global dynamic`` levels."""
+def read_system(cursor: Any, restrictions: Restrictions | None = None) -> list[Held]:
+    """The ``global static`` and ``global dynamic`` levels.
+
+    ``restrictions`` are the partial revokes, read from the optional view
+    where ``@@partial_revokes`` is on (#1502): each static privilege a holder
+    has revoked on some schemas carries those schemas. A revoke applies to
+    static privileges only; a dynamic one is global alone. A holder of a
+    static privilege that the view does not list, or a revoke of a privilege
+    the tool has no name for, raises
+    :class:`~sopuli.driver.mysql.account_state.RevokesNotKnownError`: its
+    revokes are not known, and reading none would claim every schema.
+    """
+    known = frozenset(PRIV_COLUMNS.values())
     held: list[Held] = []
     cursor.execute(GLOBAL_ROWS)
     for user, host, *flags in cursor.fetchall():
         holder = Principal(text(user), text(host))
-        held += level(holder, SYSTEM, GLOBAL_STATIC, _flagged(PRIV_COLUMNS, flags))
+        rows = level(holder, SYSTEM, GLOBAL_STATIC, _flagged(PRIV_COLUMNS, flags))
+        revoked = restrictions.of(holder.user, holder.host) if restrictions and rows else {}
+        if set(revoked) - known:
+            raise RevokesNotKnownError(UNKNOWN_PRIVILEGE)
+        held += [
+            replace(row, except_schemas=tuple(sorted(revoked[row.privilege])))
+            if row.privilege in revoked
+            else row
+            for row in rows
+        ]
     cursor.execute(DYNAMIC)
     for user, host, privilege, grant_option in cursor.fetchall():
         held.append(

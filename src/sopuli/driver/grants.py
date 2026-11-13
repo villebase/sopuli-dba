@@ -71,6 +71,9 @@ class GrantRow:
     first_role_default: bool | None
     grantable: bool
     level: str | None = None
+    #: The schemas a partial revoke takes this global privilege away on, as
+    #: MySQL keeps them with ``@@partial_revokes`` on (#1502); empty elsewhere.
+    except_schemas: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -156,11 +159,13 @@ def other_databases_reason(names: Sequence[str]) -> str:
 @runtime_checkable
 class PrivilegeViewState(Protocol):
     """A privilege survey that reads an optional view a DBA creates: MariaDB's
-    ``sopuli.global_privileges`` (#1483)."""
+    ``sopuli.global_privileges`` (#1483), and MySQL's
+    ``sopuli.account_state`` for the partial revokes (#1502)."""
 
     def privilege_view_broken(self) -> str | None:
         """What is wrong with a view that exists and cannot be used, for
-        ``SOPULI-W074``; ``None`` where it is absent or was read."""
+        ``SOPULI-W074`` on MariaDB and ``SOPULI-W073`` on MySQL; ``None``
+        where it is absent, was read, or was not needed."""
         ...
 
 

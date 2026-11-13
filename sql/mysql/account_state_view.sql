@@ -23,11 +23,12 @@
 -- (#1457, measured by 12_definer_view_probe.py, #1490).
 --
 -- Who reads it. report accounts, for the failed-login limit and the lock
--- time, which the limit needs to block. No verb that changes an account reads
--- it. Without the view the report says "not checked", with the reason, and
--- still runs. The partial revokes and the retained-password flag are in the
--- view for later reads. A column grant must include every column the tool
--- reads, or the tool does not read the view.
+-- time, which the limit needs to block, and report privileges, for the
+-- partial revokes (restrictions), where partial_revokes is on. No verb that
+-- changes an account reads it. Without the view the reports say "not
+-- checked", with the reason, and still run. The retained-password flag is in
+-- the view for a later read. A column grant must include every column a
+-- command reads, or that command does not read the view.
 --
 -- What it creates, each step safe to run again:
 --   1. the schema sopuli, which holds only the tool's views;

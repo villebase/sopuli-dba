@@ -140,12 +140,16 @@ class GrantSurvey:
 
 def other_databases_reason(names: Sequence[str]) -> str:
     """The reason that names a PostgreSQL cluster's other databases as not
-    checked (:attr:`GrantSurvey.other_databases`)."""
+    checked (:attr:`GrantSurvey.other_databases`).
+
+    It is true before and after :meth:`GrantSurvey.not_checked`, so it claims
+    nothing about the config. The driver writes it, and ``not_checked``
+    finds it by these same words, so only this function may build it."""
     return (
         "the schemas and objects of the cluster's other databases were not read ("
         + ", ".join(names)
-        + "): a target reads only the database it connects to, and no declared "
-        "target connects to these at the same host and port"
+        + "): a target reads only the database it connects to; declare a target "
+        "for each at the same host and port in its dsn: to report on it"
     )
 
 

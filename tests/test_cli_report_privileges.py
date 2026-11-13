@@ -18,7 +18,16 @@ from jsonschema import Draft202012Validator
 
 from conftest import WriteConfig
 from sopuli.cli import cli
-from sopuli.driver.grants import COLUMN, OBJECT, SCHEMA, SYSTEM, GrantRow, GrantSurvey, RoleGrant
+from sopuli.driver.grants import (
+    COLUMN,
+    OBJECT,
+    SCHEMA,
+    SYSTEM,
+    GrantRow,
+    GrantSurvey,
+    RoleGrant,
+    other_databases_reason,
+)
 from sopuli.driver.protocol import Scope
 from sopuli.driver.survey import SurveyedAccount
 from sopuli.exit_codes import ExitCode
@@ -331,6 +340,8 @@ def test_a_database_another_target_covers_is_not_named(
             objects=GRANTS.objects,
             columns=GRANTS.columns,
             schemas=GRANTS.schemas,
+            # As the PostgreSQL driver builds it.
+            unreadable=(other_databases_reason(others),),
             other_databases=others,
         )
     )

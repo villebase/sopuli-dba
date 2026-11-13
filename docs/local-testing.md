@@ -2871,7 +2871,7 @@ pg-dev  (16.15, 1 account)
     objects: EXECUTE on 3 functions (0 direct, 3 via roles); INSERT on 1 table (0 direct, 1 via roles, 1 only after SET ROLE); SELECT on 2 tables (1 direct, 1 via roles); SELECT on 2 views (0 direct, 2 via roles); default for acme_rp_owner: SELECT on 1 table (0 direct, 1 via roles)
     columns: UPDATE on 1 column (1 direct, 0 via roles)
     schemas: USAGE on acme_rp (schema, direct, via acme_rp_app > acme_rp_read, via acme_rp_batch)
-  not checked: the schemas and objects of the cluster's other databases were not read (sopuli): a target reads only the database it connects to, and no declared target connects to these at the same host and port
+  not checked: the schemas and objects of the cluster's other databases were not read (sopuli): a target reads only the database it connects to; declare a target for each at the same host and port in its dsn: to report on it
 ```
 
 It exits 4: the stack's cluster has a second database, `sopuli`, which a
@@ -2902,6 +2902,14 @@ run exits 0: `pg-dev` no longer names `sopuli`, and `pg-dev-sopuli` reads
 it:
 
 ```
+$ sopuli --config pg-report.yaml report privileges --target pg-dev --account acme_rp_user
+pg-dev  (16.15, 1 account)
+  acme_rp_user  (technical)
+    roles: acme_rp_app (inherit, set), acme_rp_batch (no inherit, set), pg_read_all_stats (inherit, set)
+    system: pg_read_all_stats (predefined role, via pg_read_all_stats)
+    objects: EXECUTE on 3 functions (0 direct, 3 via roles); INSERT on 1 table (0 direct, 1 via roles, 1 only after SET ROLE); SELECT on 2 tables (1 direct, 1 via roles); SELECT on 2 views (0 direct, 2 via roles); default for acme_rp_owner: SELECT on 1 table (0 direct, 1 via roles)
+    columns: UPDATE on 1 column (1 direct, 0 via roles)
+    schemas: USAGE on acme_rp (schema, direct, via acme_rp_app > acme_rp_read, via acme_rp_batch)
 $ sopuli --config pg-report.yaml report privileges --target pg-dev-sopuli --account acme_rp_user
 pg-dev-sopuli  (16.15, 1 account)
   acme_rp_user  (technical)

@@ -1723,7 +1723,8 @@ command that connects says so in a warning, `SOPULI-W068`
 target connects to (UC-5 §5). To report on every database of one cluster,
 declare a target for each, at the same `dsn:` with its own
 `postgres.database`, and run one per run with `--target`, as above. A run
-that selects two of them refuses the second. Each target's report then
+that selects two of them refuses the second, unless the identifier could
+not be read. Each target's report then
 leaves out the databases the others connect to
 ([#1501](../decisions/log.md#1501)). Keep such targets in a file of their
 own when other commands run over the file without `--target`, or declare

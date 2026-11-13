@@ -4141,16 +4141,13 @@ def account_list_command(
         rows.extend(found)
         errors += failed
         unanswered += sum(1 for row in found if row.target_failed)
-        # MySQL only. On MariaDB the lock is shown from the optional view where
-        # it is readable (#1491), and a block after failed logins is in no
-        # place the tool reads; what `account list` says of that is #1272's.
-        if target.target.type == MYSQL and any(
+        # Neither MySQL's `mysql.user` (#1225) nor MariaDB's optional view
+        # (#1479, #1500) holds the block after failed logins. A locked account
+        # cannot log in anyway.
+        if target.target.type in (MYSQL, MARIADB) and any(
             row.state is not None and not row.state.locked for row in found
         ):
-            # Each such row's state is read from `mysql.user`, which does
-            # not hold the block after failed logins (#1225). A locked
-            # account cannot log in anyway.
-            unseen.append(failed_login_block_unread(target.name))
+            unseen.append(failed_login_block_unread(target.name, target.target.type))
     document.diagnostics.extend(unseen)
 
     # Only a target that answered reads the journal, so this needs no `answered`.
@@ -4517,22 +4514,24 @@ def _describe_row(
         account=state.name if state is not None else name,
         target=target.name,
         rule=admitted,
-        # The lock is shown after the guardrails ran on what `describe_user`
-        # gave, so the notices say what a verb would do, and a verb does not
-        # read the view (#1491).
-        state=_with_view_lock(session, state),
+        # The lock and the date are shown after the guardrails ran on what
+        # `describe_user` gave, so the notices say what a verb would do, and a
+        # verb does not read the view (#1491, #1500).
+        state=_with_view_state(session, state),
         reset_at=_reset_at(journal, config, target, name, unread=unread),
         notices=tuple(notices),
         product=target.target.type,
     )
 
 
-def _with_view_lock(session: Any, state: UserState | None) -> UserState | None:
-    """``state``, locked where MariaDB's optional view says so (#1491).
-    Only a :class:`~sopuli.driver.survey.StateView` has one."""
-    if state is None or not isinstance(session, StateView):
-        return state
-    return session.report_lock(state)
+def _with_view_state(session: Any, state: UserState | None) -> UserState | None:
+    """``state``, locked where MariaDB's optional view says so (#1491), with
+    the time of the last change from the view (:func:`_with_view_date`,
+    #1500). Only a :class:`~sopuli.driver.survey.StateView` has one."""
+    dated = _with_view_date(session, state)
+    if dated is None or not isinstance(session, StateView):
+        return dated
+    return session.report_lock(dated)
 
 
 def _undescribed_row(
@@ -6486,12 +6485,19 @@ def _database_date(
         if not refused.about_account:
             raise
         return history_states.without_database(one, refused.message)
-    # MariaDB's date is in its optional view only, which `describe_user` does
-    # not read, so no verb acts on it (#1491).
-    if user is not None and isinstance(session, StateView):
-        when, why = session.report_changed_at(user)
-        user = replace(user, password_changed_at=when, password_changed_unknown=why)
-    return history_states.with_database(one, user)
+    return history_states.with_database(one, _with_view_date(session, user))
+
+
+def _with_view_date(session: Any, user: UserState | None) -> UserState | None:
+    """``user`` with the time of the last change from MariaDB's optional view,
+    or why there is none, for `report history` and `account list`, so the
+    two never disagree about one account (#1491, #1500). The date is in the
+    view only, which `describe_user` does not read, so no verb acts on it.
+    Only a :class:`~sopuli.driver.survey.StateView` has one."""
+    if user is None or not isinstance(session, StateView):
+        return user
+    when, why = session.report_changed_at(user)
+    return replace(user, password_changed_at=when, password_changed_unknown=why)
 
 
 def _missing_unmanaged(one: history_states.AccountHistory) -> bool:

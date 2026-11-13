@@ -558,13 +558,17 @@ on every run and reports `changed: true`, because no verb that changes an
 account reads the lock ([#1267](../decisions/log.md#1267), decision 2).
 `account list` shows it where the DBA has created the optional view
 `sopuli.account_state` (`02-mariadb-privileges.md` §2.1): a locked account
-is `LOCKED`, or `EXPIRED & LOCKED`, as on MySQL. With the view, `OPEN` means
-no `ACCOUNT LOCK`; a block after failed logins is in no place the tool reads,
-so an `OPEN` account may still be blocked. Without the view a MariaDB
-account's `status` is `OPEN` or `EXPIRED`, from the `mysql.user` view's
-`password_expired` alone, and says nothing of the lock. A view that exists
+is `LOCKED`, or `EXPIRED & LOCKED`, as on MySQL, and `DB_PW_CHANGED` is the
+date the view gives, as in `report history`. With the view, `OPEN` means no
+`ACCOUNT LOCK`; a block after failed logins (`max_password_errors`, error
+4150) is in no place the tool reads, so an `OPEN` account may still be
+blocked, and `account list` adds `SOPULI-W063` for each MariaDB target where it
+lists an account that exists and is not locked, as on MySQL. Without the view
+a MariaDB account's `status` is `OPEN` or `EXPIRED`, from the `mysql.user`
+view's `password_expired` alone, and says nothing of the lock, and
+`DB_PW_CHANGED` is `-` with a note on how to add the view. A view that exists
 and cannot be used adds `SOPULI-W073` for the target
-([#1491](../decisions/log.md#1491)). `account reset-password` never
+([#1491](../decisions/log.md#1491), [#1500](../decisions/log.md#1500)). `account reset-password` never
 sends `ACCOUNT UNLOCK`: it cannot tell a suspension from a block after failed
 logins, so a locked or blocked account keeps its new password and stays
 locked, and a DBA unlocks it by hand after checking for a suspension

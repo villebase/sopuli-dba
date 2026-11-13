@@ -435,7 +435,7 @@ does not give the fourth.
 | the lock, `account_locked` (LK2) | `account suspend` always sends `ACCOUNT LOCK` and reports `changed: true` ([#1267](../decisions/log.md#1267), decision 2). `account list` shows a locked account `LOCKED` where the view is readable, and `OPEN` or `EXPIRED` from `password_expired` alone where it is not |
 | an open rollover, `auth_or` (`03_dual_password_probe.py`, DP4) | `creds finish-rollover` always sends the current value alone and reports `changed: true` ([#1271](../decisions/log.md#1271), decision 2) |
 | when the password changed, and its lifetime (RD1) | a change is verified by login (§7), not by its time (decision 8) |
-| a block after failed logins, `max_password_errors` (LK4, RD6) | `ACCOUNT UNLOCK` ends it. A reset never sends it, and a DBA unlocks by hand after checking for a suspension ([#1272](../decisions/log.md#1272), decision 1) |
+| a block after failed logins, `max_password_errors` (LK4, RD6) | `ACCOUNT UNLOCK` ends it. A reset never sends it, and a DBA unlocks by hand after checking for a suspension ([#1272](../decisions/log.md#1272), decision 1). `account list` adds `SOPULI-W063` for a target where it lists an account that is not locked ([#1500](../decisions/log.md#1500)) |
 
 **The tool changes only `mysql_native_password` and `ed25519` accounts**
 (decision 1). `doctor --check-privileges` names an account on `parsec`, or on

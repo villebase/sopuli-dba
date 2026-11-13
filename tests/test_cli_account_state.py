@@ -3,7 +3,7 @@
 The view's own reads are `tests/driver/test_mariadb_account_state.py`'s. Here:
 that a broken view is warned about once, as `SOPULI-W073`, that `report
 history` takes MariaDB's date from the view and never from `describe_user`, and
-that `account list` takes the lock from it.
+that `account list` takes the lock and the date from it (#1500).
 """
 
 from __future__ import annotations
@@ -16,9 +16,10 @@ from typing import Any
 import pytest
 from click.testing import CliRunner
 
-from sopuli.cli import _database_date, _warn_if_view_broken, _with_view_lock, cli
+from sopuli.cli import _database_date, _warn_if_view_broken, _with_view_state, cli
 from sopuli.config.codes import ACCOUNT_STATE_VIEW_BROKEN
-from sopuli.driver.mariadb.account_state import ABSENT, AccountStates, State
+from sopuli.diagnostics import FAILED_LOGIN_BLOCK_UNREAD
+from sopuli.driver.mariadb.account_state import ABSENT, NO_ROW, AccountStates, State
 from sopuli.driver.protocol import UserState
 from sopuli.exit_codes import ExitCode
 from sopuli.output.document import Diagnostic
@@ -93,7 +94,7 @@ def test_account_list_shows_the_lock_the_view_gives(expired: bool, status: str) 
     `EXPIRED`; `account list` takes the lock from the view (#1491)."""
     session = _mariadb(AccountStates(rows={("acme_dev", "%"): _state(locked=True)}))
     read = UserState(name="acme_dev@%", status="EXPIRED" if expired else "OPEN", expired=expired)
-    shown = _with_view_lock(session, read)
+    shown = _with_view_state(session, read)
     assert shown is not None
     # ACCOUNT LOCK's flag, never a failed-login block, which the view does not
     # hold (#1479).
@@ -114,8 +115,9 @@ personal_accounts:
 
 class ListSession:
     """A MariaDB server for `account list`, whose view gave ``states``. The
-    lock is applied by the real
-    :meth:`~sopuli.driver.mariadb.session.MariadbSession.report_lock`."""
+    lock and the date are applied by the real
+    :meth:`~sopuli.driver.mariadb.session.MariadbSession.report_lock` and
+    :meth:`~sopuli.driver.mariadb.session.MariadbSession.report_changed_at`."""
 
     def __init__(self, states: AccountStates) -> None:
         self.states = states
@@ -127,7 +129,9 @@ class ListSession:
         return self.states.broken
 
     def report_changed_at(self, user: UserState) -> tuple[datetime | None, str | None]:
-        return None, None
+        from sopuli.driver.mariadb.session import MariadbSession
+
+        return MariadbSession.report_changed_at(self, user)  # type: ignore[arg-type]  # a stub
 
     def report_lock(self, user: UserState) -> UserState:
         from sopuli.driver.mariadb.session import MariadbSession
@@ -165,6 +169,57 @@ def test_account_list_shows_a_locked_mariadb_account_locked(
     assert ACCOUNT_STATE_VIEW_BROKEN not in codes
 
 
+def test_account_list_warns_once_that_a_block_after_failed_logins_is_unread(
+    write_config: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The view holds `ACCOUNT LOCK`, never a `max_password_errors` block, so
+    an `OPEN` account may be blocked: `SOPULI-W063` once for the target, as
+    on MySQL (#1500)."""
+    states = AccountStates(rows={("acme_dev_bob", "localhost"): _state(locked=True)})
+    document = _listed(write_config, monkeypatch, states)
+    (block,) = [one for one in document["diagnostics"] if one["code"] == FAILED_LOGIN_BLOCK_UNREAD]
+    assert block["target"] == "mariadb-dev"
+    assert "MariaDB" in block["message"]
+    assert "4150" in block["message"]
+    assert "PASSWORD_LOCK_TIME" not in block["message"]
+
+
+def test_account_list_does_not_warn_of_a_block_where_every_account_is_locked(
+    write_config: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    states = AccountStates(
+        rows={
+            ("acme_dev_alice", "%"): _state(locked=True),
+            ("acme_dev_bob", "localhost"): _state(locked=True),
+        }
+    )
+    document = _listed(write_config, monkeypatch, states)
+    codes = [one["code"] for one in document["diagnostics"]]
+    assert FAILED_LOGIN_BLOCK_UNREAD not in codes
+
+
+def test_account_list_shows_the_date_the_view_gives(
+    write_config: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`DB_PW_CHANGED` comes from the view, as `report history`'s date does,
+    so the two commands agree about one account (#1500). An account with no
+    row says why."""
+    states = AccountStates(rows={("acme_dev_bob", "localhost"): _state(locked=False)})
+    document = _listed(write_config, monkeypatch, states)
+    unknown = {
+        row["account"]: [one["message"] for one in row.get("warnings", [])]
+        for row in document["results"]
+    }
+    assert unknown == {"acme_dev_alice@%": [NO_ROW], "acme_dev_bob@localhost": []}
+
+    text = CliRunner().invoke(
+        cli, ["--config", str(write_config(MARIADB_CONFIG)), "account", "list"]
+    )
+    assert text.exit_code == ExitCode.SUCCESS, text.output
+    (bob,) = [line for line in text.output.splitlines() if line.startswith("acme_dev_bob")]
+    assert "2026-11-12" in bob
+
+
 def test_account_list_warns_once_about_a_broken_view(
     write_config: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -187,17 +242,39 @@ def test_account_list_warns_once_about_a_broken_view(
     ],
     ids=["not-locked", "no-row", "absent", "broken"],
 )
-def test_account_list_keeps_the_state_as_read_where_the_view_does_not_say_locked(
+def test_account_list_keeps_the_status_as_read_where_the_view_does_not_say_locked(
     states: AccountStates,
 ) -> None:
     read = UserState(name="acme_dev@%", status="OPEN")
-    assert _with_view_lock(_mariadb(states), read) is read
+    shown = _with_view_state(_mariadb(states), read)
+    assert shown is not None
+    assert (shown.status, shown.locked, shown.deliberately_locked) == ("OPEN", False, False)
+
+
+@pytest.mark.parametrize(
+    ("states", "date", "why"),
+    [
+        (AccountStates(rows={("acme_dev", "%"): _state(locked=False)}), WHEN, None),
+        (AccountStates(rows={}), None, NO_ROW),
+        (AccountStates(rows=None, reason=ABSENT), None, ABSENT),
+    ],
+    ids=["row", "no-row", "absent"],
+)
+def test_account_list_takes_the_date_from_the_view(
+    states: AccountStates, date: datetime | None, why: str | None
+) -> None:
+    """Where the view has no time, the reason replaces `describe_user`'s,
+    which named no view (#1500)."""
+    read = UserState(name="acme_dev@%", status="OPEN", password_changed_unknown="no date")
+    shown = _with_view_state(_mariadb(states), read)
+    assert shown is not None
+    assert (shown.password_changed_at, shown.password_changed_unknown) == (date, why)
 
 
 def test_account_list_reads_no_view_on_another_product() -> None:
     read = UserState(name="ACME_DEV", status="OPEN")
-    assert _with_view_lock(object(), read) is read
-    assert _with_view_lock(object(), None) is None
+    assert _with_view_state(object(), read) is read
+    assert _with_view_state(object(), None) is None
 
 
 def test_the_mariadb_session_is_a_state_view() -> None:

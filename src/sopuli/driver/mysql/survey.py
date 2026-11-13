@@ -117,7 +117,7 @@ def survey(cursor: Any, locks: Locks, states: AccountStates) -> tuple[SurveyedAc
                 lifetime=_lifetime(lifetime if lifetime is not None else default),
                 locks=locks,
                 key=key,
-                limit=states.limit(user, host),
+                limit=states.limit(key),
             )
         )
     # The server sorts by its column collations; the contract is by name.

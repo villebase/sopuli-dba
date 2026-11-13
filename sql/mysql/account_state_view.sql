@@ -5,7 +5,13 @@
 --         tests of the view read it as a tool account holding only SELECT
 --         on it, on each, and on 8.4.13 report accounts read the limit
 --         through it. An extra column, a dropped definer and a definer
---         without SELECT each left it unread.
+--         without SELECT each left it unread. A limit without a lock time
+--         never blocked. After the definer was dropped, the script mended
+--         the view on each; on 8.4.13 also when run twice by an
+--         administrator holding only CREATE USER, SET_ANY_DEFINER, SELECT on
+--         mysql.user and CREATE, DROP, CREATE VIEW and SELECT on sopuli.*,
+--         all with GRANT OPTION where it passes them on. Without the DROP
+--         VIEW below, that run answered 4006.
 --
 -- What it is for. MySQL keeps an account's failed-login limit only in
 -- mysql.user.User_attributes, beside a retained password's hash, which the
@@ -31,7 +37,8 @@
 --
 -- How to run. As an administrator who may name another definer
 -- (SET_ANY_DEFINER from 8.2, SET_USER_ID before; without it, CREATE DEFINER =
--- ... answers 1227). Set the tool account below first:
+-- ... answers 1227), and who may create users, grant SELECT on mysql.user and
+-- create and drop the schema's views. Set the tool account below first:
 --
 --   mysql -u root -p < account_state_view.sql
 --
@@ -41,6 +48,12 @@ SET @tool_user = 'sopuli_admin';
 SET @tool_host = '192.0.2.10';
 
 CREATE SCHEMA IF NOT EXISTS sopuli;
+
+-- Dropped first, so the script mends a view whose definer was dropped: while
+-- the view names a missing definer, CREATE USER of it answers 4006 unless the
+-- administrator holds ALLOW_NONEXISTENT_DEFINER (8.2 and later) or
+-- SET_USER_ID (8.0).
+DROP VIEW IF EXISTS sopuli.account_state;
 
 CREATE USER IF NOT EXISTS 'sopuli_view_definer'@'localhost' ACCOUNT LOCK;
 ALTER USER 'sopuli_view_definer'@'localhost' ACCOUNT LOCK;

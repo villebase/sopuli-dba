@@ -61,6 +61,8 @@ from sopuli.constraints import (
     Constraints,
 )
 from sopuli.driver.guardrails import PASSWORD_FILE, Caveat
+from sopuli.driver.mariadb import account_state as mariadb_account_state
+from sopuli.driver.mysql import account_state as mysql_account_state
 from sopuli.driver.oracle.wallet import AUTO_LOGIN, WalletReport
 from sopuli.driver.protocol import (
     ENCRYPTION_NONE,
@@ -1922,15 +1924,15 @@ def account_state_view_broken(target: str, what: str, *, product: str) -> Diagno
 #: Per product: what the view gives, its install script, and what its definer
 #: reads.
 _ACCOUNT_STATE_VIEWS = {
-    "mariadb": (
+    MARIADB: (
         "The lock, the lifetime and the date of the last change are",
-        "sql/mariadb/account_state_view.sql",
+        mariadb_account_state.INSTALL_SCRIPT,
         "mysql.global_priv",
     ),
-    "mysql": (
+    MYSQL: (
         "The failed-login limit is",
-        "sql/mysql/account_state_view.sql",
-        "mysql.user",
+        mysql_account_state.INSTALL_SCRIPT,
+        mysql_account_state.SOURCE,
     ),
 }
 

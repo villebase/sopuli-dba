@@ -89,9 +89,12 @@ def test_without_the_view_the_reason_names_the_script(stage: Stage) -> None:
 def test_the_installed_view_gives_the_failed_login_limit(stage: Stage) -> None:
     three = stage.account("FAILED_LOGIN_ATTEMPTS 3 PASSWORD_LOCK_TIME 2")
     none = stage.account()
+    unbounded = stage.account("FAILED_LOGIN_ATTEMPTS 5 PASSWORD_LOCK_TIME UNBOUNDED")
     zero = stage.account("FAILED_LOGIN_ATTEMPTS 4 PASSWORD_LOCK_TIME UNBOUNDED")
     # DV2: setting both to 0 removes the keys.
     stage.root(f"ALTER USER '{zero}'@'%' FAILED_LOGIN_ATTEMPTS 0 PASSWORD_LOCK_TIME 0")
+    # A limit without a lock time: the server never blocks it (#1508).
+    no_lock = stage.account("FAILED_LOGIN_ATTEMPTS 2")
     stage.install()
     # Twice: the script is safe to run again.
     stage.install()
@@ -99,9 +102,20 @@ def test_the_installed_view_gives_the_failed_login_limit(stage: Stage) -> None:
     states = stage.read()
 
     assert states.broken is None
-    assert states.limit(three, "%") == (3, None)
-    assert states.limit(none, "%") == ("unlimited", None)
-    assert states.limit(zero, "%") == ("unlimited", None)
+    assert states.limit((three, "%")) == (3, None)
+    assert states.limit((unbounded, "%")) == (5, None)
+    assert states.limit((none, "%")) == ("unlimited", None)
+    assert states.limit((zero, "%")) == ("unlimited", None)
+    assert states.limit((no_lock, "%")) == ("unlimited", None)
+
+
+def test_the_script_mends_a_view_whose_definer_was_dropped(stage: Stage) -> None:
+    """W073's fix for a dropped definer is to run the script again (#1508)."""
+    stage.install()
+    stage.root("DROP USER 'sopuli_view_definer'@'localhost'")
+    assert stage.read().broken == "its definer no longer exists (1045)"
+    stage.install()
+    assert stage.read().broken is None
 
 
 def test_a_view_with_another_column_is_broken_and_not_read(stage: Stage) -> None:

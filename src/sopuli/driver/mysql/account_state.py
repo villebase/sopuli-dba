@@ -39,9 +39,9 @@ INSTALL_SCRIPT = "sql/mysql/account_state_view.sql"
 #: What the view's definer reads.
 SOURCE = "mysql.user"
 
-#: The columns the view may have. ``password_lock_time_days``,
-#: ``restrictions`` and ``retained_password`` are in the install script for
-#: later reads (#1502, #1457) and are not read here.
+#: The columns the view may have. ``restrictions`` and ``retained_password``
+#: are in the install script for later reads (#1502, #1457) and are not read
+#: here.
 EXPECTED = frozenset(
     {
         "User",
@@ -53,7 +53,7 @@ EXPECTED = frozenset(
     }
 )
 #: The columns `report accounts` reads.
-READ = ("User", "Host", "failed_login_attempts")
+READ = ("User", "Host", "failed_login_attempts", "password_lock_time_days")
 ROWS_QUERY = f"select {', '.join(READ)} from {VIEW}"
 
 ABSENT = (
@@ -79,11 +79,12 @@ class AccountStates:
     #: warning; ``None`` where the view is absent or was read.
     broken: str | None = None
 
-    def limit(self, user: str, host: str) -> tuple[Limit, str | None]:
-        """The account's failed-login limit, or ``None`` and why."""
+    def limit(self, key: tuple[str, str]) -> tuple[Limit, str | None]:
+        """The failed-login limit of the account whose key is ``key``, ``(user,
+        host)`` with the host folded, or ``None`` and why."""
         if self.rows is None:
             return None, self.reason
-        found = self.rows.get((user, fold_mysql_host(host)))
+        found = self.rows.get(key)
         return (None, NO_ROW) if found is None else (found, None)
 
 
@@ -103,8 +104,8 @@ def read(cursor: Cursor) -> AccountStates:
     try:
         return AccountStates(
             rows={
-                (text(user), fold_mysql_host(text(host))): _limit(attempts)
-                for user, host, attempts in rows
+                (text(user), fold_mysql_host(text(host))): _limit(attempts, lock_days)
+                for user, host, attempts, lock_days in rows
             }
         )
     except (TypeError, ValueError):
@@ -121,12 +122,17 @@ def _broken(what: str) -> AccountStates:
     )
 
 
-def _limit(attempts: object) -> Limit:
-    """``FAILED_LOGIN_ATTEMPTS``: no key, or 0, is no limit (DV2: the server
-    removes the key when it is set to 0)."""
+def _limit(attempts: object, lock_days: object) -> Limit:
+    """``FAILED_LOGIN_ATTEMPTS``, where it blocks. No key, or 0, is no limit
+    (DV2: the server removes the key when it is set to 0). So is a limit
+    without ``PASSWORD_LOCK_TIME``: the server counts and blocks only when
+    both are non-zero, and with the lock time at 0 an account answers
+    ``1045`` to every wrong password and is never blocked (measured on
+    8.4.13, #1508). ``-1`` is ``UNBOUNDED``, which blocks."""
     value = integer(attempts)
-    if value is None or value == 0:
+    days = integer(lock_days)
+    if value is None or value == 0 or days is None or days == 0:
         return "unlimited"
-    if value < 0:
+    if value < 0 or days < -1:
         raise ValueError("not a limit")
     return value

@@ -47,32 +47,43 @@ class Answers:
         return self.last
 
 
-def test_each_accounts_limit_by_user_and_folded_host() -> None:
+def test_each_accounts_limit_keyed_by_user_and_folded_host() -> None:
     # DV2: NULL for none set, the number as set; 0 removes the key (NULL).
     cursor = Answers(
         ALL,
         [
-            ("acme_app", "%", "3"),
-            ("acme_web", "Example.COM", None),
-            ("acme_ops", "localhost", 5),
+            ("acme_app", "%", "3", "2"),
+            ("acme_web", "Example.COM", None, None),
+            ("acme_ops", "localhost", 5, -1),
         ],
     )
     states = read(cursor)
     assert cursor.executed == [COLUMNS_QUERY, ROWS_QUERY]
-    assert states.limit("acme_app", "%") == (3, None)
-    assert states.limit("acme_web", "example.com") == ("unlimited", None)
-    assert states.limit("acme_ops", "LOCALHOST") == (5, None)
-    assert states.limit("acme_new", "%") == (None, NO_ROW)
+    assert states.limit(("acme_app", "%")) == (3, None)
+    assert states.limit(("acme_web", "example.com")) == ("unlimited", None)
+    # UNBOUNDED reads -1, and blocks.
+    assert states.limit(("acme_ops", "localhost")) == (5, None)
+    assert states.limit(("acme_new", "%")) == (None, NO_ROW)
+
+
+@pytest.mark.parametrize("lock_days", [None, 0, "0"])
+def test_a_limit_without_a_lock_time_never_blocks(lock_days: object) -> None:
+    """The server counts and blocks only when both are non-zero (#1508)."""
+    states = read(Answers(ALL, [("acme_app", "%", 3, lock_days)]))
+    assert states.limit(("acme_app", "%")) == ("unlimited", None)
 
 
 def test_the_rows_read_no_hash_column() -> None:
-    assert ROWS_QUERY == "select User, Host, failed_login_attempts from sopuli.account_state"
+    assert ROWS_QUERY == (
+        "select User, Host, failed_login_attempts, password_lock_time_days "
+        "from sopuli.account_state"
+    )
 
 
 def test_no_columns_is_absent() -> None:
     states = read(Answers([]))
     assert (states.rows, states.reason, states.broken) == (None, ABSENT, None)
-    assert states.limit("acme_app", "%") == (None, ABSENT)
+    assert states.limit(("acme_app", "%")) == (None, ABSENT)
 
 
 def test_a_column_outside_the_six_is_never_read() -> None:
@@ -81,7 +92,7 @@ def test_a_column_outside_the_six_is_never_read() -> None:
     states = read(cursor)
     assert states.broken == "it has columns the tool does not expect (authentication_string)"
     assert cursor.executed == [COLUMNS_QUERY]
-    assert states.limit("acme_app", "%")[1] == (
+    assert states.limit(("acme_app", "%"))[1] == (
         "the optional view sopuli.account_state is not used: "
         "it has columns the tool does not expect (authentication_string)"
     )
@@ -90,7 +101,9 @@ def test_a_column_outside_the_six_is_never_read() -> None:
 def test_a_column_grant_without_the_limit_is_broken() -> None:
     # DV8: under a column grant only the granted columns are listed.
     states = read(Answers([("User",), ("Host",), ("retained_password",)]))
-    assert states.broken == "the tool account cannot read its columns failed_login_attempts"
+    assert states.broken == (
+        "the tool account cannot read its columns failed_login_attempts, password_lock_time_days"
+    )
 
 
 def test_column_names_are_compared_without_case() -> None:
@@ -99,7 +112,7 @@ def test_column_names_are_compared_without_case() -> None:
 
 
 def test_a_value_that_is_no_limit_is_broken_and_never_repeated() -> None:
-    states = read(Answers(ALL, [("acme_app", "%", "$A$005$secret")]))
+    states = read(Answers(ALL, [("acme_app", "%", "$A$005$secret", 1)]))
     assert states.broken == "a column holds values the tool does not expect"
     assert "secret" not in (states.reason or "")
 

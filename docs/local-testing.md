@@ -2599,8 +2599,8 @@ root:
 $ docker exec -i -e MYSQL_PWD=sopuli-test sopuli-test-mysql-1 mysql -uroot < account_state_view.sql
 ```
 
-With `acme_app@%` created with `FAILED_LOGIN_ATTEMPTS 3`, `acme_web@%` with
-none, and this rule:
+With `acme_app@%` created with `FAILED_LOGIN_ATTEMPTS 3 PASSWORD_LOCK_TIME 1`,
+`acme_web@%` with neither, and this rule:
 
 ```yaml
 reports:
@@ -2625,7 +2625,9 @@ mysql-dev  (8.4.13, 10 accounts read, 1 with a problem, 5 undeclared)
 
 It exits 3. The script makes the locked account `sopuli_view_definer@localhost`,
 which the view runs as. Without the view, both accounts read `NOT_CHECKED`
-with a reason that names the script, and the run exits 4.
+with a reason that names the script, and the run exits 4. A limit without a
+`PASSWORD_LOCK_TIME` reads `unlimited`: the server never blocks such an
+account.
 
 On MariaDB, with the grants of `design/02-mariadb-privileges.md` §2.1,
 `report accounts` reads only each account's

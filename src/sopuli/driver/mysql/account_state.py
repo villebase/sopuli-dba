@@ -101,17 +101,20 @@ class AccountStates:
 WRONG_VALUES = "a column holds values the tool does not expect"
 
 
-def _fetch(cursor: Cursor, columns: tuple[str, ...]) -> tuple[list[Any] | None, str | None]:
-    """The view's rows of ``columns``, after its columns are checked, or
-    ``None`` and what is wrong: ``None`` too where the view is absent or not
-    granted. One path for both readers, so they cannot answer differently."""
+def _fetch(
+    cursor: Cursor, columns: tuple[str, ...], query: str
+) -> tuple[list[Any] | None, str | None]:
+    """The view's rows, ``query`` over ``columns``, after its columns are
+    checked, or ``None`` and what is wrong: ``None`` too where the view is
+    absent or not granted. One path for both readers, so they cannot answer
+    differently."""
     try:
         listed, problem = shape_problem(cursor, SCHEMA, NAME, expected=EXPECTED, read=columns)
         if not listed:
             return None, None
         if problem is not None:
             return None, problem
-        cursor.execute(f"select {', '.join(columns)} from {VIEW}")
+        cursor.execute(query)
         return list(cursor.fetchall()), None
     except Exception as error:  # noqa: BLE001 -- a server's answer is classified
         return None, refusal(error, source=SOURCE)
@@ -123,7 +126,7 @@ def _not_used(what: str) -> str:
 
 def read(cursor: Cursor) -> AccountStates:
     """Each account's failed-login limit, for `report accounts`."""
-    rows, broken = _fetch(cursor, READ)
+    rows, broken = _fetch(cursor, READ, ROWS_QUERY)
     if rows is None:
         if broken is None:
             return AccountStates(rows=None, reason=ABSENT)
@@ -159,10 +162,23 @@ NO_PRINCIPAL_ROW = (
     f"the optional view {VIEW} has no row for an account or role that mysql.user has, "
     "so its partial revokes are not known"
 )
+#: A revoke of a privilege the tool has no name for: it cannot be placed on
+#: any global row, and dropping it would claim every schema.
+UNKNOWN_PRIVILEGE = (
+    "a partial revoke names a privilege the tool does not know, so the schemas a "
+    "global privilege reaches are not known"
+)
+#: How ``Restrictions`` spells a privilege the tool names otherwise: measured
+#: on 8.4.13, ``REVOKE GRANT OPTION ON acme_hr.*`` is stored as ``GRANT``. The
+#: other static privileges, multi-word ones among them, are stored as the tool
+#: names them.
+RESTRICTION_NAMES = {"GRANT": "GRANT OPTION"}
 
 
-class MissingRowError(Exception):
-    """A principal with global privileges that the view does not list."""
+class RevokesNotKnownError(Exception):
+    """The partial revokes of some principal are not known: the view has no
+    row for it, or names a privilege the tool does not know. The message is
+    the reason."""
 
 
 @dataclass(frozen=True)
@@ -175,20 +191,20 @@ class Restrictions:
 
     def of(self, user: str, host: str) -> dict[str, frozenset[str]]:
         """Each privilege ``user@host`` has revoked on some schemas, and those
-        schemas; empty where it has none. Raises :class:`MissingRowError` where
-        the view does not list it: no row is not the same as no revoke."""
+        schemas; empty where it has none. Raises :class:`RevokesNotKnownError`
+        where the view does not list it: no row is not the same as no revoke."""
         if self.rows is None:
             return {}
         found = self.rows.get((user, fold_mysql_host(host)))
         if found is None:
-            raise MissingRowError(f"{user}@{host}")
+            raise RevokesNotKnownError(NO_PRINCIPAL_ROW)
         return found
 
 
 def read_restrictions(cursor: Cursor) -> Restrictions:
     """Every principal's partial revokes, for `report privileges`. Read only
     where ``@@partial_revokes`` is on."""
-    rows, broken = _fetch(cursor, RESTRICTIONS_READ)
+    rows, broken = _fetch(cursor, RESTRICTIONS_READ, RESTRICTIONS_QUERY)
     if rows is None:
         if broken is None:
             return Restrictions(rows=None, reason=ABSENT_RESTRICTIONS)
@@ -221,7 +237,8 @@ def _restrictions(value: object) -> dict[str, frozenset[str]]:
         for privilege in privileges:
             if not isinstance(privilege, str):
                 raise ValueError("not a privilege")
-            schemas.setdefault(privilege.upper(), set()).add(database)
+            name = privilege.upper()
+            schemas.setdefault(RESTRICTION_NAMES.get(name, name), set()).add(database)
     return {privilege: frozenset(names) for privilege, names in schemas.items()}
 
 

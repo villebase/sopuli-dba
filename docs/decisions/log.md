@@ -5717,7 +5717,7 @@ the register.
      `SOPULI-W073`, reworded to name the product, says what is wrong.
   4. **A partial revoke** (decided later the same day, option A): the global
      row stays, and an optional field, `except_schemas`, lists the schemas
-     the privilege is revoked on. In text: `SELECT (global static, direct,
+     the privilege is revoked on. In text: `SELECT (global static, direct;
      except on acme_hr)`. Run schema 1.104.
 - **Why:** one name gives the operator one idea, one install step and one
   warning across the two products. The two gaps #1411 left *not checked*

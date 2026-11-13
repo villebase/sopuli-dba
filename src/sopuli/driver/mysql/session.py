@@ -412,10 +412,8 @@ class MysqlSession(ClosesConnection):
             else:
                 try:
                     held += privilege_module.read_system(cursor, restrictions)
-                except account_state.MissingRowError:
-                    unread[SYSTEM] = (
-                        f"{privilege_module.PARTIAL_REVOKES}; {account_state.NO_PRINCIPAL_ROW}"
-                    )
+                except account_state.RevokesNotKnownError as unknown:
+                    unread[SYSTEM] = f"{privilege_module.PARTIAL_REVOKES}; {unknown}"
             return privilege_rows.survey(
                 accounts,
                 privilege_module.read_edges(cursor),

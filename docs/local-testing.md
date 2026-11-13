@@ -2890,7 +2890,7 @@ $ sopuli --config mysql-report.yaml report privileges --account acme_rev@%
 mysql-dev  (8.4.13, 1 account)
   acme_rev@%  (undeclared)
     roles: none
-    system: SELECT (global static, direct, except on acme_hr)
+    system: SELECT (global static, direct; except on acme_hr)
     objects: none
     columns: none
     schemas: none

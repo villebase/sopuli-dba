@@ -16,6 +16,7 @@ from sopuli.driver.mysql.account_state import (
     EXPECTED,
     NO_PRINCIPAL_ROW,
     RESTRICTIONS_QUERY,
+    UNKNOWN_PRIVILEGE,
 )
 from sopuli.driver.mysql.admin import DB_PRIV_COLUMNS, MANDATORY_ROLES, PRIV_COLUMNS
 from sopuli.driver.mysql.session import MysqlSession
@@ -241,6 +242,42 @@ def test_a_holder_the_view_does_not_list_leaves_global_privileges_not_checked() 
     found = survey(cursor)
     assert found.system is None
     assert found.unreadable == (f"{reads.PARTIAL_REVOKES}; {NO_PRINCIPAL_ROW}",)
+
+
+def test_a_revoked_grant_option_is_stored_as_grant() -> None:
+    """Measured on 8.4.13: REVOKE GRANT OPTION ON acme_hr.* is `GRANT` in
+    Restrictions; multi-word names are stored as the tool names them."""
+    cursor = _Cursor(
+        partial="1",
+        users=[OPS],
+        view_columns=VIEW,
+        restrictions=[
+            (
+                "acme_ops",
+                "localhost",
+                '[{"Database": "acme_hr", "Privileges": ["GRANT", "PROCESS"]}]',
+            )
+        ],
+    )
+    found = survey(cursor)
+    assert [(r.privilege, r.except_schemas) for r in found.system or ()] == [
+        ("PROCESS", ("acme_hr",)),
+        ("GRANT OPTION", ("acme_hr",)),
+    ]
+
+
+def test_a_revoke_of_a_privilege_the_tool_does_not_know_is_not_dropped() -> None:
+    cursor = _Cursor(
+        partial="1",
+        users=[OPS],
+        view_columns=VIEW,
+        restrictions=[
+            ("acme_ops", "localhost", '[{"Database": "acme_hr", "Privileges": ["NEW THING"]}]')
+        ],
+    )
+    found = survey(cursor)
+    assert found.system is None
+    assert found.unreadable == (f"{reads.PARTIAL_REVOKES}; {UNKNOWN_PRIVILEGE}",)
 
 
 def test_a_holder_with_no_static_privilege_needs_no_row() -> None:

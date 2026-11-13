@@ -156,13 +156,16 @@ def _where(privilege: Privilege, words: Words) -> str:
     """The level, where the part has more than one, then the sources."""
     sources = _sources(privilege, words)
     where = sources if privilege.level is None else f"{privilege.level}, {sources}"
-    return f"{where}, {_except(privilege)}" if privilege.except_schemas else where
+    return _with_except(where, privilege)
 
 
-def _except(privilege: Privilege) -> str:
-    """``except on acme_hr, acme_pay``: the schemas a partial revoke takes a
-    global privilege away on (#1502)."""
-    return f"except on {', '.join(privilege.except_schemas)}"
+def _with_except(text: str, privilege: Privilege) -> str:
+    """``text; except on acme_hr, acme_pay``: the schemas a partial revoke
+    takes a global privilege away on (#1502), after a semicolon, so the list
+    of sources ends where they begin."""
+    if not privilege.except_schemas:
+        return text
+    return f"{text}; except on {', '.join(privilege.except_schemas)}"
 
 
 def _counts(
@@ -244,7 +247,7 @@ def _detail(one: AccountPrivileges, words: Words) -> list[str]:
                 ".".join(x for x in (p.owner, p.name, p.column) if x) or ABSENT,
                 SCHEMA_TYPE if p.kind == SCHEMA else p.object_type or ABSENT,
                 # With the sources, as the summary has it: not an object.
-                f"{_sources(p, words)}, {_except(p)}" if p.except_schemas else _sources(p, words),
+                _with_except(_sources(p, words), p),
                 "yes" if p.grantable else "no",
             ]
             for p in part

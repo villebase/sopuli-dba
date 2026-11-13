@@ -124,12 +124,16 @@ def _excepted(group: Sequence[GrantRow]) -> tuple[str, ...]:
 
     A schema that one active path still reaches is not an exception, because
     the privileges of an account and its active roles add up: measured on
-    8.4.13. A role not known to be active gives nothing back at login, so only
-    the direct path and paths whose first role is a default role count. Where
-    no path is active, every path counts: the privilege is held only after
-    ``SET ROLE``, and the row says so.
+    8.4.13. A role known not to be active at login gives nothing back then,
+    so a path whose first role is not a default role does not count. A path
+    whose first role may or may not be active (``first_role_default`` is
+    ``None``, such as a mandatory role 9.7.4 activates and 8.4.13 does not)
+    counts: the report then shows the wider reach, and the row already says
+    whether it is held at login was not checked. Where no path counts, every
+    path does: the privilege is held only after ``SET ROLE``, and the row says
+    so.
     """
-    active = [row for row in group if row.path == () or row.first_role_default is True]
+    active = [row for row in group if row.path == () or row.first_role_default is not False]
     paths = active or list(group)
     schemas = set(paths[0].except_schemas)
     for row in paths[1:]:

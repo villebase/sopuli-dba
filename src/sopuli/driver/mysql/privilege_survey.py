@@ -47,7 +47,11 @@ from dataclasses import replace
 from typing import Any
 
 from sopuli.driver.grants import SYSTEM
-from sopuli.driver.mysql.account_state import Restrictions
+from sopuli.driver.mysql.account_state import (
+    UNKNOWN_PRIVILEGE,
+    Restrictions,
+    RevokesNotKnownError,
+)
 from sopuli.driver.mysql.admin import DB_PRIV_COLUMNS, PRIV_COLUMNS, read_mandatory_roles
 from sopuli.driver.mysql_family.accounts import Principal, text
 from sopuli.driver.mysql_family.privilege_reads import (
@@ -137,16 +141,20 @@ def read_system(cursor: Any, restrictions: Restrictions | None = None) -> list[H
     where ``@@partial_revokes`` is on (#1502): each static privilege a holder
     has revoked on some schemas carries those schemas. A revoke applies to
     static privileges only; a dynamic one is global alone. A holder of a
-    static privilege that the view does not list raises
-    :class:`~sopuli.driver.mysql.account_state.MissingRowError`: its revokes are
-    not known, and reading none would claim every schema.
+    static privilege that the view does not list, or a revoke of a privilege
+    the tool has no name for, raises
+    :class:`~sopuli.driver.mysql.account_state.RevokesNotKnownError`: its
+    revokes are not known, and reading none would claim every schema.
     """
+    known = frozenset(PRIV_COLUMNS.values())
     held: list[Held] = []
     cursor.execute(GLOBAL_ROWS)
     for user, host, *flags in cursor.fetchall():
         holder = Principal(text(user), text(host))
         rows = level(holder, SYSTEM, GLOBAL_STATIC, _flagged(PRIV_COLUMNS, flags))
         revoked = restrictions.of(holder.user, holder.host) if restrictions and rows else {}
+        if set(revoked) - known:
+            raise RevokesNotKnownError(UNKNOWN_PRIVILEGE)
         held += [
             replace(row, except_schemas=tuple(sorted(revoked[row.privilege])))
             if row.privilege in revoked

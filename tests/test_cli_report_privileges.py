@@ -19,7 +19,8 @@ from jsonschema import Draft202012Validator
 from conftest import WriteConfig
 from sopuli.cli import cli
 from sopuli.driver.grants import COLUMN, OBJECT, SCHEMA, SYSTEM, GrantRow, GrantSurvey, RoleGrant
-from sopuli.driver.protocol import ROLE_LOOKUP, Scope, UnsupportedCapabilityError
+from sopuli.driver.oracle.session import ROLE_LOOKUP_REMEDY
+from sopuli.driver.protocol import ROLE_LOOKUP, DriverError, Scope, UnsupportedCapabilityError
 from sopuli.driver.survey import SurveyedAccount
 from sopuli.exit_codes import ExitCode
 from sopuli.output.document import SCHEMA_VERSION
@@ -248,39 +249,56 @@ def test_an_unresolved_role_warns_in_the_privilege_report(
     assert "the role acme_developers of a personal_accounts: rule was not resolved" in text
 
 
-def test_an_unresolved_role_gives_no_warning_for_an_account_outside_it(
-    write_config: WriteConfig, session: dict[str, FakeSession]
+@pytest.mark.parametrize(
+    ("account", "warned"), [("ACME_APP_USER", False), ("ACME_DEV_ALICE", True)]
+)
+def test_with_account_an_unresolved_role_warns_only_beside_an_undeclared_one(
+    write_config: WriteConfig, session: dict[str, FakeSession], account: str, warned: bool
 ) -> None:
-    """`--account` naming a declared account alone: no undeclared row, so the
-    role cannot have changed what the report shows."""
+    """A declared account named alone: nothing the role could change. An
+    undeclared one: it may be the role's, and the tool cannot tell."""
     session["session"] = _NoLookup(GRANTS)
     config = write_config(f"{CONFIG}personal_accounts:\n  - role: acme_developers\n")
     result = CliRunner().invoke(
         cli,
         [
-            "--config",
-            str(config),
-            "--output",
-            "json",
-            "report",
-            "privileges",
-            "--account",
-            "ACME_APP_USER",
+            *("--config", str(config), "--output", "json"),
+            *("report", "privileges", "--account", account),
         ],
     )
 
     document = json.loads(result.output)
-    assert [entry["account"] for entry in document["results"]] == ["ACME_APP_USER"]
-    assert "SOPULI-W075" not in [w["code"] for w in document.get("diagnostics", [])]
+    assert [entry["account"] for entry in document["results"]] == [account]
+    codes = [w["code"] for w in document.get("diagnostics", [])]
+    assert ("SOPULI-W075" in codes) is warned
+
+
+def test_an_unresolved_role_gives_no_warning_on_a_target_that_fails_later(
+    write_config: WriteConfig, session: dict[str, FakeSession]
+) -> None:
+    """The privilege read fails after the role was not resolved: the target
+    shows no rows, so it carries no warning about them."""
+
+    class _PrivilegesFail(_NoLookup):
+        def survey_privileges(self, accounts: Sequence[str], *, public: bool) -> GrantSurvey:
+            raise DriverError("ORA-01031: insufficient privileges")
+
+    session["session"] = _PrivilegesFail(GRANTS)
+    config = write_config(f"{CONFIG}personal_accounts:\n  - role: acme_developers\n")
+    result = CliRunner().invoke(
+        cli, ["--config", str(config), "--output", "json", "report", "privileges"]
+    )
+
+    assert result.exit_code == ExitCode.FAILURE, result.output
+    codes = [w["code"] for w in json.loads(result.output).get("diagnostics", [])]
+    assert "SOPULI-W075" not in codes
 
 
 class _NoLookup(_RoleSession):
+    """Oracle without `SELECT ON DBA_ROLES`, refused with the driver's own remedy."""
+
     def resolve_role(self, role: str) -> str | None:
-        raise UnsupportedCapabilityError(
-            ROLE_LOOKUP,
-            target="free-pdb",
-            remedy="GRANT SELECT ON SYS.DBA_ROLES to the service account",
-        )
+        raise UnsupportedCapabilityError(ROLE_LOOKUP, target="free-pdb", remedy=ROLE_LOOKUP_REMEDY)
 
 
 def test_public_json_validates_and_is_not_counted_as_an_account(

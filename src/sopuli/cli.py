@@ -5885,9 +5885,11 @@ class _RoleMembers:
 
     def warn(self, run: Invocation, target: str, rows: Sequence[report_states.AccountRow]) -> None:
         """`SOPULI-W075` per unresolved role, where the report shows an
-        undeclared account that the role could have admitted (#1478). Called
-        once the target's reads have all passed, so a target that fails later
-        carries no warning about rows it does not show."""
+        undeclared account (#1478). Without the role's members, any undeclared
+        account may be one, so any counts; a report of declared accounts alone
+        has nothing the role could change. Called once the target's reads have
+        all passed, so a target that fails later carries no warning about rows
+        it does not show."""
         if not any(row.kind == report_states.UNDECLARED_KIND for row in rows):
             return
         for role, refused in self.unresolved:
@@ -6136,8 +6138,8 @@ def _privileges_target(
             return privileges_view.TargetPrivileges(
                 target=target.name, error=_finding(error), read_failed=True
             )
-        # After --account's narrowing: an unrelated account named alone
-        # gets no warning about a role.
+        # After --account's narrowing: accounts the config declares, named
+        # alone, get no warning about a role.
         roles.warn(run, target.name, rows)
         return privileges_view.TargetPrivileges(
             target=target.name,

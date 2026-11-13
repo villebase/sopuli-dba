@@ -802,7 +802,9 @@ also makes `account list`'s two reads for it (#1469): whether the role exists,
 in `DBA_ROLES`, and its members through any chain, in `DBA_ROLE_PRIVS`.
 Without `role_lookup` the role is not resolved, and the report still runs.
 Its members show as undeclared, and where the report shows an undeclared
-account, `SOPULI-W075` names the role and the grant, once per role (#1478).
+account, `SOPULI-W075` names the role and the grant, once per target and role
+(#1478). Without the role's members the tool cannot tell which undeclared
+account the role would have admitted, so any undeclared account counts.
 
 On a release that answers `ORA-00904` to `COMMON` or `ORACLE_MAINTAINED`, as
 11.2.0.2.0 does, the first two statements are sent again with `NULL` in those

@@ -1931,8 +1931,8 @@ def role_not_resolved(target: str, role: str, refused: UnsupportedCapabilityErro
         target=target,
         message=(
             f"{target}: the role {role} of a personal_accounts: rule was not resolved, "
-            f"because the target does not support {refused.capability}, so its members "
-            "show as undeclared." + (f" {fix}" if fix else "")
+            f"because the target does not support {refused.capability}, so any member of "
+            "it shows as undeclared." + (f" {fix}" if fix else "")
         ),
     )
 

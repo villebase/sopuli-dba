@@ -167,6 +167,12 @@ _INITIALISING = threading.Lock()
 #: account they concern is in the hint. All four are per account rather than
 #: per target, which is why none of them is in the capability probe.
 VERIFIER_12C = "verifier_12c"
+
+#: How a target gets ``role_lookup``: the refusal's ``remedy``, which the
+#: reports' ``SOPULI-W075`` gives, and the end of its hint (#1478).
+ROLE_LOOKUP_REMEDY = (
+    f"GRANT SELECT ON SYS.DBA_ROLES to the service account, as {INSTALL_SCRIPT} does"
+)
 VERIFIER_FORMAT = "verifier_12c_format"
 VERIFIER_CHARSET = "verifier_charset"
 VERIFIER_CONTAINER = "verifier_container"
@@ -627,12 +633,10 @@ class OracleSession(ClosesConnection):
             target=self.target.name,
             hint=(
                 "the service account cannot read DBA_ROLES, so a role that matches nobody "
-                "cannot be told from one that does not exist: GRANT SELECT ON SYS.DBA_ROLES "
-                f"to it (02-oracle-privileges.md section 2, or {INSTALL_SCRIPT})"
+                f"cannot be told from one that does not exist: {ROLE_LOOKUP_REMEDY} "
+                "(02-oracle-privileges.md section 2)"
             ),
-            remedy=(
-                f"GRANT SELECT ON SYS.DBA_ROLES to the service account, as {INSTALL_SCRIPT} does"
-            ),
+            remedy=ROLE_LOOKUP_REMEDY,
         )
         with traced_cursor(self.connection) as cursor:
             return resolve_role(cursor, role)

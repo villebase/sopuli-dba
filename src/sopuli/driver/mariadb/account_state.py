@@ -24,8 +24,9 @@ only the granted columns are listed, and the others cannot be read either.
 
 - no row in ``COLUMNS``: the view is absent, its schema is absent, or the tool
   account has no grant on it. The server answers all three alike (``1142``),
-  so the reason names both fixes. ``1146`` is a view dropped with the grant
-  left, and is absent too;
+  so the reason names both fixes;
+- ``1142`` or ``1146`` on reading it: the grant was revoked, or the view
+  dropped with the grant left, after its columns were read. Absent too;
 - ``1045`` on reading it, in a session already logged in: its definer has been
   dropped;
 - ``1356``: its definer cannot read ``mysql.global_priv``.

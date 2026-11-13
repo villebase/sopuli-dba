@@ -294,7 +294,9 @@ that view.
   `authentication_string` column to test this, showed that column in both.
   Under a column grant they list only the columns granted. An absent view, an
   absent schema and a view without the grant all answer `1142`, so the tool
-  cannot tell them apart. A dropped definer answers `1045 (28000)`, "Access
+  cannot tell them apart. A view dropped while the tool account's grant on
+  it is left answers `1146`, as `global_privileges` does below; the tool
+  takes it as absent too. A dropped definer answers `1045 (28000)`, "Access
   denied", in a session that is already logged in. A definer that exists
   without `SELECT` on `global_priv` answers `1356`. The definer can be a
   locked account that holds only `SELECT` on `mysql.global_priv`. A DBA

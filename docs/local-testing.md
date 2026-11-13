@@ -2276,22 +2276,24 @@ root@localhost          mariadb-dev  role 'acme_dev_team'  OPEN    -            
 
 3 declared accounts, 3 on the selected targets
 
-2 notes:
+3 notes:
   root@localhost on mariadb-dev: a mutating verb refuses this account at plan time: check 9 (the account holds ALTER ON *.*, ALTER ROUTINE ON *.*, BINLOG MONITOR ON *.*, CREATE ON *.*, CREATE ROUTINE ON *.* and 26 more grants). no flag overrides check 9, so no verb will act on this account
-  mariadb-dev: DB_PW_CHANGED is empty for 3 accounts: MariaDB keeps the time of a password change beside the stored value, which the tool does not read
+  mariadb-dev: DB_PW_CHANGED is empty for 3 accounts: MariaDB keeps it in mysql.global_priv, beside the stored value, and the optional view sopuli.account_state that reads it without the value is absent or not granted to the tool account: run sql/mariadb/account_state_view.sql as an administrator
+  mariadb-dev: MariaDB keeps a block after failed logins (error 4150) where the tool cannot read it, so an account shown as OPEN may be blocked until somebody runs ALTER USER … ACCOUNT UNLOCK
 ...
 ```
 
 `STATUS` says nothing of the lock here: without the optional view `sopuli.account_state` (§9a),
 `OPEN` means only that nobody expired the password. With the view installed,
-a locked account shows `LOCKED`:
+a locked account shows `LOCKED`, and `DB_PW_CHANGED` shows the date of the
+last change:
 
 ```
 $ sopuli --config mariadb.yaml account list
 ACCOUNT                 TARGET       DECLARED BY           STATUS  DB_PW_CHANGED  RESET_AT
-acme_dev_alice@%        mariadb-dev  role 'acme_dev_team'  OPEN    -              -
-acme_dev_bob@localhost  mariadb-dev  role 'acme_dev_team'  LOCKED  -              -
-root@localhost          mariadb-dev  role 'acme_dev_team'  OPEN    -              -
+acme_dev_alice@%        mariadb-dev  role 'acme_dev_team'  OPEN    2026-11-13     -
+acme_dev_bob@localhost  mariadb-dev  role 'acme_dev_team'  LOCKED  2026-11-13     -
+root@localhost          mariadb-dev  role 'acme_dev_team'  OPEN    2026-11-12     -
 ...
 ```
 

@@ -830,12 +830,13 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "privilege, refuses only the verbs that set a password, and the message says so."
         ),
         FAILED_LOGIN_BLOCK_UNREAD: (
-            "`account list` described accounts on a MySQL target. MySQL blocks an account "
-            "after failed logins (`FAILED_LOGIN_ATTEMPTS`), and a blocked login gets error "
-            "3955, but the block is not in `mysql.user`, so the tool cannot read it. An "
-            "account the listing shows as `OPEN` may be blocked until `PASSWORD_LOCK_TIME` "
-            "ends, or until `ALTER USER … ACCOUNT UNLOCK`. One entry per MySQL target that "
-            "lists an account that exists and is not locked, with `target` set."
+            "`account list` described accounts on a MySQL or MariaDB target, where a block "
+            "after failed logins is in no place the tool reads. MySQL blocks an account after "
+            "`FAILED_LOGIN_ATTEMPTS` (error 3955) until `PASSWORD_LOCK_TIME` ends; MariaDB "
+            "after `max_password_errors` (error 4150). `ALTER USER … ACCOUNT UNLOCK` ends "
+            "either. An account the listing shows as `OPEN` may be blocked. One entry per "
+            "MySQL or MariaDB target that lists an account that exists and is not locked, "
+            "with `target` set."
         ),
         SECOND_METHOD_UNSEEN: (
             "`account reset-password` will reset an account on a MariaDB target. The new "
@@ -1799,22 +1800,33 @@ def unaddressable_lock_paths(skipped: Sequence[SkippedPath]) -> list[Diagnostic]
     ]
 
 
-def failed_login_block_unread(target: str) -> Diagnostic:
-    """Say that `account list` cannot see a MySQL block after failed logins (#1225).
+#: Each product's block after failed logins, for ``SOPULI-W063``: the error a
+#: blocked login gets, and what ends the block besides ``ACCOUNT UNLOCK``.
+_FAILED_LOGIN_BLOCKS = {
+    "mysql": ("MySQL", "3955", "PASSWORD_LOCK_TIME ends or "),
+    "mariadb": ("MariaDB", "4150", ""),
+}
+
+
+def failed_login_block_unread(target: str, product: str) -> Diagnostic:
+    """Say that `account list` cannot see a block after failed logins on a
+    MySQL (#1225) or MariaDB (#1500) target.
 
     One per target rather than one per account: the cause is the server, and
-    it is the same on every row. ``04_lock_expiry_probe.py`` measured that the
-    block is not in ``mysql.user``, so no account's row can say whether it has
-    one.
+    it is the same on every row. ``04_lock_expiry_probe.py`` measured that
+    neither product keeps the block where the tool reads, so no account's row
+    can say whether it has one. On MariaDB the optional view
+    ``sopuli.account_state`` does not hold it either (#1479).
     """
+    name, error, ends = _FAILED_LOGIN_BLOCKS[product]
     return Diagnostic(
         level="warning",
         code=FAILED_LOGIN_BLOCK_UNREAD,
         target=target,
         message=(
-            f"{target}: MySQL keeps a block after failed logins (error 3955) outside "
-            "mysql.user, so the tool cannot read it, and an account shown as OPEN may be "
-            "blocked until PASSWORD_LOCK_TIME ends or somebody runs ALTER USER … ACCOUNT UNLOCK"
+            f"{target}: {name} keeps a block after failed logins (error {error}) where the "
+            "tool cannot read it, so an account shown as OPEN may be blocked until "
+            f"{ends}somebody runs ALTER USER … ACCOUNT UNLOCK"
         ),
     )
 

@@ -5644,3 +5644,35 @@ the register.
      on the lock and the date.
   3. Failing the target on a broken view: a mistake in an optional object
      would stop the report there.
+
+## #1500
+
+- **Decided:** 2026-11-13, #1500
+- **Question:** three follow-ups to `account list`'s use of MariaDB's view
+  `sopuli.account_state` (#1491): should `DB_PW_CHANGED` come from the view,
+  should `account list` warn of a block after failed logins on MariaDB as it
+  does on MySQL, and is a locked account's `account_status` a change of
+  meaning?
+- **Decision:** the maintainer's, the recommended options:
+  1. **B.** `account list` fills `DB_PW_CHANGED` from the view where it is
+     readable, as `report history` does. Where it is not, `SOPULI-W021` gives
+     the view's reason, as `report history`'s does.
+  2. **B.** `SOPULI-W063` covers MariaDB targets: one per target that lists an
+     account that exists and is not locked. Its text names each product's
+     error, 3955 or 4150. It now has more entries, so run schema 1.102
+     ([#979](#979)); `account list` does not stream events.
+  3. **A.** `LOCKED` and `EXPIRED & LOCKED` in a MariaDB `account_status`
+     need no bump. The field is the status as read, both values exist on
+     Oracle and MySQL, and the view only adds what the tool reads.
+- **Why:** with the view, two commands should not disagree about one
+  account's date. `OPEN` on MariaDB means "no `ACCOUNT LOCK`", and the view
+  does not hold the `max_password_errors` block (#1479), the same gap MySQL
+  warns about.
+- **Rejected:**
+  1. Leaving `DB_PW_CHANGED` empty where the view gives the date: `report
+     history` shows it for the same account.
+  2. A new warning code for MariaDB: one gap, one code, with the wording made
+     to fit both products.
+  3. A bump for `account_status`: `03-json-output.md` §8 calls widening a field's meaning,
+     without contradicting it, minor, and no consumer reads a MariaDB
+     `OPEN` as "not locked" after UC-2 said it was not.

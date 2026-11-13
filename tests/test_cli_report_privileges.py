@@ -492,6 +492,43 @@ def test_a_path_not_checked_for_being_active_is_said_and_flagged(
     assert "active_at_login_checked" not in by_name["INSERT"]
 
 
+def test_a_partial_revoke_names_its_schemas_in_text_and_json(
+    write_config: WriteConfig, session: dict[str, FakeSession]
+) -> None:
+    """MySQL with @@partial_revokes on and the view (#1502): the global row
+    stays, with the schemas it is revoked on. The text as the real run on
+    8.4.13 printed it."""
+    session["session"] = FakeSession(
+        GrantSurvey(
+            roles=(),
+            system=(
+                row(
+                    "SELECT",
+                    kind=SYSTEM,
+                    level="global static",
+                    object_type=None,
+                    except_schemas=("acme_hr",),
+                ),
+                row("PROCESS", kind=SYSTEM, level="global static", object_type=None),
+            ),
+            objects=(),
+            columns=(),
+            schemas=(),
+        )
+    )
+    text = click.unstyle(report(write_config).output)
+    assert "SELECT (global static, direct, except on acme_hr)" in text
+    assert "PROCESS (global static, direct)" in text
+    detail = click.unstyle(report(write_config, "--detail").output)
+    line = next(one for one in detail.splitlines() if "SELECT" in one)
+    assert "except on acme_hr" in line
+    system = json_run(write_config)["results"][0]["privileges"]["system"]
+    by_name = {one["privilege"]: one for one in system}
+    assert by_name["SELECT"]["except_schemas"] == ["acme_hr"]
+    # Absent where the privilege reaches every schema.
+    assert "except_schemas" not in by_name["PROCESS"]
+
+
 def test_a_driver_without_a_privilege_survey_is_not_supported(
     write_config: WriteConfig, session: dict[str, Any]
 ) -> None:

@@ -6,6 +6,7 @@ privilege granted directly and through two roles arrives three times.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 
 from sopuli.driver.grants import COLUMN, OBJECT, SCHEMA, SYSTEM, GrantRow, GrantSurvey, RoleGrant
@@ -54,6 +55,31 @@ RR4 = (
     grant("SELECT", "T4", path=("ACME_RR_OUTER", "ACME_RR_READ")),
     grant("SELECT", "T5", path=("ACME_RR_OUTER", "ACME_RR_READ")),
 )
+
+
+def test_a_schema_is_an_exception_only_where_every_path_revokes_it() -> None:
+    """Privileges add up: on 8.4.13, an account whose own SELECT ON *.* is
+    revoked on acme_hr reads acme_hr through an active role that holds SELECT
+    ON *.* without that revoke (#1502)."""
+    own = GrantRow(
+        grantee=APP,
+        kind=SYSTEM,
+        privilege="SELECT",
+        owner=None,
+        name=None,
+        object_type=None,
+        column=None,
+        path=(),
+        first_role_default=None,
+        grantable=False,
+        level="global static",
+        except_schemas=("acme_hr", "acme_pay"),
+    )
+    via_role = replace(own, path=("acme_reader@%",), except_schemas=("acme_pay",))
+    (alone,) = collapse([own])
+    (both,) = collapse([own, via_role])
+    assert alone.except_schemas == ("acme_hr", "acme_pay")
+    assert both.except_schemas == ("acme_pay",)
 
 
 def test_one_privilege_at_two_levels_stays_two_privileges() -> None:

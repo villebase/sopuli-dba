@@ -21,7 +21,7 @@ import pytest
 
 pymysql = pytest.importorskip("pymysql")
 
-from sopuli.driver.mysql.account_state import ABSENT, read  # noqa: E402
+from sopuli.driver.mysql.account_state import ABSENT, read, read_restrictions  # noqa: E402
 
 SCRIPT = Path(__file__).resolve().parents[2] / "sql" / "mysql" / "account_state_view.sql"
 
@@ -145,3 +145,34 @@ def test_a_definer_without_select_is_broken(stage: Stage) -> None:
     states = stage.read()
     assert states.rows is None
     assert states.broken == "its definer cannot read mysql.user (1356)"
+
+
+def test_the_view_gives_each_partial_revoke(stage: Stage) -> None:
+    """#1502, DV4: one entry per schema, read by `report privileges`."""
+    schema = f"acme_rv_{uuid.uuid4().hex[:6]}"
+    with stage.live.connect() as root, root.cursor() as cursor:
+        cursor.execute("select @@global.partial_revokes")
+        (was_on,) = cursor.fetchone()
+    stage.root("SET GLOBAL partial_revokes = ON", f"CREATE SCHEMA {schema}")
+    try:
+        revoked = stage.account()
+        stage.root(
+            f"GRANT SELECT, INSERT ON *.* TO '{revoked}'@'%'",
+            f"REVOKE SELECT ON {schema}.* FROM '{revoked}'@'%'",
+        )
+        stage.install()
+        tool = stage.live.connect_as(stage.tool, stage.tool_password)
+        with tool, tool.cursor() as cursor:
+            restrictions = read_restrictions(cursor)
+        assert restrictions.broken is None
+        assert restrictions.of(revoked, "%") == {"SELECT": frozenset({schema})}
+        assert restrictions.of(stage.tool, "%") == {}
+    finally:
+        # The revoke must go before partial_revokes can be turned off.
+        for name in stage.accounts[1:]:
+            with suppress(pymysql.Error):
+                stage.root(f"DROP USER '{name}'@'%'")
+        stage.accounts[1:] = []
+        stage.root(f"DROP SCHEMA IF EXISTS {schema}")
+        if not int(was_on):
+            stage.root("SET GLOBAL partial_revokes = OFF")

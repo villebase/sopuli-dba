@@ -11,9 +11,15 @@ import pytest
 
 from sopuli.driver.grants import COLUMN, OBJECT, SCHEMA, SYSTEM, GrantSurvey, PrivilegeSurvey
 from sopuli.driver.mysql import privilege_survey as reads
+from sopuli.driver.mysql.account_state import (
+    ABSENT_RESTRICTIONS,
+    EXPECTED,
+    RESTRICTIONS_QUERY,
+)
 from sopuli.driver.mysql.admin import DB_PRIV_COLUMNS, MANDATORY_ROLES, PRIV_COLUMNS
 from sopuli.driver.mysql.session import MysqlSession
 from sopuli.driver.mysql_family import privilege_reads as shared
+from sopuli.driver.mysql_family.optional_view import columns_query
 from sopuli.driver.mysql_family.privilege_survey import MANDATORY_UNKNOWN
 from sopuli.driver.protocol import DriverError
 
@@ -52,6 +58,9 @@ class _Cursor:
             shared.COLUMNS: tables.get("columns", []),
             shared.ROUTINES: tables.get("routines", []),
             shared.PROXIES: tables.get("proxies", []),
+            # The optional view: absent unless a test gives its columns.
+            columns_query("sopuli", "account_state"): tables.get("view_columns", []),
+            RESTRICTIONS_QUERY: tables.get("restrictions", []),
         }
         self.queries: list[str] = []
 
@@ -145,7 +154,7 @@ def test_a_role_path_and_its_default_role() -> None:
     assert (role.role, role.admin_option, role.default_role) == ("acme_report@%", True, True)
 
 
-def test_partial_revokes_leave_global_privileges_not_checked() -> None:
+def test_partial_revokes_without_the_view_leave_global_privileges_not_checked() -> None:
     cursor = _Cursor(
         partial="1", users=[OPS], db=[("acme_app", "%", "acme", *db_flags("Select_priv"))]
     )
@@ -154,7 +163,74 @@ def test_partial_revokes_leave_global_privileges_not_checked() -> None:
     assert found.system is None
     assert found.schemas is not None
     assert reads.GLOBAL_ROWS not in cursor.queries
-    assert found.unreadable == (reads.PARTIAL_REVOKES,)
+    assert found.unreadable == (f"{reads.PARTIAL_REVOKES}; {ABSENT_RESTRICTIONS}",)
+
+
+VIEW = [(column,) for column in EXPECTED]
+
+
+def test_partial_revokes_with_the_view_name_the_schemas_each_privilege_is_revoked_on() -> None:
+    """#1502: DV4's shape, one entry per schema. A dynamic privilege has none."""
+    app = ("acme_app", "%", *flags("Select_priv", "Insert_priv"))
+    cursor = _Cursor(
+        partial="1",
+        users=[app],
+        dynamic=[("acme_app", "%", "connection_admin", "N")],
+        view_columns=VIEW,
+        restrictions=[
+            (
+                "acme_app",
+                "%",
+                '[{"Database": "acme_hr", "Privileges": ["SELECT"]}, '
+                '{"Database": "acme_pay", "Privileges": ["SELECT", "INSERT"]}]',
+            ),
+            ("acme_ops", "localhost", None),
+        ],
+    )
+    found = survey(cursor)
+
+    assert found.unreadable == ()
+    assert [(r.privilege, r.level, r.except_schemas) for r in found.system or ()] == [
+        ("SELECT", "global static", ("acme_hr", "acme_pay")),
+        ("INSERT", "global static", ("acme_pay",)),
+        ("CONNECTION_ADMIN", "global dynamic", ()),
+    ]
+
+
+def test_partial_revokes_off_read_no_view() -> None:
+    cursor = _Cursor(users=[APP])
+    survey(cursor)
+    assert RESTRICTIONS_QUERY not in cursor.queries
+    assert columns_query("sopuli", "account_state") not in cursor.queries
+
+
+def test_a_broken_view_leaves_global_privileges_not_checked_and_says_so() -> None:
+    session = MysqlSession.__new__(MysqlSession)
+    cursor = _Cursor(partial="1", users=[APP], view_columns=[*VIEW, ("authentication_string",)])
+
+    def read(reader: Any, **_: Any) -> Any:
+        return reader(cursor)
+
+    session._read = read  # type: ignore[method-assign]
+    session._read_grants = read  # type: ignore[method-assign]
+    found = session.survey_privileges(["acme_app@%"], public=False)
+
+    assert found.system is None
+    assert session.privilege_view_broken() == (
+        "it has columns the tool does not expect (authentication_string)"
+    )
+
+
+def test_a_restriction_of_another_shape_is_broken_and_never_repeated() -> None:
+    cursor = _Cursor(
+        partial="1",
+        users=[APP],
+        view_columns=VIEW,
+        restrictions=[("acme_app", "%", '{"secret": "$A$005$x"}')],
+    )
+    found = survey(cursor)
+    assert found.system is None
+    assert "secret" not in " ".join(found.unreadable)
 
 
 def test_refused_default_roles_are_not_checked() -> None:

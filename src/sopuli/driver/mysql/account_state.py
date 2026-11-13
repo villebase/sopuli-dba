@@ -9,10 +9,15 @@ creates it. What it gives was measured by ``12_definer_view_probe.py``
 (#1490; ``02-mysql-privileges.md`` §2.4). It has MariaDB's name (#1502), and
 the columns MySQL keeps.
 
-**Who reads it.** `report accounts` only, for the failed-login limit, through
-:meth:`~sopuli.driver.mysql.session.MysqlSession.account_states`.
-``describe_user`` does not, so no verb that changes an account acts on what
-the view says.
+**Who reads it.** `report accounts`, for the failed-login limit, through
+:meth:`~sopuli.driver.mysql.session.MysqlSession.account_states`, and `report
+privileges`, for the partial revokes (:func:`read_restrictions`), only where
+``@@partial_revokes`` is on. ``describe_user`` does not, so no verb that
+changes an account acts on what the view says.
+
+**A partial revoke** is one entry of ``Restrictions`` per schema, such as
+``[{"Database": "acme", "Privileges": ["SELECT"]}]`` (DV4): the global
+privileges named are taken away on that schema. Roles have them too.
 
 **Its shape is checked first, every session**, and a refusal is read, as
 :mod:`~sopuli.driver.mysql_family.optional_view` says. An absent view leaves
@@ -24,6 +29,7 @@ than an integer. Neither the server's message nor the value is repeated.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 
 from sopuli.config.products import fold_mysql_host
@@ -120,6 +126,93 @@ def _broken(what: str) -> AccountStates:
         reason=f"the optional view {VIEW} is not used: {what}",
         broken=what,
     )
+
+
+#: The columns `report privileges` reads.
+RESTRICTIONS_READ = ("User", "Host", "restrictions")
+RESTRICTIONS_QUERY = f"select {', '.join(RESTRICTIONS_READ)} from {VIEW}"
+
+#: Per ``(user, host)``, the host folded: each global privilege and the
+#: schemas it is revoked on.
+Revoked = dict[tuple[str, str], dict[str, frozenset[str]]]
+
+
+@dataclass(frozen=True)
+class Restrictions:
+    """What the view gave for the partial revokes, or why there is none."""
+
+    rows: Revoked | None
+    reason: str | None = None
+    broken: str | None = None
+
+    def of(self, user: str, host: str) -> dict[str, frozenset[str]]:
+        """Each privilege ``user@host`` has revoked on some schemas, and those
+        schemas; empty where it has none."""
+        return {} if self.rows is None else self.rows.get((user, fold_mysql_host(host)), {})
+
+
+def read_restrictions(cursor: Cursor) -> Restrictions:
+    """Every principal's partial revokes, after the view's columns are
+    checked. Read only where ``@@partial_revokes`` is on."""
+    try:
+        listed, problem = shape_problem(
+            cursor, SCHEMA, NAME, expected=EXPECTED, read=RESTRICTIONS_READ
+        )
+        if not listed:
+            return Restrictions(rows=None, reason=ABSENT_RESTRICTIONS)
+        if problem is not None:
+            return _broken_restrictions(problem)
+        cursor.execute(RESTRICTIONS_QUERY)
+        rows = cursor.fetchall()
+    except Exception as error:  # noqa: BLE001 -- a server's answer is classified
+        what = refusal(error, source=SOURCE)
+        if what is None:
+            return Restrictions(rows=None, reason=ABSENT_RESTRICTIONS)
+        return _broken_restrictions(what)
+    revoked: Revoked = {}
+    try:
+        for user, host, value in rows:
+            parsed = _restrictions(value)
+            if parsed:
+                revoked[(text(user), fold_mysql_host(text(host)))] = parsed
+    except (TypeError, ValueError, KeyError):
+        # Never repeated: the column could hold anything a view selects.
+        return _broken_restrictions("a column holds values the tool does not expect")
+    return Restrictions(rows=revoked)
+
+
+ABSENT_RESTRICTIONS = (
+    "MySQL keeps a partial revoke in mysql.user.User_attributes, beside a retained "
+    f"password's hash, and the optional view {VIEW} that reads it without the hash is "
+    f"absent or not granted to the tool account: run {INSTALL_SCRIPT} as an administrator"
+)
+
+
+def _broken_restrictions(what: str) -> Restrictions:
+    return Restrictions(
+        rows=None, reason=f"the optional view {VIEW} is not used: {what}", broken=what
+    )
+
+
+def _restrictions(value: object) -> dict[str, frozenset[str]]:
+    """``[{"Database": "acme", "Privileges": ["SELECT"]}]`` as each privilege
+    and its schemas. NULL is none (DV4). Raises for any other shape."""
+    if value is None:
+        return {}
+    entries = json.loads(text(value))
+    if not isinstance(entries, list):
+        raise ValueError("not a list")
+    schemas: dict[str, set[str]] = {}
+    for entry in entries:
+        database = entry["Database"]
+        privileges = entry["Privileges"]
+        if not isinstance(database, str) or not isinstance(privileges, list):
+            raise ValueError("not a restriction")
+        for privilege in privileges:
+            if not isinstance(privilege, str):
+                raise ValueError("not a privilege")
+            schemas.setdefault(privilege.upper(), set()).add(database)
+    return {privilege: frozenset(names) for privilege, names in schemas.items()}
 
 
 def _limit(attempts: object, lock_days: object) -> Limit:

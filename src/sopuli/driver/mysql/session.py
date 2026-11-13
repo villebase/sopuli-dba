@@ -169,6 +169,9 @@ class MysqlSession(ClosesConnection):
     _account_states: account_state.AccountStates | None = field(
         default=None, init=False, repr=False
     )
+    #: The partial revokes the view gave `report privileges`, where
+    #: ``@@partial_revokes`` is on; ``None`` where they were not needed.
+    _restrictions: account_state.Restrictions | None = field(default=None, init=False, repr=False)
     #: The server's clock just before :meth:`set_password` sent its statement,
     #: per account, for :meth:`confirm_change`.
     _changed_since: dict[str, datetime] = field(default_factory=dict, init=False, repr=False)
@@ -378,10 +381,16 @@ class MysqlSession(ClosesConnection):
         ``public`` adds nothing to read. The default roles are an optional
         read (#1411, M4): without the grant the server refuses it, ``1142``,
         and whether a role is active without ``SET ROLE`` is not checked. Any
-        other error fails the read.
+        other error fails the read. With ``@@partial_revokes`` on, the global
+        level is read only with the optional view ``sopuli.account_state``,
+        which gives the revokes (#1502); without it that level is not checked.
         """
         del public
         partial, all_active = self._read_grants(privilege_module.read_settings)
+        restrictions = None
+        if partial:
+            restrictions = self._read(account_state.read_restrictions)
+            self._restrictions = restrictions
         defaults = None
         reasons: list[str] = []
         # Read also where every role is active at login: the roles list says
@@ -397,10 +406,10 @@ class MysqlSession(ClosesConnection):
         def read(cursor: Any) -> GrantSurvey:
             held = privilege_module.read_objects(cursor)
             unread = {}
-            if partial:
-                unread[SYSTEM] = privilege_module.PARTIAL_REVOKES
+            if restrictions is not None and restrictions.rows is None:
+                unread[SYSTEM] = f"{privilege_module.PARTIAL_REVOKES}; {restrictions.reason}"
             else:
-                held += privilege_module.read_system(cursor)
+                held += privilege_module.read_system(cursor, restrictions)
             return privilege_rows.survey(
                 accounts,
                 privilege_module.read_edges(cursor),
@@ -411,6 +420,12 @@ class MysqlSession(ClosesConnection):
             )
 
         return self._read_grants(read)
+
+    def privilege_view_broken(self) -> str | None:
+        """:class:`~sopuli.driver.grants.PrivilegeViewState`: what is wrong
+        with the view where :meth:`survey_privileges` needed it for the partial
+        revokes and could not use it, for ``SOPULI-W073``."""
+        return None if self._restrictions is None else self._restrictions.broken
 
     def _read(self, reader: Callable[[Any], T], *, scrub: Callable[[str], str] | None = None) -> T:
         """Run ``reader`` on a cursor of this session. A closed session is a

@@ -52,6 +52,9 @@ class Privilege:
     #: not known to be active or not, such as a MySQL role whose default status
     #: was not read: whether it is held without ``SET ROLE`` was not checked.
     active_at_login_checked: bool = True
+    #: The schemas a MySQL partial revoke takes this global privilege away on,
+    #: on every path (#1502); empty elsewhere.
+    except_schemas: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -105,6 +108,7 @@ def collapse(rows: Sequence[GrantRow]) -> tuple[Privilege, ...]:
                 via_default_role=active is True,
                 active_at_login_checked=active is not None,
                 grantable=any(row.grantable for row in group),
+                except_schemas=_excepted(group),
             )
         )
     return tuple(
@@ -113,6 +117,16 @@ def collapse(rows: Sequence[GrantRow]) -> tuple[Privilege, ...]:
             key=lambda p: (p.level or "", p.privilege, p.owner or "", p.name or "", p.column or ""),
         )
     )
+
+
+def _excepted(group: Sequence[GrantRow]) -> tuple[str, ...]:
+    """The schemas every path's grant is revoked on (#1502): a schema that one
+    path still reaches is not an exception, because the privileges of an
+    account and its active roles add up."""
+    schemas = set(group[0].except_schemas)
+    for row in group[1:]:
+        schemas &= set(row.except_schemas)
+    return tuple(sorted(schemas))
 
 
 def _active(group: Sequence[GrantRow]) -> bool | None:

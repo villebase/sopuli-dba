@@ -347,8 +347,16 @@ ROLE` where the path's first role is a default role, or where
 `activate_all_roles_on_login` is on. Two things are *not checked*, with the
 reason, and the run exits 4:
 
-- **global privileges where `@@partial_revokes` is on**, because a revoke on
-  one schema is kept beside a retained password's hash;
+- **global privileges where `@@partial_revokes` is on, without the optional
+  view `sopuli.account_state`**, because a revoke on one schema is kept beside
+  a retained password's hash. With the view (#1502), each static global
+  privilege a partial revoke takes away on some schemas names them: `SELECT
+  (global static, direct, except on acme_hr)`, and in JSON `except_schemas`.
+  A schema is an exception only where every path to the privilege revokes it,
+  because an account's privileges and its active roles' add up: on 8.4.13 an
+  account whose `SELECT ON *.*` was revoked on `acme_hr` read `acme_hr`
+  through an active role holding `SELECT ON *.*`. A view that exists and
+  cannot be used leaves them *not checked*, and `SOPULI-W073` says why;
 - **whether a role is active at login**, without the optional `SELECT` on
   `mysql.default_roles`, and for a mandatory role that is not a default role,
   which 9.7.4 activates at login and 8.0.46 and 8.4.13 do not

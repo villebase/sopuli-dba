@@ -319,7 +319,8 @@ def test_a_broken_mysql_view_is_warned_about_only_once_the_survey_read_it() -> N
     assert warning.code == ACCOUNT_STATE_VIEW_BROKEN
     assert warning.message == (
         "mysql-dev: the optional view sopuli.account_state is not used: its definer cannot "
-        "read mysql.user (1356). The failed-login limit is not checked here. Recreate it "
+        "read mysql.user (1356). The failed-login limit and, with @@partial_revokes on, the "
+        "global privileges are not checked here. Recreate it "
         "with sql/mysql/account_state_view.sql, which makes it with only the expected "
         "columns, owned by a locked definer that can read mysql.user"
     )

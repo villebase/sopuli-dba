@@ -294,7 +294,13 @@ reads as locked, but not by somebody.
 - **A partial revoke cannot be read with §2.1.** With `partial_revokes` on,
   `SELECT ON *.*` and then a revoke on one schema reads as `Select_priv =
   'Y'`, with no row in `db`, and nothing else the tool account reads shows
-  the revoke. It is `User_attributes`' `Restrictions`.
+  the revoke. It is `User_attributes`' `Restrictions`. `report privileges`
+  reads it from the view below, `restrictions`, only where `partial_revokes`
+  is on (#1502). A role's revokes are read too. A revoke takes away a static
+  global privilege only on the paths that carry it: on 8.4.13 an account
+  whose `SELECT ON *.*` was revoked on `acme_hr` was refused there, `1142`,
+  and read it once its default role, holding `SELECT ON *.*` with no revoke,
+  was active.
 - **A view that a DBA creates reads the limit, the partial revokes and a
   retained password** (`12_definer_view_probe.py`, #1490, for #1457). It is
   `sopuli.account_state`, the name MariaDB's view has, and

@@ -2873,7 +2873,7 @@ pg-dev  (16.15, 1 account)
     objects: EXECUTE on 3 functions (0 direct, 3 via roles); INSERT on 1 table (0 direct, 1 via roles, 1 only after SET ROLE); SELECT on 2 tables (1 direct, 1 via roles); SELECT on 2 views (0 direct, 2 via roles); default for acme_rp_owner: SELECT on 1 table (0 direct, 1 via roles)
     columns: UPDATE on 1 column (1 direct, 0 via roles)
     schemas: USAGE on acme_rp (schema, direct, via acme_rp_app > acme_rp_read, via acme_rp_batch)
-  not checked: the schemas and objects of the cluster's other databases were not read (sopuli): a target reads only the database it connects to; a target declared for another database reports on that one
+  not checked: the schemas and objects of the cluster's other databases were not read (sopuli): a target reads only the database it connects to; declare a target for each at the same host and port in its dsn: to report on it
 ```
 
 It exits 4: the stack's cluster has a second database, `sopuli`, which a
@@ -2884,6 +2884,43 @@ listed under its own name, and the functions and views it is granted on are
 counted too. The default privilege is what `acme_rp_owner`'s future tables
 will grant. `--detail` lists each one, with `KIND` naming the level, such as
 `object (default for acme_rp_owner)`.
+
+To cover `sopuli`, copy `postgres.yaml` to `pg-report.yaml` and add a second
+target at the same `dsn:`. Keep it out of `postgres.yaml`: the other commands
+in this guide run without `--target`, and a run that reaches both targets
+refuses the second (`SOPULI-20008`).
+
+```yaml
+  - name: pg-dev-sopuli
+    type: postgresql
+    environment: dev
+    dsn: "127.0.0.1:5432"
+    admin: { username: sopuli_admin, auth: { method: env } }
+    postgres: { database: sopuli, sslmode: disable }
+```
+
+The two targets are one cluster, so run one per run with `--target`. Each
+run exits 0: `pg-dev` no longer names `sopuli`, and `pg-dev-sopuli` reads
+it:
+
+```
+$ sopuli --config pg-report.yaml report privileges --target pg-dev --account acme_rp_user
+pg-dev  (16.15, 1 account)
+  acme_rp_user  (technical)
+    roles: acme_rp_app (inherit, set), acme_rp_batch (no inherit, set), pg_read_all_stats (inherit, set)
+    system: pg_read_all_stats (predefined role, via pg_read_all_stats)
+    objects: EXECUTE on 3 functions (0 direct, 3 via roles); INSERT on 1 table (0 direct, 1 via roles, 1 only after SET ROLE); SELECT on 2 tables (1 direct, 1 via roles); SELECT on 2 views (0 direct, 2 via roles); default for acme_rp_owner: SELECT on 1 table (0 direct, 1 via roles)
+    columns: UPDATE on 1 column (1 direct, 0 via roles)
+    schemas: USAGE on acme_rp (schema, direct, via acme_rp_app > acme_rp_read, via acme_rp_batch)
+$ sopuli --config pg-report.yaml report privileges --target pg-dev-sopuli --account acme_rp_user
+pg-dev-sopuli  (16.15, 1 account)
+  acme_rp_user  (technical)
+    roles: acme_rp_app (inherit, set), acme_rp_batch (no inherit, set), pg_read_all_stats (inherit, set)
+    system: pg_read_all_stats (predefined role, via pg_read_all_stats)
+    objects: EXECUTE on 2 functions (0 direct, 2 via roles); SELECT on 2 views (0 direct, 2 via roles)
+    columns: none
+    schemas: none
+```
 
 On *A MariaDB server*, as root, make the same shape. A role has no host, and
 `PUBLIC` is a role every account holds:

@@ -194,7 +194,7 @@ from sopuli.diagnostics import (
     worse_encryption,
 )
 from sopuli.driver import guardrails
-from sopuli.driver.clusters import ClusterIdentity, scope_and_claim
+from sopuli.driver.clusters import ClusterIdentity, covered_databases, scope_and_claim
 from sopuli.driver.grants import PrivilegeSurvey, PrivilegeViewState
 from sopuli.driver.mariadb.roles import PublicRoleError
 from sopuli.driver.mysql.roles import MandatoryRoleError
@@ -6034,7 +6034,8 @@ def report_privileges_command(
     Exit 0 when every part was read, 1 when a target could not be reached, and 4
     when a part could not be read, such as without the optional grant on
     Oracle's privilege views, or another database of a PostgreSQL cluster,
-    which a target cannot see into, or MariaDB's global level. Oracle,
+    which a target cannot see into and no other declared target connects to
+    at the same host and port, or MariaDB's global level. Oracle,
     PostgreSQL, MySQL and MariaDB can run this report.
     """
     document = run.document
@@ -6144,7 +6145,8 @@ def _privileges_target(
             target=target.name,
             release=session.scope().release,
             accounts=privilege_states.per_account(target.name, rows, grants, public=public),
-            unreadable=grants.unreadable,
+            # The declared targets, not only the selected ones (#1501).
+            unreadable=grants.not_checked(covered_databases(target, run.config.expanded_targets)),
             absent=absent,
             product=target.target.type,
         )

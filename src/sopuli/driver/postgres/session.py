@@ -243,7 +243,7 @@ class PostgresSession(ClosesConnection):
         :class:`~sopuli.driver.grants.PrivilegeSurvey`
         (:mod:`sopuli.driver.postgres.grants`). The catalogs it reads are open
         to every role, so it needs no grant and no capability. The cluster's
-        other databases are named in ``unreadable``.
+        other databases are named in ``unreadable`` and ``other_databases``.
         """
         with self._cursor() as cursor:
             return survey_grants(cursor, accounts, public=public)

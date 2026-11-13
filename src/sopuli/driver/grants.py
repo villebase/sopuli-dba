@@ -26,7 +26,7 @@ the account holds no such privilege; ``None`` says nobody could look.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
@@ -116,6 +116,41 @@ class GrantSurvey:
     columns: tuple[GrantRow, ...] | None
     schemas: tuple[GrantRow, ...] | None
     unreadable: tuple[str, ...] = ()
+    #: The other databases of a PostgreSQL cluster, whose schemas and objects
+    #: the session could not read. :attr:`unreadable` names them all, in
+    #: :func:`other_databases_reason`'s words, so a reader that does not call
+    #: :meth:`not_checked` still shows them as not checked.
+    other_databases: tuple[str, ...] = ()
+
+    def not_checked(self, covered: Collection[str]) -> tuple[str, ...]:
+        """:attr:`unreadable`, with the other databases in ``covered`` left out
+        of their reason.
+
+        ``covered`` are the databases another declared target connects to at
+        the same host and port, whose own report reads them (#1501). Leaving
+        them out lets a cluster with a target for each database exit 0.
+        """
+        if not self.other_databases:
+            return self.unreadable
+        whole = other_databases_reason(self.other_databases)
+        rest = tuple(reason for reason in self.unreadable if reason != whole)
+        left = tuple(name for name in self.other_databases if name not in covered)
+        return (*rest, other_databases_reason(left)) if left else rest
+
+
+def other_databases_reason(names: Sequence[str]) -> str:
+    """The reason that names a PostgreSQL cluster's other databases as not
+    checked (:attr:`GrantSurvey.other_databases`).
+
+    It is true before and after :meth:`GrantSurvey.not_checked`, so it claims
+    nothing about the config. The driver writes it, and ``not_checked``
+    finds it by these same words, so only this function may build it."""
+    return (
+        "the schemas and objects of the cluster's other databases were not read ("
+        + ", ".join(names)
+        + "): a target reads only the database it connects to; declare a target "
+        "for each at the same host and port in its dsn: to report on it"
+    )
 
 
 @runtime_checkable
@@ -137,9 +172,10 @@ class PrivilegeSurvey(Protocol):
     them. ``public`` asks for the grants to everyone too, once, under the
     product's name for them. A part the session could not read is ``None``,
     with one reason in :attr:`GrantSurvey.unreadable` naming what would make it
-    readable. So is a scope the session could not reach at all, such as another
-    database of a PostgreSQL cluster: the reason names it, and the report shows
-    it as not checked on that target.
+    readable. So is a scope the session could not reach at all, such as a
+    PostgreSQL cluster's other databases, which are also in
+    :attr:`GrantSurvey.other_databases`: the report shows those no other
+    declared target covers as not checked on that target.
     """
 
     def survey_privileges(self, accounts: Sequence[str], *, public: bool) -> GrantSurvey:

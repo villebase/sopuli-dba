@@ -381,9 +381,15 @@ where every grant inherits is active; one the account reaches only by `SET
 ROLE` counts, and is marked "needs SET ROLE"; a path with neither option gives
 nothing. An attribute is never inherited, so a role's attribute counts only
 where the account can `SET ROLE` to that role. A target reads the database it
-connects to: the cluster's other databases, except templates, are named as
-*not checked* on every target, so the run exits 4 on a cluster with more than
-one such database, even where a target is declared for each.
+connects to. The cluster's other databases, except templates, are named as
+*not checked*, and the run exits 4, unless another declared target connects
+to that database at the same host and port in its `dsn:`
+([#1501](../decisions/log.md#1501)). That target's own report reads it, so
+it need not be selected in the same run. Run one such target per run with
+`--target`, as `01-configuration.md` asks for targets on one cluster: each run
+exits 0 when every database has a target. A database reached under another
+address, such as an alias or a standby's, does not match, and stays *not
+checked*.
 
 **On MariaDB** ([#1483](../decisions/log.md#1483)), from the grant tables,
 with the grants of `02-mariadb-privileges.md` §2.1, as on MySQL: *schemas*
@@ -581,7 +587,8 @@ of a role's last password change, no last login and no failed logins, so the
 failed-login count is `unknown` there, and `report history` shows only the
 store's records. Object privileges are per database: a session can read only
 the grants of the database it connects to, so the privilege report names the
-cluster's other databases as not checked (§5). Measured on 13.23 to 18.6
+cluster's other databases that no declared target connects to as not checked
+(§5). Measured on 13.23 to 18.6
 (`02-postgres-privileges.md` §2.5, #1443).
 
 On MySQL (#1461) and MariaDB (#1462), `report accounts` and `report history`

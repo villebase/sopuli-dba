@@ -21,10 +21,14 @@ which is claimed beside its server.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
 from sopuli.config.errors import ConfigError
+from sopuli.config.model import ExpandedTarget
+from sopuli.config.targets import POSTGRESQL
+from sopuli.driver.address import host_and_port
 from sopuli.driver.protocol import Scope, Session
 
 #: ``error.code`` for a second target on a cluster another target reached.
@@ -123,3 +127,33 @@ def claim(session: object, target: str, clusters: dict[str, str]) -> None:
             )
     for one in found:
         clusters.setdefault(one.value, target)
+
+
+def covered_databases(target: ExpandedTarget, declared: Sequence[ExpandedTarget]) -> frozenset[str]:
+    """The databases other PostgreSQL targets in ``declared`` connect to at
+    ``target``'s host and port, for `report privileges` (#1501).
+
+    ``declared`` is every target the file declares, selected in the run or
+    not. Each one's own report reads its database's schemas and objects, so
+    ``target``'s report does not name that database as not checked. "Same
+    cluster" is the same host, in any case, and the same port in ``dsn:``,
+    compared without reading anything: :func:`claim` refuses a second target
+    on one cluster in a run, and a target the selectors left out is never
+    connected to, so neither's ``system_identifier`` can be read. A cluster
+    reached under another name, such as an alias or a standby's address, does
+    not match, and its database stays not checked. Nothing here says whether
+    the other target's own run was made or succeeded: each target's run
+    reports its own database.
+    """
+    if target.target.type != POSTGRESQL:
+        return frozenset()
+    host, port = host_and_port(target.target.dsn)
+    here = (host.lower(), port)
+    covered: set[str] = set()
+    for other in declared:
+        if other.name == target.name or other.target.type != POSTGRESQL:
+            continue
+        other_host, other_port = host_and_port(other.target.dsn)
+        if (other_host.lower(), other_port) == here:
+            covered.add(other.target.postgres_settings.database)
+    return frozenset(covered)

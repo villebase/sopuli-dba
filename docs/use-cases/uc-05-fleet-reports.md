@@ -597,15 +597,18 @@ name at a host, so one name can be several accounts, each with its own
 state, and the report shows one row for each. A role is left out. The
 product's own accounts, such as `mysql.sys@localhost` and
 `mariadb.sys@localhost`, are left out unless a rule names them, as Oracle's
-are. On MySQL the failed-login limit is *not checked*, and the count
-is `unknown` without the optional grant of `02-mysql-privileges.md` §2.1. With
-the grants the tool account holds today, MySQL reads each
+are. On MySQL the failed-login count is `unknown` without the optional grant
+of `02-mysql-privileges.md` §2.1. With §2.1's grants, MySQL reads each
 account's lock, expiry, lifetime and date of the last change, and every
 privilege level with the role path. It cannot read an account's
 `FAILED_LOGIN_ATTEMPTS`, which is kept beside a hash, nor its count of failed
 logins, which only 9.7.4 keeps in a table, behind a grant of its own. Nor a
 partial revoke, nor the default role without `SELECT` on
-`mysql.default_roles`. MariaDB's §2.1 grants read only the expiry: the lock,
+`mysql.default_roles`. The optional view `sopuli.account_state`, which
+`sql/mysql/account_state_view.sql` makes (#1502), gives the failed-login
+limit: with it, a rule's `failed_login_limit` is checked; without it, it is
+*not checked*, with a reason that names the script. A view that exists and
+cannot be used is not read, and `SOPULI-W073` says what is wrong. MariaDB's §2.1 grants read only the expiry: the lock,
 the lifetime and the date of the last change are kept beside the hash. A DBA
 can expose them with the optional view `sopuli.account_state`, which
 `sql/mariadb/account_state_view.sql` makes (#1457, #1491). The tool checks

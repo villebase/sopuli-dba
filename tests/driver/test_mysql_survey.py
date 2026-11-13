@@ -10,9 +10,11 @@ from typing import Any
 import pytest
 
 from sopuli.driver.mysql import survey
+from sopuli.driver.mysql.account_state import ABSENT, NO_ROW, AccountStates
 from sopuli.driver.mysql.admin import MANDATORY_ROLES
 from sopuli.driver.mysql.session import MysqlSession
 from sopuli.driver.mysql_family.accounts import DEFAULT_LIFETIME
+from sopuli.driver.mysql_family.optional_view import columns_query
 from sopuli.driver.protocol import DriverError
 from sopuli.driver.survey import AccountSurvey
 
@@ -34,6 +36,8 @@ class _Cursor:
             survey.ACCOUNTS: list(users),
             survey.ROLES: list(roles or []),
             survey.LOCKS: list(locks or []),
+            # The optional view, absent: COLUMNS lists nothing (DV7).
+            columns_query("sopuli", "account_state"): [],
         }
         self.default_lifetime = default_lifetime
         self.queries: list[str] = []
@@ -52,8 +56,14 @@ class _Cursor:
         return self.answers[self.queries[-1]]
 
 
-def surveyed(cursor: _Cursor, locks: survey.Locks | None = None) -> dict[str, Any]:
-    read = survey.survey(cursor, locks or survey.Locks(None, survey.NO_GRANT))
+#: The optional view absent, as on a server where nobody installed it.
+NO_VIEW = AccountStates(rows=None, reason=ABSENT)
+
+
+def surveyed(
+    cursor: _Cursor, locks: survey.Locks | None = None, states: AccountStates = NO_VIEW
+) -> dict[str, Any]:
+    read = survey.survey(cursor, locks or survey.Locks(None, survey.NO_GRANT), states)
     return {one.name: one for one in read}
 
 
@@ -101,7 +111,7 @@ def test_a_mandatory_role_is_left_out() -> None:
 def test_the_accounts_come_ordered_by_name() -> None:
     """The contract's order, not the server's collation: `.` sorts before `@`."""
     cursor = _Cursor([("acme", "%", "N", "N", None), ("acme.x", "%", "N", "N", None)])
-    read = survey.survey(cursor, survey.Locks(None, survey.NO_GRANT))
+    read = survey.survey(cursor, survey.Locks(None, survey.NO_GRANT), NO_VIEW)
     assert [one.name for one in read] == ["acme.x@%", "acme@%"]
 
 
@@ -122,11 +132,34 @@ def test_the_lifetime(lifetime: int | None, default: int, expected: object) -> N
     assert surveyed(cursor)["acme_app@%"].password_lifetime == expected
 
 
-def test_the_failed_login_limit_is_never_read() -> None:
-    """M1: it is beside a retained hash in `User_attributes`."""
+def test_without_the_view_the_failed_login_limit_is_not_read() -> None:
+    """M1: it is beside a retained hash in `User_attributes`; the reason names
+    the optional view and its install script."""
     found = surveyed(_Cursor([APP]))["acme_app@%"]
     assert found.failed_login_limit is None
-    assert found.unreadable[0] == survey.NO_LIMIT_READ
+    assert found.unreadable[0] == ABSENT
+
+
+def test_the_view_gives_the_failed_login_limit() -> None:
+    """#1502: by user and host, the host compared without case, as the server
+    compares it."""
+    states = AccountStates(rows={("acme_app", "example.com"): 3, ("acme_web", "%"): "unlimited"})
+    cursor = _Cursor(
+        [
+            ("acme_app", "EXAMPLE.com", "N", "N", None),
+            ("acme_web", "%", "N", "N", None),
+            ("acme_new", "%", "N", "N", None),
+        ]
+    )
+    found = surveyed(cursor, states=states)
+
+    assert found["acme_app@EXAMPLE.com"].failed_login_limit == 3
+    assert found["acme_web@%"].failed_login_limit == "unlimited"
+    # Created after the view was read: not checked, and said so.
+    assert found["acme_new@%"].failed_login_limit is None
+    assert found["acme_new@%"].unreadable[0] == NO_ROW
+    # The count is still the locks table's, unknown here.
+    assert found["acme_app@EXAMPLE.com"].unreadable == (survey.NO_GRANT,)
 
 
 def test_a_lock_somebody_set_is_deliberate() -> None:
@@ -147,7 +180,7 @@ def test_mysqls_own_accounts_are_vendor_maintained() -> None:
 def test_without_the_locks_table_the_count_is_unknown() -> None:
     found = surveyed(_Cursor([APP]), survey.Locks(None, survey.NO_TABLE))["acme_app@%"]
     assert found.failed_logins is None
-    assert found.unreadable == (survey.NO_LIMIT_READ, survey.NO_TABLE)
+    assert found.unreadable == (ABSENT, survey.NO_TABLE)
 
 
 def test_the_locks_table_gives_the_count_and_a_block() -> None:
@@ -162,7 +195,7 @@ def test_the_locks_table_gives_the_count_and_a_block() -> None:
     assert (blocked.locked, blocked.deliberately_locked) == (True, False)
     assert blocked.status == "LOCKED(TIMED)"
     assert blocked.failed_logins == 3
-    assert blocked.unreadable == (survey.NO_LIMIT_READ,)
+    assert blocked.unreadable == (ABSENT,)
     assert found["acme_api@%"].failed_logins == 1
     assert found["acme_api@%"].locked is False
     # No row: the server keeps no count for it, or none was measured.

@@ -19,9 +19,12 @@ report matches names in the tool.
   locked, not by somebody.
 - **The lifetime** is ``password_lifetime`` in days, ``0`` for never, and
   NULL for the server's ``@@default_password_lifetime``, where ``0`` is never.
-- **The failed-login limit is never read** (M1). ``FAILED_LOGIN_ATTEMPTS`` is
-  kept in ``User_attributes`` beside a retained password's hash, which the tool
-  account is refused (``1143``).
+- **The failed-login limit** is ``FAILED_LOGIN_ATTEMPTS``, kept in
+  ``User_attributes`` beside a retained password's hash, which the tool account
+  is refused (``1143``, M1). It is read from the optional view
+  ``sopuli.account_state`` (:mod:`~sopuli.driver.mysql.account_state`, #1502),
+  where it is installed and granted; without it the limit is *not checked*,
+  with the view's reason.
 - **The failed-login count** is ``FAILED_LOGIN_ATTEMPTS`` less
   ``REMAINING_LOGIN_ATTEMPTS`` in ``temporary_account_locks``, read under an
   optional grant the survey tries (M2). Without the grant the server answers
@@ -37,6 +40,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from sopuli.config.products import fold_mysql_host
+from sopuli.driver.mysql.account_state import AccountStates
 from sopuli.driver.mysql.accounts import SYSTEM_ACCOUNTS, status
 from sopuli.driver.mysql.admin import read_mandatory_roles
 from sopuli.driver.mysql_family.accounts import DEFAULT_LIFETIME, EXPIRED, text
@@ -62,10 +66,6 @@ NO_SUCH_TABLE = 1146
 #: :mod:`~sopuli.driver.mysql.accounts` words the other states.
 LOCKED_TIMED = "LOCKED(TIMED)"
 
-NO_LIMIT_READ = (
-    "MySQL keeps FAILED_LOGIN_ATTEMPTS only in mysql.user.User_attributes, beside a "
-    "retained password's hash, which the tool account does not read"
-)
 NO_GRANT = (
     f"the tool account has no SELECT on {LOCKS_TABLE}, or the server has no such table, "
     "as 8.0 and 8.4 have not"
@@ -92,8 +92,9 @@ def read_locks(cursor: Any) -> Locks:
     return Locks(rows)
 
 
-def survey(cursor: Any, locks: Locks) -> tuple[SurveyedAccount, ...]:
-    """Every account, roles left out, ordered by name, ``user@host``."""
+def survey(cursor: Any, locks: Locks, states: AccountStates) -> tuple[SurveyedAccount, ...]:
+    """Every account, roles left out, ordered by name, ``user@host``.
+    ``states`` is what the optional view gave, for the failed-login limit."""
     cursor.execute(DEFAULT_LIFETIME)
     (default,) = cursor.fetchone()
     cursor.execute(ROLES)
@@ -116,6 +117,7 @@ def survey(cursor: Any, locks: Locks) -> tuple[SurveyedAccount, ...]:
                 lifetime=_lifetime(lifetime if lifetime is not None else default),
                 locks=locks,
                 key=key,
+                limit=states.limit(user, host),
             )
         )
     # The server sorts by its column collations; the contract is by name.
@@ -136,6 +138,7 @@ def _account(
     lifetime: Limit,
     locks: Locks,
     key: tuple[str, str],
+    limit: tuple[Limit, str | None],
 ) -> SurveyedAccount:
     blocked, failed, count_reason = False, None, locks.reason
     if locks.rows is not None:
@@ -144,6 +147,7 @@ def _account(
             count_reason = NO_ROW
         else:
             blocked, failed = row
+    limit_value, limit_reason = limit
     name = f"{user}@{host}"
     return SurveyedAccount(
         name=name,
@@ -158,9 +162,13 @@ def _account(
         # Oracle's are.
         vendor_maintained=name in SYSTEM_ACCOUNTS,
         password_lifetime=lifetime,
-        failed_login_limit=None,
+        failed_login_limit=limit_value,
         failed_logins=failed,
-        unreadable=(NO_LIMIT_READ,) if failed is not None else (NO_LIMIT_READ, count_reason),
+        unreadable=tuple(
+            reason
+            for reason in (limit_reason, None if failed is not None else count_reason)
+            if reason
+        ),
     )
 
 

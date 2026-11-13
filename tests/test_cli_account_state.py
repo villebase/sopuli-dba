@@ -42,8 +42,8 @@ def _run() -> Any:
     return SimpleNamespace(document=_Document())
 
 
-def _target() -> Any:
-    return SimpleNamespace(name="mariadb-dev")
+def _target(product: str = "mariadb") -> Any:
+    return SimpleNamespace(name=f"{product}-dev", target=SimpleNamespace(type=product))
 
 
 class ViewSession:
@@ -297,6 +297,44 @@ def test_a_broken_view_is_warned_about() -> None:
     assert warning.code == ACCOUNT_STATE_VIEW_BROKEN
     assert warning.target == "mariadb-dev"
     assert "its definer no longer exists (1045)" in warning.message
+
+
+class _MysqlView:
+    """MySQL's session: the view's warning, and nothing for `report history`
+    or `account list` (#1502)."""
+
+    def view_broken(self) -> str | None:
+        return "its definer cannot read mysql.user (1356)"
+
+
+def test_a_broken_mysql_view_is_warned_about_by_report_accounts_only() -> None:
+    run = _run()
+    # `report history` and `account list` ask for a StateView, which MySQL is not.
+    _warn_if_view_broken(run, _target("mysql"), _MysqlView())
+    assert run.document.diagnostics == []
+
+    _warn_if_view_broken(run, _target("mysql"), _MysqlView(), by_survey=True)
+    (warning,) = run.document.diagnostics
+    assert warning.code == ACCOUNT_STATE_VIEW_BROKEN
+    assert warning.message == (
+        "mysql-dev: the optional view sopuli.account_state is not used: its definer cannot "
+        "read mysql.user (1356). The failed-login limit is not checked here. Recreate it "
+        "with sql/mysql/account_state_view.sql, which makes it with only the expected "
+        "columns, owned by a locked definer that can read mysql.user"
+    )
+
+
+def test_the_mysql_session_is_an_optional_view() -> None:
+    from sopuli.driver.mysql.session import MysqlSession
+    from sopuli.driver.survey import OptionalView, StateView
+
+    def typed(session: MysqlSession) -> OptionalView:
+        # mypy checks the signatures here; isinstance only the names.
+        return session
+
+    assert typed is not None
+    assert issubclass(MysqlSession, OptionalView)
+    assert not issubclass(MysqlSession, StateView)
 
 
 def test_an_absent_view_and_another_product_are_not_warned_about() -> None:

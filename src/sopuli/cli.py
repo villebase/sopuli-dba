@@ -247,7 +247,7 @@ from sopuli.driver.registry import (
     installed,
     require_command,
 )
-from sopuli.driver.survey import AccountSurvey, StateView, SurveyedAccount
+from sopuli.driver.survey import AccountSurvey, OptionalView, StateView, SurveyedAccount
 from sopuli.exit_codes import ExitCode
 from sopuli.extras import MISSING_MODULE, missing_kind
 from sopuli.generate import Candidate, DocumentWrite
@@ -5975,7 +5975,7 @@ def _report_target(
             )
         try:
             surveyed, profiles = session.survey_with_profiles()
-            _warn_if_view_broken(run, target, session)
+            _warn_if_view_broken(run, target, session, by_survey=True)
             roles = _personal_role_members(session, config, target)
         except Exception as error:  # noqa: BLE001 -- a per-target finding
             # Connected, then could not read: said as such, not as "could not
@@ -6461,14 +6461,29 @@ def _account_key(account: str, product: str) -> object:
     return account_key(product)(account)
 
 
-def _warn_if_view_broken(run: Invocation, target: ExpandedTarget, session: Any) -> None:
-    """`SOPULI-W073` where a MariaDB target's optional view exists and is not
-    used (#1491). Only a :class:`~sopuli.driver.survey.StateView` has one."""
-    if not isinstance(session, StateView):
+def _warn_if_view_broken(
+    run: Invocation,
+    target: ExpandedTarget,
+    session: object,
+    *,
+    by_survey: bool = False,
+) -> None:
+    """`SOPULI-W073` where a target's optional view ``sopuli.account_state``
+    exists and is not used (#1491, #1502), for a command that reads it.
+
+    `report history` and `account list` read it through a
+    :class:`~sopuli.driver.survey.StateView` (MariaDB). `report accounts`
+    passes ``by_survey``: its survey reads the view on every
+    :class:`~sopuli.driver.survey.OptionalView` (MariaDB and MySQL)."""
+    if not isinstance(session, OptionalView):
+        return
+    if not by_survey and not isinstance(session, StateView):
         return
     broken = session.view_broken()
     if broken is not None:
-        run.document.warn_in_text(account_state_view_broken(target.name, broken))
+        run.document.warn_in_text(
+            account_state_view_broken(target.name, broken, product=target.target.type)
+        )
 
 
 def _database_date(

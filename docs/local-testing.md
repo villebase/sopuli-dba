@@ -2589,6 +2589,44 @@ MySQL 9.7.4, with the optional `SELECT` on
 `LOCKED(TIMED)` with its count, and the lock is still a problem, because
 somebody tried to log in.
 
+A rule's `failed_login_limit` is *not checked* on MySQL: the limit is kept
+beside a retained password's hash. The optional view `sopuli.account_state`
+reads it without the hash. Set the tool account's user and host at the top of
+`sql/mysql/account_state_view.sql`, here `sopuli_admin` and `%`, and run it as
+root:
+
+```
+$ docker exec -i -e MYSQL_PWD=sopuli-test sopuli-test-mysql-1 mysql -uroot < account_state_view.sql
+```
+
+With `acme_app@%` created with `FAILED_LOGIN_ATTEMPTS 3`, `acme_web@%` with
+none, and this rule:
+
+```yaml
+reports:
+  accounts:
+    - accounts: ["acme_app@%", "acme_web@%"]
+      settings: { failed_login_limit: 5 }
+```
+
+```
+$ sopuli --config mysql-report.yaml report accounts
+mysql-dev  (8.4.13, 10 accounts read, 1 with a problem, 5 undeclared)
+  ACCOUNT                        KIND        PROFILE  STATUS  FAILED LOGINS  STATE           FINDING
+  acme_web@%                     technical   -        OPEN    unknown        REPORT_PROBLEM  failed_login_limit: unlimited, rule says at most 5
+  acme_stray@%                   undeclared  -        OPEN    unknown        UNDECLARED      not in config
+  root@%                         undeclared  -        OPEN    unknown        UNDECLARED      not in config
+  root@localhost                 undeclared  -        OPEN    unknown        UNDECLARED      not in config
+  sopuli_admin@%                 undeclared  -        OPEN    unknown        UNDECLARED      not in config
+  sopuli_view_definer@localhost  undeclared  -        LOCKED  unknown        UNDECLARED      not in config
+  1 account OK
+  failed logins unknown: the tool account has no SELECT on performance_schema.temporary_account_locks, or the server has no such table, as 8.0 and 8.4 have not
+```
+
+It exits 3. The script makes the locked account `sopuli_view_definer@localhost`,
+which the view runs as. Without the view, both accounts read `NOT_CHECKED`
+with a reason that names the script, and the run exits 4.
+
 On MariaDB, with the grants of `design/02-mariadb-privileges.md` §2.1,
 `report accounts` reads only each account's
 expiry: the lock and the lifetime are kept beside the stored value, which the

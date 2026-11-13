@@ -24,7 +24,8 @@ only the granted columns are listed, and the others cannot be read either.
 
 - no row in ``COLUMNS``: the view is absent, its schema is absent, or the tool
   account has no grant on it. The server answers all three alike (``1142``),
-  so the reason names both fixes;
+  so the reason names both fixes. ``1146`` is a view dropped with the grant
+  left, and is absent too;
 - ``1045`` on reading it, in a session already logged in: its definer has been
   dropped;
 - ``1356``: its definer cannot read ``mysql.global_priv``.
@@ -34,7 +35,9 @@ exists and cannot be used is **broken**: the fields are *not checked* too, and
 the caller warns, naming what is wrong (#1491). So is any other refusal of the
 read, and a column that holds something other than an integer, such as another
 key of ``Priv`` under an expected name. Neither the server's message nor the
-value is repeated, as either could carry a stored value.
+value is repeated, as either could carry a stored value. The check and the
+refusals are :mod:`~sopuli.driver.mysql_family.optional_view`'s, which MySQL's
+view uses too (#1509).
 """
 
 from __future__ import annotations
@@ -44,7 +47,12 @@ from datetime import UTC, datetime
 from typing import Any
 
 from sopuli.driver.mysql_family.accounts import DEFAULT_LIFETIME, text
-from sopuli.driver.mysql_family.errors import error_number
+from sopuli.driver.mysql_family.optional_view import (
+    columns_query,
+    integer,
+    refusal,
+    shape_problem,
+)
 from sopuli.driver.protocol import Cursor
 from sopuli.driver.survey import Limit
 
@@ -68,22 +76,8 @@ EXPECTED = frozenset(
 #: The columns the reports read.
 READ = ("User", "Host", "account_locked", "password_lifetime", "password_last_changed")
 
-COLUMNS_QUERY = (
-    "select COLUMN_NAME from information_schema.COLUMNS "
-    f"where TABLE_SCHEMA = '{SCHEMA}' and TABLE_NAME = '{NAME}'"
-)
+COLUMNS_QUERY = columns_query(SCHEMA, NAME)
 ROWS_QUERY = f"select {', '.join(READ)} from {VIEW}"
-
-#: ``ER_ACCESS_DENIED_ERROR``: the view's definer is gone (#1479).
-DEFINER_GONE = 1045
-#: ``ER_VIEW_INVALID``: the definer cannot read what the view selects.
-VIEW_INVALID = 1356
-#: ``ER_TABLEACCESS_DENIED_ERROR``: no grant on the view, or no view.
-NO_GRANT = 1142
-#: The client's own error numbers (CR_*), such as a lost connection: not the
-#: server's answer about the view.
-CLIENT_ERRORS = range(2000, 3000)
-_EXPECTED_LOWER = frozenset(column.lower() for column in EXPECTED)
 
 ABSENT = (
     f"MariaDB keeps it in mysql.global_priv, beside the stored value, and the optional "
@@ -134,37 +128,19 @@ NO_ROW = f"the optional view {VIEW} has no row for this account"
 def read(cursor: Cursor) -> AccountStates:
     """The view's rows, after its columns are checked."""
     try:
-        cursor.execute(COLUMNS_QUERY)
-        # MariaDB's column names are not case sensitive; COLUMNS gives them as
-        # the view's SELECT wrote them.
-        columns = {text(row[0]).lower() for row in cursor.fetchall()}
-        if not columns:
+        listed, problem = shape_problem(cursor, SCHEMA, NAME, expected=EXPECTED, read=READ)
+        if not listed:
             return AccountStates(rows=None, reason=ABSENT)
-        extra = tuple(sorted(columns - _EXPECTED_LOWER))
-        if extra:
-            return _broken(f"it has columns the tool does not expect ({', '.join(extra)})")
-        missing = [column for column in READ if column.lower() not in columns]
-        if missing:
-            return _broken(f"the tool account cannot read its columns {', '.join(missing)}")
+        if problem is not None:
+            return _broken(problem)
         cursor.execute(DEFAULT_LIFETIME)
         (default,) = cursor.fetchone()
         cursor.execute(ROWS_QUERY)
         rows = cursor.fetchall()
     except Exception as error:  # noqa: BLE001 -- a server's answer is classified
-        number = error_number(error)
-        if number is None or CLIENT_ERRORS.start <= number < CLIENT_ERRORS.stop:
-            # Not the server's answer, such as a lost connection (2013) or a
-            # server gone away (2006): the target's, as any read's would be.
-            raise
-        if number == NO_GRANT:
-            return AccountStates(rows=None, reason=ABSENT)
-        if number == DEFINER_GONE:
-            return _broken(f"its definer no longer exists ({DEFINER_GONE})")
-        if number == VIEW_INVALID:
-            return _broken(f"its definer cannot read mysql.global_priv ({VIEW_INVALID})")
-        # Any other refusal of an optional view: not read, never the target's
-        # failure (#1376). Only the number, never the server's message.
-        return _broken(f"the server refused to read it ({number})")
+        # A client error, such as a lost connection, is raised again.
+        what = refusal(error, source="mysql.global_priv")
+        return AccountStates(rows=None, reason=ABSENT) if what is None else _broken(what)
     try:
         default_days = int(default or 0)
         return AccountStates(
@@ -188,26 +164,15 @@ def _broken(what: str) -> AccountStates:
 
 
 def _state(locked: Any, lifetime: Any, changed: Any, default_days: int) -> State:
-    days = _int(lifetime)
+    days = integer(lifetime)
     # NULL or -1 is the server's default_password_lifetime, where 0 is none.
     if days is None or days < 0:
         days = default_days
-    seconds = _int(changed)
+    seconds = integer(changed)
     return State(
-        locked=_int(locked) == 1,
+        locked=integer(locked) == 1,
         lifetime="unlimited" if days == 0 else days,
         changed_at=datetime.fromtimestamp(seconds, UTC) if seconds else None,
         # 0 is how PASSWORD EXPIRE marks it (#1479); NULL is no key at all.
         no_time=None if seconds else NO_TIME if seconds == 0 else NO_TIME_KEY,
     )
-
-
-def _int(value: Any) -> int | None:
-    """An integer the view gave, as text or a number. Raises ``ValueError`` for
-    anything else; the caller never repeats the value."""
-    if value is None:
-        return None
-    found = text(value)
-    if not found.lstrip("-").isdigit():
-        raise ValueError("not an integer")
-    return int(found)

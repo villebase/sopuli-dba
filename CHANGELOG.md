@@ -1,5 +1,47 @@
 # Changelog
 
+## [0.89.0](https://github.com/villebase/sopuli-dba/compare/v0.88.0...v0.89.0) (2026-11-13)
+
+
+### ⚠ BREAKING CHANGES
+
+* **config:** a `reports.accounts` rule's `profile:` must be written as `oracle: { profile: ... }`, and `reports.db_profiles:` as `reports: { oracle: { profiles: ... } }`. A config with the old keys is refused until they are moved.
+
+### Features
+
+* **config:** move the Oracle-only report rule keys into an oracle: block ([#1447](https://github.com/villebase/sopuli-dba/issues/1447)) ([#1449](https://github.com/villebase/sopuli-dba/issues/1449)) ([e127a0a](https://github.com/villebase/sopuli-dba/commit/e127a0a05a846cf07edbd42048338632d0c585d2))
+* **config:** warn about a report name without a host where every target is MySQL or MariaDB ([#1472](https://github.com/villebase/sopuli-dba/issues/1472)) ([#1473](https://github.com/villebase/sopuli-dba/issues/1473)) ([b1d5a6b](https://github.com/villebase/sopuli-dba/commit/b1d5a6b7115559d6886ee1c0c2da71d86ba73ebd))
+* **mariadb:** read the global privileges from the optional view sopuli.global_privileges ([#1483](https://github.com/villebase/sopuli-dba/issues/1483)) ([#1499](https://github.com/villebase/sopuli-dba/issues/1499)) ([0b323d0](https://github.com/villebase/sopuli-dba/commit/0b323d0c8456cca2cc37e3f33662727251626c73))
+* **mariadb:** read the optional view sopuli.account_state in the reports ([#1491](https://github.com/villebase/sopuli-dba/issues/1491)) ([#1493](https://github.com/villebase/sopuli-dba/issues/1493)) ([119d2ff](https://github.com/villebase/sopuli-dba/commit/119d2ffc949e211f3591d37ad75cb761fdbde787))
+* **mariadb:** report every privilege below the global level, one row per path ([#1483](https://github.com/villebase/sopuli-dba/issues/1483)) ([#1498](https://github.com/villebase/sopuli-dba/issues/1498)) ([92f9504](https://github.com/villebase/sopuli-dba/commit/92f95046025aadebb7ac144cef513cdfc73fc8ee))
+* **mariadb:** show the lock in account list from the optional view ([#1491](https://github.com/villebase/sopuli-dba/issues/1491)) ([#1497](https://github.com/villebase/sopuli-dba/issues/1497)) ([2f933d2](https://github.com/villebase/sopuli-dba/commit/2f933d271bca0c646b3e4e0fa6bcea2c3e42423b))
+* **mariadb:** show the view's date in account list, and warn of a block after failed logins ([#1500](https://github.com/villebase/sopuli-dba/issues/1500)) ([#1506](https://github.com/villebase/sopuli-dba/issues/1506)) ([8b07d58](https://github.com/villebase/sopuli-dba/commit/8b07d58595c497664671b80a8c0c89f6020ff8fb))
+* **mysql:** name the schemas a partial revoke takes a global privilege away on ([#1502](https://github.com/villebase/sopuli-dba/issues/1502)) ([#1510](https://github.com/villebase/sopuli-dba/issues/1510)) ([1c707fd](https://github.com/villebase/sopuli-dba/commit/1c707fded9b704c1d0be63e6cb0344b63fe531ad))
+* **mysql:** read the failed-login limit from the optional view sopuli.account_state ([#1502](https://github.com/villebase/sopuli-dba/issues/1502)) ([#1508](https://github.com/villebase/sopuli-dba/issues/1508)) ([575c13c](https://github.com/villebase/sopuli-dba/commit/575c13c26a9a8d24174c3d6a6b54452756f9f040))
+* **postgres:** leave out databases another declared target covers in report privileges ([#1501](https://github.com/villebase/sopuli-dba/issues/1501)) ([#1507](https://github.com/villebase/sopuli-dba/issues/1507)) ([3419982](https://github.com/villebase/sopuli-dba/commit/341998243815d0fc036e83f78bd39a549d0d2187))
+* **postgres:** survey every privilege a role holds, with its path ([#1481](https://github.com/villebase/sopuli-dba/issues/1481)) ([#1487](https://github.com/villebase/sopuli-dba/issues/1487)) ([aa0caa1](https://github.com/villebase/sopuli-dba/commit/aa0caa139b294545a0fa2ff7ef0e78574b9bce67))
+* **report:** add the not-applicable outcome and a survey protocol for other products ([#1458](https://github.com/villebase/sopuli-dba/issues/1458)) ([#1463](https://github.com/villebase/sopuli-dba/issues/1463)) ([d03730f](https://github.com/villebase/sopuli-dba/commit/d03730f6a1b8b00dd59c08f550018b067c8ace41))
+* **report:** build MySQL and MariaDB privilege rows per role path ([#1482](https://github.com/villebase/sopuli-dba/issues/1482)) ([#1486](https://github.com/villebase/sopuli-dba/issues/1486)) ([933f3ea](https://github.com/villebase/sopuli-dba/commit/933f3eade78e1d8202dc3a3ee51882d0760f6939))
+* **report:** give the privilege survey a protocol and a per-row level ([#1480](https://github.com/villebase/sopuli-dba/issues/1480)) ([#1484](https://github.com/villebase/sopuli-dba/issues/1484)) ([f3a9241](https://github.com/villebase/sopuli-dba/commit/f3a9241018651b97cf44692f651b091a86dac33b))
+* **report:** name MySQL and MariaDB accounts user@host in report rules ([#1461](https://github.com/villebase/sopuli-dba/issues/1461)) ([#1466](https://github.com/villebase/sopuli-dba/issues/1466)) ([c806d14](https://github.com/villebase/sopuli-dba/commit/c806d14b5a9f36e4fd78247418d31a7826874f73)), closes [#1465](https://github.com/villebase/sopuli-dba/issues/1465)
+* **report:** pass schema-only owners and catch a lockout that reads LOCKED ([#1447](https://github.com/villebase/sopuli-dba/issues/1447)) ([#1452](https://github.com/villebase/sopuli-dba/issues/1452)) ([9746ef6](https://github.com/villebase/sopuli-dba/commit/9746ef625739a7091b59baa91f98fd795bcabd80))
+* **report:** report accounts on PostgreSQL ([#1459](https://github.com/villebase/sopuli-dba/issues/1459)) ([#1464](https://github.com/villebase/sopuli-dba/issues/1464)) ([9b95360](https://github.com/villebase/sopuli-dba/commit/9b953602aa797ad3c729fac27f2ff52b5ad2724b))
+* **report:** report history on PostgreSQL, MySQL and MariaDB ([#1460](https://github.com/villebase/sopuli-dba/issues/1460)) ([#1470](https://github.com/villebase/sopuli-dba/issues/1470)) ([f0853b8](https://github.com/villebase/sopuli-dba/commit/f0853b8ff6ccd2bae17d8dc991906a845c42c743))
+* **report:** resolve a personal rule's role: on MySQL and MariaDB ([#1495](https://github.com/villebase/sopuli-dba/issues/1495)) ([#1496](https://github.com/villebase/sopuli-dba/issues/1496)) ([d1d5113](https://github.com/villebase/sopuli-dba/commit/d1d5113d6ac8227493a5df1d491c62eb8a9c113f))
+* **report:** resolve a personal rule's role: on Oracle and PostgreSQL ([#1469](https://github.com/villebase/sopuli-dba/issues/1469)) ([#1477](https://github.com/villebase/sopuli-dba/issues/1477)) ([484da37](https://github.com/villebase/sopuli-dba/commit/484da37405c89e082bee0e3e50b3ba4585779f96))
+* **report:** run report accounts on MariaDB ([#1462](https://github.com/villebase/sopuli-dba/issues/1462)) ([#1474](https://github.com/villebase/sopuli-dba/issues/1474)) ([95c5b53](https://github.com/villebase/sopuli-dba/commit/95c5b530f2012f8e3b8eaa5b18518df9ae1c138c))
+* **report:** run report accounts on MySQL ([#1461](https://github.com/villebase/sopuli-dba/issues/1461)) ([#1467](https://github.com/villebase/sopuli-dba/issues/1467)) ([5b99788](https://github.com/villebase/sopuli-dba/commit/5b9978883d4e9b9c4b3ecadf8145a5c6da1acb71))
+* **report:** run report privileges on MySQL ([#1482](https://github.com/villebase/sopuli-dba/issues/1482)) ([#1489](https://github.com/villebase/sopuli-dba/issues/1489)) ([bac36a1](https://github.com/villebase/sopuli-dba/commit/bac36a14deb6be1653cd7f6e6c487da641accb2c))
+* **report:** run report privileges on PostgreSQL ([#1481](https://github.com/villebase/sopuli-dba/issues/1481)) ([#1488](https://github.com/villebase/sopuli-dba/issues/1488)) ([c6d8ea3](https://github.com/villebase/sopuli-dba/commit/c6d8ea3c1a2830178cf3c504f6d6908e3598428e))
+* **report:** say with login: whether an account must be able to log in ([#1447](https://github.com/villebase/sopuli-dba/issues/1447)) ([#1451](https://github.com/villebase/sopuli-dba/issues/1451)) ([7567034](https://github.com/villebase/sopuli-dba/commit/75670346ab49eb1ce05073bef20f6163be026e40))
+* **report:** warn W075 when a personal rule's role cannot be resolved ([#1478](https://github.com/villebase/sopuli-dba/issues/1478)) ([#1505](https://github.com/villebase/sopuli-dba/issues/1505)) ([5b05200](https://github.com/villebase/sopuli-dba/commit/5b0520056817d4ed6024dee7a74a16f7841b7551))
+
+
+### Bug Fixes
+
+* **report:** judge a past VALID UNTIL by whether the role can log in ([#1468](https://github.com/villebase/sopuli-dba/issues/1468)) ([#1476](https://github.com/villebase/sopuli-dba/issues/1476)) ([dd9e2bb](https://github.com/villebase/sopuli-dba/commit/dd9e2bb495d8bf91d3420bb43003ac7d7c393e7e))
+* **reset:** name a lockout under PASSWORD_LOCK_TIME UNLIMITED when the reset refuses it ([#1454](https://github.com/villebase/sopuli-dba/issues/1454)) ([#1475](https://github.com/villebase/sopuli-dba/issues/1475)) ([b066b62](https://github.com/villebase/sopuli-dba/commit/b066b6238a79560702bafe0d6ac78c9d020e39da))
+
 ## [0.88.0](https://github.com/villebase/sopuli-dba/compare/v0.87.0...v0.88.0) (2026-11-10)
 
 

@@ -149,18 +149,25 @@ class AccountSurvey(Protocol):
 
 
 @runtime_checkable
-class StateView(Protocol):
+class OptionalView(Protocol):
+    """A session whose survey reads the optional view ``sopuli.account_state``:
+    MariaDB's (#1491) and MySQL's (#1502)."""
+
+    def view_broken(self) -> str | None:
+        """What is wrong with a view that exists and cannot be used, for
+        ``SOPULI-W073``; ``None`` where it is absent, was read, or was not
+        needed by this session."""
+        ...
+
+
+@runtime_checkable
+class StateView(OptionalView, Protocol):
     """A session that reads an optional view for the reports, beside
     ``describe_user``: MariaDB's ``sopuli.account_state`` (#1491).
 
     Only `report accounts`, `report history` and `account list` ask for it, so
     no verb that changes an account acts on what the view says.
     """
-
-    def view_broken(self) -> str | None:
-        """What is wrong with a view that exists and cannot be used, for
-        ``SOPULI-W073``; ``None`` where it is absent or was read."""
-        ...
 
     def report_changed_at(self, user: UserState) -> tuple[datetime | None, str | None]:
         """When ``user``'s password last changed, from the view, or ``None``

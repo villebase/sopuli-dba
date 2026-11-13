@@ -247,7 +247,7 @@ from sopuli.driver.registry import (
     installed,
     require_command,
 )
-from sopuli.driver.survey import AccountSurvey, StateView, SurveyedAccount
+from sopuli.driver.survey import AccountSurvey, OptionalView, StateView, SurveyedAccount
 from sopuli.exit_codes import ExitCode
 from sopuli.extras import MISSING_MODULE, missing_kind
 from sopuli.generate import Candidate, DocumentWrite
@@ -6461,14 +6461,22 @@ def _account_key(account: str, product: str) -> object:
     return account_key(product)(account)
 
 
-def _warn_if_view_broken(run: Invocation, target: ExpandedTarget, session: Any) -> None:
-    """`SOPULI-W073` where a MariaDB target's optional view exists and is not
-    used (#1491). Only a :class:`~sopuli.driver.survey.StateView` has one."""
-    if not isinstance(session, StateView):
+def _warn_if_view_broken(
+    run: Invocation,
+    target: ExpandedTarget,
+    session: object,
+) -> None:
+    """`SOPULI-W073` where a target's optional view ``sopuli.account_state``
+    exists and is not used (#1491, #1502). Each
+    :class:`~sopuli.driver.survey.OptionalView` says so only for a view it
+    read: MySQL's only after `report accounts`' survey has."""
+    if not isinstance(session, OptionalView):
         return
     broken = session.view_broken()
     if broken is not None:
-        run.document.warn_in_text(account_state_view_broken(target.name, broken))
+        run.document.warn_in_text(
+            account_state_view_broken(target.name, broken, product=target.target.type)
+        )
 
 
 def _database_date(

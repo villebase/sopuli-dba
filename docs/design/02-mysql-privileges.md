@@ -130,20 +130,24 @@ is granted to. `account list` follows `role_edges` down from the role to every
 account below it, and a verb follows it up from an account to its roles. So
 the session reports `role_lookup` and needs no other grant for it.
 
-Two grants are optional. The tool works without them, and `doctor
---check-privileges` lists neither as missing:
+Three grants are optional. The tool works without them, and `doctor
+--check-privileges` lists none as missing:
 
 ```sql
 -- report accounts: the failed-login count, on 9.7.4 and later (#1461).
 GRANT SELECT ON performance_schema.temporary_account_locks TO 'sopuli_admin'@'192.0.2.10';
 -- report privileges: which roles are active at login (#1482).
 GRANT SELECT ON mysql.default_roles TO 'sopuli_admin'@'192.0.2.10';
+-- report accounts: the failed-login limit (#1502). sql/mysql/account_state_view.sql
+-- creates the view and makes this grant.
+GRANT SELECT ON sopuli.account_state TO 'sopuli_admin'@'192.0.2.10';
 ```
 
-Neither table holds a hash. Without the first, or on a server that has no
-such table, such as 8.0 and 8.4, the count is `unknown` (§2.4). Without the
-second, `report privileges` says whether a role is active at login is *not
-checked*, unless `activate_all_roles_on_login` is on, and exits 4.
+None holds a hash. Without the first, or on a server that has no such table,
+such as 8.0 and 8.4, the count is `unknown` (§2.4). Without the second,
+`report privileges` says whether a role is active at login is *not checked*,
+unless `activate_all_roles_on_login` is on, and exits 4. Without the third,
+the failed-login limit is *not checked* (§2.4).
 
 Give the account no other privilege, and no role.
 
@@ -230,7 +234,8 @@ out each account that `mysql.role_edges` names as a granted role. Where a
 as `account list` does (#1495). Its lock is
 `account_locked`. Its lifetime is `password_lifetime`, or
 `@@default_password_lifetime` where that is NULL. Its failed-login limit is
-*not checked*, for the reason below. Its failed-login count is read from
+read from the optional view `sopuli.account_state` (below, #1502), and is
+*not checked* without it. Its failed-login count is read from
 `performance_schema.temporary_account_locks` under §2.1's optional grant. A
 row there with `LOCKED` `YES` is a block after failed logins, and the account
 reads as locked, but not by somebody.
@@ -291,24 +296,22 @@ reads as locked, but not by somebody.
   'Y'`, with no row in `db`, and nothing else the tool account reads shows
   the revoke. It is `User_attributes`' `Restrictions`.
 - **A view that a DBA creates reads the limit, the partial revokes and a
-  retained password** (`12_definer_view_probe.py`, #1490, for #1457). Nothing
-  reads the view yet. It has `SQL SECURITY DEFINER` and selects `User`,
-  `Host`, three keys of `User_attributes` and one flag:
-
-  ```sql
-  CREATE SQL SECURITY DEFINER VIEW sopuli_probe.account_state AS
-  SELECT User, Host,
-    JSON_EXTRACT(User_attributes, '$.Password_locking.failed_login_attempts')
-      AS failed_login_attempts,
-    JSON_EXTRACT(User_attributes, '$.Password_locking.password_lock_time_days')
-      AS password_lock_time_days,
-    JSON_EXTRACT(User_attributes, '$.Restrictions') AS restrictions,
-    COALESCE(JSON_CONTAINS_PATH(User_attributes, 'one', '$.additional_password'), 0)
-      AS retained_password
-  FROM mysql.user;
-  ```
-
-  With `SELECT` on it, the tool account reads:
+  retained password** (`12_definer_view_probe.py`, #1490, for #1457). It is
+  `sopuli.account_state`, the name MariaDB's view has, and
+  `sql/mysql/account_state_view.sql` creates it (#1502). It has `SQL SECURITY
+  DEFINER`, runs as a locked account that holds only `SELECT` on
+  `mysql.user`, and selects `User`, `Host`, three keys of `User_attributes`
+  and one flag: `failed_login_attempts`, `password_lock_time_days`,
+  `restrictions` and `retained_password`. `report accounts` reads `User`,
+  `Host`, `failed_login_attempts` and `password_lock_time_days`
+  (`sopuli/driver/mysql/account_state.py`), after it has checked the view's
+  columns, every session. A limit counts only with a lock time: the server
+  blocks after failed logins only when both are non-zero (measured on
+  8.4.13, #1508). A view with a column outside the six, one the tool account
+  cannot read all four of, or one that cannot be read, is not read, and
+  `SOPULI-W073` names what is wrong. No verb that changes an account reads
+  it. With `SELECT` on it, the tool
+  account reads:
   - the failed-login limit and lock days, `-1` for `UNBOUNDED`, and `NULL`
     where neither is set: setting both to 0 removes the keys;
   - the partial revokes, one entry per schema, such as `{"Database":

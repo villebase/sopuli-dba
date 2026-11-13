@@ -137,10 +137,13 @@ TABLES_READ = (
 #: reads the failed-login count from ``temporary_account_locks`` on 9.7.4
 #: (#1411, M2); without it the count is unknown. `report privileges` reads
 #: ``default_roles`` for which roles are active at login (M4, #1482); without
-#: it that is not checked. Neither holds a hash.
+#: it that is not checked. ``report accounts`` reads the failed-login limit
+#: from the optional view ``sopuli.account_state`` (#1502), whose definer reads
+#: ``mysql.user``. None holds a hash.
 OPTIONAL_TABLES_READ = (
     "performance_schema.temporary_account_locks",
     "mysql.default_roles",
+    "sopuli.account_state",
 )
 
 

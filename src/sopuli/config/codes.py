@@ -77,10 +77,10 @@ UNVERIFIED_DATABASE = "SOPULI-W058"
 #: account (#1472). The rule checks nothing for that name.
 HOSTLESS_REPORT_NAME = "SOPULI-W072"
 
-#: The optional MariaDB view ``sopuli.account_state`` exists and cannot be
-#: used: a column outside the expected set, or a definer that is gone or
-#: cannot read ``mysql.global_priv`` (#1491). What it would give is not
-#: checked on that target.
+#: The optional view ``sopuli.account_state`` exists on a MariaDB or MySQL
+#: target and cannot be used: a column outside the expected set, or a definer
+#: that is gone or cannot read what the view selects (#1491, #1502). What it
+#: would give is not checked on that target.
 ACCOUNT_STATE_VIEW_BROKEN = "SOPULI-W073"
 
 #: The optional MariaDB view ``sopuli.global_privileges`` exists and cannot

@@ -39,10 +39,10 @@ import pymysql
 from sopuli.config.model import ExpandedTarget, Runtime
 from sopuli.config.products import same_mysql_account
 from sopuli.driver.grants import SYSTEM, GrantSurvey
+from sopuli.driver.mysql import account_state, roles, verification
 from sopuli.driver.mysql import accounts as accounts_module
 from sopuli.driver.mysql import password as password_module
 from sopuli.driver.mysql import privilege_survey as privilege_module
-from sopuli.driver.mysql import roles, verification
 from sopuli.driver.mysql import survey as survey_module
 from sopuli.driver.mysql.errors import UNKNOWN_SYSTEM_VARIABLE, from_error
 from sopuli.driver.mysql.limits import LIMIT
@@ -165,6 +165,10 @@ class MysqlSession(ClosesConnection):
     #: :meth:`describe_user`. It does not change for the life of a connection,
     #: as the Oracle session's ``_session_user`` does not.
     _session_user: str | None = field(default=None, init=False, repr=False)
+    #: What the optional view ``sopuli.account_state`` gave, read on first use.
+    _account_states: account_state.AccountStates | None = field(
+        default=None, init=False, repr=False
+    )
     #: The server's clock just before :meth:`set_password` sent its statement,
     #: per account, for :meth:`confirm_change`.
     _changed_since: dict[str, datetime] = field(default_factory=dict, init=False, repr=False)
@@ -329,6 +333,8 @@ class MysqlSession(ClosesConnection):
         The failed-login counts are an optional read (#1411, M2): the server
         refuses it without the grant, ``1142``, or has no such table, ``1146``,
         and either leaves the counts unknown. Any other error fails the read.
+        The failed-login limit comes from the optional view
+        ``sopuli.account_state`` (:meth:`account_states`, #1502).
         """
         try:
             locks = self._read(survey_module.read_locks)
@@ -339,7 +345,28 @@ class MysqlSession(ClosesConnection):
                 locks = survey_module.Locks(None, survey_module.NO_TABLE)
             else:
                 raise
-        return self._read_grants(lambda cursor: survey_module.survey(cursor, locks)), frozenset()
+        states = self.account_states()
+        return (
+            self._read_grants(lambda cursor: survey_module.survey(cursor, locks, states)),
+            frozenset(),
+        )
+
+    def account_states(self) -> account_state.AccountStates:
+        """Each account's failed-login limit, from the optional view
+        ``sopuli.account_state``, or why there are none
+        (:mod:`~sopuli.driver.mysql.account_state`, #1502). Read once per
+        session. Only `report accounts` asks for it: ``describe_user`` does
+        not, so no verb that changes an account acts on it."""
+        if self._account_states is None:
+            self._account_states = self._read(account_state.read)
+        return self._account_states
+
+    def view_broken(self) -> str | None:
+        """:class:`~sopuli.driver.survey.OptionalView`: what is wrong with a
+        view that exists and is not used, for ``SOPULI-W073``. ``None`` until
+        this session's survey has read it: only `report accounts` reads it, so
+        no other command warns about a view it did not use."""
+        return None if self._account_states is None else self._account_states.broken
 
     def survey_privileges(self, accounts: Sequence[str], *, public: bool) -> GrantSurvey:
         """Every privilege ``accounts`` hold, one row per path, for `report

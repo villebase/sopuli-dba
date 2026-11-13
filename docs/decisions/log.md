@@ -5699,6 +5699,34 @@ the register.
      without contradicting it, minor, and no consumer reads a MariaDB
      `OPEN` as "not locked" after UC-2 said it was not.
 
+## #1502
+
+- **Decided:** 2026-11-13, #1502
+- **Question:** how is MySQL's view of #1457 named and read, by which
+  commands, and what happens when it exists and cannot be used?
+- **Decision:** the maintainer's:
+  1. **Name:** `sopuli.account_state`, MariaDB's name ([#1491](#1491)). Its
+     columns differ per product, and the shape check knows each product's
+     set.
+  2. **Readers:** the reports only. `report accounts` reads the failed-login
+     limit (M1). `report privileges` reads the partial revokes (M5, #1482),
+     in a change of its own. `account list` is not changed. The
+     retained-password flag stays in the view for a later
+     `creds finish-rollover` decision.
+  3. **A broken view** is not read: its fields are *not checked*, and
+     `SOPULI-W073`, reworded to name the product, says what is wrong.
+- **Why:** one name gives the operator one idea, one install step and one
+  warning across the two products. The two gaps #1411 left *not checked*
+  close where the view is installed. `account list` has no failed-login
+  column on any product, so showing the limit there is a change of its own.
+  W073 already means "the optional view `sopuli.account_state` exists and
+  cannot be used", and the JSON carries the target, so the product is known.
+- **Rejected:**
+  1. A MySQL-only name, such as `sopuli.user_attributes`: two names for one
+     idea.
+  2. Showing the limit in `account list`: a new column on every product.
+  3. A new warning code for MySQL: W073 already says it.
+
 ## #1503
 
 - **Decided:** 2026-11-13, #1503

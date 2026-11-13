@@ -42,8 +42,8 @@ def _run() -> Any:
     return SimpleNamespace(document=_Document())
 
 
-def _target() -> Any:
-    return SimpleNamespace(name="mariadb-dev")
+def _target(product: str = "mariadb") -> Any:
+    return SimpleNamespace(name=f"{product}-dev", target=SimpleNamespace(type=product))
 
 
 class ViewSession:
@@ -297,6 +297,54 @@ def test_a_broken_view_is_warned_about() -> None:
     assert warning.code == ACCOUNT_STATE_VIEW_BROKEN
     assert warning.target == "mariadb-dev"
     assert "its definer no longer exists (1045)" in warning.message
+
+
+def test_a_broken_mysql_view_is_warned_about_only_once_the_survey_read_it() -> None:
+    """MySQL reads the view only in `report accounts`' survey (#1502): before
+    that, `report history` and `account list` hear nothing of it."""
+    from sopuli.driver.mysql import account_state as mysql_view
+    from sopuli.driver.mysql.session import MysqlSession
+
+    session = MysqlSession.__new__(MysqlSession)
+    session._account_states = None
+    run = _run()
+    _warn_if_view_broken(run, _target("mysql"), session)
+    assert run.document.diagnostics == []
+
+    session._account_states = mysql_view.AccountStates(
+        rows=None, reason="x", broken="its definer cannot read mysql.user (1356)"
+    )
+    _warn_if_view_broken(run, _target("mysql"), session)
+    (warning,) = run.document.diagnostics
+    assert warning.code == ACCOUNT_STATE_VIEW_BROKEN
+    assert warning.message == (
+        "mysql-dev: the optional view sopuli.account_state is not used: its definer cannot "
+        "read mysql.user (1356). The failed-login limit is not checked here. Recreate it "
+        "with sql/mysql/account_state_view.sql, which makes it with only the expected "
+        "columns, owned by a locked definer that can read mysql.user"
+    )
+
+
+def test_a_product_without_the_view_gets_the_warning_without_the_fix() -> None:
+    from sopuli.diagnostics import account_state_view_broken
+
+    warning = account_state_view_broken("pg-dev", "it is broken", product="postgresql")
+    assert warning.message == (
+        "pg-dev: the optional view sopuli.account_state is not used: it is broken"
+    )
+
+
+def test_the_mysql_session_is_an_optional_view() -> None:
+    from sopuli.driver.mysql.session import MysqlSession
+    from sopuli.driver.survey import OptionalView, StateView
+
+    def typed(session: MysqlSession) -> OptionalView:
+        # mypy checks the signatures here; isinstance only the names.
+        return session
+
+    assert typed is not None
+    assert issubclass(MysqlSession, OptionalView)
+    assert not issubclass(MysqlSession, StateView)
 
 
 def test_an_absent_view_and_another_product_are_not_warned_about() -> None:

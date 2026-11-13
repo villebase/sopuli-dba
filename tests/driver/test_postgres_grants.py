@@ -9,7 +9,15 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
-from sopuli.driver.grants import COLUMN, OBJECT, SCHEMA, SYSTEM, RoleGrant
+from sopuli.driver.grants import (
+    COLUMN,
+    OBJECT,
+    SCHEMA,
+    SYSTEM,
+    GrantSurvey,
+    RoleGrant,
+    other_databases_reason,
+)
 from sopuli.driver.postgres.grants import (
     ATTRIBUTE,
     ATTRIBUTES_QUERY,
@@ -268,12 +276,14 @@ def test_the_walk_merges_the_grants_of_every_grantor_first() -> None:
 def test_the_other_databases_are_named_as_not_read() -> None:
     result, _ = survey(others=["acme_rp_other", "postgres"])
     assert result.other_databases == ("acme_rp_other", "postgres")
-    assert result.unreadable == ()
-    (reason,) = result.not_checked(frozenset())
+    # In unreadable too, so a reader that does not ask which are covered
+    # still shows them as not checked.
+    (reason,) = result.unreadable
     assert "(acme_rp_other, postgres)" in reason
     assert "a target reads only the database it connects to" in reason
+    assert result.not_checked(frozenset()) == result.unreadable
     alone, _ = survey()
-    assert alone.not_checked(frozenset()) == ()
+    assert alone.unreadable == alone.not_checked(frozenset()) == ()
 
 
 def test_a_database_another_target_covers_is_not_named() -> None:
@@ -282,6 +292,19 @@ def test_a_database_another_target_covers_is_not_named() -> None:
     (reason,) = result.not_checked(frozenset({"postgres"}))
     assert "(acme_rp_other)" in reason
     assert result.not_checked(frozenset({"postgres", "acme_rp_other"})) == ()
+
+
+def test_other_reasons_are_kept_when_every_database_is_covered() -> None:
+    found = GrantSurvey(
+        (),
+        (),
+        (),
+        (),
+        (),
+        unreadable=("other", other_databases_reason(["x"])),
+        other_databases=("x",),
+    )
+    assert found.not_checked(frozenset({"x"})) == ("other",)
 
 
 def test_a_role_that_holds_nothing_reads_as_holding_nothing() -> None:

@@ -206,7 +206,8 @@ DRIVERS: dict[str, DatabaseDriver] = {
         # accounts`, from `pg_roles` (#1459); `report history`, from the store,
         # with no database date, because PostgreSQL keeps none (#1460); `report
         # privileges`, from the catalogs' ACLs of the database the target
-        # connects to, with the cluster's other databases not checked (#1481).
+        # connects to, with the cluster's other databases not checked (#1481)
+        # unless another declared target connects to them (#1501).
         commands=frozenset(
             {
                 "report.privileges",

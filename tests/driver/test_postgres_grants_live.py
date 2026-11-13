@@ -280,7 +280,14 @@ def test_the_other_databases_are_named_as_not_read(live_postgres: Any, session: 
         ]
     survey = session.survey_privileges([], public=False)
     assert survey.other_databases == tuple(others)
-    assert survey.unreadable == ()
+    # Every one is named until another target covers it (#1501).
+    if not others:
+        assert survey.unreadable == ()
+        return
+    (reason,) = survey.unreadable
+    assert f"({', '.join(others)})" in reason
+    assert survey.not_checked(frozenset()) == survey.unreadable
+    assert survey.not_checked(frozenset(others)) == ()
 
 
 def test_a_domain_over_an_array_and_a_function_by_its_input_types(

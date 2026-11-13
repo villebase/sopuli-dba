@@ -1719,6 +1719,16 @@ revoked it, the target is not checked: not knowing is not a finding. Every
 command that connects says so in a warning, `SOPULI-W068`
 ([#1363](../decisions/log.md#1363)).
 
+`report privileges` reads the schemas and objects of the one database a
+target connects to (UC-5 §5). To report on every database of one cluster,
+declare a target for each, at the same `dsn:` with its own
+`postgres.database`, and run one per run with `--target`, as above. A run
+that selects two of them refuses the second. Each target's report then
+leaves out the databases the others connect to
+([#1501](../decisions/log.md#1501)). Keep such targets in a file of their
+own when other commands run over the file without `--target`, or declare
+them with labels that a selector can leave out.
+
 **The `dsn` is `host:port` and nothing else.** The host is a name, an IPv4
 address, or an IPv6 address in brackets, such as `[2001:db8::10]:5432`. A
 connection URI (`postgresql://…`) and a keyword string (`host=… port=…`) are

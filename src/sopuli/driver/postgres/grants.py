@@ -55,8 +55,8 @@ privilege of its own name (level ``predefined role``), with its path, so a
 member of ``pg_read_all_data`` never reads as holding nothing.
 
 **One database.** A session reads the schemas and objects of the database it
-is connected to. The cluster's other databases are named in
-``other_databases``, so the report can say what it could not see (#1411,
+is connected to. The cluster's other databases are named in ``unreadable``
+and ``other_databases``, so the report says what it could not see (#1411,
 question 4), except where another declared target reads it (#1501). Their own
 database privileges are in ``pg_database``, which every database shares, and
 are read.
@@ -67,7 +67,16 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
-from sopuli.driver.grants import COLUMN, OBJECT, SCHEMA, SYSTEM, GrantRow, GrantSurvey, RoleGrant
+from sopuli.driver.grants import (
+    COLUMN,
+    OBJECT,
+    SCHEMA,
+    SYSTEM,
+    GrantRow,
+    GrantSurvey,
+    RoleGrant,
+    other_databases_reason,
+)
 from sopuli.driver.postgres.roles import FIRST_NORMAL_OID
 from sopuli.driver.protocol import Cursor
 
@@ -404,6 +413,7 @@ def survey_grants(cursor: Cursor, accounts: Sequence[str], *, public: bool) -> G
         objects=_part(rows, OBJECT),
         columns=_part(rows, COLUMN),
         schemas=_part(rows, SCHEMA),
+        unreadable=(other_databases_reason(others),) if others else (),
         other_databases=tuple(others),
     )
 

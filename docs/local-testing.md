@@ -2883,7 +2883,10 @@ counted too. The default privilege is what `acme_rp_owner`'s future tables
 will grant. `--detail` lists each one, with `KIND` naming the level, such as
 `object (default for acme_rp_owner)`.
 
-To cover `sopuli`, add a second target at the same `dsn:`:
+To cover `sopuli`, copy `postgres.yaml` to `pg-report.yaml` and add a second
+target at the same `dsn:`. Keep it out of `postgres.yaml`: the other commands
+in this guide run without `--target`, and a run that reaches both targets
+refuses the second (`SOPULI-20008`).
 
 ```yaml
   - name: pg-dev-sopuli
@@ -2899,7 +2902,7 @@ run exits 0: `pg-dev` no longer names `sopuli`, and `pg-dev-sopuli` reads
 it:
 
 ```
-$ sopuli --config postgres.yaml report privileges --target pg-dev-sopuli --account acme_rp_user
+$ sopuli --config pg-report.yaml report privileges --target pg-dev-sopuli --account acme_rp_user
 pg-dev-sopuli  (16.15, 1 account)
   acme_rp_user  (technical)
     roles: acme_rp_app (inherit, set), acme_rp_batch (no inherit, set), pg_read_all_stats (inherit, set)

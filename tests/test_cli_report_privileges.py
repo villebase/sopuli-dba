@@ -521,7 +521,9 @@ def test_a_partial_revoke_names_its_schemas_in_text_and_json(
     assert "PROCESS (global static, direct)" in text
     detail = click.unstyle(report(write_config, "--detail").output)
     line = next(one for one in detail.splitlines() if "SELECT" in one)
-    assert "except on acme_hr" in line
+    # With the sources, as in the summary; the object column stays `-`.
+    assert "direct, except on acme_hr" in line
+    assert line.split()[3:6] == ["SELECT", "-", "-"]
     system = json_run(write_config)["results"][0]["privileges"]["system"]
     by_name = {one["privilege"]: one for one in system}
     assert by_name["SELECT"]["except_schemas"] == ["acme_hr"]

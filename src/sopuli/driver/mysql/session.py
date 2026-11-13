@@ -390,7 +390,8 @@ class MysqlSession(ClosesConnection):
         restrictions = None
         if partial:
             restrictions = self._read(account_state.read_restrictions)
-            self._restrictions = restrictions
+        # Each call's own: a later call with partial_revokes off warns of nothing.
+        self._restrictions = restrictions
         defaults = None
         reasons: list[str] = []
         # Read also where every role is active at login: the roles list says
@@ -409,7 +410,12 @@ class MysqlSession(ClosesConnection):
             if restrictions is not None and restrictions.rows is None:
                 unread[SYSTEM] = f"{privilege_module.PARTIAL_REVOKES}; {restrictions.reason}"
             else:
-                held += privilege_module.read_system(cursor, restrictions)
+                try:
+                    held += privilege_module.read_system(cursor, restrictions)
+                except account_state.MissingRowError:
+                    unread[SYSTEM] = (
+                        f"{privilege_module.PARTIAL_REVOKES}; {account_state.NO_PRINCIPAL_ROW}"
+                    )
             return privilege_rows.survey(
                 accounts,
                 privilege_module.read_edges(cursor),

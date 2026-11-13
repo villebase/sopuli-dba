@@ -153,8 +153,9 @@ def test_the_view_gives_each_partial_revoke(stage: Stage) -> None:
     with stage.live.connect() as root, root.cursor() as cursor:
         cursor.execute("select @@global.partial_revokes")
         (was_on,) = cursor.fetchone()
-    stage.root("SET GLOBAL partial_revokes = ON", f"CREATE SCHEMA {schema}")
     try:
+        # Inside the try, so a failure here still turns the setting back.
+        stage.root("SET GLOBAL partial_revokes = ON", f"CREATE SCHEMA {schema}")
         revoked = stage.account()
         stage.root(
             f"GRANT SELECT, INSERT ON *.* TO '{revoked}'@'%'",

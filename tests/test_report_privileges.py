@@ -75,11 +75,42 @@ def test_a_schema_is_an_exception_only_where_every_path_revokes_it() -> None:
         level="global static",
         except_schemas=("acme_hr", "acme_pay"),
     )
-    via_role = replace(own, path=("acme_reader@%",), except_schemas=("acme_pay",))
+    via_role = replace(
+        own, path=("acme_reader@%",), first_role_default=True, except_schemas=("acme_pay",)
+    )
     (alone,) = collapse([own])
     (both,) = collapse([own, via_role])
     assert alone.except_schemas == ("acme_hr", "acme_pay")
     assert both.except_schemas == ("acme_pay",)
+
+
+def test_a_role_not_active_at_login_gives_no_schema_back() -> None:
+    """At login, a role that is not a default role grants nothing, so its
+    unrevoked SELECT does not undo the account's own revoke (#1510). Nor does
+    one not known to be active."""
+    own = GrantRow(
+        grantee=APP,
+        kind=SYSTEM,
+        privilege="SELECT",
+        owner=None,
+        name=None,
+        object_type=None,
+        column=None,
+        path=(),
+        first_role_default=None,
+        grantable=False,
+        level="global static",
+        except_schemas=("acme_hr",),
+    )
+    for default in (False, None):
+        inactive = replace(own, path=("acme_reader@%",), first_role_default=default)
+        (privilege,) = collapse([own, inactive])
+        assert privilege.except_schemas == ("acme_hr",)
+    # Held only through roles not active: every path counts.
+    first = replace(own, path=("acme_a@%",), first_role_default=False)
+    second = replace(first, path=("acme_b@%",), except_schemas=())
+    (only_roles,) = collapse([first, second])
+    assert only_roles.except_schemas == ()
 
 
 def test_one_privilege_at_two_levels_stays_two_privileges() -> None:

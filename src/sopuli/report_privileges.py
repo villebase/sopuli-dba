@@ -120,11 +120,19 @@ def collapse(rows: Sequence[GrantRow]) -> tuple[Privilege, ...]:
 
 
 def _excepted(group: Sequence[GrantRow]) -> tuple[str, ...]:
-    """The schemas every path's grant is revoked on (#1502): a schema that one
-    path still reaches is not an exception, because the privileges of an
-    account and its active roles add up."""
-    schemas = set(group[0].except_schemas)
-    for row in group[1:]:
+    """The schemas every path active at login revokes the grant on (#1502).
+
+    A schema that one active path still reaches is not an exception, because
+    the privileges of an account and its active roles add up: measured on
+    8.4.13. A role not known to be active gives nothing back at login, so only
+    the direct path and paths whose first role is a default role count. Where
+    no path is active, every path counts: the privilege is held only after
+    ``SET ROLE``, and the row says so.
+    """
+    active = [row for row in group if row.path == () or row.first_role_default is True]
+    paths = active or list(group)
+    schemas = set(paths[0].except_schemas)
+    for row in paths[1:]:
         schemas &= set(row.except_schemas)
     return tuple(sorted(schemas))
 

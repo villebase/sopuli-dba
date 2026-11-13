@@ -241,10 +241,10 @@ def _detail(one: AccountPrivileges, words: Words) -> list[str]:
             [
                 label if p.level in (None, label) else f"{label} ({p.level})",
                 p.privilege,
-                ".".join(x for x in (p.owner, p.name, p.column) if x)
-                or (_except(p) if p.except_schemas else ABSENT),
+                ".".join(x for x in (p.owner, p.name, p.column) if x) or ABSENT,
                 SCHEMA_TYPE if p.kind == SCHEMA else p.object_type or ABSENT,
-                _sources(p, words),
+                # With the sources, as the summary has it: not an object.
+                f"{_sources(p, words)}, {_except(p)}" if p.except_schemas else _sources(p, words),
                 "yes" if p.grantable else "no",
             ]
             for p in part

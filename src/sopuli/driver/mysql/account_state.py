@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from typing import Any
 
 from sopuli.config.products import fold_mysql_host
 from sopuli.driver.mysql_family.accounts import text
@@ -45,9 +46,10 @@ INSTALL_SCRIPT = "sql/mysql/account_state_view.sql"
 #: What the view's definer reads.
 SOURCE = "mysql.user"
 
-#: The columns the view may have. ``restrictions`` and ``retained_password``
-#: are in the install script for later reads (#1502, #1457) and are not read
-#: here.
+#: The columns the view may have. `report accounts` reads the limit and the
+#: lock time, and `report privileges` reads ``restrictions``.
+#: ``retained_password`` is in the install script for a later read (#1457)
+#: and is not read here.
 EXPECTED = frozenset(
     {
         "User",
@@ -94,19 +96,38 @@ class AccountStates:
         return (None, NO_ROW) if found is None else (found, None)
 
 
-def read(cursor: Cursor) -> AccountStates:
-    """The view's rows, after its columns are checked."""
+#: What a value of the wrong shape makes the view: broken, the value never
+#: repeated, as it may be a stored one (invariant 2).
+WRONG_VALUES = "a column holds values the tool does not expect"
+
+
+def _fetch(cursor: Cursor, columns: tuple[str, ...]) -> tuple[list[Any] | None, str | None]:
+    """The view's rows of ``columns``, after its columns are checked, or
+    ``None`` and what is wrong: ``None`` too where the view is absent or not
+    granted. One path for both readers, so they cannot answer differently."""
     try:
-        listed, problem = shape_problem(cursor, SCHEMA, NAME, expected=EXPECTED, read=READ)
+        listed, problem = shape_problem(cursor, SCHEMA, NAME, expected=EXPECTED, read=columns)
         if not listed:
-            return AccountStates(rows=None, reason=ABSENT)
+            return None, None
         if problem is not None:
-            return _broken(problem)
-        cursor.execute(ROWS_QUERY)
-        rows = cursor.fetchall()
+            return None, problem
+        cursor.execute(f"select {', '.join(columns)} from {VIEW}")
+        return list(cursor.fetchall()), None
     except Exception as error:  # noqa: BLE001 -- a server's answer is classified
-        what = refusal(error, source=SOURCE)
-        return AccountStates(rows=None, reason=ABSENT) if what is None else _broken(what)
+        return None, refusal(error, source=SOURCE)
+
+
+def _not_used(what: str) -> str:
+    return f"the optional view {VIEW} is not used: {what}"
+
+
+def read(cursor: Cursor) -> AccountStates:
+    """Each account's failed-login limit, for `report accounts`."""
+    rows, broken = _fetch(cursor, READ)
+    if rows is None:
+        if broken is None:
+            return AccountStates(rows=None, reason=ABSENT)
+        return AccountStates(rows=None, reason=_not_used(broken), broken=broken)
     try:
         return AccountStates(
             rows={
@@ -115,17 +136,7 @@ def read(cursor: Cursor) -> AccountStates:
             }
         )
     except (TypeError, ValueError):
-        # A column with the right name holds something else. Its value is never
-        # repeated: it may be a stored one (invariant 2).
-        return _broken("a column holds values the tool does not expect")
-
-
-def _broken(what: str) -> AccountStates:
-    return AccountStates(
-        rows=None,
-        reason=f"the optional view {VIEW} is not used: {what}",
-        broken=what,
-    )
+        return AccountStates(rows=None, reason=_not_used(WRONG_VALUES), broken=WRONG_VALUES)
 
 
 #: The columns `report privileges` reads.
@@ -133,8 +144,25 @@ RESTRICTIONS_READ = ("User", "Host", "restrictions")
 RESTRICTIONS_QUERY = f"select {', '.join(RESTRICTIONS_READ)} from {VIEW}"
 
 #: Per ``(user, host)``, the host folded: each global privilege and the
-#: schemas it is revoked on.
+#: schemas it is revoked on. Every principal the view lists has an entry,
+#: empty where it has no revoke.
 Revoked = dict[tuple[str, str], dict[str, frozenset[str]]]
+
+ABSENT_RESTRICTIONS = (
+    "MySQL keeps a partial revoke in mysql.user.User_attributes, beside a retained "
+    f"password's hash, and the optional view {VIEW} that reads it without the hash is "
+    f"absent or not granted to the tool account: run {INSTALL_SCRIPT} as an administrator"
+)
+#: A principal ``mysql.user`` has and the view does not show, such as one
+#: created between the two reads, or a view that filters rows.
+NO_PRINCIPAL_ROW = (
+    f"the optional view {VIEW} has no row for an account or role that mysql.user has, "
+    "so its partial revokes are not known"
+)
+
+
+class MissingRowError(Exception):
+    """A principal with global privileges that the view does not list."""
 
 
 @dataclass(frozen=True)
@@ -147,51 +175,33 @@ class Restrictions:
 
     def of(self, user: str, host: str) -> dict[str, frozenset[str]]:
         """Each privilege ``user@host`` has revoked on some schemas, and those
-        schemas; empty where it has none."""
-        return {} if self.rows is None else self.rows.get((user, fold_mysql_host(host)), {})
+        schemas; empty where it has none. Raises :class:`MissingRowError` where
+        the view does not list it: no row is not the same as no revoke."""
+        if self.rows is None:
+            return {}
+        found = self.rows.get((user, fold_mysql_host(host)))
+        if found is None:
+            raise MissingRowError(f"{user}@{host}")
+        return found
 
 
 def read_restrictions(cursor: Cursor) -> Restrictions:
-    """Every principal's partial revokes, after the view's columns are
-    checked. Read only where ``@@partial_revokes`` is on."""
+    """Every principal's partial revokes, for `report privileges`. Read only
+    where ``@@partial_revokes`` is on."""
+    rows, broken = _fetch(cursor, RESTRICTIONS_READ)
+    if rows is None:
+        if broken is None:
+            return Restrictions(rows=None, reason=ABSENT_RESTRICTIONS)
+        return Restrictions(rows=None, reason=_not_used(broken), broken=broken)
     try:
-        listed, problem = shape_problem(
-            cursor, SCHEMA, NAME, expected=EXPECTED, read=RESTRICTIONS_READ
+        return Restrictions(
+            rows={
+                (text(user), fold_mysql_host(text(host))): _restrictions(value)
+                for user, host, value in rows
+            }
         )
-        if not listed:
-            return Restrictions(rows=None, reason=ABSENT_RESTRICTIONS)
-        if problem is not None:
-            return _broken_restrictions(problem)
-        cursor.execute(RESTRICTIONS_QUERY)
-        rows = cursor.fetchall()
-    except Exception as error:  # noqa: BLE001 -- a server's answer is classified
-        what = refusal(error, source=SOURCE)
-        if what is None:
-            return Restrictions(rows=None, reason=ABSENT_RESTRICTIONS)
-        return _broken_restrictions(what)
-    revoked: Revoked = {}
-    try:
-        for user, host, value in rows:
-            parsed = _restrictions(value)
-            if parsed:
-                revoked[(text(user), fold_mysql_host(text(host)))] = parsed
     except (TypeError, ValueError, KeyError):
-        # Never repeated: the column could hold anything a view selects.
-        return _broken_restrictions("a column holds values the tool does not expect")
-    return Restrictions(rows=revoked)
-
-
-ABSENT_RESTRICTIONS = (
-    "MySQL keeps a partial revoke in mysql.user.User_attributes, beside a retained "
-    f"password's hash, and the optional view {VIEW} that reads it without the hash is "
-    f"absent or not granted to the tool account: run {INSTALL_SCRIPT} as an administrator"
-)
-
-
-def _broken_restrictions(what: str) -> Restrictions:
-    return Restrictions(
-        rows=None, reason=f"the optional view {VIEW} is not used: {what}", broken=what
-    )
+        return Restrictions(rows=None, reason=_not_used(WRONG_VALUES), broken=WRONG_VALUES)
 
 
 def _restrictions(value: object) -> dict[str, frozenset[str]]:

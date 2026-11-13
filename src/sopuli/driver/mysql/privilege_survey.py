@@ -136,14 +136,17 @@ def read_system(cursor: Any, restrictions: Restrictions | None = None) -> list[H
     ``restrictions`` are the partial revokes, read from the optional view
     where ``@@partial_revokes`` is on (#1502): each static privilege a holder
     has revoked on some schemas carries those schemas. A revoke applies to
-    static privileges only; a dynamic one is global alone.
+    static privileges only; a dynamic one is global alone. A holder of a
+    static privilege that the view does not list raises
+    :class:`~sopuli.driver.mysql.account_state.MissingRowError`: its revokes are
+    not known, and reading none would claim every schema.
     """
     held: list[Held] = []
     cursor.execute(GLOBAL_ROWS)
     for user, host, *flags in cursor.fetchall():
         holder = Principal(text(user), text(host))
         rows = level(holder, SYSTEM, GLOBAL_STATIC, _flagged(PRIV_COLUMNS, flags))
-        revoked = restrictions.of(holder.user, holder.host) if restrictions else {}
+        revoked = restrictions.of(holder.user, holder.host) if restrictions and rows else {}
         held += [
             replace(row, except_schemas=tuple(sorted(revoked[row.privilege])))
             if row.privilege in revoked

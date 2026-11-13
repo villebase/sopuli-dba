@@ -14,6 +14,7 @@ from sopuli.driver.mysql import privilege_survey as reads
 from sopuli.driver.mysql.account_state import (
     ABSENT_RESTRICTIONS,
     EXPECTED,
+    NO_PRINCIPAL_ROW,
     RESTRICTIONS_QUERY,
 )
 from sopuli.driver.mysql.admin import DB_PRIV_COLUMNS, MANDATORY_ROLES, PRIV_COLUMNS
@@ -231,6 +232,39 @@ def test_a_restriction_of_another_shape_is_broken_and_never_repeated() -> None:
     found = survey(cursor)
     assert found.system is None
     assert "secret" not in " ".join(found.unreadable)
+
+
+def test_a_holder_the_view_does_not_list_leaves_global_privileges_not_checked() -> None:
+    """No row is not the same as no revoke: reading none would claim every
+    schema (#1510)."""
+    cursor = _Cursor(partial="1", users=[OPS], view_columns=VIEW, restrictions=[])
+    found = survey(cursor)
+    assert found.system is None
+    assert found.unreadable == (f"{reads.PARTIAL_REVOKES}; {NO_PRINCIPAL_ROW}",)
+
+
+def test_a_holder_with_no_static_privilege_needs_no_row() -> None:
+    cursor = _Cursor(partial="1", users=[APP], view_columns=VIEW, restrictions=[])
+    found = survey(cursor)
+    assert found.system == ()
+    assert found.unreadable == ()
+
+
+def test_a_later_survey_with_partial_revokes_off_warns_of_nothing() -> None:
+    session = MysqlSession.__new__(MysqlSession)
+    broken = _Cursor(partial="1", users=[APP], view_columns=[*VIEW, ("authentication_string",)])
+    current = [broken]
+
+    def read(reader: Any, **_: Any) -> Any:
+        return reader(current[0])
+
+    session._read = read  # type: ignore[method-assign]
+    session._read_grants = read  # type: ignore[method-assign]
+    session.survey_privileges(["acme_app@%"], public=False)
+    assert session.privilege_view_broken() is not None
+    current[0] = _Cursor(users=[APP])
+    session.survey_privileges(["acme_app@%"], public=False)
+    assert session.privilege_view_broken() is None
 
 
 def test_refused_default_roles_are_not_checked() -> None:

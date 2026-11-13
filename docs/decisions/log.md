@@ -5676,3 +5676,36 @@ the register.
   3. A bump for `account_status`: `03-json-output.md` §8 calls widening a field's meaning,
      without contradicting it, minor, and no consumer reads a MariaDB
      `OPEN` as "not locked" after UC-2 said it was not.
+
+## #1503
+
+- **Decided:** 2026-11-13, #1503
+- **Question:** two questions from #1496's review. In `report accounts` and
+  `report privileges`, a personal rule's `role:` that every account holds (a
+  MySQL role in `@@global.mandatory_roles`, a MariaDB role that `PUBLIC`
+  reaches) fails that target's read, and the run exits 1, while `account
+  list` refuses it as a config error, exit 9. Which should the reports use?
+  And on MariaDB, where the account that ran `CREATE ROLE` holds the role,
+  is it a member?
+- **Decision:** the maintainer's:
+  1. **That target's read fails**, as built, and the run exits 1, as for
+     any target that was reached and could not be read (UC-5 §3). The
+     target's entry says that every account holds the role and names the
+     fix. The other targets are still read and reported.
+  2. **The creator is a member**, in the reports as in `account list`.
+- **Why:** without the role's members the report cannot say which accounts
+  on that target the config declares. Listing them as undeclared would be a
+  wrong answer, not a missing one, so the target gives no answer, as when
+  its survey fails. The fault is found only by reading that target: the same
+  config can be right on another target, where the role is not mandatory.
+  The server reports that the creator holds the role, and the two commands
+  share one function ([#1469](#1469)), so they cannot disagree.
+- **Rejected:**
+  1. Exit 9: it says the config was refused before anything was read, as
+     `account list` and the mutating verbs refuse it. The report has read
+     every other target and reports them, and the config is not wrong on
+     every target.
+  2. Leaving out a member whose only grant is the creator's: the server's
+     grant does not tell a creator from a later admin grant, so it would
+     need a rule of its own and a measurement. A DBA who does not want the
+     creator listed revokes the role from it.

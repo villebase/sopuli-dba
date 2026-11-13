@@ -181,6 +181,7 @@ from sopuli.diagnostics import (
     refusing_targets,
     reset_journal_unread,
     reset_record_unwritten,
+    role_not_resolved,
     rollback_reuse,
     rollover_caveat,
     second_method_unseen,
@@ -5874,7 +5875,9 @@ def _role_key(role: str) -> str:
     return f"{name}@{fold_mysql_host(host)}" if at else role
 
 
-def _personal_role_members(session: Any, config: Config, target: ExpandedTarget) -> tuple[str, ...]:
+def _personal_role_members(
+    session: Any, config: Config, target: ExpandedTarget, run: Invocation
+) -> tuple[str, ...]:
     """Every account a personal rule's `role:` admits on ``target`` (#1469).
 
     The same two reads `account list` makes (:func:`role_members`), so the
@@ -5885,9 +5888,10 @@ def _personal_role_members(session: Any, config: Config, target: ExpandedTarget)
     refuses both, because there the rule is the whole answer.
 
     Where the target lacks `role_lookup` (on Oracle, `SELECT ON DBA_ROLES`),
-    the role is not resolved and its members show as undeclared, as before
-    #1469. The report still runs: a report that lacks a capability does not
-    fail the target over it (invariant 4, #1376). Any other failure, such as
+    the role is not resolved and its members show as undeclared, and
+    `SOPULI-W075` names the role and the grant (#1478). The report still runs:
+    a report that lacks a capability does not fail the target over it
+    (invariant 4, #1376). Any other failure, such as
     two roles whose names differ only in case, is the target's read failure,
     as the survey's is: without the members the report cannot say which
     accounts the file declares, and listing them as undeclared would be a
@@ -5910,7 +5914,8 @@ def _personal_role_members(session: Any, config: Config, target: ExpandedTarget)
     for role in roles.values():
         try:
             found = role_members(session, role)
-        except UnsupportedCapabilityError:
+        except UnsupportedCapabilityError as refused:
+            run.document.warn_in_text(role_not_resolved(target.name, role, refused))
             continue
         members.extend(found or ())
     return tuple(members)
@@ -5952,7 +5957,7 @@ def _report_target(
         try:
             surveyed, profiles = session.survey_with_profiles()
             _warn_if_view_broken(run, target, session)
-            members = _personal_role_members(session, config, target)
+            members = _personal_role_members(session, config, target, run)
         except Exception as error:  # noqa: BLE001 -- a per-target finding
             # Connected, then could not read: said as such, not as "could not
             # connect", though the target still gave no answer (exit 1).
@@ -6092,7 +6097,7 @@ def _privileges_target(
             surveyed, _profiles = session.survey_with_profiles()
             # A common account in a PDB stays: its grants made in the PDB are
             # read here, though its lock and limits are not (#1438).
-            members = _personal_role_members(session, config, target)
+            members = _personal_role_members(session, config, target, run)
             rows = report_states.evaluate(
                 target.name, config, surveyed, keep_kept_in_root=True, role_members=members
             )

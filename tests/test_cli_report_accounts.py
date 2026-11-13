@@ -223,6 +223,19 @@ ROLES = {
 }
 
 
+def _quiet_run() -> Any:
+    """A run whose document refuses a warning: these reads must raise none."""
+
+    class _Document:
+        def warn_in_text(self, diagnostic: Any) -> None:
+            raise AssertionError(f"unexpected warning: {diagnostic}")
+
+    class _Run:
+        document = _Document()
+
+    return _Run()
+
+
 @pytest.mark.parametrize("product", sorted(ROLES))
 def test_roles_are_resolved_on_every_product(product: str) -> None:
     """#1469 on Oracle and PostgreSQL, and #1495 on MySQL and MariaDB."""
@@ -235,7 +248,7 @@ def test_roles_are_resolved_on_every_product(product: str) -> None:
     )
     session = _RoleSession("t")
     session.roles = {name.upper(): ("acme_dev_alice",) for name in ROLES.values()}
-    members = _personal_role_members(session, config, config.expanded_targets[0])
+    members = _personal_role_members(session, config, config.expanded_targets[0], _quiet_run())
 
     assert members == ("acme_dev_alice",)
 
@@ -274,7 +287,7 @@ def test_roles_are_told_apart_as_the_config_tells_them(product: str, asked: list
     )
     session = _AskedRoles("t")
     session.roles = {"ACME_DEV@EXAMPLE.COM": ()}
-    _personal_role_members(session, config, config.expanded_targets[0])
+    _personal_role_members(session, config, config.expanded_targets[0], _quiet_run())
 
     assert session.asked == asked
 
@@ -283,18 +296,29 @@ def test_without_role_lookup_the_report_runs_and_the_role_is_not_resolved(
     write_config: WriteConfig, sessions: Any
 ) -> None:
     """On Oracle without `SELECT ON DBA_ROLES`: the report does not fail the
-    target over a capability (invariant 4, #1376); the members show as before."""
+    target over a capability (invariant 4, #1376); the members show as
+    undeclared, and `SOPULI-W075` names the role and the grant (#1478)."""
 
     class _NoLookup(_RoleSession):
         def resolve_role(self, role: str) -> str | None:
-            raise UnsupportedCapabilityError(ROLE_LOOKUP, target=self.target)
+            raise UnsupportedCapabilityError(
+                ROLE_LOOKUP, target=self.target, hint="GRANT SELECT ON SYS.DBA_ROLES to it"
+            )
 
     sessions["prod-alpha"] = lambda *_: _NoLookup("prod-alpha")
     result = role_report(write_config, "acme_developers")
 
     assert result.exit_code == ExitCode.DRIFT, result.output
-    by_name = {row["account"]: row for row in json.loads(result.output)["results"]}
+    document = json.loads(result.output)
+    by_name = {row["account"]: row for row in document["results"]}
     assert by_name["ACME_STRAY_USER"]["state"] == "UNDECLARED"
+    [warning] = [w for w in document["diagnostics"] if w["code"] == "SOPULI-W075"]
+    assert warning["target"] == "prod-alpha"
+    assert warning["message"] == (
+        "prod-alpha: the role acme_developers of a personal_accounts: rule was not "
+        "resolved, because the target does not support role_lookup, so its members "
+        "show as undeclared: GRANT SELECT ON SYS.DBA_ROLES to it"
+    )
 
 
 def test_a_role_read_that_fails_is_a_read_failure_on_the_target(

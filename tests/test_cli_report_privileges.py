@@ -19,7 +19,7 @@ from jsonschema import Draft202012Validator
 from conftest import WriteConfig
 from sopuli.cli import cli
 from sopuli.driver.grants import COLUMN, OBJECT, SCHEMA, SYSTEM, GrantRow, GrantSurvey, RoleGrant
-from sopuli.driver.protocol import Scope
+from sopuli.driver.protocol import ROLE_LOOKUP, Scope, UnsupportedCapabilityError
 from sopuli.driver.survey import SurveyedAccount
 from sopuli.exit_codes import ExitCode
 from sopuli.output.document import SCHEMA_VERSION
@@ -223,6 +223,28 @@ def test_a_role_predicates_member_is_personal_in_the_privilege_report(
     document = json.loads(result.output)
     kinds = {entry["account"]: entry["kind"] for entry in document["results"]}
     assert kinds["ACME_DEV_ALICE"] == "personal"
+
+
+def test_an_unresolved_role_warns_in_the_privilege_report(
+    write_config: WriteConfig, session: dict[str, FakeSession]
+) -> None:
+    """Without `role_lookup` the member is undeclared, and W075 says why (#1478)."""
+
+    class _NoLookup(_RoleSession):
+        def resolve_role(self, role: str) -> str | None:
+            raise UnsupportedCapabilityError(ROLE_LOOKUP, target="free-pdb")
+
+    session["session"] = _NoLookup(GRANTS)
+    config = write_config(f"{CONFIG}personal_accounts:\n  - role: acme_developers\n")
+    result = CliRunner().invoke(
+        cli, ["--config", str(config), "--output", "json", "report", "privileges"]
+    )
+
+    document = json.loads(result.output)
+    kinds = {entry["account"]: entry["kind"] for entry in document["results"]}
+    assert kinds["ACME_DEV_ALICE"] == "undeclared"
+    codes = [warning["code"] for warning in document["diagnostics"]]
+    assert codes.count("SOPULI-W075") == 1
 
 
 def test_public_json_validates_and_is_not_counted_as_an_account(

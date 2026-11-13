@@ -5554,6 +5554,28 @@ the register.
   2. A query of the report's own: a third way to resolve one set, which
      could disagree with the other two.
 
+## #1478
+
+- **Decided:** 2026-11-13, #1478
+- **Question:** where a target lacks the capability to resolve a personal
+  rule's `role:` (on Oracle `role_lookup`, `SELECT ON SYS.DBA_ROLES`, which
+  no pre-flight requires), the role's members show as undeclared in the
+  reports, and nothing says why. How should the report say it?
+- **Decision:** the maintainer's: a run warning, `SOPULI-W075`, once per
+  target and role, from `report accounts` and `report privileges`. It names
+  the role, the capability and the grant.
+- **Why:** it names the cause and the fix where the operator already looks,
+  and it does not change the report's shape, as `SOPULI-W072` reports a
+  config-shaped gap on the report path (#1472).
+- **Rejected:**
+  1. A per-target note field in the report: a new field and a new place for
+     later gaps to collect, for the first such case.
+  2. Marking every undeclared account on that target *not checked*: without
+     the members the tool cannot tell which accounts the role would admit.
+  3. Documentation only: the output stays silent.
+  4. A required pre-flight read of `DBA_ROLES`: it turns a report gap into a
+     plan-time refusal, which [#1376](#1376) decided against for the reports.
+
 ## #1482
 
 - **Decided:** 2026-11-12, #1482

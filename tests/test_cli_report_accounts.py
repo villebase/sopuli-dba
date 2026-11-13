@@ -20,6 +20,7 @@ from jsonschema import Draft202012Validator
 from conftest import WriteConfig
 from sopuli.cli import _personal_role_members, cli
 from sopuli.config.loading import build_config
+from sopuli.driver.oracle.session import ROLE_LOOKUP_REMEDY
 from sopuli.driver.protocol import ROLE_LOOKUP, DriverError, Scope, UnsupportedCapabilityError
 from sopuli.driver.survey import SurveyedAccount
 from sopuli.exit_codes import ExitCode
@@ -235,9 +236,9 @@ def test_roles_are_resolved_on_every_product(product: str) -> None:
     )
     session = _RoleSession("t")
     session.roles = {name.upper(): ("acme_dev_alice",) for name in ROLES.values()}
-    members = _personal_role_members(session, config, config.expanded_targets[0])
+    roles = _personal_role_members(session, config, config.expanded_targets[0])
 
-    assert members == ("acme_dev_alice",)
+    assert (roles.members, roles.unresolved) == (("acme_dev_alice",), ())
 
 
 class _AskedRoles(_RoleSession):
@@ -283,18 +284,72 @@ def test_without_role_lookup_the_report_runs_and_the_role_is_not_resolved(
     write_config: WriteConfig, sessions: Any
 ) -> None:
     """On Oracle without `SELECT ON DBA_ROLES`: the report does not fail the
-    target over a capability (invariant 4, #1376); the members show as before."""
-
-    class _NoLookup(_RoleSession):
-        def resolve_role(self, role: str) -> str | None:
-            raise UnsupportedCapabilityError(ROLE_LOOKUP, target=self.target)
+    target over a capability (invariant 4, #1376); the members show as
+    undeclared, and `SOPULI-W075` names the role and the grant (#1478)."""
 
     sessions["prod-alpha"] = lambda *_: _NoLookup("prod-alpha")
     result = role_report(write_config, "acme_developers")
 
     assert result.exit_code == ExitCode.DRIFT, result.output
-    by_name = {row["account"]: row for row in json.loads(result.output)["results"]}
+    document = json.loads(result.output)
+    by_name = {row["account"]: row for row in document["results"]}
     assert by_name["ACME_STRAY_USER"]["state"] == "UNDECLARED"
+    [warning] = [w for w in document["diagnostics"] if w["code"] == "SOPULI-W075"]
+    assert warning["target"] == "prod-alpha"
+    assert warning["message"] == (
+        "prod-alpha: the role acme_developers of a personal_accounts: rule was not "
+        "resolved, because the target does not support role_lookup, so any member of "
+        "it shows as undeclared. GRANT SELECT ON SYS.DBA_ROLES to the service account, "
+        "as sql/oracle/00_install.sql does"
+    )
+
+
+class _NoLookup(_RoleSession):
+    """Oracle without `SELECT ON DBA_ROLES`, refused with the driver's own
+    remedy (the live test pins it), and `account list`'s hint, which W075
+    does not repeat."""
+
+    def resolve_role(self, role: str) -> str | None:
+        raise UnsupportedCapabilityError(
+            ROLE_LOOKUP,
+            target=self.target,
+            hint="the service account cannot read DBA_ROLES, so a role that matches nobody",
+            remedy=ROLE_LOOKUP_REMEDY,
+        )
+
+
+def test_an_unresolved_role_gives_no_warning_on_a_target_that_fails_later(
+    write_config: WriteConfig, sessions: Any
+) -> None:
+    """The warning is about rows the report shows: a target whose second role
+    read fails shows none, so it carries none (#1478)."""
+
+    asked: list[str] = []
+
+    class _SecondFails(_NoLookup):
+        def resolve_role(self, role: str) -> str | None:
+            asked.append(role)
+            if role == "acme_ops":
+                raise DriverError("ORA-01031: insufficient privileges")
+            return super().resolve_role(role)
+
+    sessions["prod-alpha"] = lambda *_: _SecondFails("prod-alpha")
+    config = write_config(
+        f"{CONFIG}personal_accounts:\n  - role: acme_developers\n  - role: acme_ops\n"
+    )
+    result = CliRunner().invoke(
+        cli,
+        [
+            *("--config", str(config), "--output", "json"),
+            *("report", "accounts", "--target", "prod-alpha"),
+        ],
+    )
+
+    # The unresolved role was met before the failure, or the test proves nothing.
+    assert asked == ["acme_developers", "acme_ops"]
+    assert result.exit_code == ExitCode.FAILURE, result.output
+    codes = [w["code"] for w in json.loads(result.output).get("diagnostics", [])]
+    assert "SOPULI-W075" not in codes
 
 
 def test_a_role_read_that_fails_is_a_read_failure_on_the_target(

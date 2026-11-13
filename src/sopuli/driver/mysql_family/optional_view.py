@@ -35,8 +35,8 @@ VIEW_INVALID = 1356
 #: ``ER_TABLEACCESS_DENIED_ERROR``: no grant on the view, or no view.
 NO_GRANT = 1142
 #: ``ER_NO_SUCH_TABLE``: the view was dropped after its columns were read,
-#: with the grant left, as the install script's own re-run can do. Absent,
-#: as MariaDB's ``sopuli.global_privileges`` reader takes it.
+#: with the grant left, as the install script's own re-run can do, or by a
+#: DBA's ``DROP VIEW``, which leaves the grant. Absent.
 NO_SUCH_TABLE = 1146
 #: The client's own error numbers (CR_*), such as a lost connection: not the
 #: server's answer about the view.
@@ -73,10 +73,11 @@ def shape_problem(
     return True, None
 
 
-def refusal(error: Exception, *, source: str) -> str | None:
+def refusal(error: Exception, *, source: str | None) -> str | None:
     """What a refused read of the view says: ``None`` where the view is
     absent or not granted, else what is wrong with it. ``source`` is what its
-    definer reads, such as ``mysql.user``.
+    definer reads, such as ``mysql.user``, and ``None`` where ``1356`` does not
+    say which read failed, as for MariaDB's ``sopuli.global_privileges``.
 
     Raises ``error`` again where it is not the server's answer, such as a lost
     connection: that is the target's, as any read's would be.
@@ -89,6 +90,8 @@ def refusal(error: Exception, *, source: str) -> str | None:
     if number == DEFINER_GONE:
         return f"its definer no longer exists ({DEFINER_GONE})"
     if number == VIEW_INVALID:
+        if source is None:
+            return f"it cannot be read ({VIEW_INVALID})"
         return f"its definer cannot read {source} ({VIEW_INVALID})"
     # Any other refusal of an optional view: not read, never the target's
     # failure (#1376). Only the number.

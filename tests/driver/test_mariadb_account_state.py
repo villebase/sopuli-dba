@@ -86,8 +86,10 @@ def test_a_definer_that_is_gone_or_cannot_read_is_broken(number: int, broken: st
     assert (states.rows, states.broken) == (None, broken)
 
 
-def test_a_grant_revoked_between_the_two_reads_is_absent() -> None:
-    states = read(Answers(ALL, (0,), ServerError(1142, "denied")))
+@pytest.mark.parametrize("number", [1142, 1146])
+def test_a_grant_revoked_or_a_view_dropped_between_the_two_reads_is_absent(number: int) -> None:
+    # 1146: DROP VIEW leaves the tool account's grant (#1509).
+    states = read(Answers(ALL, (0,), ServerError(number, "denied")))
     assert (states.rows, states.reason, states.broken) == (None, ABSENT, None)
 
 

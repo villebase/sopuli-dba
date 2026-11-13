@@ -13,8 +13,8 @@ measured by ``17_global_privileges_view_probe.py``
 (``02-mariadb-privileges.md`` §2.4).
 
 **Its shape is checked first, every session**, as ``sopuli.account_state``'s
-is (:mod:`~sopuli.driver.mariadb.account_state`): a view with a column outside
-:data:`EXPECTED` is not read.
+is, by :mod:`~sopuli.driver.mysql_family.optional_view`: a view with a column
+outside :data:`EXPECTED` is not read.
 
 **What the server answers** where the view cannot be used:
 
@@ -40,7 +40,7 @@ from dataclasses import dataclass
 
 from sopuli.driver.grants import SYSTEM
 from sopuli.driver.mysql_family.accounts import Principal, text
-from sopuli.driver.mysql_family.errors import error_number
+from sopuli.driver.mysql_family.optional_view import columns_query, refusal, shape_problem
 from sopuli.driver.mysql_family.privilege_survey import Held
 from sopuli.driver.protocol import Cursor
 
@@ -51,22 +51,12 @@ INSTALL_SCRIPT = "sql/mariadb/global_privileges_view.sql"
 
 #: The view's columns, exactly.
 EXPECTED = ("GRANTEE", "PRIVILEGE_TYPE", "IS_GRANTABLE")
-_EXPECTED_LOWER = frozenset(column.lower() for column in EXPECTED)
 
-COLUMNS_QUERY = (
-    "select COLUMN_NAME from information_schema.COLUMNS "
-    f"where TABLE_SCHEMA = '{SCHEMA}' and TABLE_NAME = '{NAME}'"
-)
+COLUMNS_QUERY = columns_query(SCHEMA, NAME)
 ROWS_QUERY = f"select {', '.join(EXPECTED)} from {VIEW}"
 
 #: The privilege every account holds, which says it holds nothing.
 USAGE = "USAGE"
-
-DEFINER_GONE = 1045
-NO_GRANT = 1142
-NO_SUCH_TABLE = 1146
-VIEW_INVALID = 1356
-CLIENT_ERRORS = range(2000, 3000)
 
 #: Why the view gave nothing, where it is absent or not granted. Follows the
 #: privilege survey's own reason, after a semicolon.
@@ -105,31 +95,18 @@ def read(cursor: Cursor, *, user: str, host: str) -> GlobalPrivileges:
     """The view's rows, after its columns are checked. ``user`` and ``host`` are
     the tool account's own, whose row proves the definer reads every account."""
     try:
-        cursor.execute(COLUMNS_QUERY)
-        columns = {text(row[0]).lower() for row in cursor.fetchall()}
-        if not columns:
+        listed, problem = shape_problem(cursor, SCHEMA, NAME, expected=EXPECTED, read=EXPECTED)
+        if not listed:
             return GlobalPrivileges(rows=None, reason=ABSENT)
-        extra = tuple(sorted(columns - _EXPECTED_LOWER))
-        if extra:
-            return _broken(f"it has columns the tool does not expect ({', '.join(extra)})")
-        missing = [column for column in EXPECTED if column.lower() not in columns]
-        if missing:
-            return _broken(f"the tool account cannot read its columns {', '.join(missing)}")
+        if problem is not None:
+            return _broken(problem)
         cursor.execute(ROWS_QUERY)
         rows = cursor.fetchall()
     except Exception as error:  # noqa: BLE001 -- a server's answer is classified
-        number = error_number(error)
-        if number is None or number in CLIENT_ERRORS:
-            # A lost connection, say: the target's, as any read's would be.
-            raise
-        if number in (NO_GRANT, NO_SUCH_TABLE):
-            return GlobalPrivileges(rows=None, reason=ABSENT)
-        if number == DEFINER_GONE:
-            return _broken(f"its definer no longer exists ({DEFINER_GONE})")
-        if number == VIEW_INVALID:
-            return _broken(f"it cannot be read ({VIEW_INVALID})")
-        # Only the number: the server's message could quote a value.
-        return _broken(f"the server refused to read it ({number})")
+        # A client error, such as a lost connection, is raised again. The
+        # view reads information_schema, so 1356 names no table.
+        what = refusal(error, source=None)
+        return GlobalPrivileges(rows=None, reason=ABSENT) if what is None else _broken(what)
     found: dict[str, list[tuple[str, bool]]] = {}
     for who, privilege, grantable in rows:
         held = found.setdefault(text(who), [])

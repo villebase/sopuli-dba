@@ -190,7 +190,7 @@ above are like that:
 - `common_users` asks whether the session holds `ALTER USER` *granted commonly*.
   The test lane connects as `SYSTEM`, which holds it through a role, so
   `USER_SYS_PRIVS` returns nothing and the capability is absent.
-- `offline_verify` needs `SELECT ON SYS.USER$`. That is an optional grant (P2),
+- `offline_verify` needs `READ ON SYS.USER$`. That is an optional grant (P2),
   and `SYSTEM` does not hold it by default. The test stack grants it at
   container start (`test/oracle-init/01_test_profiles.sql`), so the capability
   is present.

@@ -11,7 +11,7 @@ holds — which is **release gate 4**:
 accounts while checking them is worse than no tool. It is the one test in this
 repository whose failure means "do not ship", so it is written to fail loudly
 rather than skip quietly: the profile comes from the container init script, and
-so does the `SELECT ON SYS.USER$` grant the guard needs.
+so does the `READ ON SYS.USER$` grant the guard needs.
 """
 
 from __future__ import annotations
@@ -339,7 +339,7 @@ def _offline_session(
 def test_hash_without_the_sys_user_grant_is_refused_naming_the_target(
     session_module: Any, method: str
 ) -> None:
-    """The branch every live test above skips: without `SELECT ON SYS.USER$`
+    """The branch every live test above skips: without `READ ON SYS.USER$`
     there is no verifier to read, and `login` is not substituted for it --
     `both` included, which would otherwise have a login half to fall back on."""
     offline = _offline_session(session_module, frozenset())
@@ -349,7 +349,7 @@ def test_hash_without_the_sys_user_grant_is_refused_naming_the_target(
 
     assert refused.value.capability == OFFLINE_VERIFY
     assert refused.value.target == "orders-pdb"
-    assert "GRANT SELECT ON SYS.USER$" in (refused.value.hint or "")
+    assert "GRANT READ ON SYS.USER$" in (refused.value.hint or "")
 
 
 def test_on_autonomous_database_the_refusal_does_not_advise_a_grant(
@@ -638,7 +638,7 @@ def test_the_scope_sets_name_only_real_scopes(session_module: Any) -> None:
 def test_a_common_account_without_the_grant_is_told_the_container_reason(
     session_module: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Granting `SELECT ON SYS.USER$` would not give a common account its guard
+    """Granting `READ ON SYS.USER$` would not give a common account its guard
     in a PDB, so the row gives the container as the reason, not the grant."""
     offline = _offline_session(session_module, frozenset())
     _stub_account(session_module, offline, monkeypatch)
@@ -889,7 +889,7 @@ def test_release_gate_4_checking_a_drifted_account_never_locks_it(
 
     **No `requires_capability` marker, deliberately.** §6 opens with "not tests
     that can be skipped", and routing this through the generic capability gate
-    would mean a missing `SELECT ON SYS.USER$` grant reports a tidy skip while
+    would mean a missing `READ ON SYS.USER$` grant reports a tidy skip while
     the safety property goes unverified — a broken setup looking green, which is
     the one outcome a release gate must not have. So the guard's absence fails
     here, with a message saying what to grant.
@@ -897,7 +897,7 @@ def test_release_gate_4_checking_a_drifted_account_never_locks_it(
     if OFFLINE_VERIFY not in oracle_target.capabilities:
         pytest.fail(
             "release gate 4 cannot run without the LCOUNT guard, and a gate does not skip "
-            "(04-testing.md §6). Grant SELECT ON SYS.USER$ to the test account -- "
+            "(04-testing.md §6). Grant READ ON SYS.USER$ to the test account -- "
             "test/oracle-init/01_test_profiles.sql does it, and it needs CONTAINER=ALL "
             "because the init script runs in CDB$ROOT while the suite connects to a PDB"
         )

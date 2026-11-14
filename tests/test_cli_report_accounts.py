@@ -627,7 +627,7 @@ def test_an_unreadable_count_says_why_once_per_target(
                 vendor_maintained=True,
                 password_lifetime="unlimited",
                 failed_logins=None,
-                unreadable=("SYS.USER$ is not readable: grant SELECT ON SYS.USER$",),
+                unreadable=("SYS.USER$ is not readable: grant READ ON SYS.USER$",),
             ),
         ),
     )

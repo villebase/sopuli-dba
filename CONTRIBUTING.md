@@ -269,7 +269,9 @@ this way. Use them as the model.
 
 ### Describe the current build
 
-A document says what the tool does now, in the present tense.
+A document says what the tool does now, in the present tense. A decision record
+is the exception: it says what was decided on its date (*A later pointer, in a
+decision record*, below).
 
 - Do not write "until #N", "this paragraph used to say", or the date a
   behaviour changed.
@@ -321,8 +323,17 @@ a new list.
 - **Provenance, once.** At the home of a decision, name the issue that made it:
   "decided in #N".
 - **Pending work, as a marker.** See *Describe the current build* above.
-- **Never as narration.** Do not write "#N changed this" or "this said X until
-  #N".
+- **Never as narration**, outside a decision record. Do not write "#N changed
+  this" or "this said X until #N".
+- **A later pointer, in a decision record.** A record in
+  [`docs/decisions/log.md`](docs/decisions/log.md), and an ADR's *Decision*
+  and *Consequences*, says what was decided on its date, and stays that way.
+  Where a later decision or build changes what the record says about the
+  build, do not rewrite it: add a sentence beside the old text, "#N later
+  decided it: …" or "#N later built it …". Write `#N` as a link,
+  `[#N](#N)`, where the log has a record for it, and bare otherwise.
+  Rewriting the record would make it say something nobody decided on that
+  date.
 
 The reason itself is always written in the repository. An issue number points to
 the discussion. It does not replace the explanation.

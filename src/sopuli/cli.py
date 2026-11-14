@@ -6758,7 +6758,7 @@ def creds_check(
     `--method login`, the default, logs in as the account. On Oracle there are
     two more methods. `--method hash` compares the vault's password with the
     account's stored 12C verifier and does not log in, so it spends nothing
-    against the lockout counter. It needs the optional `SELECT ON SYS.USER$`
+    against the lockout counter. It needs the optional `READ ON SYS.USER$`
     grant, which no account can hold on Autonomous Database. `--method both`
     compares first, and logs in only if the comparison passed, so it never
     tries a password that is already shown to be wrong.
@@ -8737,7 +8737,7 @@ def creds_apply(
     therefore reports `changed: false`. It spends at most two logins per
     account on each target per run, and it counts them before it starts. It
     does not compare verifiers instead, because that needs the optional
-    `SELECT ON SYS.USER$` grant, which no account can hold on Autonomous
+    `READ ON SYS.USER$` grant, which no account can hold on Autonomous
     Database.
 
     The command does not change a locked account. The `ALTER USER` would

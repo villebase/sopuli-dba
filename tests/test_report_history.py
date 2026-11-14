@@ -402,11 +402,11 @@ def test_a_naive_database_date_is_read_as_utc_not_local_time() -> None:
 def test_an_unknown_database_date_says_why() -> None:
     found = history.with_database(
         app(TARGET, binding(), listed(1), {1: shared(None)}),
-        UserState(name="X", status="OPEN", password_changed_unknown="needs SELECT ON SYS.USER$"),
+        UserState(name="X", status="OPEN", password_changed_unknown="needs READ ON SYS.USER$"),
     )
 
     assert found.db_changed_at is None
-    assert found.db_unknown == "needs SELECT ON SYS.USER$"
+    assert found.db_unknown == "needs READ ON SYS.USER$"
 
 
 def test_no_account_on_the_target_is_said() -> None:

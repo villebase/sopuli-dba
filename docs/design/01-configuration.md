@@ -3512,7 +3512,7 @@ count is compared with the limit the profile has now, so a lockout whose limit
 was raised afterwards passes, and a lock somebody set after failed logins is a
 problem once the limit is lowered to the count (`02-oracle-privileges.md` §2).
 The
-count needs the optional `SELECT ON SYS.USER$` grant; without it, such a lock
+count needs the optional `READ ON SYS.USER$` grant; without it, such a lock
 is *not checked*, never OK. So is a lock whose profile's lock time or limit the
 target cannot read. Where the target cannot read the lock, as for a common
 account on a PDB target, the check is *not checked*. `login:` is a neutral

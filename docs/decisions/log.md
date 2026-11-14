@@ -5907,6 +5907,14 @@ the register.
   3. **Without the table or the grant** (`1142`, `1146`): the login goes
      ahead, and the detail says the guard is unavailable and why. A session
      that was refused once does not read the table again.
+  4. **Every login through `verify_password`** is guarded, as on Oracle:
+     `creds check`'s, and the login after a change in `creds apply` and
+     `creds rotate`, with a budget of the one login the run makes there.
+     Where the guard stops that login, the change is not confirmed and the
+     vault is not promoted (invariant 7).
+  5. **A blocked row** is not logged in as, and the detail names its
+     `LOCKED_UNTIL`. Whether the row clears on its own after that date was
+     not measured.
 - **Why:** measured on 9.7.4, the table has a row from the creation of every
   account with a limit and a lock time, and none for an account the server
   never blocks, so it answers the whole question by itself. #1511 named the

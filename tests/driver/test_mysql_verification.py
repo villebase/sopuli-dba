@@ -6,7 +6,7 @@ written in :mod:`sopuli.driver.mysql.verification`'s docstring.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 
 import pytest
 
@@ -146,13 +146,22 @@ def test_a_failure_that_says_nothing_about_the_password_is_raised() -> None:
 
 def test_a_row_gives_the_count_and_the_limit() -> None:
     """Measured on 9.7.4: after two wrong passwords of three, the row reads
-    `NO, 3, 1` (#1515). The query reads the limit, the attempts left and
-    `LOCKED`, in that order."""
-    assert lockout_from_row((3, 1, "NO")) == Lockout(failed=2, limit=3, blocked=False)
+    `NO, 3, 1` (#1515). The query reads the limit, the attempts left,
+    `LOCKED` and `LOCKED_UNTIL`, in that order."""
+    found = lockout_from_row((3, 1, "NO", None))
+    assert found == Lockout(failed=2, limit=3, blocked=False)
+    assert found.limit_text == "3"
 
 
-def test_a_blocked_row_says_so() -> None:
-    assert lockout_from_row((3, 0, b"YES")) == Lockout(failed=3, limit=3, blocked=True)
+def test_a_blocked_row_says_so_and_names_its_date() -> None:
+    """`LOCKED_UNTIL` is a date. Whether the row clears on its own once it has
+    passed was not measured, so the detail names it and no login is made."""
+    found = lockout_from_row((3, 0, b"YES", date(2026, 11, 15)))
+    assert found == Lockout(failed=3, limit=3, blocked=True, until=date(2026, 11, 15))
+    assert "until 2026-11-15 as the server records it; no login was attempted" in (
+        found.blocked_detail()
+    )
+    assert "ACCOUNT UNLOCK" in found.blocked_detail()
 
 
 def test_no_row_is_nothing_to_guard() -> None:

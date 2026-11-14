@@ -54,6 +54,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import date
 from typing import Any
 
 from sopuli.driver.mysql.accounts import Account
@@ -76,8 +77,8 @@ LOCKS_TABLE = "performance_schema.temporary_account_locks"
 
 #: One account's row. The user name and host are bound: neither is a secret.
 LOCK_ROW = (
-    f"select FAILED_LOGIN_ATTEMPTS, REMAINING_LOGIN_ATTEMPTS, LOCKED from {LOCKS_TABLE} "
-    "where USER = %s and HOST = %s"
+    "select FAILED_LOGIN_ATTEMPTS, REMAINING_LOGIN_ATTEMPTS, LOCKED, LOCKED_UNTIL "
+    f"from {LOCKS_TABLE} where USER = %s and HOST = %s"
 )
 
 #: ``ER_NO_SUCH_TABLE``: a server older than the table, read under a grant
@@ -105,13 +106,34 @@ class Lockout:
 
     ``failed`` and ``limit`` are ``None`` where there is nothing to guard: no
     row, or no read. ``unguarded`` says why the read was not made or failed,
-    and is ``None`` where the guard ran.
+    and is ``None`` where the guard ran. ``until`` is the block's
+    ``LOCKED_UNTIL``, a date.
     """
 
     failed: int | None = None
     limit: int | None = None
     blocked: bool = False
     unguarded: str | None = None
+    until: date | None = None
+
+    @property
+    def limit_text(self) -> str | None:
+        """The limit as a result reports it, and as the guard's rule takes it."""
+        return None if self.limit is None else str(self.limit)
+
+    def blocked_detail(self) -> str:
+        """What a check of a blocked account says. Whether the row clears on
+        its own once ``LOCKED_UNTIL`` has passed, before the next login, was
+        not measured, so the date is named and no login is guessed at."""
+        until = (
+            ""
+            if self.until is None
+            else f", until {self.until.isoformat()} as the server records it"
+        )
+        return (
+            f"the account is blocked after failed logins{until}; no login was attempted. "
+            "`ALTER USER … ACCOUNT UNLOCK` ends the block"
+        )
 
 
 def unguarded_reason(number: int) -> str | None:
@@ -124,13 +146,14 @@ def lockout_from_row(row: Sequence[Any] | None) -> Lockout:
     """The guard's reading of :data:`LOCK_ROW`'s row, or of no row."""
     if row is None:
         return Lockout()
-    attempts, remaining, locked = row
+    attempts, remaining, locked, until = row
     if isinstance(locked, bytes):
         locked = locked.decode()
     return Lockout(
         failed=int(attempts) - int(remaining),
         limit=int(attempts),
         blocked=str(locked).upper() == "YES",
+        until=until if isinstance(until, date) else None,
     )
 
 

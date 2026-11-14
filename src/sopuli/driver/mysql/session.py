@@ -928,7 +928,7 @@ class MysqlSession(ClosesConnection):
         if declared.locked:
             return _not_tried("the account is locked; no login was attempted")
         lockout = self._lockout(declared)
-        limit = None if lockout.limit is None else str(lockout.limit)
+        limit = lockout.limit_text
         if lockout.blocked:
             # Before the margin, as on Oracle: a block leaves no attempts, and
             # it is a block either way.
@@ -937,7 +937,7 @@ class MysqlSession(ClosesConnection):
                 result=UNAVAILABLE,
                 failed_logins=lockout.failed,
                 failed_login_limit=limit,
-                detail="the account is blocked after failed logins; no login was attempted",
+                detail=lockout.blocked_detail(),
             )
         reason = margin_reason(lockout.failed, limit, margin=lockout_margin, attempts=attempts)
         if reason is not None:
@@ -954,8 +954,9 @@ class MysqlSession(ClosesConnection):
     def _lockout(self, declared: accounts_module.Account) -> verification.Lockout:
         """The guard's read of ``declared``'s row, fresh before each login.
 
-        A table this session could not read is not read again: the grant and
-        the table do not change while it is open."""
+        A table this session could not read is not read again. A grant made
+        while the run is open then leaves the rest of the run unguarded, which
+        fails open and is accepted: it saves a refused read per login."""
         if self._unguarded is not None:
             return verification.Lockout(unguarded=self._unguarded)
 
@@ -1015,8 +1016,8 @@ class MysqlSession(ClosesConnection):
         self, declared: accounts_module.Account, secret: Secret, lockout: verification.Lockout
     ) -> VerifyResult:
         """One login, after :meth:`verify_password`'s guard. ``lockout`` is what
-        the guard read, reported with the result as on Oracle."""
-        limit = None if lockout.limit is None else str(lockout.limit)
+        the guard read, reported with every result as on Oracle."""
+        limit = lockout.limit_text
         arguments = connect_arguments(
             self.target,
             Credential(username=declared.user, secret=secret),
@@ -1063,9 +1064,12 @@ class MysqlSession(ClosesConnection):
                 method=VERIFY_LOGIN,
                 result=UNAVAILABLE,
                 latency_ms=latency,
-                detail=(
+                failed_logins=lockout.failed,
+                failed_login_limit=limit,
+                detail=verification.with_unguarded(
                     f"the login succeeded, and reading which account it reached failed "
-                    f"({failure.code}), so it says nothing certain about {declared.name}"
+                    f"({failure.code}), so it says nothing certain about {declared.name}",
+                    lockout.unguarded,
                 ),
             )
         finally:
@@ -1081,9 +1085,12 @@ class MysqlSession(ClosesConnection):
                 method=VERIFY_LOGIN,
                 result=UNAVAILABLE,
                 latency_ms=latency,
-                detail=(
+                failed_logins=lockout.failed,
+                failed_login_limit=limit,
+                detail=verification.with_unguarded(
                     f"the login reached {answered}, not {declared.name}, so it says nothing "
-                    "about the declared account's password"
+                    "about the declared account's password",
+                    lockout.unguarded,
                 ),
             )
         LOG.debug("login as %s: pass in %.3fs", declared.name, latency / 1000)

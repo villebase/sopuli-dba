@@ -260,7 +260,8 @@ def test_a_blocked_account_is_not_logged_in_as(guarded: Stage) -> None:
     assert wrong.result == "unavailable"
     assert "(3955)" in str(wrong.detail)
     assert after.result == "unavailable"
-    assert "blocked after failed logins; no login was attempted" in str(after.detail)
+    assert "blocked after failed logins, until " in str(after.detail)
+    assert "as the server records it; no login was attempted" in str(after.detail)
     assert after.failed_logins == 1
 
 

@@ -650,12 +650,17 @@ not logged in as. Measured on 9.7.4 (#1515):
   blocks it (#1508). No row is nothing to guard.
 - With a limit of 1, the first wrong password blocks the account, and the
   server answers that login `3955`, not `1045`.
+- A blocked row has `LOCKED_UNTIL`, a date. Whether the row clears on its own
+  once that date has passed, before the next login, was not measured. So a
+  blocked row is not logged in as, and the detail names the date and says
+  that `ACCOUNT UNLOCK` ends the block.
 
 The login that `creds apply` and `creds rotate` make after a change, to
-confirm it, is guarded too, as on Oracle, with a budget of two logins. Where
-the guard stops it, the change is not confirmed and the vault is not promoted:
-on 9.7.4, an account with a limit of 3 and no failed logins was changed and
-reported `UNVERIFIABLE`, because two more would leave less than the margin.
+confirm it, is guarded too, as on Oracle. Its budget is one login, the only
+one the run makes on MySQL, where no login comes before a change. Where the
+guard stops it, the change is not confirmed and the vault is not promoted.
+On 9.7.4 an account with a limit of 3 and no failed logins was changed,
+confirmed and promoted.
 
 The optional view `sopuli.account_state` is not read: the table has the limit
 too. Without the grant, or on 8.0 and 8.4, which have no such table, the

@@ -62,7 +62,7 @@ def margin_reason(
         # not understand, and guessing at a lockout threshold is the wrong thing
         # to guess at. Refuse the attempt rather than spend an unknown budget.
         return (
-            f"the profile's FAILED_LOGIN_ATTEMPTS is {failed_login_limit!r}, "
+            f"the FAILED_LOGIN_ATTEMPTS limit is {failed_login_limit!r}, "
             "which is neither a count nor UNLIMITED"
         )
 

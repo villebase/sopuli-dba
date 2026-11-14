@@ -10973,8 +10973,17 @@ def _apply_one(
         # lock may have arrived in between. The state reported has to be the one
         # that is true now.
         after_user = session.describe_user(binding.account) or user
+        # The budget is the logins this run makes on the account: two, or one
+        # where the driver makes no login before a change (MySQL, MariaDB). A
+        # budget of two there would hold back a login the account can afford
+        # (#1515).
+        budget = 2 if getattr(session, "verifies_before_change", True) else 1
         after = session.verify_password(
-            after_user.name, source.value, method=VERIFY_LOGIN, lockout_margin=margin, attempts=2
+            after_user.name,
+            source.value,
+            method=VERIFY_LOGIN,
+            lockout_margin=margin,
+            attempts=budget,
         )
         reaching = getattr(session, "verify_reaching", None)
         unrecorded = None

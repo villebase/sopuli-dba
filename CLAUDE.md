@@ -245,7 +245,8 @@ disagree, one of them has a bug: fix it, do not add a note.
 **Write documentation and comments by the rules in `CONTRIBUTING.md`**,
 §*Writing documentation and comments*. Read them before writing prose or
 comments. When a fact changes, replace the old wording. Do not add a correction
-beside it.
+beside it. A decision record is the exception: it keeps its text and gains a
+later pointer (`CONTRIBUTING.md`, *A later pointer, in a decision record*).
 
 **`docs/local-testing.md` follows the usual path.** It is a general guide for a
 person testing by hand: the usual commands, for the current build, with no

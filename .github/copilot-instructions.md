@@ -148,10 +148,12 @@ them:
 - No counts and no "the only" unless a test checks them.
 - Cite an issue once, as provenance ("decided in #N"), or as a pending-work
   marker: `(open: #N)` in Markdown, `TODO(#N)` in code. Never as narration. The
-  reason itself is always written in the repository. A decision record in
-  `docs/decisions/log.md`, or an ADR's decision, keeps its text when a later
-  change makes it stale, and gains a "#N later decided it" pointer; do not
-  ask for it to be rewritten.
+  reason itself is always written in the repository.
+- The exception to both rules above: a record in `docs/decisions/log.md`, and
+  an ADR's *Decision* and *Consequences*, say what was decided on their date.
+  When a later change makes one stale, it keeps its text and gains a sentence
+  beside it, "#N later decided it: …" or "#N later built it …". Do not ask
+  for such a record to be rewritten, or for its pointer to be removed.
 - Comments say what the code does and why, not which issue changed it. Module
   docstrings stay short.
 

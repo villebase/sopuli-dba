@@ -7067,6 +7067,7 @@ def _check_one(
                 method=method,
                 lockout_margin=margin,
                 attempts=budget,
+                for_check=True,
             )
             outcome = check_states.decide(user, verification, version=stored.version)
             if previous:
@@ -7209,6 +7210,7 @@ def _previous_accepted(
         method=method,
         lockout_margin=margin,
         attempts=budget,
+        for_check=True,
     )
     # A declined or unavailable attempt is not a "no": it is the absence of an
     # answer, and the guard that declined it has already been reported on the
@@ -10583,7 +10585,8 @@ def _verify_before_change(
 
     MySQL says so (#1223): a wrong login during a rotation can block an account
     with ``FAILED_LOGIN_ATTEMPTS 1`` for days, a new password does not clear the
-    block, and the tool cannot read the setting. MariaDB says so too (#1270,
+    block, and the tool reads the setting only on 9.7.4 and later, under an
+    optional grant, for `creds check`'s guard (#1515). MariaDB says so too (#1270,
     decision 4): a failure counts toward ``max_password_errors``, which the
     tool cannot read either. Without the login there is no answer, so a
     `pending` is set, and a `current` is left alone

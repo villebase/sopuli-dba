@@ -554,6 +554,7 @@ class FakeSession:
         method: str = VERIFY_LOGIN,
         lockout_margin: int = 2,
         attempts: int = 1,
+        for_check: bool = False,
     ) -> VerifyResult:
         self.attempts.append((account.upper(), secret.reveal()))
         self.budgets.append(attempts)

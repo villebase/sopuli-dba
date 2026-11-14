@@ -280,6 +280,7 @@ class FakeSession:
         method: str = "login",
         lockout_margin: int = 2,
         attempts: int = 1,
+        for_check: bool = False,
     ) -> VerifyResult:
         """Ask the database, rather than replaying a scripted answer.
 

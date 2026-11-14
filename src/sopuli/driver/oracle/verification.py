@@ -75,6 +75,8 @@ says ``EXPIRED(GRACE)`` in both shapes and needs no login
 
 from __future__ import annotations
 
+# The guard's rule is shared with MySQL (#1515), and re-exported here.
+from sopuli.driver.lockout import UNLIMITED, margin_reason, skipped_detail
 from sopuli.driver.protocol import (
     DEFAULT_MARGIN,
     FAIL,
@@ -82,9 +84,6 @@ from sopuli.driver.protocol import (
     SKIPPED,
     UNAVAILABLE,
 )
-
-#: What ``FAILED_LOGIN_ATTEMPTS`` says when there is no lockout to guard against.
-UNLIMITED = "UNLIMITED"
 
 ACCOUNT_LOCKED = "ORA-28000"
 PASSWORD_EXPIRED = "ORA-28001"
@@ -95,64 +94,6 @@ PASSWORD_EXPIRED = "ORA-28001"
 #: only in SQL*Plus; see the module docstring.
 PASSWORD_IN_GRACE = "ORA-28002"
 INVALID_CREDENTIALS = "ORA-01017"
-
-
-def margin_reason(
-    failed_logins: int | None,
-    failed_login_limit: str | None,
-    *,
-    margin: int = DEFAULT_MARGIN,
-    attempts: int = 1,
-) -> str | None:
-    """Why this run must not attempt a login, or ``None`` to go ahead.
-
-    ``attempts`` is how many logins **this run intends against this account**,
-    and it is a parameter rather than an assumed 1 because of what
-    ``--include-previous`` does. Mitigation 1 sets a fixed budget per account per
-    run; a flag that checks the previous password too makes it two, and restating
-    the rule per *value checked* rather than per account would quietly double
-    the spend on the counter the guard is protecting. Asking for the budget up
-    front is what keeps the flag honest.
-
-    Returns a sentence rather than a bool because it is reported: "we chose not
-    to try" is a result (:data:`~sopuli.driver.protocol.SKIPPED`), and a result
-    with no reason attached is indistinguishable at 03:00 from a run that did
-    nothing.
-
-    Two ways to have no guard, and they are not the same:
-
-    * **``UNLIMITED``** -- there is no lockout on this profile, so there is
-      nothing to protect and the attempt goes ahead.
-    * **``failed_logins is None``** -- ``READ ON SYS.USER$`` was never granted
-      (an optional grant, decision P2), or the account is a common account whose
-      count is in another container (#1122), so the guard is *unavailable*. The
-      attempt still goes ahead, because `check` runs without a site-specific
-      grant -- but the caller is expected to say so plainly rather than let an
-      absent guard look like a satisfied one.
-    """
-    if failed_login_limit is None or failed_login_limit.upper() == UNLIMITED:
-        return None
-    if failed_logins is None:
-        return None
-
-    try:
-        limit = int(failed_login_limit)
-    except ValueError:
-        # A limit that is neither a number nor UNLIMITED is one this code does
-        # not understand, and guessing at a lockout threshold is the wrong thing
-        # to guess at. Refuse the attempt rather than spend an unknown budget.
-        return (
-            f"the profile's FAILED_LOGIN_ATTEMPTS is {failed_login_limit!r}, "
-            "which is neither a count nor UNLIMITED"
-        )
-
-    remaining = limit - failed_logins
-    if remaining - attempts < margin:
-        return (
-            f"{failed_logins} of {limit} failed logins are already recorded, "
-            f"and {attempts} more would leave less than the {margin}-attempt margin"
-        )
-    return None
 
 
 #: The codes that say something about **this password on this account**, and so
@@ -264,11 +205,6 @@ def _sentence(code: str | None, message: str | None) -> str | None:
     if code is not None and first.startswith(prefix):
         return first[len(prefix) :].strip()
     return first
-
-
-def skipped_detail(reason: str) -> str:
-    """What a skipped verification says about itself."""
-    return f"no login attempted: {reason}"
 
 
 __all__ = [

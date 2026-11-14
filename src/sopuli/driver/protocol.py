@@ -1508,8 +1508,14 @@ class Session(Protocol):
         method: str = VERIFY_LOGIN,
         lockout_margin: int = 2,
         attempts: int = 1,
+        for_check: bool = False,
     ) -> VerifyResult:
         """Whether ``secret`` authenticates as ``account``.
+
+        ``for_check`` says the login is `creds check`'s. MySQL's lockout guard
+        runs on that login only (#1515): the login after a change, or before a
+        rollover is closed, uses the password the run just set or keeps, and
+        stays unguarded there, as before. Every other driver ignores it.
 
         ``lockout_margin`` is UC-1 §7 mitigation 2's headroom -- how many failed
         logins the driver must leave unspent -- and it is **on the interface

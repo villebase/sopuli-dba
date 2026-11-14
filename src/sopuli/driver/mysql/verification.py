@@ -34,15 +34,28 @@ it can handle an expired password, so the server refuses at connect with
 after failed logins (`3955`) answers the right password too, so it says
 nothing about it.
 
-**There is no lockout guard.** `FAILED_LOGIN_ATTEMPTS` and its counter are in
-`mysql.user.User_attributes`, which the tool account cannot read (#1202,
-decision 6). A login therefore goes ahead, as on Oracle without the
-`SYS.USER$` grant, and the result says the guard is unavailable.
+**The lockout guard** (#1515) reads `performance_schema.temporary_account_locks`,
+under the optional grant on it (`02-mysql-privileges.md` §2.1). From 9.7.4 the
+table has a row per account with a failed-login limit and a lock time, from
+the account's creation: the limit, the attempts left and whether the account
+is blocked. A failed login takes one attempt, and a good login, `ACCOUNT
+UNLOCK` or a new limit gives them all back (measured on 9.7.4). An account
+with a limit and no lock time has no row, and the server never blocks it. So
+no row means nothing to guard. The guard is as Oracle's: no login where one
+more would leave less than `--lockout-margin` attempts. The optional view
+`sopuli.account_state` is not read: the table has the limit too.
+
+Without the grant, or on a server without the table, as 8.0 and 8.4, the
+guard is unavailable: the login goes ahead, as on Oracle without the
+`SYS.USER$` grant, and the result says so.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
+from datetime import date
+from typing import Any
 
 from sopuli.driver.mysql.accounts import Account
 from sopuli.driver.mysql.errors import (
@@ -50,15 +63,110 @@ from sopuli.driver.mysql.errors import (
     ACCOUNT_LOCKED,
     MUST_CHANGE_PASSWORD_LOGIN,
 )
-from sopuli.driver.mysql_family.errors import ACCESS_DENIED, MUST_CHANGE_PASSWORD, Diagnosis
+from sopuli.driver.mysql.survey import LOCKS_TABLE, NO_SUCH_TABLE
+from sopuli.driver.mysql_family.errors import (
+    ACCESS_DENIED,
+    MUST_CHANGE_PASSWORD,
+    TABLE_ACCESS_DENIED,
+    Diagnosis,
+)
 from sopuli.driver.mysql_family.verification import competition
 from sopuli.driver.protocol import FAIL, PASS, UNAVAILABLE
 
-#: Said on every login, because MySQL gives the tool nothing to guard it with.
-UNGUARDED = (
-    "the lockout guard is unavailable: MySQL keeps FAILED_LOGIN_ATTEMPTS and its "
-    "counter in mysql.user.User_attributes, which the tool account does not read"
+#: One account's row, as `report accounts` reads the table
+#: (:mod:`~sopuli.driver.mysql.survey`), with ``LOCKED_UNTIL``. The user name
+#: and host are bound: neither is a secret. The guard reads only a ``user@%``
+#: account, whose host has no case to fold.
+LOCK_ROW = (
+    "select FAILED_LOGIN_ATTEMPTS, REMAINING_LOGIN_ATTEMPTS, LOCKED, LOCKED_UNTIL "
+    f"from {LOCKS_TABLE} where USER = %s and HOST = %s"
 )
+
+#: Whether the server collects ``performance_schema``. Where it does not, the
+#: table exists and is empty, and no row would read as nothing to guard.
+PERFORMANCE_SCHEMA = "select @@performance_schema"
+
+#: ``performance_schema`` is off.
+NO_PERFORMANCE_SCHEMA = (
+    "the lockout guard is unavailable: performance_schema is off on this server, "
+    f"so {LOCKS_TABLE} holds no rows"
+)
+
+#: Without the grant. The server checks the grant before the table, so a
+#: server without the table answers this too.
+NO_GRANT = (
+    f"the lockout guard is unavailable: the tool account cannot read {LOCKS_TABLE} "
+    f"({TABLE_ACCESS_DENIED}); it needs SELECT on it, and the server needs the table, "
+    "which MySQL has from 9.7.4"
+)
+
+#: A server without the table.
+NO_TABLE = (
+    f"the lockout guard is unavailable: this server has no {LOCKS_TABLE} "
+    f"({NO_SUCH_TABLE}), where MySQL keeps the count of failed logins from 9.7.4"
+)
+
+
+@dataclass(frozen=True)
+class Lockout:
+    """What the guard read for one account.
+
+    ``failed`` and ``limit`` are ``None`` where there is nothing to guard: no
+    row, or no read. ``unguarded`` says why the read was not made or failed,
+    and is ``None`` where the guard ran. ``until`` is the block's
+    ``LOCKED_UNTIL``, a date.
+    """
+
+    failed: int | None = None
+    limit: int | None = None
+    blocked: bool = False
+    unguarded: str | None = None
+    until: date | None = None
+
+    @property
+    def limit_text(self) -> str | None:
+        """The limit as a result reports it, and as the guard's rule takes it."""
+        return None if self.limit is None else str(self.limit)
+
+    def blocked_detail(self) -> str:
+        """What a check of a blocked account says. Whether the row clears on
+        its own once ``LOCKED_UNTIL`` has passed, before the next login, was
+        not measured, so the date is named and no login is guessed at."""
+        until = (
+            ""
+            if self.until is None
+            else f", until {self.until.isoformat()} as the server records it"
+        )
+        return (
+            f"the account is blocked after failed logins{until}; no login was attempted. "
+            "`ALTER USER … ACCOUNT UNLOCK` ends the block"
+        )
+
+
+def unguarded_reason(number: int) -> str | None:
+    """Why the guard is unavailable, for an error ``number`` from the read, or
+    ``None`` for an error that is not about the table, which the caller raises."""
+    return {TABLE_ACCESS_DENIED: NO_GRANT, NO_SUCH_TABLE: NO_TABLE}.get(number)
+
+
+def lockout_from_row(row: Sequence[Any] | None) -> Lockout:
+    """The guard's reading of :data:`LOCK_ROW`'s row, or of no row."""
+    if row is None:
+        return Lockout()
+    attempts, remaining, locked, until = row
+    if isinstance(locked, bytes):
+        locked = locked.decode()
+    return Lockout(
+        failed=int(attempts) - int(remaining),
+        limit=int(attempts),
+        blocked=str(locked).upper() == "YES",
+        until=until if isinstance(until, date) else None,
+    )
+
+
+def with_unguarded(detail: str, unguarded: str | None) -> str:
+    """``detail``, and why the guard did not run where it did not."""
+    return detail if unguarded is None else f"{detail}; {unguarded}"
 
 
 def not_tried_reason(
@@ -105,10 +213,13 @@ NOT_OVER_TLS = (
 )
 
 
-def login_outcome(diagnosis: Diagnosis, *, tls: bool) -> tuple[str, str] | None:
+def login_outcome(
+    diagnosis: Diagnosis, *, tls: bool, unguarded: str | None
+) -> tuple[str, str] | None:
     """The result and detail for a login that failed with ``diagnosis``, or
     ``None`` where the failure says nothing about the password, and the caller
     raises it. ``tls`` is whether the target's ``ssl_mode`` requires TLS.
+    ``unguarded`` is why the lockout guard did not run, or ``None`` where it did.
 
     Measured on 8.4.13: an account created ``REQUIRE SSL`` answers its right
     password with ``1045`` over a plain connection, as it does a wrong one. So
@@ -116,20 +227,25 @@ def login_outcome(diagnosis: Diagnosis, *, tls: bool) -> tuple[str, str] | None:
     MariaDB, ``PREFERRED`` does not count: the server may offer no TLS."""
     if diagnosis.number == ACCESS_DENIED:
         if tls:
-            return FAIL, f"the server refused the password ({ACCESS_DENIED}); {UNGUARDED}"
-        return UNAVAILABLE, (
+            return FAIL, with_unguarded(
+                f"the server refused the password ({ACCESS_DENIED})", unguarded
+            )
+        return UNAVAILABLE, with_unguarded(
             f"the server refused the password ({ACCESS_DENIED}), but {NOT_OVER_TLS}, so "
-            f"it says nothing certain about the password; {UNGUARDED}"
+            f"it says nothing certain about the password",
+            unguarded,
         )
     if diagnosis.number in (MUST_CHANGE_PASSWORD_LOGIN, MUST_CHANGE_PASSWORD):
-        return PASS, (
+        return PASS, with_unguarded(
             f"the server accepted the password, and then refused the session because "
-            f"the password has expired ({diagnosis.number}); {UNGUARDED}"
+            f"the password has expired ({diagnosis.number})",
+            unguarded,
         )
     if diagnosis.number == ACCOUNT_LOCKED:
-        return PASS, (
+        return PASS, with_unguarded(
             f"the server accepted the password, and then refused the session because "
-            f"the account is locked ({ACCOUNT_LOCKED}); {UNGUARDED}"
+            f"the account is locked ({ACCOUNT_LOCKED})",
+            unguarded,
         )
     if diagnosis.number == ACCOUNT_BLOCKED:
         return UNAVAILABLE, (

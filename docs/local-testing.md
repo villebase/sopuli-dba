@@ -852,7 +852,7 @@ acme_app@%            mysql-dev  verify  vault-dev:acme/mysql/any
 acme_batch@192.0.2.%  mysql-dev  verify  vault-dev:acme/mysql/192.0.2.any
 
 ACCOUNT               TARGET     STATE         DETAIL
-acme_app@%            mysql-dev  IN_SYNC       vault v2 verified by login; the lockout guard is unavailable: MySQL keeps FAILED_LOGIN_ATTEMPTS and its counter in mysql.user.User_attributes, which the tool account does not read
+acme_app@%            mysql-dev  IN_SYNC       vault v2 verified by login; the lockout guard is unavailable: the tool account cannot read performance_schema.temporary_account_locks (1142); it needs SELECT on it, and the server needs the table, which MySQL has from 9.7.4
 acme_batch@192.0.2.%  mysql-dev  UNVERIFIABLE  a login reaches the account the server matches from the tool's host, which may not be acme_batch@192.0.2.%, so its password is checked by login only where its host is `%` and it is the user's only account; no login was attempted
 
 1 unverifiable

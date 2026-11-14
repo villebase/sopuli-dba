@@ -39,6 +39,7 @@ import pymysql
 from sopuli.config.model import ExpandedTarget, Runtime
 from sopuli.config.products import same_mysql_account
 from sopuli.driver.grants import SYSTEM, GrantSurvey
+from sopuli.driver.lockout import margin_reason, skipped_detail
 from sopuli.driver.mysql import account_state, roles, verification
 from sopuli.driver.mysql import accounts as accounts_module
 from sopuli.driver.mysql import password as password_module
@@ -80,6 +81,7 @@ from sopuli.driver.protocol import (
     PROFILE_MANAGEMENT,
     ROLE_LOOKUP,
     ROLLOVER_FINISH,
+    SKIPPED,
     STORED,
     UNAVAILABLE,
     VERIFY_BOTH,
@@ -175,6 +177,9 @@ class MysqlSession(ClosesConnection):
     #: The server's clock just before :meth:`set_password` sent its statement,
     #: per account, for :meth:`confirm_change`.
     _changed_since: dict[str, datetime] = field(default_factory=dict, init=False, repr=False)
+    #: Why the lockout guard cannot read ``temporary_account_locks``, once a
+    #: read was refused; ``None`` until then (#1515).
+    _unguarded: str | None = field(default=None, init=False, repr=False)
     #: The words for two targets that are one server
     #: (:class:`~sopuli.driver.clusters.ClusterIdentity`). Not fields.
     #: ``identity_caveat`` is always ``None``: any account reads ``server_uuid``
@@ -882,9 +887,15 @@ class MysqlSession(ClosesConnection):
         a ``user@%`` account that is the user's only one, with no anonymous
         account at a named host. Any other is
         :data:`~sopuli.driver.protocol.UNAVAILABLE` without a login, as is an
-        account that does not exist or is locked. MySQL gives the tool no
-        lockout counter to read, so ``lockout_margin`` and ``attempts`` have
-        nothing to guard, and the detail says so.
+        account that does not exist or is locked.
+
+        **The lockout guard** (#1515, :mod:`~sopuli.driver.mysql.verification`)
+        reads the account's row of ``temporary_account_locks`` just before the
+        login. A blocked account is not logged in as. Where ``attempts`` more
+        failures would leave less than ``lockout_margin``, the result is
+        :data:`~sopuli.driver.protocol.SKIPPED`, as on Oracle. Where the table
+        cannot be read, the login goes ahead and the detail says the guard is
+        unavailable.
         """
         if method in (VERIFY_HASH, VERIFY_BOTH):
             self.require_verifier(account, secret)
@@ -916,7 +927,52 @@ class MysqlSession(ClosesConnection):
             return _not_tried(reason)
         if declared.locked:
             return _not_tried("the account is locked; no login was attempted")
-        return self._login(declared, secret)
+        lockout = self._lockout(declared)
+        limit = None if lockout.limit is None else str(lockout.limit)
+        if lockout.blocked:
+            # Before the margin, as on Oracle: a block leaves no attempts, and
+            # it is a block either way.
+            return VerifyResult(
+                method=VERIFY_LOGIN,
+                result=UNAVAILABLE,
+                failed_logins=lockout.failed,
+                failed_login_limit=limit,
+                detail="the account is blocked after failed logins; no login was attempted",
+            )
+        reason = margin_reason(lockout.failed, limit, margin=lockout_margin, attempts=attempts)
+        if reason is not None:
+            return VerifyResult(
+                method=VERIFY_LOGIN,
+                result=SKIPPED,
+                failed_logins=lockout.failed,
+                failed_login_limit=limit,
+                lockout_margin_hit=True,
+                detail=skipped_detail(reason),
+            )
+        return self._login(declared, secret, lockout)
+
+    def _lockout(self, declared: accounts_module.Account) -> verification.Lockout:
+        """The guard's read of ``declared``'s row, fresh before each login.
+
+        A table this session could not read is not read again: the grant and
+        the table do not change while it is open."""
+        if self._unguarded is not None:
+            return verification.Lockout(unguarded=self._unguarded)
+
+        def read(cursor: Any) -> Any:
+            cursor.execute(verification.LOCK_ROW, (declared.user, declared.host))
+            return cursor.fetchone()
+
+        try:
+            row = self._read(read)
+        except DriverError as error:
+            code = error.code or ""
+            reason = verification.unguarded_reason(int(code)) if code.isdigit() else None
+            if reason is None:
+                raise
+            self._unguarded = reason
+            return verification.Lockout(unguarded=reason)
+        return verification.lockout_from_row(row)
 
     def confirm_change(self, account: str) -> VerifyResult | None:
         """After :meth:`set_password`, for an account no login can reach: a
@@ -955,7 +1011,12 @@ class MysqlSession(ClosesConnection):
             ),
         )
 
-    def _login(self, declared: accounts_module.Account, secret: Secret) -> VerifyResult:
+    def _login(
+        self, declared: accounts_module.Account, secret: Secret, lockout: verification.Lockout
+    ) -> VerifyResult:
+        """One login, after :meth:`verify_password`'s guard. ``lockout`` is what
+        the guard read, reported with the result as on Oracle."""
+        limit = None if lockout.limit is None else str(lockout.limit)
         arguments = connect_arguments(
             self.target,
             Credential(username=declared.user, secret=secret),
@@ -971,7 +1032,9 @@ class MysqlSession(ClosesConnection):
             LOG.debug(
                 "login as %s failed with %s in %.3fs", declared.name, failure.code, latency / 1000
             )
-            outcome = verification.login_outcome(failure, tls=requires_tls(self.target))
+            outcome = verification.login_outcome(
+                failure, tls=requires_tls(self.target), unguarded=lockout.unguarded
+            )
             if outcome is None:
                 raise failure.as_error() from error
             result, detail = outcome
@@ -979,6 +1042,8 @@ class MysqlSession(ClosesConnection):
                 method=VERIFY_LOGIN,
                 result=result,
                 latency_ms=latency,
+                failed_logins=lockout.failed,
+                failed_login_limit=limit,
                 detail=detail,
                 refused=failure.number == ACCESS_DENIED,
             )
@@ -1023,7 +1088,12 @@ class MysqlSession(ClosesConnection):
             )
         LOG.debug("login as %s: pass in %.3fs", declared.name, latency / 1000)
         return VerifyResult(
-            method=VERIFY_LOGIN, result=PASS, latency_ms=latency, detail=verification.UNGUARDED
+            method=VERIFY_LOGIN,
+            result=PASS,
+            latency_ms=latency,
+            failed_logins=lockout.failed,
+            failed_login_limit=limit,
+            detail=lockout.unguarded,
         )
 
     def require_verifier(self, account: str, secret: Secret) -> None:

@@ -134,7 +134,8 @@ Three grants are optional. The tool works without them, and `doctor
 --check-privileges` lists none as missing:
 
 ```sql
--- report accounts: the failed-login count, on 9.7.4 and later (#1461).
+-- report accounts: the failed-login count; creds check: the lockout guard.
+-- On 9.7.4 and later (#1461, #1515).
 GRANT SELECT ON performance_schema.temporary_account_locks TO 'sopuli_admin'@'192.0.2.10';
 -- report privileges: which roles are active at login (#1482).
 GRANT SELECT ON mysql.default_roles TO 'sopuli_admin'@'192.0.2.10';
@@ -634,9 +635,30 @@ plain connection the check sends the application's password encrypted with
 the RSA key the server sends, which nothing verifies
 ([#1407](../decisions/log.md#1407)).
 
-**There is no lockout guard.** `FAILED_LOGIN_ATTEMPTS` is in
-`User_attributes`, which the tool account does not read (#1202, decision 6).
-The count of failed logins is in no table on 8.0.46 and 8.4.13, and on 9.7.4
-only in `performance_schema.temporary_account_locks` (§2.4).
-A login goes ahead, as on Oracle without the `SYS.USER$` grant, and each
-result's detail says the guard is unavailable.
+**The lockout guard** ([#1515](../decisions/log.md#1515)) reads the
+account's row of `performance_schema.temporary_account_locks` just before the
+login, under the optional grant in §2.1. It works as Oracle's (UC-1 §7
+mitigation 2): no login where `--lockout-margin` would not be left, and the
+result is `skipped`, which `check` shows as `UNVERIFIABLE`. A blocked account is
+not logged in as. Measured on 9.7.4 (#1515):
+
+- An account with `FAILED_LOGIN_ATTEMPTS` and a `PASSWORD_LOCK_TIME` has a row
+  from its creation: the limit, the attempts left and whether it is blocked.
+  A failed login takes one attempt. A good login, `ACCOUNT UNLOCK` or a new
+  limit gives them all back.
+- An account with a limit and no lock time has no row, and the server never
+  blocks it (#1508). No row is nothing to guard.
+- With a limit of 1, the first wrong password blocks the account, and the
+  server answers that login `3955`, not `1045`.
+
+The login that `creds apply` and `creds rotate` make after a change, to
+confirm it, is guarded too, as on Oracle, with a budget of two logins. Where
+the guard stops it, the change is not confirmed and the vault is not promoted:
+on 9.7.4, an account with a limit of 3 and no failed logins was changed and
+reported `UNVERIFIABLE`, because two more would leave less than the margin.
+
+The optional view `sopuli.account_state` is not read: the table has the limit
+too. Without the grant, or on 8.0 and 8.4, which have no such table, the
+server answers `1142`, the login goes ahead, as on Oracle without the
+`SYS.USER$` grant, and each result's detail says the guard is unavailable
+and why.

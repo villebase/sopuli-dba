@@ -195,6 +195,105 @@ def test_a_locked_account_is_not_logged_in_as(stage: Stage) -> None:
     assert "no login was attempted" in str(result.detail)
 
 
+# ------------------------------------------------------- the lockout guard ---
+#
+# #1515. The guard reads `performance_schema.temporary_account_locks`, which
+# MySQL has from 9.7.4; the tier-1 service is 8.4, so these run against the
+# `mysql-9` matrix service, with `SOPULI_TEST_MYSQL_PORT` set to its port.
+
+LOCKS_TABLE = "performance_schema.temporary_account_locks"
+
+
+@pytest.fixture
+def guarded(stage: Stage) -> Stage:
+    """The stage, on a server with the table, and the tool account granted it."""
+    with stage.live.connect() as admin, admin.cursor() as cursor:
+        cursor.execute(
+            "select count(*) from information_schema.tables "
+            "where table_schema = 'performance_schema' and table_name = 'temporary_account_locks'"
+        )
+        (found,) = cursor.fetchone()
+    if not found:
+        pytest.skip(f"this server has no {LOCKS_TABLE}: MySQL has it from 9.7.4")
+    stage.admin(f"grant select on {LOCKS_TABLE} to %s@'%%'", (stage.tool,))
+    return stage
+
+
+def test_the_guard_stops_a_login_that_would_come_too_close_to_the_limit(
+    guarded: Stage,
+) -> None:
+    """Three attempts and the default margin of two: a good login reads 0 of
+    3; after one wrong password, one more login would leave less than two."""
+    user = guarded.account("%")
+    guarded.admin(
+        "alter user %s@'%%' identified by %s failed_login_attempts 3 password_lock_time 1",
+        (user, PASSWORD),
+    )
+
+    right = guarded.session.verify_password(f"{user}@%", Secret(PASSWORD))
+    wrong = guarded.session.verify_password(f"{user}@%", Secret("Not-the-pw9"))
+    after = guarded.session.verify_password(f"{user}@%", Secret(PASSWORD))
+
+    assert right.result == "pass"
+    assert (right.failed_logins, right.failed_login_limit) == (0, "3")
+    assert right.detail is None, "the guard ran, so nothing says it is unavailable"
+    assert wrong.result == "fail"
+    assert after.result == "skipped"
+    assert after.lockout_margin_hit is True
+    assert (after.failed_logins, after.failed_login_limit) == (1, "3")
+    assert "1 of 3 failed logins" in str(after.detail)
+
+
+def test_a_blocked_account_is_not_logged_in_as(guarded: Stage) -> None:
+    """With a limit of one and no margin, the one wrong password blocks the
+    account, and the server answers it `3955` already. The next check reads
+    the block and makes no login."""
+    user = guarded.account("%")
+    guarded.admin(
+        "alter user %s@'%%' identified by %s failed_login_attempts 1 password_lock_time 1",
+        (user, PASSWORD),
+    )
+
+    wrong = guarded.session.verify_password(f"{user}@%", Secret("Not-the-pw9"), lockout_margin=0)
+    after = guarded.session.verify_password(f"{user}@%", Secret(PASSWORD), lockout_margin=0)
+
+    assert wrong.result == "unavailable"
+    assert "(3955)" in str(wrong.detail)
+    assert after.result == "unavailable"
+    assert "blocked after failed logins; no login was attempted" in str(after.detail)
+    assert after.failed_logins == 1
+
+
+def test_a_limit_without_a_lock_time_has_nothing_to_guard(guarded: Stage) -> None:
+    """The server never blocks such an account, and the table has no row for
+    it (measured on 9.7.4)."""
+    user = guarded.account("%")
+    guarded.admin("alter user %s@'%%' identified by %s failed_login_attempts 1", (user, PASSWORD))
+
+    result = guarded.session.verify_password(f"{user}@%", Secret(PASSWORD))
+
+    assert result.result == "pass"
+    assert result.failed_logins is None
+    assert result.detail is None
+
+
+def test_without_the_grant_the_guard_says_it_is_unavailable(stage: Stage) -> None:
+    """On 8.4 the table does not exist, and on 9.7.4 the tool account lacks
+    the grant: either way the server answers `1142`, and the login goes ahead."""
+    user = stage.account("%")
+    stage.admin(
+        "alter user %s@'%%' identified by %s failed_login_attempts 3 password_lock_time 1",
+        (user, PASSWORD),
+    )
+
+    result = stage.session.verify_password(f"{user}@%", Secret(PASSWORD))
+
+    assert result.result == "pass"
+    assert result.failed_logins is None
+    assert "the lockout guard is unavailable" in str(result.detail)
+    assert "(1142)" in str(result.detail)
+
+
 @pytest.mark.parametrize("hosts", [("10.%",), ("%", "10.%")])
 def test_an_account_another_host_could_answer_for_is_not_logged_in_as(
     stage: Stage, hosts: tuple[str, ...]

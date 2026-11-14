@@ -13,12 +13,18 @@ import pytest
 from sopuli.driver.mysql.accounts import Account
 from sopuli.driver.mysql.errors import classify
 from sopuli.driver.mysql.verification import (
+    NO_GRANT,
+    NO_TABLE,
     NOT_OVER_TLS,
-    UNGUARDED,
+    Lockout,
+    lockout_from_row,
     login_outcome,
     not_tried_reason,
+    unguarded_reason,
 )
 from sopuli.driver.protocol import FAIL, PASS, UNAVAILABLE
+
+UNGUARDED = NO_GRANT
 
 
 def account(host: str, user: str = "acme_app") -> Account:
@@ -91,23 +97,30 @@ def test_an_anonymous_account_at_any_host_does_not_compete() -> None:
     ],
 )
 def test_each_answer_at_login_over_tls_says_what_it_shows(number: int, result: str) -> None:
-    outcome = login_outcome(classify(number, "refused"), tls=True)
+    outcome = login_outcome(classify(number, "refused"), tls=True, unguarded=None)
 
     assert outcome is not None
     assert outcome[0] == result
 
 
-def test_a_pass_or_fail_says_the_lockout_guard_is_unavailable() -> None:
+def test_a_pass_or_fail_says_when_the_lockout_guard_is_unavailable() -> None:
     for number in (1045, 1862, 3118):
-        outcome = login_outcome(classify(number, "refused"), tls=True)
+        outcome = login_outcome(classify(number, "refused"), tls=True, unguarded=UNGUARDED)
         assert outcome is not None
-        assert outcome[1].endswith(UNGUARDED)
+        assert outcome[1].endswith(f"; {UNGUARDED}")
+
+
+def test_a_guarded_login_says_nothing_of_the_guard() -> None:
+    for number in (1045, 1862, 3118):
+        outcome = login_outcome(classify(number, "refused"), tls=True, unguarded=None)
+        assert outcome is not None
+        assert "lockout guard" not in outcome[1]
 
 
 def test_a_refusal_where_tls_is_not_required_says_nothing() -> None:
     """Measured on 8.4.13: an account created REQUIRE SSL answers its right
     password with 1045 over a plain connection (#1410)."""
-    outcome = login_outcome(classify(1045, "refused"), tls=False)
+    outcome = login_outcome(classify(1045, "refused"), tls=False, unguarded=UNGUARDED)
 
     assert outcome is not None
     assert outcome[0] == UNAVAILABLE
@@ -117,7 +130,7 @@ def test_a_refusal_where_tls_is_not_required_says_nothing() -> None:
 
 @pytest.mark.parametrize(("number", "result"), [(1862, PASS), (3118, PASS), (3955, UNAVAILABLE)])
 def test_the_other_answers_mean_the_same_without_tls(number: int, result: str) -> None:
-    outcome = login_outcome(classify(number, "refused"), tls=False)
+    outcome = login_outcome(classify(number, "refused"), tls=False, unguarded=None)
 
     assert outcome is not None
     assert outcome[0] == result
@@ -125,4 +138,33 @@ def test_the_other_answers_mean_the_same_without_tls(number: int, result: str) -
 
 def test_a_failure_that_says_nothing_about_the_password_is_raised() -> None:
     """A server that cannot be reached is the caller's to raise."""
-    assert login_outcome(classify(2003, "Can't connect"), tls=True) is None
+    assert login_outcome(classify(2003, "Can't connect"), tls=True, unguarded=None) is None
+
+
+# ------------------------------------------------------- the lockout guard ---
+
+
+def test_a_row_gives_the_count_and_the_limit() -> None:
+    """Measured on 9.7.4: after two wrong passwords of three, the row reads
+    `NO, 3, 1` (#1515). The query reads the limit, the attempts left and
+    `LOCKED`, in that order."""
+    assert lockout_from_row((3, 1, "NO")) == Lockout(failed=2, limit=3, blocked=False)
+
+
+def test_a_blocked_row_says_so() -> None:
+    assert lockout_from_row((3, 0, b"YES")) == Lockout(failed=3, limit=3, blocked=True)
+
+
+def test_no_row_is_nothing_to_guard() -> None:
+    """An account with no limit, or a limit and no lock time, has no row, and
+    the server never blocks it."""
+    assert lockout_from_row(None) == Lockout()
+
+
+def test_the_two_refusals_name_why_the_guard_is_unavailable() -> None:
+    """`1142` without the grant, or on a server without the table; `1146` on
+    a server without the table, under a broader grant. Anything else is
+    raised by the caller."""
+    assert unguarded_reason(1142) == NO_GRANT
+    assert unguarded_reason(1146) == NO_TABLE
+    assert unguarded_reason(2013) is None

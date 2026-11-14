@@ -5850,3 +5850,35 @@ the register.
      measurements (`23_lcount_view_probe.sql`,
      `11_password_set_function_probe.py`) show what each needs, and neither
      gain outweighs it.
+
+## #1515
+
+- **Decided:** 2026-11-14, #1515
+- **Question:** building [#1511](#1511) decision 3, where does MySQL's
+  lockout guard for `creds check` read the
+  limit and the count, how close to the limit does it refuse, and what does a
+  refusal report?
+- **Decision:**
+  1. **Source:** `performance_schema.temporary_account_locks` alone, under
+     its optional grant, read just before each login. It has the limit, the
+     attempts left and the block. The view `sopuli.account_state` is not
+     read.
+  2. **Margin and report:** Oracle's. `--lockout-margin`, default 2, and
+     `skipped` with the count where one more login would leave less;
+     `unavailable` without a login for a blocked account.
+  3. **Without the table or the grant** (`1142`, `1146`): the login goes
+     ahead, and the detail says the guard is unavailable and why. A session
+     that was refused once does not read the table again.
+- **Why:** measured on 9.7.4, the table has a row from the creation of every
+  account with a limit and a lock time, and none for an account the server
+  never blocks, so it answers the whole question by itself. #1511 named the
+  view as the source of the limit, before that was known. Reading the table
+  alone keeps a site's object out of the guard, which is #1511's reason for
+  leaving the verbs that change accounts alone, and needs one grant, not
+  two. Oracle's margin and words give one guard across the products.
+- **Rejected:**
+  1. The limit from the view and the count from the table: a second read,
+     a second grant, and a stale or wrong view could move the guard.
+  2. A guard that refuses the login where the table cannot be read: `check`
+     runs without the optional grant today, as on Oracle without the
+     `SYS.USER$` grant.

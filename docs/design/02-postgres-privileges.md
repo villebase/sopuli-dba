@@ -268,12 +268,14 @@ catalog below is readable with §2.1's grants alone.
   same releases (#1511). With
   `EXECUTE` and `USAGE` on its schema, the tool account reads one row per
   role and no stored value, and cannot change or drop the function.
-  `to_regprocedure()` is NULL when the function or its schema is absent. Two
-  conditions matter. The owner must be a superuser: on 13 to 15 the tool
+  `to_regprocedure()` is NULL when the function or its schema is absent, and
+  is refused, `42501`, when the tool account lacks `USAGE` on the schema.
+  Two conditions matter. The owner must be a superuser: on 13 to 15 the tool
   account can make itself a member of any other owner and read every
-  verifier as it. And the function needs `SET search_path`: without it, a
+  verifier as it. And the body must name `pg_catalog.pg_authid`, or the
+  function must `SET search_path = pg_catalog, pg_temp`. With neither, a
   temporary table that the tool account creates replaces `pg_authid` in the
-  answer.
+  answer. Either one alone prevents it.
 - **Lock, expiry and logins.** PostgreSQL has no lock and no failed-login
   counter. `NOLOGIN` and `VALID UNTIL` are the nearest things to a lock and an
   expiry. No catalog keeps a role's last password change, its last login or

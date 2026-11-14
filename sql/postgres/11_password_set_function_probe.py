@@ -38,10 +38,11 @@ unless a step says otherwise:
        reads with a value that begins SCRAM-SHA-256$. Then the same three on
        the superuser postgres, and whether the tool account may CREATE OR
        REPLACE, ALTER or DROP the superuser's function
-  PS4  search_path: a copy owned by the superuser without the SET clause,
-       whose body names pg_authid without a schema. The tool account creates
-       a temporary table pg_authid with one row, and calls the copy, and the
-       function above
+  PS4  search_path: three copies owned by the superuser, beside the function
+       above: an unqualified pg_authid without the SET clause, a qualified
+       pg_catalog.pg_authid without it, and an unqualified pg_authid with it.
+       The tool account creates a temporary table pg_authid with one row,
+       and calls the four
 
 The fixture, which the superuser creates on each server:
 
@@ -69,8 +70,10 @@ value is found in what the tool account read.
 STATUS: run on 13.23, 14.24, 15.19, 16.15, 17.11 and 18.6, the postgres:13 to
 postgres:18 images of test/compose.yaml profile postgres-matrix, on 2026-11-14
 (#1511). The client was psycopg 3.3.6 with libpq 18.4, on Windows 11 AMD64.
-Five times, exit 0, the same result every time; the last two after a change
-that only wrapped lines.
+Twice, exit 0, the same result both times. Five earlier runs are not counted:
+PS4 had only the first and the last of its four functions, so it did not
+show which of the two safeguards stops the spoof. They gave the same results
+as below for PS1 to PS3.
 
 RESULTS -- the same on every release, except where noted
 
@@ -115,18 +118,19 @@ RESULTS -- the same on every release, except where noted
        sopuli_probe", and its ALTER FUNCTION and DROP FUNCTION get 42501
        "must be owner of function sopuli_probe.role_password_set"
   PS4  the tool account may create a temporary table pg_authid. The copy
-       without SET search_path then reads that table: one row, the spoofed
-       one. The function with SET search_path = pg_catalog, pg_temp reads
-       pg_authid, and no spoofed row
-  leak check: nothing the tool account read held a stored value, 27 outputs
-       on 13.23 to 15.19 and 25 from 16.15, against 5 values each
+       with an unqualified pg_authid and no SET search_path then reads that
+       table: one row, the spoofed one. Each of the other three reads the
+       catalog, one row per role and no spoofed row: the qualified name
+       without the SET clause, the unqualified name with it, and both
+  leak check: nothing the tool account read held a stored value, 29 outputs
+       on 13.23 to 15.19 and 27 from 16.15, against 5 values each
 
   So the function answers the question with the tool account's grants of
   02-postgres-privileges.md §2.1 and EXECUTE, and shows no stored value. Its
   owner must be a superuser: on 13 to 15 the tool account can make itself a
-  member of any other owner, and then read every verifier. A function
-  without SET search_path can be made to read a temporary table, so its
-  answer is only as good as that clause.
+  member of any other owner, and then read every verifier. Its body must
+  name pg_catalog.pg_authid, or the function must SET search_path =
+  pg_catalog, pg_temp: with neither, a temporary table decides its answer.
 
 HOW TO RUN, against the matrix (test/README.md), from the repo root, with the
 repo's virtual environment:
@@ -175,6 +179,8 @@ FUNCTION = "role_password_set"
 KIND_FUNCTION = "role_password_kind"
 OWNED_COPY = "role_password_set_owned"
 UNSET_COPY = "role_password_set_no_path"
+QUALIFIED_UNSET_COPY = "role_password_set_qualified_no_path"
+UNQUALIFIED_SET_COPY = "role_password_set_unqualified_path"
 
 BODY = "SELECT a.rolname, a.rolpassword IS NOT NULL FROM pg_catalog.pg_authid a"
 KIND_BODY = (
@@ -297,6 +303,8 @@ def _setup(version: int) -> list[str]:
         _create_function(su, OWNED_COPY, "password_set boolean", BODY)
         su.execute(f"ALTER FUNCTION {SCHEMA}.{OWNED_COPY}() OWNER TO {OWNER}")
         _create_function(su, UNSET_COPY, "password_set boolean", UNQUALIFIED_BODY, path=False)
+        _create_function(su, QUALIFIED_UNSET_COPY, "password_set boolean", BODY, path=False)
+        _create_function(su, UNQUALIFIED_SET_COPY, "password_set boolean", UNQUALIFIED_BODY)
         return [
             row[0]
             for row in su.execute(
@@ -428,7 +436,7 @@ def _ps4(conn: psycopg.Connection[Any], seen: Seen) -> None:
     print(f"  PS4  tool account: CREATE TEMPORARY TABLE pg_authid: {made}")
     if made.startswith("ok"):
         conn.execute("INSERT INTO pg_temp.pg_authid VALUES ('sopuli_probe_spoof', 'x')")
-    for name in (UNSET_COPY, FUNCTION):
+    for name in (UNSET_COPY, QUALIFIED_UNSET_COPY, UNQUALIFIED_SET_COPY, FUNCTION):
         rows = _try(
             conn,
             seen,

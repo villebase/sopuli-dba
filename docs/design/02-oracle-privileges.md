@@ -431,7 +431,10 @@ tool does not read such a view.
   schema that `SYS` grants `SELECT` or `READ` on `SYS.USER$` `WITH GRANT
   OPTION`. Without the grant option, the view is created and granted, and the
   tool account's read gets `ORA-41900`. An account with the `DBA` role gets
-  `ORA-41904`. So ADB, which has no `SYS` access, cannot have it.
+  `ORA-41904` when it creates the view, and `ORA-01031` when it grants
+  `SYS.USER$` to an owner, with or without the grant option. ADB was not
+  tried. Its `ADMIN` is not `SYS`, and gets `ORA-00942` on `SYS.USER$` (see
+  above), so ADB is not expected to allow the view either.
 - **What the tool account gets when the view is not usable.** A view that
   does not exist and a view it has no grant on both get `ORA-00942`. When the
   owner loses its grant on `SYS.USER$`, the read gets `ORA-04063`, and it

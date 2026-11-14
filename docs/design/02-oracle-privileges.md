@@ -342,6 +342,11 @@ database. An account that holds `ALTER USER` can already set any password, so
 reading the verifiers adds little to what it can do in the database. But
 verifiers can be attacked offline: a stolen copy is useful to an attacker who
 never touches the database again. A site makes that trade, not the tool.
+`23_lcount_view_probe.sql` found two more costs of this grant, described
+below: an account with the `DBA` role can read the verifiers through a view in
+the tool account's schema, and `SELECT … FOR UPDATE` lets the tool account
+hold up an account's logins. Whether to grant `READ` instead of `SELECT` is
+open (#1514).
 
 The tool offers no narrower grant. One was measured and not adopted; the
 reasons are in [#124](../decisions/log.md#124). On the release measured, a
@@ -418,6 +423,44 @@ too, but it is NULL in `SYS.USER$` as well, since no account in the run had a
   that reason.
 
 The view is not documented by Oracle, and other releases are not measured.
+
+A third source was measured (#1511): a view that a DBA creates over
+`SYS.USER$`'s `NAME` and `LCOUNT` alone, and grants to the tool account. The
+tool does not read such a view.
+`sql/oracle/23_lcount_view_probe.sql` measured it on 23.26.3.0.0:
+
+- **The tool account reads the count and nothing else.** The view has one
+  row per row of `DBA_USERS`, and its `LCOUNT` equals the one in `SYS.USER$`.
+  A column the view does not have gets `ORA-00904`.
+- **It needs `SYS`.** The view goes in `SYS`'s schema, or in a schema that
+  `SYS` grants `SELECT` or `READ` on `SYS.USER$` `WITH GRANT OPTION`.
+  Without the grant option, the view is created and granted, and the tool
+  account's read gets `ORA-41900`. An account with the `DBA` role gets
+  `ORA-41904` when it creates the view, and `ORA-01031` when it grants
+  `SYS.USER$` to an owner: `SELECT` with or without the grant option, and
+  `READ` with it. Whether an owner that holds the grant option can pass the
+  grant on to another schema was not tried. ADB was not
+  tried. Its `ADMIN` is not `SYS`, and gets `ORA-00942` on `SYS.USER$` (see
+  above), so ADB is not expected to allow the view either.
+- **What the tool account gets when the view is not usable.** A view that
+  does not exist and a view it has no grant on both get `ORA-00942`. When the
+  owner loses its grant on `SYS.USER$`, the read gets `ORA-04063`, and it
+  works again when the grant comes back.
+- **A `SELECT` grant lets its holder hold up logins.** Through `SELECT` on
+  the view, or on `SYS.USER$` itself as `grant_user_dollar=Y` grants it,
+  `SELECT … FOR UPDATE` locks a row of `SYS.USER$`. Until the lock ends, a
+  login to that account, with a right or a wrong password, and `ALTER USER`
+  on it, wait. `READ` refuses `FOR UPDATE` with `ORA-41900` or `ORA-01031`,
+  and still reads `LCOUNT`.
+- **A grant on `SYS.USER$` outside `SYS` shows the verifiers to the `DBA`
+  role.** The `DBA` role cannot read `SYS.USER$`. But an account with `CREATE
+  ANY VIEW` and `SELECT ANY TABLE`, as the `DBA` role has, can create a view
+  over `SPARE4` in any schema outside `SYS` that holds a grant on
+  `SYS.USER$`, and read the verifiers through it. That includes the tool
+  account's schema under `grant_user_dollar=Y`, and a view owner's schema,
+  with `SELECT` or `READ`. In `SYS`'s schema it gets `ORA-01031`.
+- **A read through the view leaves two audit rows** under a policy on both
+  objects: one for the view and one for `SYS.USER$`.
 
 #### Hash mode
 
@@ -1764,6 +1807,7 @@ the design as it is then.
 | `sql/oracle/18_common_spare4_probe.sql` | what `SPARE4` holds for a common account in a PDB and in `CDB$ROOT`, and whether a password change in the root reaches the PDB's row (§2) |
 | `sql/oracle/19_report_read_probe.sql` | what UC-5's report commands can read, the grants the privilege views need (column grants among them), the effective-privilege query, and how a `DEFAULT` limit resolves for a local and a common profile (§2) |
 | `sql/oracle/22_lock_kind_probe.sql` | what a lock somebody set, a lockout under a finite and an `UNLIMITED` `PASSWORD_LOCK_TIME`, and an account made `NO AUTHENTICATION` read in `DBA_USERS` and `SYS.USER$` (§2) |
+| `sql/oracle/23_lcount_view_probe.sql` | who can own a view over `SYS.USER$`'s `NAME` and `LCOUNT`, what the tool account reads through it, what it gets when the view is absent or broken, and what a grant on `SYS.USER$` opens to row locks and to the `DBA` role (§2) |
 | `sql/oracle/99_uninstall.sql` | removes the service account and, optionally, the audit policies |
 | `docs/decisions/adr-001-privilege-model.md` | why this model, what was rejected, and when to reconsider |
 

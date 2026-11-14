@@ -261,7 +261,23 @@ catalog below is readable with §2.1's grants alone.
 - **Roles.** It reads all 13 columns of `pg_roles`, among them
   `rolcanlogin`, `rolvaliduntil` and the attributes. `rolpassword` reads as
   `********` for every role, with a password or without, so the tool account
-  cannot tell whether a role has one. `pg_authid` is refused.
+  cannot tell whether a role has one. `pg_authid` is refused. A
+  `SECURITY DEFINER` function that a superuser owns, over
+  `pg_authid.rolpassword IS NOT NULL`, would answer it. The tool does not read
+  such a function. `11_password_set_function_probe.py` measured one on the
+  same releases (#1511). With
+  `EXECUTE` and `USAGE` on its schema, the tool account reads one row per
+  role and no stored value, and cannot change or drop the function.
+  `to_regprocedure()` is NULL when the function or its schema is absent, and
+  is refused, `42501`, when the tool account lacks `USAGE` on the schema.
+  Two conditions matter. The owner must be a superuser: on 13 to 15 the tool
+  account can make itself a member of any other owner and read every
+  verifier as it. And the function needs `SET search_path = pg_catalog,
+  pg_temp`, with `pg_catalog.pg_authid` named in full. With neither, a
+  temporary table that the tool account creates replaces `pg_authid` in the
+  answer. Either one alone stopped that table. Only the `SET` clause also
+  fixes how the body's operators and functions are found, such as `LIKE`,
+  and the probe did not try those, so a function should have both.
 - **Lock, expiry and logins.** PostgreSQL has no lock and no failed-login
   counter. `NOLOGIN` and `VALID UNTIL` are the nearest things to a lock and an
   expiry. No catalog keeps a role's last password change, its last login or
@@ -434,5 +450,6 @@ longer password is refused before anything is sent.
 | `sql/postgres/08_pgbouncer_probe.py` | what PgBouncer does with the query budget the driver sends, and how it refuses a login |
 | `sql/postgres/09_supabase_roles_probe.sql` | which roles a Supabase database lets the tool account change, and what supautils refuses |
 | `sql/postgres/10_report_read_probe.py` | what the UC-5 reports can read with the tool account's grants: roles, memberships with their path, and object privileges (§2.5) |
+| `sql/postgres/11_password_set_function_probe.py` | whether a `SECURITY DEFINER` function can tell the tool account which roles have a password, and who may own it (§2.5) |
 
 The probes are for throwaway servers only: each header says what it creates.

@@ -323,6 +323,13 @@ a new list.
 - **Pending work, as a marker.** See *Describe the current build* above.
 - **Never as narration.** Do not write "#N changed this" or "this said X until
   #N".
+- **A later pointer, in a decision record.** A record in
+  [`docs/decisions/log.md`](docs/decisions/log.md), and an ADR's *Decision*
+  and *Consequences*, says what was decided on its date, and stays that way.
+  Where a later decision or build changes what the record says about the
+  build, do not rewrite it: add "#N later decided it: …" or "#N later built
+  it …" beside the old text. Rewriting it would make the record say something
+  nobody decided on that date.
 
 The reason itself is always written in the repository. An issue number points to
 the discussion. It does not replace the explanation.

@@ -21,8 +21,8 @@ Whatever you have. A report with less in it is better than no report:
 
 - what the problem is, and what an attacker gets out of it;
 - the steps to reproduce it, or the code path if you found it by reading;
-- the version — `sopuli --version` — and, if it is relevant, the Oracle release
-  and the secret store you were using.
+- the version — `sopuli --version` — and, if it is relevant, the database
+  product and its release, and the secret store you were using.
 
 **Do not include a real password, a real vault path, a real hostname or a real
 account name.** If a demonstration needs one, describe its shape or use the
@@ -67,6 +67,10 @@ in full:
   `SYS`.** Oracle has no way to grant `ALTER USER` for one account only —
   `GRANT ALTER USER ON SCHEMA` is rejected with `ORA-00990`, tested. The tool
   cannot narrow what Oracle does not let it narrow.
+- **On PostgreSQL 13 to 15, the tool account can change the password of every
+  role that is not a superuser.** The `CREATEROLE` attribute it needs gives
+  that power there; from 16 it also needs `ADMIN OPTION` on the role. Only
+  the tool's config whitelist narrows it on 13 to 15.
 - **The account guardrails are client-side and can be bypassed by not using the
   tool.** They protect against a typo and a too-wide config change. The security
   boundary is the database's own auditing, and `docs/security-model.md` says so

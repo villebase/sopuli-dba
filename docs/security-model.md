@@ -238,8 +238,11 @@ confirmation, and a lock that has not yet expired needs `--force` on top.
 `sopuli creds check` answers one question: does the password in the vault still
 work on this database? By default it answers by trying to log in. On Oracle,
 `--method hash` compares the vault's password with the account's stored 12C
-verifier instead, and does not log in; it needs the optional
-`SELECT ON SYS.USER$` grant. This section is about the login.
+verifier instead, and does not log in. Where it cannot run, such as without
+the optional `SELECT ON SYS.USER$` grant or on Autonomous Database, the run is
+refused before it checks anything; it never falls back to a login.
+`--method both` compares first and then logs in. This section is about the
+login.
 
 That is the risk. A failed login counts against Oracle's `FAILED_LOGIN_ATTEMPTS`
 limit. A check that runs every hour against an account whose password has drifted

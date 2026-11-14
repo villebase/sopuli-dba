@@ -27,9 +27,9 @@ Exit 0 when nothing is wrong, 1 when a target could not be reached, 3 when a
 check found a problem or a profile a rule or policy expects is missing on a
 target, and 4 when something could not be checked. An account
 the config does not declare is listed as information and never changes the
-exit code. It runs on Oracle, PostgreSQL, MySQL and MariaDB. MariaDB keeps
-the lock and the lifetime where the tool does not read them, so there they
-are not checked.
+exit code. It runs on Oracle, PostgreSQL, MySQL and MariaDB. On MariaDB the
+lock and the lifetime come from the optional view `sopuli.account_state`,
+and are not checked where the view is absent or cannot be used.
 
 Options:
 
@@ -57,8 +57,9 @@ shown beside it and never compared. No password is read into the report.
 Exit 0 when every history was read, 1 when a target or a store gave no
 answer, and 4 when a history has a gap or the store keeps no versions.
 Oracle, PostgreSQL, MySQL and MariaDB can run it. The database's date comes
-from Oracle and MySQL; PostgreSQL keeps none, and MariaDB keeps it where the
-tool does not read it, so there the report says why it is unknown.
+from Oracle and MySQL, and on MariaDB from the optional view
+`sopuli.account_state`. PostgreSQL keeps none. Where there is no date, the
+report says why it is unknown.
 
 Options:
 

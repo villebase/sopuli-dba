@@ -70,7 +70,8 @@ value is found in what the tool account read.
 STATUS: run on 13.23, 14.24, 15.19, 16.15, 17.11 and 18.6, the postgres:13 to
 postgres:18 images of test/compose.yaml profile postgres-matrix, on 2026-11-14
 (#1511). The client was psycopg 3.3.6 with libpq 18.4, on Windows 11 AMD64.
-Twice, exit 0, the same result both times. Five earlier runs are not counted:
+Four times, exit 0, the same result every time; the last two after a change
+to how a missing row is reported. Five earlier runs are not counted:
 PS4 had only the first and the last of its four functions, so it did not
 show which of the two safeguards stops the spoof. They gave the same results
 as below for PS1 to PS3.
@@ -128,9 +129,11 @@ RESULTS -- the same on every release, except where noted
   So the function answers the question with the tool account's grants of
   02-postgres-privileges.md §2.1 and EXECUTE, and shows no stored value. Its
   owner must be a superuser: on 13 to 15 the tool account can make itself a
-  member of any other owner, and then read every verifier. Its body must
-  name pg_catalog.pg_authid, or the function must SET search_path =
-  pg_catalog, pg_temp: with neither, a temporary table decides its answer.
+  member of any other owner, and then read every verifier. With neither a
+  body that names pg_catalog.pg_authid nor SET search_path = pg_catalog,
+  pg_temp, a temporary table decides its answer, and either one alone
+  stopped that. The body's operators and functions, which only the SET
+  clause fixes, were not tried.
 
 HOW TO RUN, against the matrix (test/README.md), from the repo root, with the
 repo's virtual environment:
@@ -222,12 +225,17 @@ def _connect(
     )
 
 
-def _one(conn: psycopg.Connection[Any], query: Any, params: Any = None) -> Any:
-    """The first column of the one row a query returns."""
+def _row(conn: psycopg.Connection[Any], query: Any, params: Any = None) -> Any:
+    """The one row a query returns."""
     row = conn.execute(query, params).fetchone()
     if row is None:
         raise RuntimeError(f"no row from: {query}")
-    return row[0]
+    return row
+
+
+def _one(conn: psycopg.Connection[Any], query: Any, params: Any = None) -> Any:
+    """The first column of the one row a query returns."""
+    return _row(conn, query, params)[0]
 
 
 def _try(conn: psycopg.Connection[Any], seen: Seen, query: Any, params: Any = None) -> str:
@@ -255,8 +263,8 @@ def _clean(version: int) -> None:
             ).fetchall()
         ]
         if found:
-            su.execute("REVOKE ALL ON pg_catalog.pg_authid FROM " + ", ".join(found))
             names = sql.SQL(", ").join(sql.Identifier(role) for role in found)
+            su.execute(sql.SQL("REVOKE ALL ON pg_catalog.pg_authid FROM {}").format(names))
             su.execute(sql.SQL("DROP OWNED BY {}").format(names))
             su.execute(sql.SQL("DROP ROLE {}").format(names))
 
@@ -325,12 +333,13 @@ def _ps1(conn: psycopg.Connection[Any], seen: Seen) -> None:
     )
     print(f"  PS1  {FUNCTION}(): {rows}")
     counts = seen.add(
-        conn.execute(
+        _row(
+            conn,
             f"SELECT (SELECT count(*) FROM {SCHEMA}.{FUNCTION}()),"
             " (SELECT count(*) FROM pg_roles),"
             f" (SELECT count(*) FROM {SCHEMA}.{FUNCTION}() f"
-            "   WHERE NOT EXISTS (SELECT 1 FROM pg_roles r WHERE r.rolname = f.rolname))"
-        ).fetchone()
+            "   WHERE NOT EXISTS (SELECT 1 FROM pg_roles r WHERE r.rolname = f.rolname))",
+        )
     )
     print(f"  PS1  rows: function {counts[0]}, pg_roles {counts[1]}, not in pg_roles {counts[2]}")
     kinds = seen.add(
@@ -345,13 +354,14 @@ def _ps1(conn: psycopg.Connection[Any], seen: Seen) -> None:
 
 def _ps2(conn: psycopg.Connection[Any], su: psycopg.Connection[Any], seen: Seen) -> None:
     shape = seen.add(
-        conn.execute(
+        _row(
+            conn,
             "SELECT p.oid IS NOT NULL, pg_get_function_result(p.oid), p.prosecdef,"
             " p.proconfig, o.rolsuper, has_function_privilege(p.oid, 'EXECUTE'), p.prosrc"
             " FROM pg_proc p JOIN pg_roles o ON o.oid = p.proowner"
             " WHERE p.oid = to_regprocedure(%s)",
             (f"{SCHEMA}.{FUNCTION}()",),
-        ).fetchone()
+        )
     )
     print(
         f"  PS2  found {shape[0]}; result {shape[1]!r}; prosecdef {shape[2]}; proconfig"

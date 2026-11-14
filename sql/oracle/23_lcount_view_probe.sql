@@ -21,8 +21,8 @@
 --        OPTION, granting READ on its view. Then the view in SYS's own
 --        schema. Then sopuli_lv_dba, an account holding the DBA role, and so
 --        GRANT ANY OBJECT PRIVILEGE: creating the view in its own schema, and
---        granting SELECT and READ ON SYS.USER$, with and without the grant
---        option, to a third owner, sopuli_lv_byd
+--        granting to a third owner, sopuli_lv_byd, SELECT ON SYS.USER$ with
+--        and without the grant option, and READ with it
 --   LV2  what the tool account reads through it: its columns from
 --        ALL_TAB_COLUMNS, the view's text from ALL_VIEWS, its rows against
 --        DBA_USERS, a column the view does not have, and SYS.USER$ itself.
@@ -81,9 +81,11 @@
 --        account reads. The view in SYS's schema needs no grant on SYS.USER$.
 --        An account with the DBA role gets ORA-41904, "Missing object
 --        privilege on "SYS"."USER$" to create a view", in its own schema, and
---        ORA-01031 on each of its grants of SYS.USER$ to another owner, with
---        or without the grant option. So the view needs SYS: in its own
---        schema, or to grant SYS.USER$ WITH GRANT OPTION to the owner
+--        ORA-01031 on each of its grants of SYS.USER$ to another owner: SELECT
+--        with and without the grant option, and READ with it. So the view
+--        needs SYS: in its own schema, or to grant SYS.USER$ WITH GRANT
+--        OPTION to the owner. Whether such an owner can pass the grant on to
+--        another schema was not tried
 --   LV2  the tool account sees the two columns, NAME VARCHAR2 and LCOUNT
 --        NUMBER, in ALL_TAB_COLUMNS, and the view's text in ALL_VIEWS. Each
 --        view has one row per row of DBA_USERS, and no name differs. A column
@@ -108,8 +110,8 @@
 --        mode 3 lock on SYS.USER$ as through the view
 --   LV4b with either grant, while the lock is held, the wrong password, the
 --        right password and SYS's ALTER USER each wait, and each finishes 34
---        to 35 s after it
---        started, when the holder rolls back: the wrong password then gets
+--        to 35 s after it started, when the holder rolls back: the wrong
+--        password then gets
 --        ORA-01017, the right one logs in, and ALTER USER succeeds
 --   LV5  the DBA role gives no read of SYS.USER$: ORA-41900, "missing READ
 --        privilege on "SYS"."USER$"". It reads sopuli_lv_plain's view with
@@ -117,7 +119,8 @@
 --        sopuli_lv_plain's schema, which holds SELECT with no grant option,
 --        in sopuli_lv_reader's, which holds READ, and in the tool account's
 --        schema while that holds SELECT ON SYS.USER$. Through each, the DBA
---        account reads a verifier on every row, each beginning S:.
+--        account counts 47 rows whose SPARE4 is not NULL, as many as
+--        DBA_USERS has rows in that run; LV5c also counts 47 that begin S:.
 --        In SYS's schema CREATE VIEW gets ORA-01031, and the DBA account
 --        reads SYS's narrow view. So any schema outside SYS that holds a
 --        grant on SYS.USER$, the tool account's under grant_user_dollar=Y

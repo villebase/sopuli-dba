@@ -342,6 +342,11 @@ database. An account that holds `ALTER USER` can already set any password, so
 reading the verifiers adds little to what it can do in the database. But
 verifiers can be attacked offline: a stolen copy is useful to an attacker who
 never touches the database again. A site makes that trade, not the tool.
+`23_lcount_view_probe.sql` found two more costs of this grant, described
+below: an account with the `DBA` role can read the verifiers through a view in
+the tool account's schema, and `SELECT … FOR UPDATE` lets the tool account
+hold up an account's logins. Whether to grant `READ` instead of `SELECT` is
+open (#1514).
 
 The tool offers no narrower grant. One was measured and not adopted; the
 reasons are in [#124](../decisions/log.md#124). On the release measured, a
@@ -427,12 +432,14 @@ tool does not read such a view.
 - **The tool account reads the count and nothing else.** The view has one
   row per row of `DBA_USERS`, and its `LCOUNT` equals the one in `SYS.USER$`.
   A column the view does not have gets `ORA-00904`.
-- **Only `SYS` can install it.** The view goes in `SYS`'s schema, or in a
-  schema that `SYS` grants `SELECT` or `READ` on `SYS.USER$` `WITH GRANT
-  OPTION`. Without the grant option, the view is created and granted, and the
-  tool account's read gets `ORA-41900`. An account with the `DBA` role gets
+- **It needs `SYS`.** The view goes in `SYS`'s schema, or in a schema that
+  `SYS` grants `SELECT` or `READ` on `SYS.USER$` `WITH GRANT OPTION`.
+  Without the grant option, the view is created and granted, and the tool
+  account's read gets `ORA-41900`. An account with the `DBA` role gets
   `ORA-41904` when it creates the view, and `ORA-01031` when it grants
-  `SYS.USER$` to an owner, with or without the grant option. ADB was not
+  `SYS.USER$` to an owner: `SELECT` with or without the grant option, and
+  `READ` with it. Whether an owner that holds the grant option can pass the
+  grant on to another schema was not tried. ADB was not
   tried. Its `ADMIN` is not `SYS`, and gets `ORA-00942` on `SYS.USER$` (see
   above), so ADB is not expected to allow the view either.
 - **What the tool account gets when the view is not usable.** A view that
@@ -449,7 +456,7 @@ tool does not read such a view.
   role.** The `DBA` role cannot read `SYS.USER$`. But an account with `CREATE
   ANY VIEW` and `SELECT ANY TABLE`, as the `DBA` role has, can create a view
   over `SPARE4` in any schema outside `SYS` that holds a grant on
-  `SYS.USER$`, and read every verifier through it. That includes the tool
+  `SYS.USER$`, and read the verifiers through it. That includes the tool
   account's schema under `grant_user_dollar=Y`, and a view owner's schema,
   with `SELECT` or `READ`. In `SYS`'s schema it gets `ORA-01031`.
 - **A read through the view leaves two audit rows** under a policy on both

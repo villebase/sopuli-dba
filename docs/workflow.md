@@ -367,7 +367,7 @@ the code, and report the claims that are false. The project skill
 `.claude/skills/doc-drift-audit/SKILL.md` runs it, and says how to verify and
 record the findings.
 
-**Run the audit after every 50 merged pull requests.** One run costs about 2
+**Run the audit after every 50 merged pull requests.** One run costs 2 to 3
 million Sonnet tokens and 15 to 25 minutes, plus the time to verify and file the
 findings. That is too much for every release, because minor releases ship
 several times a week and patch releases ship for small fixes. A count of merged

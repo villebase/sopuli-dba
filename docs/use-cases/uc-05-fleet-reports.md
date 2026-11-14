@@ -4,13 +4,10 @@ Depends on: `../design/00-principles.md`, `../design/01-configuration.md`,
 `../design/02-oracle-privileges.md`
 
 This document specifies `sopuli report accounts`, `sopuli report privileges`
-and `sopuli report history`. **All three are built, on Oracle**, with the
-`reports:` rules (§4, §5, §7). **`report history` is built on PostgreSQL,
-MySQL and MariaDB** too (§6), **`report accounts` on PostgreSQL** (§4),
-**MySQL and MariaDB** (§8, #1461, #1462), and **`report privileges` on
-PostgreSQL and MySQL** (§5, #1481, #1482). The privilege report on MariaDB
-comes later: until then it is refused before it connects. §9 lists the
-decisions.
+and `sopuli report history`. **All three are built, on Oracle, PostgreSQL,
+MySQL and MariaDB** (§4, §5, §6), with the `reports:` rules (§7). §8 says
+what the service account needs to read on each product, and §3 how a check
+that cannot run is reported. §9 lists the decisions.
 
 ---
 

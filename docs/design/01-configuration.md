@@ -675,6 +675,8 @@ The selectors are flags: `--select` for labels, and `--target`, `--account`,
 `--group` and `--application` for names. `--app` is an accepted alias for
 `--application`. All are repeatable. The `account` verbs take every selector
 except `--application`, because a personal account belongs to no application.
+`account reset-password`, `suspend` and `expire-password` require
+`--account`, and take it once, because each acts on exactly one account.
 `lock break` takes none, because it names one lock path (P5).
 
 **They combine as *and*.** `--application acme --select env=dev` is acme's
@@ -3078,8 +3080,7 @@ natively (P2's `staging_labels` row), and the rules still apply there, for two
 reasons. A version's content holds the password beside the stamps that
 describe it, so a rotated OCI ref names a field. And a document that holds more
 than one account stages in payload fields even on OCI (UC-1 §3), so the reserved
-keys and the collision rule matter there too. A store type P2 gives no capability
-row, `keyring`, is left alone rather than assumed to emulate.
+keys and the collision rule matter there too.
 
 **An application's ref on an `oci` store is the OCI secret name, exactly.** Its
 path is one name of letters, digits, `-`, `_` and `.`, with no `/`. Names are
@@ -3266,8 +3267,9 @@ rather than as prose; generation and validation are `sopuli/passwords.py`.
 **To see what a policy actually produces**, `sopuli policy sample NAME` draws from
 it offline — no vault, no database, nothing stored. It reports each sample's
 length, its byte length in an encoding you name, and its composition; `--reveal`
-prints the passwords themselves, which is the one place in the tool where
-plaintext reaches output on purpose. That is the answer to the questions this
+prints the passwords themselves. A sample is not a credential: nothing
+authenticates with it and it is never stored (`03-json-output.md` §4). That is
+the answer to the questions this
 section raises and cannot settle on paper: whether a `custom` charset renders what
 was meant, and whether the shape survives a connect string or a `.env` file.
 
@@ -4071,8 +4073,8 @@ notices until a rotation.
   pair: a run that draws both accounts refuses the write, and a run whose
   selectors leave one out does not see it ([#841](../decisions/log.md#841))
 - in `reports:` (§8a): a `reports.accounts` rule with none of `login:`,
-  `settings:` and `oracle.profile`, a `login:` other than `refused` or
-  `allowed`, an empty `settings:` or `oracle:`, a setting that is neither
+  `settings:`, `oracle.profile` and `postgresql.valid_until`, a `login:` other than `refused` or
+  `allowed`, an empty `settings:`, `oracle:` or `postgresql:`, a setting that is neither
   `unlimited` nor a whole number above 0, a pattern using a wildcard other than
   `*`, an account named twice (in one rule or across rules), an `oracle.profile`
   or `login: refused` given by name to an account an application declares, a

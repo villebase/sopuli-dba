@@ -75,8 +75,9 @@ the one required check (#1120).
     what `tests/command_reference.py` renders from the command tree. A pull
     request that changes a command, an option or a help text regenerates the
     reference with `python tests/command_reference.py`.
-  - `tests/test_verification_register.py` scans every `docs/**/*.md` plus
-    `README.md` and `CLAUDE.md` for `(unverified: <slug>)` markers.
+  - `tests/test_verification_register.py` scans every `docs/**/*.md`,
+    `src/**/*.py` and `sql/**/*.sql`, plus `README.md` and `CLAUDE.md`, for
+    `(unverified: <slug>)` markers.
   - `tests/test_doc_command_lines.py` parses every fenced `sopuli` command line
     against the real CLI.
   - `tests/test_doc_lists.py` compares each list marked

@@ -158,7 +158,7 @@ def estate(monkeypatch: pytest.MonkeyPatch) -> Harness:
             "ACME_BATCH_USER": UserState(
                 name="ACME_BATCH_USER",
                 status="OPEN",
-                password_changed_unknown="needs SELECT ON SYS.USER$",
+                password_changed_unknown="needs READ ON SYS.USER$",
             ),
             "JDOE": UserState(name="JDOE", status="OPEN", password_changed_at=CHANGED),
             "ACME_STRAY_USER": UserState(
@@ -223,7 +223,7 @@ def test_each_account_gets_its_own_rotations(write_config: WriteConfig, estate: 
     assert "2026-11-03T03:00:00Z rotation v3 ville" in batch
     assert "history from v1" in text
     assert "database changed: 2026-11-07T03:00:05Z" in web
-    assert "database changed: unknown, needs SELECT ON SYS.USER$" in batch
+    assert "database changed: unknown, needs READ ON SYS.USER$" in batch
     assert SECRET not in result.output
 
 

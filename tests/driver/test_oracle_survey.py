@@ -213,7 +213,7 @@ def test_no_offline_verify_means_no_count() -> None:
     (account,) = accounts
     assert account.failed_logins is None
     (reason,) = account.unreadable
-    assert "GRANT SELECT ON SYS.USER$" in reason
+    assert "GRANT READ ON SYS.USER$" in reason
     assert SURVEY_LCOUNT_QUERY not in cursor.asked
 
 

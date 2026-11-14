@@ -84,7 +84,7 @@ EXCEPTION
 END;
 /
 --------------------------------------------------------------------------------
--- 5. SELECT ON SYS.USER$, so the LCOUNT lockout guard can be exercised.
+-- 5. READ ON SYS.USER$, so the LCOUNT lockout guard can be exercised.
 --
 -- #86 made this an OPTIONAL grant, and the tool works without it -- `check`
 -- still runs and says the guard is unavailable. But release gate 4 asserts that
@@ -103,28 +103,41 @@ END;
 -- do, not a no-op.
 --
 -- Guarded, because the suite must stay green on versions where it fails.
+--
+-- READ where the release has it, as sql/oracle/00_install.sql grants it (#1514),
+-- so the suite runs on the grant an install makes. SELECT on 11.2.
 --------------------------------------------------------------------------------
+DECLARE
+  l_priv VARCHAR2(6) := 'SELECT';
+  l_read NUMBER;
 BEGIN
-  -- CONTAINER=ALL first, because this script runs in CDB$ROOT and the suite
-  -- connects to a PDB. Measured: the plain form lands in the root only --
-  -- DBA_TAB_PRIVS shows the grant in CDB$ROOT and not in FREEPDB1 -- so the
-  -- obvious statement grants a privilege nothing the suite does can use.
-  -- Profiles are not like this: one created in the root is visible in the PDB,
-  -- which is why sections 1 to 4 need no such clause and this does.
-  EXECUTE IMMEDIATE 'GRANT SELECT ON SYS.USER$ TO SYSTEM CONTAINER=ALL';
-  DBMS_OUTPUT.PUT_LINE('granted SELECT ON SYS.USER$ to SYSTEM (all containers)');
-EXCEPTION
-  WHEN OTHERS THEN
-    BEGIN
-      -- A non-CDB has no CONTAINER clause to give, and a PDB (oracle-19c, whose
-      -- init runs there) cannot grant to ALL.
-      EXECUTE IMMEDIATE 'GRANT SELECT ON SYS.USER$ TO SYSTEM';
-      DBMS_OUTPUT.PUT_LINE('granted SELECT ON SYS.USER$ to SYSTEM (this container only)');
-    EXCEPTION
-      WHEN OTHERS THEN
-        DBMS_OUTPUT.PUT_LINE('SELECT ON SYS.USER$ not granted (' || SQLERRM
-                          || '): the LCOUNT guard tests will skip');
-    END;
+  SELECT COUNT(*) INTO l_read FROM system_privilege_map WHERE name = 'READ ANY TABLE';
+  IF l_read > 0 THEN
+    l_priv := 'READ';
+  END IF;
+  BEGIN
+    -- CONTAINER=ALL first, because this script runs in CDB$ROOT and the suite
+    -- connects to a PDB. Measured: the plain form lands in the root only --
+    -- DBA_TAB_PRIVS shows the grant in CDB$ROOT and not in FREEPDB1 -- so the
+    -- obvious statement grants a privilege nothing the suite does can use.
+    -- Profiles are not like this: one created in the root is visible in the PDB,
+    -- which is why sections 1 to 4 need no such clause and this does.
+    EXECUTE IMMEDIATE 'GRANT ' || l_priv || ' ON SYS.USER$ TO SYSTEM CONTAINER=ALL';
+    DBMS_OUTPUT.PUT_LINE('granted ' || l_priv || ' ON SYS.USER$ to SYSTEM (all containers)');
+  EXCEPTION
+    WHEN OTHERS THEN
+      BEGIN
+        -- A non-CDB has no CONTAINER clause to give, and a PDB (oracle-19c, whose
+        -- init runs there) cannot grant to ALL.
+        EXECUTE IMMEDIATE 'GRANT ' || l_priv || ' ON SYS.USER$ TO SYSTEM';
+        DBMS_OUTPUT.PUT_LINE('granted ' || l_priv
+                          || ' ON SYS.USER$ to SYSTEM (this container only)');
+      EXCEPTION
+        WHEN OTHERS THEN
+          DBMS_OUTPUT.PUT_LINE(l_priv || ' ON SYS.USER$ not granted (' || SQLERRM
+                            || '): the LCOUNT guard tests will skip');
+      END;
+  END;
 END;
 /
 

@@ -89,6 +89,15 @@
 --         section 8's report lists it. Untried on 21c, 18c and 11g, where the
 --         view exists and the line is the same shape as its neighbours.
 --
+--         grant_user_dollar=Y grants READ, not SELECT, where the release has
+--         it, and revokes an existing SELECT (2026-11-14, #1514). Run on 26ai
+--         Free 23.26.3.0.0 through tests/driver/test_oracle_install_script.py
+--         in COMMON mode, and by hand as SYSDBA in PDB mode in FREEPDB1: an
+--         account given SELECT ON SYS.USER$ by hand held READ alone after a
+--         run with Y, read LCOUNT and SPARE4, and got ORA-01031 on
+--         SELECT ... FOR UPDATE. The 11.2 branch, which grants SELECT, is
+--         untried, and so is every other release.
+--
 -- Run as SYS AS SYSDBA or an equivalent DBA.
 --
 -- Pick a mode:
@@ -122,7 +131,7 @@ WHENEVER SQLERROR EXIT SQL.SQLCODE
 --   1 mode                COMMON | PDB | NONCDB
 --   2 svc_name            account name; COMMON mode prefixes it with C##
 --   3 svc_tablespace      default tablespace for the account
---   4 grant_user_dollar   Y grants SELECT on SYS.USER$ -- see below
+--   4 grant_user_dollar   Y grants READ on SYS.USER$ (SELECT on 11.2) -- see below
 --   5 grant_set_container Y grants SET CONTAINER -- see below
 --   6 grant_pwfile        Y grants SELECT on SYS.V_$PWFILE_USERS -- see below
 --   7 grant_connect_info  Y grants SELECT on SYS.V_$SESSION_CONNECT_INFO -- see below
@@ -155,7 +164,7 @@ SELECT NULL AS "1", NULL AS "2", NULL AS "3", NULL AS "4", NULL AS "5", NULL AS 
 
 -- Defaults live here, in the NVL. `grant_user_dollar=Y` enables
 -- `sopuli creds check --method hash` and the failed-login (LCOUNT) guard, at the
--- cost of SELECT on SYS.USER$, which exposes password verifiers -- see
+-- cost of READ on SYS.USER$, which exposes password verifiers -- see
 -- docs/design/02-oracle-privileges.md §2. It is recommended for scheduled checks,
 -- because the alternative (repeated login attempts) can lock the very production
 -- accounts the check is monitoring. `grant_set_container=Y` is for a site whose
@@ -374,14 +383,41 @@ END;
 
 --------------------------------------------------------------------------------
 -- 4. Optional: SYS.USER$ for hash-mode verification and the LCOUNT guard
+--
+-- READ, not SELECT, where the release has it (#1514). The tool only selects
+-- from SYS.USER$, and READ refuses SELECT ... FOR UPDATE: through SELECT the
+-- account can lock a USER$ row, and that account's logins and ALTER USER then
+-- wait until the lock ends (sql/oracle/23_lcount_view_probe.sql, LV4). READ
+-- came with READ ANY TABLE in 12.1.0.2, so the system privilege map answers
+-- whether this release has it. 11.2 gets SELECT. Where READ is granted, an
+-- existing SELECT ON SYS.USER$ is revoked after it, so running this script
+-- again moves an install made with SELECT to READ.
 --------------------------------------------------------------------------------
 PROMPT
 PROMPT [4] optional: SYS.USER$ (grant_user_dollar=&grant_user_dollar)
+DECLARE
+  n_read   NUMBER;
+  n_select NUMBER;
 BEGIN
   IF UPPER('&grant_user_dollar') = 'Y' THEN
-    EXECUTE IMMEDIATE 'GRANT SELECT ON SYS.USER$ TO &eff_user&cont_all';
-    DBMS_OUTPUT.PUT_LINE('granted SELECT ON SYS.USER$ '
-      || '(enables check --method hash and the failed-login guard)');
+    SELECT COUNT(*) INTO n_read FROM system_privilege_map
+     WHERE name = 'READ ANY TABLE';
+    IF n_read > 0 THEN
+      EXECUTE IMMEDIATE 'GRANT READ ON SYS.USER$ TO &eff_user&cont_all';
+      DBMS_OUTPUT.PUT_LINE('granted READ ON SYS.USER$ '
+        || '(enables check --method hash and the failed-login guard)');
+      SELECT COUNT(*) INTO n_select FROM dba_tab_privs
+       WHERE grantee = UPPER('&eff_user') AND owner = 'SYS'
+         AND table_name = 'USER$' AND privilege = 'SELECT';
+      IF n_select > 0 THEN
+        EXECUTE IMMEDIATE 'REVOKE SELECT ON SYS.USER$ FROM &eff_user&cont_all';
+        DBMS_OUTPUT.PUT_LINE('revoked SELECT ON SYS.USER$ (READ replaces it)');
+      END IF;
+    ELSE
+      EXECUTE IMMEDIATE 'GRANT SELECT ON SYS.USER$ TO &eff_user&cont_all';
+      DBMS_OUTPUT.PUT_LINE('granted SELECT ON SYS.USER$ (this release has no READ) '
+        || '(enables check --method hash and the failed-login guard)');
+    END IF;
   ELSE
     DBMS_OUTPUT.PUT_LINE('SYS.USER$ not granted: check --method hash unavailable, '
       || 'and login-based checks run without the LCOUNT lockout guard');

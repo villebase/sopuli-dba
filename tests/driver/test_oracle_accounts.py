@@ -161,7 +161,7 @@ def test_the_survey_reads_every_account_and_resolves_default(account: Any) -> No
     else:
         assert row.failed_logins is None
         assert row.unreadable == (
-            "the failed-login count is in SYS.USER$; GRANT SELECT ON SYS.USER$ to the "
+            "the failed-login count is in SYS.USER$; GRANT READ ON SYS.USER$ to the "
             "service account to read it",
         )
 
@@ -481,7 +481,7 @@ def test_without_the_column_or_the_grant_the_date_is_absent_and_says_why(account
     assert state is not None
     assert state.password_changed_at is None
     assert state.password_changed_unknown is not None
-    assert "SELECT ON SYS.USER$" in state.password_changed_unknown
+    assert "READ ON SYS.USER$" in state.password_changed_unknown
 
 
 def test_a_role_held_through_another_role_is_still_found(account: Any) -> None:

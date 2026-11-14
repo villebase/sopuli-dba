@@ -283,7 +283,7 @@ def test_the_age_is_the_vault_s(
 #: What the Oracle driver says on a release without `DBA_USERS.PASSWORD_CHANGE_DATE`
 #: and without the `SYS.USER$` grant (decision #386).
 NO_COLUMN = (
-    "this release has no DBA_USERS.PASSWORD_CHANGE_DATE; GRANT SELECT ON "
+    "this release has no DBA_USERS.PASSWORD_CHANGE_DATE; GRANT READ ON "
     "SYS.USER$ to the service account to read the same date from SYS.USER$.PTIME"
 )
 
@@ -359,7 +359,7 @@ def test_an_empty_db_pw_changed_says_why_once_per_target_in_the_table(
     result = run(runner, write_config(CONFIG))
 
     assert "-" in row(result, "acme_web_user")
-    assert result.output.count("GRANT SELECT ON SYS.USER$") == 1
+    assert result.output.count("GRANT READ ON SYS.USER$") == 1
     assert "appdb-alpha: DB_PW_CHANGED is empty for 2 accounts" in result.output
 
 

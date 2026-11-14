@@ -1972,7 +1972,7 @@ worse than the drift the check was looking for. All of these mitigations apply:
    previous password. `apply` and `rotate` make up to two: before the change,
    and after it to confirm. The lockout guard (2) counts the whole budget before
    the first attempt.
-2. **Read `LCOUNT` first, where the grant exists.** `SELECT ON SYS.USER$` is
+2. **Read `LCOUNT` first, where the grant exists.** `READ ON SYS.USER$` is
    optional and not part of the default install (`02-oracle-privileges.md` §2
    and §8 P2; decided in #86). The tool probes it as a capability. Where it is
    present, the tool does not attempt a login when the account is already within
@@ -2065,7 +2065,7 @@ advice to grant it would be advice nobody can follow. The capability probe gets
 
 Trade-offs:
 
-- It needs the same optional `SELECT ON SYS.USER$` grant as the `LCOUNT` guard
+- It needs the same optional `READ ON SYS.USER$` grant as the `LCOUNT` guard
   (`02-oracle-privileges.md` §2), which some sites will not grant. With no
   `--method`, the default is `login`, and nothing is lost. An *explicit*
   `--method hash` or `--method both` against a target without the grant or the

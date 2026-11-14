@@ -59,7 +59,7 @@ Against that, the direct model in a CDB is one grant set with `CONTAINER=ALL`
 that new PDBs inherit automatically.
 
 A secondary effect made the trade better than expected: once the service account
-holds `ALTER USER`, granting `SELECT ON SYS.USER$` costs much less than it did
+holds `ALTER USER`, granting `READ ON SYS.USER$` costs much less than it did
 under the package model. An account that can already set any password gains
 little from reading verifiers. That makes `check --method hash` — and, more
 importantly, the `LCOUNT` guard that stops scheduled checks from locking
@@ -82,7 +82,7 @@ plainly rather than overselling them.
 commands read dictionary views that the credential commands do not need, such
 as the views of system and object privileges. Each extra grant is `SELECT`
 only and optional, and the tool probes for it, as it does for
-`SELECT ON SYS.USER$`. The service account still changes passwords and
+`READ ON SYS.USER$`. The service account still changes passwords and
 nothing else. On 23.26.3.0.0 the extra grants are `SELECT` on `DBA_SYS_PRIVS`,
 `DBA_TAB_PRIVS` and `DBA_COL_PRIVS`, for a local service account and for a
 common one alike

@@ -78,7 +78,7 @@ keep the database in agreement with the vault. That gives you:
   about it from a report, not from an outage. Before it tries, it reads the
   account's failed-login count, and does not try if one more failure would come
   too close to the lockout limit. Reading that count needs one optional grant
-  (`SELECT ON SYS.USER$`); without it the check still runs, and each result says
+  (`READ ON SYS.USER$`); without it the check still runs, and each result says
   that the lockout guard was unavailable.
 - **You get evidence for the auditor.** Every run can produce a machine-readable
   report of what was checked and what was changed. `sopuli creds status` shows
@@ -284,7 +284,7 @@ attempt would come too close to the limit, it does not try. It reports that it
 could not check, and says why. Checking is never worth locking out the account
 you were checking on.
 
-That guard needs one optional grant: `SELECT ON SYS.USER$`, which lets the tool
+That guard needs one optional grant: `READ ON SYS.USER$`, which lets the tool
 read the failed-login count. Without it, the check still runs. It logs in once
 per account per run (twice with `--include-previous`, which also tries the
 previous password), and every result from a login it attempted says that the

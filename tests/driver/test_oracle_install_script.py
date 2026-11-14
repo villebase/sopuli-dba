@@ -491,8 +491,8 @@ def grants_of(container: str, connect: str, account: str) -> set[str]:
         connect,
         f"""SELECT privilege FROM dba_sys_privs WHERE grantee = UPPER('{account}')
             UNION ALL
-            SELECT 'SELECT ON ' || table_name FROM dba_tab_privs
-             WHERE grantee = UPPER('{account}') AND privilege = 'SELECT';""",
+            SELECT privilege || ' ON ' || table_name FROM dba_tab_privs
+             WHERE grantee = UPPER('{account}') AND privilege IN ('SELECT', 'READ');""",
     )
     return set(rows)
 
@@ -764,7 +764,11 @@ def test_the_optional_grants_are_off_unless_asked_for(
     )
     assert result.returncode == 0, result.stdout[-2000:]
     asked = grants_of(container, ROOT, install_account)
-    assert "SELECT ON USER$" in asked
+    if _has_read(container):
+        assert "READ ON USER$" in asked
+        assert "SELECT ON USER$" not in asked
+    else:
+        assert "SELECT ON USER$" in asked
     assert "SELECT ON V_$SESSION_CONNECT_INFO" in asked
     assert set(REPORT_READS) <= asked
     # Granted where the view exists. The script asks DBA_VIEWS; this asks the
@@ -782,6 +786,50 @@ def test_the_optional_grants_are_off_unless_asked_for(
     else:
         assert "SET CONTAINER" not in asked
         assert "SET CONTAINER not granted" in result.stdout, "asked for, skipped, and said so"
+
+
+def _has_read(container: str) -> bool:
+    """Whether the release has the `READ` object privilege, as the script asks it.
+
+    `READ` came with `READ ANY TABLE` in 12.1.0.2 (#1514).
+    """
+    found = query(
+        container, ROOT, "SELECT COUNT(*) FROM system_privilege_map WHERE name = 'READ ANY TABLE';"
+    )
+    return found != ["0"]
+
+
+def test_running_the_script_again_moves_select_on_user_dollar_to_read(
+    container: str, scripts: str, clean: None, install_mode: str, install_account: str
+) -> None:
+    """An install made with `SELECT ON SYS.USER$` ends with `READ` alone (#1514).
+
+    Through `SELECT` the account can lock a `USER$` row, and that account's
+    logins wait until the lock ends; `READ` refuses the lock. The grant comes
+    first and the revoke after it, so the account never lacks the read.
+    """
+    if not _has_read(container):
+        pytest.skip("this release has no READ object privilege: the script grants SELECT")
+    first = sqlplus(container, ROOT, f"{scripts}/00_install.sql", install_mode, SVC)
+    assert first.returncode == 0, first.stdout[-2000:]
+    cont_all = " CONTAINER=ALL" if install_mode == "COMMON" else ""
+    granted = _exec(
+        container,
+        ROOT,
+        script=(
+            "WHENEVER SQLERROR EXIT SQL.SQLCODE\n"
+            f"GRANT SELECT ON SYS.USER$ TO {install_account}{cont_all};\nEXIT\n"
+        ),
+    )
+    assert granted.returncode == 0, granted.stdout[-2000:]
+    assert "SELECT ON USER$" in grants_of(container, ROOT, install_account)
+
+    again = sqlplus(container, ROOT, f"{scripts}/00_install.sql", install_mode, SVC, "USERS", "Y")
+    assert again.returncode == 0, again.stdout[-2000:]
+    assert "revoked SELECT ON SYS.USER$" in again.stdout
+    held = grants_of(container, ROOT, install_account)
+    assert "READ ON USER$" in held
+    assert "SELECT ON USER$" not in held
 
 
 def test_installing_twice_changes_nothing(

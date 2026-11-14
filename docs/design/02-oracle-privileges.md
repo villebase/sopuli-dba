@@ -305,12 +305,21 @@ The default path is a login attempt plus UC-1 §7's mitigations: never retry,
 reset on success, and report `ACCOUNT_STATUS`. All of it runs on the base grant
 set. [P2](../decisions/log.md#p2) records the decision.
 
-`SELECT ON SYS.USER$` is optional. `sql/oracle/00_install.sql` grants it only
+The grant on `SYS.USER$` is optional. `sql/oracle/00_install.sql` makes it only
 when `grant_user_dollar` is `Y`, and the default is `N`:
 
 ```sql
-GRANT SELECT ON SYS.USER$ TO sopuli_svc;   -- or c##sopuli_svc CONTAINER=ALL
+GRANT READ ON SYS.USER$ TO sopuli_svc;   -- or c##sopuli_svc CONTAINER=ALL
 ```
+
+It is `READ`, not `SELECT` ([#1514](../decisions/log.md#1514)). The tool only
+selects from `SYS.USER$`, and `READ` refuses `SELECT … FOR UPDATE`, which
+through `SELECT` lets the tool account hold up an account's logins (below).
+The script grants `READ` where `SYSTEM_PRIVILEGE_MAP` has `READ ANY TABLE`,
+which came with the `READ` object privilege in 12.1.0.2, and `SELECT` on 11.2.
+Where it grants `READ`, it then revokes a `SELECT ON SYS.USER$` the account
+holds, so running the script again moves an older install to `READ`. The tool
+probes the read, so either grant gives the same capability.
 
 When the grant is present, the tool probes it as a capability at plan time
 (invariant 3) and uses it for these things:
@@ -342,11 +351,12 @@ database. An account that holds `ALTER USER` can already set any password, so
 reading the verifiers adds little to what it can do in the database. But
 verifiers can be attacked offline: a stolen copy is useful to an attacker who
 never touches the database again. A site makes that trade, not the tool.
-`23_lcount_view_probe.sql` found two more costs of this grant, described
-below: an account with the `DBA` role can read the verifiers through a view in
-the tool account's schema, and `SELECT … FOR UPDATE` lets the tool account
-hold up an account's logins. Whether to grant `READ` instead of `SELECT` is
-open (#1514).
+The grant also exposes the verifiers to every account with the `DBA` role,
+`READ` as much as `SELECT`. The `DBA` role alone cannot read `SYS.USER$`, but
+with `CREATE ANY VIEW` and `SELECT ANY TABLE` it can create a view over
+`SPARE4` in the tool account's schema and read every verifier through it
+(`23_lcount_view_probe.sql`, below). A site that grants `grant_user_dollar=Y`
+widens who can read the verifiers to every holder of that role.
 
 The tool offers no narrower grant. One was measured and not adopted; the
 reasons are in [#124](../decisions/log.md#124). On the release measured, a
@@ -447,8 +457,8 @@ tool does not read such a view.
   owner loses its grant on `SYS.USER$`, the read gets `ORA-04063`, and it
   works again when the grant comes back.
 - **A `SELECT` grant lets its holder hold up logins.** Through `SELECT` on
-  the view, or on `SYS.USER$` itself as `grant_user_dollar=Y` grants it,
-  `SELECT … FOR UPDATE` locks a row of `SYS.USER$`. Until the lock ends, a
+  the view, or on `SYS.USER$` itself, as `grant_user_dollar=Y` granted it
+  before #1514, `SELECT … FOR UPDATE` locks a row of `SYS.USER$`. Until the lock ends, a
   login to that account, with a right or a wrong password, and `ALTER USER`
   on it, wait. `READ` refuses `FOR UPDATE` with `ORA-41900` or `ORA-01031`,
   and still reads `LCOUNT`.
@@ -466,7 +476,7 @@ tool does not read such a view.
 
 `check --method hash` compares the vault's password with the account's stored
 `T:` (12C, PBKDF2-SHA512) verifier. The tool regenerates the verifier
-client-side. Reading the stored one needs `SELECT ON SYS.USER$`, because it is in
+client-side. Reading the stored one needs `READ ON SYS.USER$`, because it is in
 `SPARE4`. So hash mode needs the grant, although the derivation does not.
 
 The layout, the derivation and the rules for a missing verifier are measured.
@@ -983,7 +993,7 @@ account's password alone.
 
 | Not granted | Why |
 |---|---|
-| `SELECT ANY DICTIONARY` | includes `SYS.USER$` and everything else. If hash mode is wanted, grant `SELECT ON SYS.USER$` alone |
+| `SELECT ANY DICTIONARY` | includes `SYS.USER$` and everything else. If hash mode is wanted, grant `READ ON SYS.USER$` alone |
 | `DBA`, `PDB_DBA`, `CDB_DBA` | the tool needs `ALTER USER`, not a role that carries a hundred other privileges |
 | `SYSDBA` / `SYSOPER` | no operation of the tool needs them |
 | `ALTER PROFILE` | no credential-sync verb edits a profile (UC-1 Q4). A profile is shared, so editing one reaches accounts nobody selected, and the config's account whitelist (invariant 5) cannot limit that. The tool reports the DDL that enables password rollover instead, and `doctor --check-privileges` reports this privilege if the service account holds it. Whether UC-4 may create and alter profiles is its own question; it would be a privilege of a principal UC-4 defines, not of this grant set |

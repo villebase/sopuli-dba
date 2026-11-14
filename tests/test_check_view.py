@@ -164,7 +164,7 @@ def test_an_errored_run_counts_as_failed_not_unverifiable() -> None:
 
 
 def test_a_missing_lcount_is_null_rather_than_absent() -> None:
-    """`SELECT ON SYS.USER$` is optional, so "the guard was unavailable" is a
+    """`READ ON SYS.USER$` is optional, so "the guard was unavailable" is a
     thing a scheduled check must be able to report. Omitting the key would make
     an ungranted estate look like one where nothing looked."""
     failed = VerifyResult(method=VERIFY_LOGIN, result=FAIL, failed_logins=None)

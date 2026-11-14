@@ -473,6 +473,9 @@ the register.
   from what `ALTER USER` already allows, so a site should choose it, not get it
   by default. Without the grant, `check` still runs, with the other lockout
   guards. A narrower grant was measured and not adopted ([#124](#124)).
+  The grant also makes the verifiers readable by every account with the
+  `DBA` role, through a view in the service account's schema, and it is
+  `READ`, not `SELECT`, from [#1514](#1514).
 - **Rejected:**
   - Grant by default: every site would expose its verifiers to the service
     account, whether or not it uses the features that need them.
@@ -5850,3 +5853,30 @@ the register.
      measurements (`23_lcount_view_probe.sql`,
      `11_password_set_function_probe.py`) show what each needs, and neither
      gain outweighs it.
+
+## #1514
+
+- **Decided:** 2026-11-14, #1514
+- **Question:** `00_install.sql` granted `SELECT ON SYS.USER$` under
+  `grant_user_dollar=Y`. `23_lcount_view_probe.sql` found that the grant lets
+  the tool account lock a `USER$` row with `SELECT … FOR UPDATE`, which holds
+  up that account's logins and `ALTER USER` (34 s measured), and that it shows
+  every verifier to the `DBA` role through a view in the tool account's
+  schema. Should the script grant `READ` instead, and should P2 name the
+  second exposure?
+- **Decision:** the maintainer's:
+  1. The script grants `READ ON SYS.USER$` where `SYSTEM_PRIVILEGE_MAP` has
+     `READ ANY TABLE` (12.1.0.2 and later), and `SELECT` on 11.2.
+  2. Where it grants `READ`, it revokes an existing `SELECT ON SYS.USER$`
+     after the grant, so running the script again moves an install to `READ`.
+  3. P2 and `02-oracle-privileges.md` §2 name the `DBA` role's read.
+- **Why:** every read the tool makes on `SYS.USER$` is a plain `SELECT`, and
+  `READ` serves it and refuses the lock. The tool probes the read, not the
+  grant, so the driver does not change. The revoke follows the grant, so the
+  account is never without the read. The `DBA` role's read is a fact about
+  the grant, whichever it is, and a site choosing it should know.
+- **Rejected:**
+  1. Granting `READ` and leaving an old `SELECT`: an existing install keeps
+     the lock until a DBA revokes it by hand.
+  2. Keeping `SELECT` and documenting the lock: the tool needs nothing that
+     `SELECT` gives beyond `READ`.

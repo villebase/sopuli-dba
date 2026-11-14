@@ -270,7 +270,7 @@ def test_an_absent_password_age_says_why(
     """Decision #386: `password_age_days` is left out where the database would
     not say, and the result carries the reason under `SOPULI-W021` beside the
     hole -- a consumer cannot see `creds status`'s dash."""
-    reason = "this release has no DBA_USERS.PASSWORD_CHANGE_DATE; GRANT SELECT ON SYS.USER$"
+    reason = "this release has no DBA_USERS.PASSWORD_CHANGE_DATE; GRANT READ ON SYS.USER$"
     estate(users={"ACME_WEB_USER": user(password_changed_unknown=reason)})
     result = run(runner, write_config(CONFIG), "--output", "json")
 
@@ -294,7 +294,7 @@ def test_a_login_that_raises_keeps_what_was_already_read(
     login must not discard it. W021 explains a missing `password_age_days`, and
     it has to survive on the path where the row is an error too -- as does an
     age that *was* read."""
-    reason = "this release has no DBA_USERS.PASSWORD_CHANGE_DATE; GRANT SELECT ON SYS.USER$"
+    reason = "this release has no DBA_USERS.PASSWORD_CHANGE_DATE; GRANT READ ON SYS.USER$"
     # No scripted answer, so `verify_password` raises -- after `describe_user`.
     estate(users={"ACME_WEB_USER": user(password_changed_unknown=reason)}, answers={})
     result = run(runner, write_config(CONFIG), "--output", "json")

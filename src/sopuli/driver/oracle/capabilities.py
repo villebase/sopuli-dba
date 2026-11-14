@@ -86,7 +86,7 @@ class ProbeError(DriverError):
 #: * ``ORA-00904`` -- the column is not there, which is how a feature added in a
 #:   later release announces itself to a query written for it.
 #: * ``ORA-01031`` -- the privilege is not held. `offline_verify` is the case
-#:   this exists for: ``SELECT ON SYS.USER$`` is an optional grant (decision P2), so its
+#:   this exists for: ``READ ON SYS.USER$`` is an optional grant (decision P2), so its
 #:   absence is the ordinary configuration rather than a fault.
 #: * ``ORA-41900`` -- the ``READ`` privilege is not held, which is what a modern
 #:   release says instead of ``ORA-00942`` when the asker is privileged enough to

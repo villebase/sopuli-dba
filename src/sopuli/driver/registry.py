@@ -240,8 +240,10 @@ DRIVERS: dict[str, DatabaseDriver] = {
     # expire-password`, which discards a retained password first. UC-5: `report
     # accounts`, one row per `user@host` (#1461); `report history`, from the
     # store, with `mysql.user.password_last_changed` as the database's date
-    # (#1460); `report privileges`, one row per path, each with its level, global
-    # privileges not checked under `partial_revokes` (#1482).
+    # (#1460); `report privileges`, one row per path, each with its level.
+    # Under `partial_revokes` the revokes come from the optional view
+    # `sopuli.account_state`, and global privileges are not checked without it
+    # (#1482, #1502).
     "mysql": DatabaseDriver(
         module="sopuli.driver.mysql.session",
         extra="mysql",

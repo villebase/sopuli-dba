@@ -5803,3 +5803,50 @@ the register.
   4. C3, connecting to an unselected target only to read its identifier:
      a run opens no connection to a target the selectors left out
      (`01-configuration.md`).
+
+## #1511
+
+- **Decided:** 2026-11-14, #1511
+- **Question:** which of the six gaps that [#1457](#1457) left, and that
+  [#1491](#1491) and [#1502](#1502) kept from the verbs that change
+  accounts, does the tool close?
+- **Decision:** the maintainer's: one is built, five stay as they are.
+  1. **MariaDB `account suspend`** does not read the lock from the view. It
+     keeps sending `ACCOUNT LOCK` and reporting `changed: true`
+     ([#1267](#1267), decision 2).
+  2. **MariaDB `creds finish-rollover`** does not read `auth_or` from the
+     view. It keeps sending the current value alone ([#1271](#1271),
+     decision 2).
+  3. **MySQL `creds check`** gets a lockout guard from the view's limit and
+     the server's count, where the server has the count (#1515). It is read
+     by a read of its own, not through `describe_user`. Where the view is
+     absent or broken, `check` runs as it does now.
+  4. **MySQL `creds finish-rollover`** does not read the retained-password
+     flag. It keeps sending `DISCARD OLD PASSWORD` on every run.
+  5. **Oracle `LCOUNT`** through a view a DBA creates is not adopted.
+     `SELECT ON SYS.USER$` stays the only source (P2, [#124](#124)); what
+     that grant should be is #1514.
+  6. **PostgreSQL**, whether a role has a password, is not read through a
+     `SECURITY DEFINER` function. The field stays *not checked*.
+- **Why:** the view is the site's object, and it can be stale or wrong. A
+  verb that skips a safety action on its word (1, 2, 4) leaves an account
+  open, or an old password working, where the view is wrong. Sending the
+  action every run is harmless, and costs only `changed: true`, so the
+  exceptions to invariant 9 stay. The guard (3) can only stop a login, so a
+  wrong view leaves `check` as it runs today. The Oracle view (5) needs
+  `SYS` to set up and a second `LCOUNT` path, which #124 rejected; its one
+  gain, verifiers hidden from the tool account, is weighed in #1514, where a
+  view in `SYS`'s schema is the remedy if that exposure is judged serious.
+  The PostgreSQL function (6) is safe only when a superuser owns it and it
+  sets `search_path` or names the catalog in full; operator resolution was
+  not measured; and it adds one report field.
+- **Rejected:**
+  1. Reading the views in `describe_user` for 1, 2 and 4: `creds apply`
+     would start skipping locked accounts ([#1491](#1491)), and each verb
+     would skip its action where the view is wrong.
+  2. A lockout guard that refuses `check` where the view is absent: the
+     view is optional, and `check` runs without it today.
+  3. Building the Oracle view or the PostgreSQL function now: the
+     measurements (`23_lcount_view_probe.sql`,
+     `11_password_set_function_probe.py`) show what each needs, and neither
+     gain outweighs it.

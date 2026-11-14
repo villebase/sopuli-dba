@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.90.0](https://github.com/villebase/sopuli-dba/compare/v0.89.0...v0.90.0) (2026-11-14)
+
+
+### Features
+
+* **mysql:** a lockout guard for creds check ([#1515](https://github.com/villebase/sopuli-dba/issues/1515)) ([#1534](https://github.com/villebase/sopuli-dba/issues/1534)) ([5bd4f71](https://github.com/villebase/sopuli-dba/commit/5bd4f714e1d5e5c7a818978ee09c94d3909e6ead))
+
+
+### Bug Fixes
+
+* **oracle:** grant READ instead of SELECT on SYS.USER$ ([#1514](https://github.com/villebase/sopuli-dba/issues/1514)) ([#1531](https://github.com/villebase/sopuli-dba/issues/1531)) ([9bc13cb](https://github.com/villebase/sopuli-dba/commit/9bc13cb3ea9fb8fa52275af0e6e238e5617da581))
+* **report:** say where MariaDB's report data comes from in help ([#1520](https://github.com/villebase/sopuli-dba/issues/1520)) ([#1524](https://github.com/villebase/sopuli-dba/issues/1524)) ([ec402a5](https://github.com/villebase/sopuli-dba/commit/ec402a5fce9d80e49ebb0c9a582a38af4652e762))
+
 ## [0.89.0](https://github.com/villebase/sopuli-dba/compare/v0.88.0...v0.89.0) (2026-11-13)
 
 

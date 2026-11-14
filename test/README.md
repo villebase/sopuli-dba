@@ -99,7 +99,7 @@ Strategy and rationale: [`../docs/design/04-testing.md`](../docs/design/04-testi
 
 ```bash
 docker compose --profile tier0 up -d      # Vault + PostgreSQL + Yopass, seconds
-docker compose --profile tier1 up -d      # + Oracle Free, ~30-60 s to healthy
+docker compose --profile tier1 up -d      # + Oracle Free, MySQL, MariaDB, ~30-60 s to healthy
 docker compose --profile tier2 up -d      # + 21c/18c/11g XE, about 90 s once pulled
 docker compose --profile nne   up -d      # Vault + Oracle requiring NNE, on 1525
 docker compose --profile emulators up -d  # lowkey-vault, on 8443
@@ -215,12 +215,14 @@ starts `mariadb-matrix` sets `SOPULI_TEST_MARIADB1011_PORT`,
 `SOPULI_TEST_MARIADB123_PORT`, defaults 3311, 3314, 3318 and 3323. The suite
 reads none of them.
 
-A healthy tier-1 stack uses about 2.5 GB of memory in its containers, and about
-2.9 GB while the suite runs against it. Oracle Free is most of it, about 2.25 GB
-idle and 2.8 GB under the suite; `yopass` and `yopass-memcached` add about
-10 MiB. Those figures predate `mysql`, which adds about 440 MiB (measured
-after its tier-1 tests, 2026-11-01), and `mariadb`, which adds about 90 MiB
-(measured idle, 2026-11-04, before any test used it).
+A tier-1 stack starts `mysql` and `mariadb` too. The rest of it uses about
+2.5 GB of memory in its containers idle, and about 2.9 GB while the suite runs
+against it. Oracle Free is most of that, about 2.25 GB idle and 2.8 GB under
+the suite; `yopass` and `yopass-memcached` add about 10 MiB. `mysql` adds
+about 440 MiB after its tier-1 tests (measured 2026-11-01). `mariadb` adds
+about 90 MiB idle, with no test run against it (measured 2026-11-04); under
+the suite it uses more, by an amount not measured. So the whole stack needs
+more than 3.4 GB while the suite runs.
 
 | Service | Port | Notes |
 |---|---|---|

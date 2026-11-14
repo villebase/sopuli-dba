@@ -773,7 +773,7 @@ UC-5's `report` commands read accounts, profiles and privileges
 measured what they can read on 26ai Free 23.26.3.0.0
 ([measurements](../measurements.md), #1377):
 
-- **The grants above already read the account views.** An account holding
+- **The grants above already read four of the views.** An account holding
   them reads `DBA_USERS`, `DBA_PROFILES`, `DBA_ROLE_PRIVS` and `DBA_ROLES`.
   This holds for a local service account and for a common one whose grants
   are made `CONTAINER = ALL`, reading in a PDB.
@@ -1190,7 +1190,8 @@ power ([#1222](../decisions/log.md#1222)).
 not decide, as the error mapping does. `creds apply`, `creds rotate`, `account
 reset-password`, `account expire-password` and `account suspend` call it to
 refuse. `creds finish-rollover` calls it for the checks no flag waives, and
-`account list` to say which accounts a verb would refuse.
+`creds generate` for the same checks on each account it skips (#1174).
+`account list` calls it to say which accounts a verb would refuse.
 It holds no Oracle names. The Oracle driver
 (`src/sopuli/driver/oracle/accounts.py`) holds the role list for check 4 and the
 deny list for check 5, and reports what they find on each account it describes.

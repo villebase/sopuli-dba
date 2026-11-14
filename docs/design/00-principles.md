@@ -1055,11 +1055,11 @@ first question is where their test database runs.
   to touch. A refusal is not that: a run refused before it changed anything
   prints the refusal alone. A real `account reset-password` prints its plan to
   stderr before its first target whether or not it asks (#863).
-- Every mutating command that loads a config supports **`--confirm`**, with
-  one exception: UC-2's seen reset refuses it as a usage error (exit 2),
-  because there the prompt establishes that a person is present. `keyring
-  set` and `keyring delete` need no config and change only the OS keyring
-  entry they name, so no confirmation setting applies to them and they take
+- Every mutating command that changes a target or a store supports
+  **`--confirm`**, with one exception: UC-2's seen reset refuses it as a
+  usage error (exit 2), because there the prompt establishes that a person is
+  present. `keyring set` and `keyring delete` change only the OS keyring
+  entry they name, and no confirmation setting applies to them, so they take
   no `--confirm`. **The tool asks for confirmation where
   the configuration asks for it, and nowhere else.** D10 has the decision. The
   table shows which triggers exist:

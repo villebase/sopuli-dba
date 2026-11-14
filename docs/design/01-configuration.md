@@ -675,8 +675,8 @@ The selectors are flags: `--select` for labels, and `--target`, `--account`,
 `--group` and `--application` for names. `--app` is an accepted alias for
 `--application`. All are repeatable. The `account` verbs take every selector
 except `--application`, because a personal account belongs to no application.
-`account reset-password`, `suspend` and `expire-password` take `--account`
-once, because each acts on exactly one account.
+`account reset-password`, `suspend` and `expire-password` require
+`--account`, and take it once, because each acts on exactly one account.
 `lock break` takes none, because it names one lock path (P5).
 
 **They combine as *and*.** `--application acme --select env=dev` is acme's
@@ -4074,7 +4074,7 @@ notices until a rotation.
   selectors leave one out does not see it ([#841](../decisions/log.md#841))
 - in `reports:` (§8a): a `reports.accounts` rule with none of `login:`,
   `settings:`, `oracle.profile` and `postgresql.valid_until`, a `login:` other than `refused` or
-  `allowed`, an empty `settings:` or `oracle:`, a setting that is neither
+  `allowed`, an empty `settings:`, `oracle:` or `postgresql:`, a setting that is neither
   `unlimited` nor a whole number above 0, a pattern using a wildcard other than
   `*`, an account named twice (in one rule or across rules), an `oracle.profile`
   or `login: refused` given by name to an account an application declares, a

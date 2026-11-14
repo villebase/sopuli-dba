@@ -3233,6 +3233,8 @@ their strictness only because every document describes a real run.
 **`sopuli about` is outside the rule, not an exception to it.** It exits 0 and
 emits no document, because it is not a run. It takes no options of its own and
 refuses the global ones written before it, except `--color`, which it honours.
+The refusal names each option, except `--dry-run` and `--vault-token`, which
+have refusals of their own (`about_refusals` in `src/sopuli/cli.py`).
 It reads no configuration, resolves no settings, touches no estate and prints
 compiled-in text, so there is no invocation to describe and nothing a consumer
 could branch on. It is in the same position as `--version` and `--help`. It is a verb, not a

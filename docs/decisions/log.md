@@ -5432,15 +5432,20 @@ the register.
   requests do not measure it. `docs/design/04-testing.md` §4 has the local
   command.
 - **Why:** a report shows which code no test runs, which is the question.
-  Tracing slows the tier-1 lane, so it runs on a schedule and on request,
-  not on every pull request.
+  Tracing slows the tier-1 lane, which every pull request that changes code
+  waits on: its pytest took 730 s and 512 s in two runs with coverage,
+  against 452 to 534 s without. So it runs on a schedule and on request.
 - **Rejected:**
-  1. A minimum that fails a run below a set percentage. It invites tests
+  1. Measuring in one cell of the tier-1 lane on every run, as the issue
+     first proposed. The maintainer chose the schedule after the first CI
+     run, for the time above.
+  2. A minimum that fails a run below a set percentage. It invites tests
      written for the number, and the point of a test here is the behaviour
      it asserts.
-  2. An external service such as Codecov. It is a third party with access
-     to the repository, and the Scorecard token rules apply. It can still be
-     chosen later, once the figures have been seen.
+  3. An external service such as Codecov. It is a third party with access
+     to the repository, and the Scorecard token rules apply.
+
+  2 and 3 can still be chosen later, once the figures have been seen.
 
 ## #1454
 

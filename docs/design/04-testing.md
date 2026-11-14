@@ -318,7 +318,7 @@ stack running, the same tests skip with a reason, as §1 requires.
 [`../maintainer-environments.md`](../maintainer-environments.md) §1 lists the
 variables the suite reads for Oracle, and their defaults.
 
-**Coverage is reported, not required** (#1453). `pytest --cov
+**Coverage is reported, not required** ([#1453](../decisions/log.md#1453)). `pytest --cov
 --cov-report=term-missing` measures which lines and branches of `src/sopuli` the
 run executed, and prints them with the missing line numbers. The settings are
 in `pyproject.toml`. Code run in a child process counts too, such as the real

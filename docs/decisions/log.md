@@ -5870,6 +5870,9 @@ the register.
      12.1.0.1.
   2. Where it grants `READ`, it revokes an existing `SELECT ON SYS.USER$`
      after the grant, so running the script again moves an install to `READ`.
+     A grant it cannot revoke from where it runs (another grantor's, a
+     PDB's own seen from the root, or a common one seen from a PDB) is named
+     and left, and the run does not fail.
   3. P2 and `02-oracle-privileges.md` §2 name the `DBA` role's read.
 - **Why:** every read the tool makes on `SYS.USER$` is a plain `SELECT`, and
   `READ` serves it and refuses the lock. The tool probes the read, not the

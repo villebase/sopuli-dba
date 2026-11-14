@@ -812,10 +812,9 @@ def test_running_the_script_again_moves_select_on_user_dollar_to_read(
     """An install made with `SELECT ON SYS.USER$` ends with `READ` alone (#1514).
 
     Through `SELECT` the account can lock a `USER$` row, and that account's
-    logins wait until the lock ends; `READ` refuses the lock. The grant comes
-    first and the revoke after it, so the account never lacks the read. In
-    `COMMON` mode the old grant may be common or local to the root, and each
-    is revoked in its own form.
+    logins wait until the lock ends; `READ` refuses the lock. In `COMMON` mode
+    the old grant may be common or local to the root, and each is revoked in
+    its own form, which the message names.
     """
     if not _has_read(container):
         pytest.skip("this release has no READ object privilege: the script grants SELECT")
@@ -837,10 +836,86 @@ def test_running_the_script_again_moves_select_on_user_dollar_to_read(
 
     again = sqlplus(container, ROOT, f"{scripts}/00_install.sql", install_mode, SVC, "USERS", "Y")
     assert again.returncode == 0, again.stdout[-2000:]
-    assert "revoked SELECT ON SYS.USER$" in again.stdout
+    form = "in every container" if common else "in this container"
+    assert f"revoked SELECT ON SYS.USER$ {form}" in again.stdout
     held = grants_of(container, ROOT, install_account)
     assert "READ ON USER$" in held
     assert "SELECT ON USER$" not in held
+
+
+def _sql(container: str, connect: str, statements: str) -> None:
+    """Statements as SYSDBA, failing the test on the first error."""
+    result = _exec(
+        container, connect, script=f"WHENEVER SQLERROR EXIT SQL.SQLCODE\n{statements}\nEXIT\n"
+    )
+    assert result.returncode == 0, result.stdout[-2000:]
+
+
+def test_a_pdb_install_revokes_its_local_select_and_names_a_common_one(
+    container: str, scripts: str, clean: None, cdb_only: None
+) -> None:
+    """`PDB` mode revokes a `SELECT` granted in the PDB. A common account's
+    common grant cannot be revoked from a PDB, so the script names it and
+    goes on (#1514)."""
+    if not _has_read(container):
+        pytest.skip("this release has no READ object privilege: the script grants SELECT")
+    first = sqlplus(container, PDB, f"{scripts}/00_install.sql", "PDB", SVC)
+    assert first.returncode == 0, first.stdout[-2000:]
+    _sql(container, PDB, f"GRANT SELECT ON SYS.USER$ TO {LOCAL_SVC};")
+
+    again = sqlplus(container, PDB, f"{scripts}/00_install.sql", "PDB", SVC, "USERS", "Y")
+    assert again.returncode == 0, again.stdout[-2000:]
+    assert "revoked SELECT ON SYS.USER$ in this container" in again.stdout
+    held = grants_of(container, PDB, LOCAL_SVC)
+    assert "READ ON USER$" in held
+    assert "SELECT ON USER$" not in held
+
+
+def test_a_common_install_names_a_select_granted_inside_a_pdb(
+    container: str, scripts: str, clean: None, cdb_only: None
+) -> None:
+    """The root's `DBA_TAB_PRIVS` does not show a grant made inside a PDB, so
+    `COMMON` mode reads `CDB_TAB_PRIVS` and names the PDB, to revoke it there."""
+    if not _has_read(container):
+        pytest.skip("this release has no READ object privilege: the script grants SELECT")
+    first = sqlplus(container, ROOT, f"{scripts}/00_install.sql", "COMMON", SVC)
+    assert first.returncode == 0, first.stdout[-2000:]
+    _sql(container, PDB, f"GRANT SELECT ON SYS.USER$ TO {COMMON_SVC};")
+
+    again = sqlplus(container, ROOT, f"{scripts}/00_install.sql", "COMMON", SVC, "USERS", "Y")
+    assert again.returncode == 0, again.stdout[-2000:]
+    assert "granted locally in FREEPDB1 is left: revoke it in that PDB" in again.stdout
+    assert "SELECT ON USER$" in grants_of(container, PDB, COMMON_SVC), "left, as it says"
+
+
+def test_a_select_another_grantor_made_is_named_and_left(
+    container: str, scripts: str, clean: None, cdb_only: None
+) -> None:
+    """A `REVOKE` of another grantor's grant is `ORA-01927`, which would stop
+    the script part-way, so the script names that grant and goes on. The
+    grantor holds the grant option and grants through a procedure it owns,
+    which runs with its rights."""
+    if not _has_read(container):
+        pytest.skip("this release has no READ object privilege: the script grants SELECT")
+    grantor = "SOPULI_GRANTOR"
+    first = sqlplus(container, PDB, f"{scripts}/00_install.sql", "PDB", SVC)
+    assert first.returncode == 0, first.stdout[-2000:]
+    try:
+        _sql(
+            container,
+            PDB,
+            f"CREATE USER {grantor} NO AUTHENTICATION;\n"
+            f"GRANT SELECT ON SYS.USER$ TO {grantor} WITH GRANT OPTION;\n"
+            f"CREATE PROCEDURE {grantor}.g AUTHID DEFINER AS BEGIN "
+            f"EXECUTE IMMEDIATE 'GRANT SELECT ON SYS.USER$ TO {LOCAL_SVC}'; END;\n/\n"
+            f"EXEC {grantor}.g\n",
+        )
+        again = sqlplus(container, PDB, f"{scripts}/00_install.sql", "PDB", SVC, "USERS", "Y")
+        assert again.returncode == 0, again.stdout[-2000:]
+        assert f"granted by {grantor} is left: {grantor} revokes it" in again.stdout
+        assert "READ ON USER$" in grants_of(container, PDB, LOCAL_SVC)
+    finally:
+        drop(container, PDB, grantor)
 
 
 def test_installing_twice_changes_nothing(

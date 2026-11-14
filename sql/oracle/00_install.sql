@@ -93,7 +93,9 @@
 --         it, and revokes an existing SELECT (2026-11-14, #1514). Run on 26ai
 --         Free 23.26.3.0.0 through tests/driver/test_oracle_install_script.py
 --         in COMMON mode, with the old SELECT common and local to the root,
---         and by hand as SYSDBA in PDB mode in FREEPDB1: an account given
+--         and one granted inside FREEPDB1, named and left; and in PDB mode,
+--         with the old SELECT local, and one another grantor made, named and
+--         left. By hand as SYSDBA in PDB mode in FREEPDB1: an account given
 --         SELECT ON SYS.USER$ by hand held READ alone after a run with Y, read
 --         LCOUNT and SPARE4, and got ORA-01031 on SELECT ... FOR UPDATE. The
 --         branch that grants SELECT (11.2 and 12.1.0.1) is untried, and so is
@@ -393,17 +395,23 @@ END;
 -- whether this release has it. 11.2 and 12.1.0.1 get SELECT. Where READ is
 -- granted, an existing SELECT ON SYS.USER$ in this container is revoked after
 -- it, so running this script again moves an install made with SELECT to READ.
--- A common SELECT grant is revoked with CONTAINER=ALL, and only in COMMON
--- mode: a PDB cannot revoke it, and says so. A SELECT granted locally inside
--- a PDB is not seen from CDB$ROOT; revoke it in that PDB. The query names
--- DBA_TAB_PRIVS.COMMON, a 12.1 column, so it is dynamic: 11.2 never runs it.
+-- Only a grant this session's user made is revoked: a REVOKE of another
+-- grantor's is ORA-01927, so such a grant is named and left. A common SELECT
+-- grant is revoked with CONTAINER=ALL, and only in COMMON mode: a PDB cannot
+-- revoke it, and names it. In COMMON mode a SELECT granted locally inside a
+-- PDB is not in the root's DBA_TAB_PRIVS, so CDB_TAB_PRIVS names each PDB that
+-- holds one, to revoke it there. A grant that is left does not fail the run.
+-- The queries name 12.1 columns and views, so they are dynamic: 11.2 never
+-- runs them.
 --------------------------------------------------------------------------------
 PROMPT
 PROMPT [4] optional: SYS.USER$ (grant_user_dollar=&grant_user_dollar)
 DECLARE
-  n_read   NUMBER;
-  c_grants SYS_REFCURSOR;
-  l_common VARCHAR2(3);
+  n_read    NUMBER;
+  c_grants  SYS_REFCURSOR;
+  l_common  VARCHAR2(3);
+  l_grantor VARCHAR2(128);
+  l_pdb     VARCHAR2(128);
 BEGIN
   IF UPPER('&grant_user_dollar') = 'Y' THEN
     SELECT COUNT(*) INTO n_read FROM system_privilege_map
@@ -413,13 +421,16 @@ BEGIN
       DBMS_OUTPUT.PUT_LINE('granted READ ON SYS.USER$ '
         || '(enables check --method hash and the failed-login guard)');
       OPEN c_grants FOR
-        'SELECT common FROM dba_tab_privs WHERE grantee = :g AND owner = ''SYS'' '
-        || 'AND table_name = ''USER$'' AND privilege = ''SELECT'''
+        'SELECT common, grantor FROM dba_tab_privs WHERE grantee = :g '
+        || 'AND owner = ''SYS'' AND table_name = ''USER$'' AND privilege = ''SELECT'''
         USING UPPER('&eff_user');
       LOOP
-        FETCH c_grants INTO l_common;
+        FETCH c_grants INTO l_common, l_grantor;
         EXIT WHEN c_grants%NOTFOUND;
-        IF l_common = 'YES' AND '&cont_all' IS NULL THEN
+        IF l_grantor <> USER THEN
+          DBMS_OUTPUT.PUT_LINE('SELECT ON SYS.USER$ granted by ' || l_grantor
+            || ' is left: ' || l_grantor || ' revokes it');
+        ELSIF l_common = 'YES' AND '&cont_all' IS NULL THEN
           DBMS_OUTPUT.PUT_LINE('SELECT ON SYS.USER$ is a common grant here, and '
             || 'is left: revoke it in CDB$ROOT with CONTAINER=ALL');
         ELSIF l_common = 'YES' THEN
@@ -428,10 +439,25 @@ BEGIN
             || '(READ replaces it)');
         ELSE
           EXECUTE IMMEDIATE 'REVOKE SELECT ON SYS.USER$ FROM &eff_user';
-          DBMS_OUTPUT.PUT_LINE('revoked SELECT ON SYS.USER$ (READ replaces it)');
+          DBMS_OUTPUT.PUT_LINE('revoked SELECT ON SYS.USER$ in this container '
+            || '(READ replaces it)');
         END IF;
       END LOOP;
       CLOSE c_grants;
+      IF '&cont_all' IS NOT NULL THEN
+        OPEN c_grants FOR
+          'SELECT c.name FROM cdb_tab_privs p JOIN v$containers c ON c.con_id = p.con_id '
+          || 'WHERE p.grantee = :g AND p.owner = ''SYS'' AND p.table_name = ''USER$'' '
+          || 'AND p.privilege = ''SELECT'' AND p.common = ''NO'' AND p.con_id <> 1'
+          USING UPPER('&eff_user');
+        LOOP
+          FETCH c_grants INTO l_pdb;
+          EXIT WHEN c_grants%NOTFOUND;
+          DBMS_OUTPUT.PUT_LINE('SELECT ON SYS.USER$ granted locally in ' || l_pdb
+            || ' is left: revoke it in that PDB');
+        END LOOP;
+        CLOSE c_grants;
+      END IF;
     ELSE
       EXECUTE IMMEDIATE 'GRANT SELECT ON SYS.USER$ TO &eff_user&cont_all';
       DBMS_OUTPUT.PUT_LINE('granted SELECT ON SYS.USER$, as this release has no READ '

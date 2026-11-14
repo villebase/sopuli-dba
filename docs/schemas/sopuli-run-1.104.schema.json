@@ -1486,7 +1486,7 @@
             "boolean",
             "null"
           ],
-          "description": "True when the session can read SYS.USER$ (READ ON SYS.USER$, or SELECT before 12.1.0.2), enabling check --method hash and the LCOUNT lockout guard."
+          "description": "True when SELECT ON SYS.USER$ is granted, enabling check --method hash and the LCOUNT lockout guard."
         },
         "encryption": {
           "type": "object",
@@ -2036,7 +2036,7 @@
         },
         "failed_logins_reason": {
           "type": "string",
-          "description": "Why `failed_logins` is `null`, as the target's survey said it (added in 1.82), such as a missing `READ ON SYS.USER$` grant. Present only where `failed_logins` is `null`."
+          "description": "Why `failed_logins` is `null`, as the target's survey said it (added in 1.82), such as a missing `SELECT ON SYS.USER$` grant. Present only where `failed_logins` is `null`."
         },
         "missing_profile": {
           "type": "string",

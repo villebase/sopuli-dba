@@ -780,8 +780,10 @@ the register.
 - **Decision:** In the vault. There is one lock record per secret path, written
   with check-and-set, with holder details and a TTL, under a `locks/` prefix on
   the secret's own mount. A store without check-and-set (KV v1, or the `file`
-  backend, which is not built) refuses mutations unless it is configured
-  `locking: advisory-only`.
+  backend, which was not built then) refuses mutations unless it is configured
+  `locking: advisory-only`. #1372 later built the `file` backend
+  without check-and-set, and it needs `locking: advisory-only`
+  ([#1415](#1415), decision 4).
 - **Why:** The vault is the one participant every mutating command talks to.
   `DBMS_LOCK` has one advantage: a lock is released when its session dies. That
   does not help with the real risk. A stalled run's session is still alive, so
@@ -816,7 +818,9 @@ the register.
   - A configurable list of N: an unbounded payload, emulation on every backend,
     and stage names that cannot address the older entries.
   - None, relying on the store's history: rollback would depend on the backend,
-    and KV v1 has no history, nor would the unbuilt `file` backend.
+    and KV v1 has no history, nor would the `file` backend as then planned.
+    [#1415](#1415) later gave the `file` backend a history of the last
+    `max_versions` versions of each path.
 
 ## Q4
 
@@ -5139,7 +5143,8 @@ the register.
 
   Each takes effect when the backend is built (#1372). Until then the
   build refuses a `file` store with `SOPULI-20005`, and decision 7 lands
-  with the config part of that build.
+  with the config part of that build. #1372 later built the backend with
+  all seven.
 - **Why:**
   1. The store is for development and CI. An age key is one line made by one
      command, and a library needs nothing installed beside Python. `pyrage`
@@ -5197,7 +5202,8 @@ the register.
 - **Known cost:** a store with `locking: advisory-only` can still lose a
   write when two runs replace the file in the moment between the hash check
   and the rename. `pyrage` is a new dependency, and the version floor of
-  `sopuli-dba[file]` is set when the backend is built and measured.
+  `sopuli-dba[file]` is set when the backend is built and measured. The
+  build later set it at `pyrage>=1.4.0`.
 
 ## #1417
 
@@ -5396,7 +5402,9 @@ the register.
 
   Not decided yet: whether MariaDB's server-wide `max_password_errors`
   counts as an account's `failed_login_limit`, or the setting is *not
-  applicable* there. It waits for the MariaDB measurement.
+  applicable* there. It waits for the MariaDB measurement. #1448 later
+  decided it (R1): the setting is server-wide, not an account's limit, so
+  the check is *not applicable* on MariaDB.
 - **Why:** one neutral word for a concept only one product has leaves every
   other product with a check that is *not checked* forever, and that reads
   the same as a missing grant, which is a gap to fix. Splitting every setting

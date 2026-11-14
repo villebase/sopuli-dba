@@ -172,13 +172,15 @@ expire_password          ok
 offline_verify           ok  
 password_reuse_policy    ok  
 password_rollover        ok  
+password_value           --  
 profile_management       ok  
 role_lookup              ok  
-0 tests skipped (capability absent), 0 skipped (environment unavailable)
+1 tests skipped (capability absent), 0 skipped (environment unavailable)
 ```
 
 `ok` is present, `--` is absent, and `?` is an environment that could not be
-reached. The harness configures one environment per run, so the matrix has one
+reached. `password_value` is absent on Oracle because only the MariaDB driver
+reports it. The harness configures one environment per run, so the matrix has one
 column.
 
 Watch the second skip count. A skip for an absent capability is correct. A skip

@@ -4,12 +4,13 @@ Pure: the config and a survey of the target's accounts come in, rows come out.
 Nothing here connects. `docs/use-cases/uc-05-fleet-reports.md` §3 and §4 are
 the specification.
 
-**OK has to be earned.** A check ends in
-`problem`, `ok`, `not_checked` (it could not run truthfully on this target),
-`no_rule` (the file states nothing to compare) or `not_applicable` (the
-product has no such thing). An account is `REPORT_OK` only
-when every check had a rule, ran, and passed. That is the design's one hard
-rule: never report an account as fine when it is not.
+**OK has to be earned.** A check ends in `problem`, `ok`, `not_checked` (it
+could not run truthfully on this target), `no_rule` (the file states nothing to
+compare) or `not_applicable` (the product has no such thing). An account is
+`REPORT_OK` only when every check that applies had a rule, ran, and passed, and
+at least one did: where every stated check is `not_applicable`, the account is
+`no rule` (:func:`_state`). That is the design's one hard rule: never report an
+account as fine when it is not.
 
 **Names are matched in the tool.** A rule's names and `*` patterns are compared
 with the names the survey read, by `upper()`. No pattern is ever sent to the

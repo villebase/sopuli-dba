@@ -29,7 +29,7 @@ target, and 4 when something could not be checked. An account
 the config does not declare is listed as information and never changes the
 exit code. It runs on Oracle, PostgreSQL, MySQL and MariaDB. On MariaDB the
 lock and the lifetime come from the optional view `sopuli.account_state`,
-and are not checked where the view is absent or fails its check.
+and are not checked where the view is absent or cannot be used.
 
 Options:
 

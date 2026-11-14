@@ -819,8 +819,8 @@ the register.
     and stage names that cannot address the older entries.
   - None, relying on the store's history: rollback would depend on the backend,
     and KV v1 has no history, nor would the `file` backend as then planned.
-    [#1415](#1415) later gave the `file` backend a history of the last
-    `max_versions` versions of each path.
+    #1372 later built the `file` backend with a history of the last
+    `max_versions` versions of each path ([#1415](#1415), decision 3).
 
 ## Q4
 
@@ -5202,8 +5202,8 @@ the register.
 - **Known cost:** a store with `locking: advisory-only` can still lose a
   write when two runs replace the file in the moment between the hash check
   and the rename. `pyrage` is a new dependency, and the version floor of
-  `sopuli-dba[file]` is set when the backend is built and measured. The
-  build later set it at `pyrage>=1.4.0`.
+  `sopuli-dba[file]` is set when the backend is built and measured. #1372
+  later set it, in `pyproject.toml`.
 
 ## #1417
 
@@ -5403,8 +5403,10 @@ the register.
   Not decided yet: whether MariaDB's server-wide `max_password_errors`
   counts as an account's `failed_login_limit`, or the setting is *not
   applicable* there. It waits for the MariaDB measurement. #1448 later
-  decided it (R1): the setting is server-wide, not an account's limit, so
-  the check is *not applicable* on MariaDB.
+  measured and decided it: the setting is server-wide, not an account's
+  limit, so the check is *not applicable* on MariaDB
+  (`../use-cases/uc-05-fleet-reports.md` §8,
+  `../design/02-mariadb-privileges.md` §2.4).
 - **Why:** one neutral word for a concept only one product has leaves every
   other product with a check that is *not checked* forever, and that reads
   the same as a missing grant, which is a gap to fix. Splitting every setting

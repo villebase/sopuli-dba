@@ -94,16 +94,10 @@ all of `03-json-output.md` checked only about 2 claims per 1,000 words (#1086).
 `01-configuration.md` is over 30,000 words (#1359), and `log.md` over 50,000
 (#1523). Split each at the heading the table names, so that every audit compares
 the same parts. Find the heading's line number before you start, and tell each
-agent its range of lines, that another agent covers the rest, and to report the
-file's own line numbers, not numbers counted from the start of its range. A
-log-3 sweep once gave its numbers from the start of its range (#1523). `log.md`
+agent its range of lines and that another agent covers the rest. `log.md`
 grows at its end, so its last part grows. When that part passes 30,000 words,
 pick a later `## #N` heading, end the part's row at the line before it, add a
 row from it to the end, and add the new part to the decision-record note below.
-
-The oracle and front areas were each over 30,000 words in #1523, and their
-sweeps checked under 3 claims per 1,000 words. `measurements.md` and
-`local-testing.md` are areas of their own for that reason.
 
 Some areas need a note after the file list in the prompt:
 
@@ -111,14 +105,14 @@ Some areas need a note after the file list in the prompt:
   `sql/oracle/`, `sql/postgres/`, `sql/mysql/` and `sql/mariadb/` (a Python
   probe's docstring is its header). Dated results are allowed in
   `docs/measurements.md`; do not report them as narration."
-- **products**: "Dated measurement results quoted from `docs/measurements.md` are
+- **oracle** and **products**: "Dated measurement results quoted from `docs/measurements.md` are
   allowed; do not report them as narration, but check that they agree with
   `docs/measurements.md`."
 - **process**: "The sources of truth also include `.github/workflows/*.yml`, the
   compose files in `test/`, `pyproject.toml` and `tests/`."
 - **local-testing**: "This page shows the current build, so a sample the build
-  no longer prints, or a `schema_version` older than the one in
-  `docs/schemas/`, is `FALSE`."
+  no longer prints, or a `schema_version` older than the newest schema of its
+  own kind in `docs/schemas/` (run, event or config), is `FALSE`."
 - **register**, **log-1**, **log-2**, **log-3** and **adrs**: "Decision records and ADRs record why a decision was made, so
   describing the rejected options is not narration. An ADR's *Context*
   section describes the situation when the decision was made; do not report

@@ -77,4 +77,7 @@ not. Then one row per finding, in this form:
 <file>:<line> | <kind 1-8> | <FALSE|UNSURE|NARRATION> | "<the claim, quoted, at most 25 words>" | <evidence>
 ```
 
+`<line>` is the file's own line number, as an editor shows it, even when you
+were given only part of the file.
+
 Return nothing else. No summary, and no proposed fixes.

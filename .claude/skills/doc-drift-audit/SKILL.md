@@ -75,29 +75,39 @@ the agent cannot read this skill.
 | uc1 | `docs/use-cases/uc-01-app-credential-sync.md` |
 | scenarios | `docs/scenarios/*.md` |
 | uc2 | `docs/use-cases/uc-02-personal-account-passwords.md` |
-| oracle | `docs/design/02-oracle-privileges.md`, `docs/measurements.md` |
+| uc5 | `docs/use-cases/uc-05-fleet-reports.md` |
+| oracle | `docs/design/02-oracle-privileges.md` |
+| measurements | `docs/measurements.md` |
 | products | `docs/design/00-principles.md`, `docs/design/02-postgres-privileges.md`, `docs/design/02-mysql-privileges.md`, `docs/design/02-mariadb-privileges.md` |
 | process | `docs/design/04-testing.md`, `docs/workflow.md`, `docs/maintainer-environments.md`, `test/README.md`, `CONTRIBUTING.md`, `CLAUDE.md`, `.github/copilot-instructions.md` |
-| front | `README.md`, `SECURITY.md`, `docs/getting-started.md`, `docs/security-model.md`, `docs/local-testing.md` |
+| front | `README.md`, `SECURITY.md`, `docs/getting-started.md`, `docs/security-model.md` |
+| local-testing | `docs/local-testing.md` |
 | register | `docs/README.md` |
 | log-1 | `docs/decisions/log.md`, from the start to the line before `## #892` |
-| log-2 | `docs/decisions/log.md`, from `## #892` to the end |
+| log-2 | `docs/decisions/log.md`, from `## #892` to the line before `## #1267` |
+| log-3 | `docs/decisions/log.md`, from `## #1267` to the end |
 | adrs | `docs/decisions/adr-*.md` |
 | code | module docstrings, docstrings and comments in `src/sopuli/**/*.py` |
 
-Three files are split in two, because a sweep of a whole one goes shallow. One
-sweep of all of `03-json-output.md` checked only about 2 claims per 1,000 words
-(#1086). `01-configuration.md` and `log.md` are each over 30,000 words (#1359).
-Split each at the heading the table names, so that every audit compares the same
-halves. Find the heading's line number before you start, and tell each agent its
-range of lines and that another agent covers the rest. `log.md` grows at its
-end, so log-2 grows. When log-2 passes 30,000 words, pick a later `## #N`
-heading. End log-2's row at the line before it, add a log-3 row from it to the
-end, and add log-3 to the decision-record note below.
+Three files are split, because a sweep of a whole one goes shallow. One sweep of
+all of `03-json-output.md` checked only about 2 claims per 1,000 words (#1086).
+`01-configuration.md` is over 30,000 words (#1359), and `log.md` over 50,000
+(#1523). Split each at the heading the table names, so that every audit compares
+the same parts. Find the heading's line number before you start, and tell each
+agent its range of lines, that another agent covers the rest, and to report the
+file's own line numbers, not numbers counted from the start of its range. A
+log-3 sweep once gave its numbers from the start of its range (#1523). `log.md`
+grows at its end, so its last part grows. When that part passes 30,000 words,
+pick a later `## #N` heading, end the part's row at the line before it, add a
+row from it to the end, and add the new part to the decision-record note below.
+
+The oracle and front areas were each over 30,000 words in #1523, and their
+sweeps checked under 3 claims per 1,000 words. `measurements.md` and
+`local-testing.md` are areas of their own for that reason.
 
 Some areas need a note after the file list in the prompt:
 
-- **oracle**: "Check `docs/measurements.md` against the headers of the scripts in
+- **measurements**: "Check `docs/measurements.md` against the headers of the scripts in
   `sql/oracle/`, `sql/postgres/`, `sql/mysql/` and `sql/mariadb/` (a Python
   probe's docstring is its header). Dated results are allowed in
   `docs/measurements.md`; do not report them as narration."
@@ -106,7 +116,10 @@ Some areas need a note after the file list in the prompt:
   `docs/measurements.md`."
 - **process**: "The sources of truth also include `.github/workflows/*.yml`, the
   compose files in `test/`, `pyproject.toml` and `tests/`."
-- **register**, **log-1**, **log-2** and **adrs**: "Decision records and ADRs record why a decision was made, so
+- **local-testing**: "This page shows the current build, so a sample the build
+  no longer prints, or a `schema_version` older than the one in
+  `docs/schemas/`, is `FALSE`."
+- **register**, **log-1**, **log-2**, **log-3** and **adrs**: "Decision records and ADRs record why a decision was made, so
   describing the rejected options is not narration. An ADR's *Context*
   section describes the situation when the decision was made; do not report
   it. Report claims about the current build that are false, and status claims

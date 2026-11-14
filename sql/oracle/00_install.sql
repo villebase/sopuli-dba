@@ -89,6 +89,18 @@
 --         section 8's report lists it. Untried on 21c, 18c and 11g, where the
 --         view exists and the line is the same shape as its neighbours.
 --
+--         grant_user_dollar=Y grants READ, not SELECT, where the release has
+--         it, and revokes an existing SELECT (2026-11-14, #1514). Run on 26ai
+--         Free 23.26.3.0.0 through tests/driver/test_oracle_install_script.py
+--         in COMMON mode, with the old SELECT common and local to the root,
+--         and one granted inside FREEPDB1, named and left; and in PDB mode,
+--         with the old SELECT local, and one another grantor made, named and
+--         left. By hand as SYSDBA in PDB mode in FREEPDB1: an account given
+--         SELECT ON SYS.USER$ by hand held READ alone after a run with Y, read
+--         LCOUNT and SPARE4, and got ORA-01031 on SELECT ... FOR UPDATE. The
+--         branch that grants SELECT (11.2 and 12.1.0.1) is untried, and so is
+--         every other release.
+--
 -- Run as SYS AS SYSDBA or an equivalent DBA.
 --
 -- Pick a mode:
@@ -122,7 +134,7 @@ WHENEVER SQLERROR EXIT SQL.SQLCODE
 --   1 mode                COMMON | PDB | NONCDB
 --   2 svc_name            account name; COMMON mode prefixes it with C##
 --   3 svc_tablespace      default tablespace for the account
---   4 grant_user_dollar   Y grants SELECT on SYS.USER$ -- see below
+--   4 grant_user_dollar   Y grants READ on SYS.USER$ (SELECT before 12.1.0.2) -- see below
 --   5 grant_set_container Y grants SET CONTAINER -- see below
 --   6 grant_pwfile        Y grants SELECT on SYS.V_$PWFILE_USERS -- see below
 --   7 grant_connect_info  Y grants SELECT on SYS.V_$SESSION_CONNECT_INFO -- see below
@@ -155,7 +167,7 @@ SELECT NULL AS "1", NULL AS "2", NULL AS "3", NULL AS "4", NULL AS "5", NULL AS 
 
 -- Defaults live here, in the NVL. `grant_user_dollar=Y` enables
 -- `sopuli creds check --method hash` and the failed-login (LCOUNT) guard, at the
--- cost of SELECT on SYS.USER$, which exposes password verifiers -- see
+-- cost of READ on SYS.USER$, which exposes password verifiers -- see
 -- docs/design/02-oracle-privileges.md §2. It is recommended for scheduled checks,
 -- because the alternative (repeated login attempts) can lock the very production
 -- accounts the check is monitoring. `grant_set_container=Y` is for a site whose
@@ -374,14 +386,83 @@ END;
 
 --------------------------------------------------------------------------------
 -- 4. Optional: SYS.USER$ for hash-mode verification and the LCOUNT guard
+--
+-- READ, not SELECT, where the release has it (#1514). The tool only selects
+-- from SYS.USER$, and READ refuses SELECT ... FOR UPDATE: through SELECT the
+-- account can lock a USER$ row, and that account's logins and ALTER USER then
+-- wait until the lock ends (sql/oracle/23_lcount_view_probe.sql, LV4). READ
+-- came with READ ANY TABLE in 12.1.0.2, so the system privilege map answers
+-- whether this release has it. 11.2 and 12.1.0.1 get SELECT. Where READ is
+-- granted, an existing SELECT ON SYS.USER$ in this container is revoked after
+-- it, so running this script again moves an install made with SELECT to READ.
+-- Only a grant this session's user made is revoked: a REVOKE of another
+-- grantor's is ORA-01927, so such a grant is named and left. A common SELECT
+-- grant is revoked with CONTAINER=ALL, and only in COMMON mode: a PDB cannot
+-- revoke it, and names it. In COMMON mode a SELECT granted locally inside a
+-- PDB is not in the root's DBA_TAB_PRIVS, so CDB_TAB_PRIVS names each PDB that
+-- holds one, to revoke it there. A grant that is left does not fail the run.
+-- The queries name 12.1 columns and views, so they are dynamic: 11.2 never
+-- runs them.
 --------------------------------------------------------------------------------
 PROMPT
 PROMPT [4] optional: SYS.USER$ (grant_user_dollar=&grant_user_dollar)
+DECLARE
+  n_read    NUMBER;
+  c_grants  SYS_REFCURSOR;
+  l_common  VARCHAR2(3);
+  l_grantor VARCHAR2(128);
+  l_pdb     VARCHAR2(128);
 BEGIN
   IF UPPER('&grant_user_dollar') = 'Y' THEN
-    EXECUTE IMMEDIATE 'GRANT SELECT ON SYS.USER$ TO &eff_user&cont_all';
-    DBMS_OUTPUT.PUT_LINE('granted SELECT ON SYS.USER$ '
-      || '(enables check --method hash and the failed-login guard)');
+    SELECT COUNT(*) INTO n_read FROM system_privilege_map
+     WHERE name = 'READ ANY TABLE';
+    IF n_read > 0 THEN
+      EXECUTE IMMEDIATE 'GRANT READ ON SYS.USER$ TO &eff_user&cont_all';
+      DBMS_OUTPUT.PUT_LINE('granted READ ON SYS.USER$ '
+        || '(enables check --method hash and the failed-login guard)');
+      OPEN c_grants FOR
+        'SELECT common, grantor FROM dba_tab_privs WHERE grantee = :g '
+        || 'AND owner = ''SYS'' AND table_name = ''USER$'' AND privilege = ''SELECT'''
+        USING UPPER('&eff_user');
+      LOOP
+        FETCH c_grants INTO l_common, l_grantor;
+        EXIT WHEN c_grants%NOTFOUND;
+        IF l_grantor <> USER THEN
+          DBMS_OUTPUT.PUT_LINE('SELECT ON SYS.USER$ granted by ' || l_grantor
+            || ' is left: ' || l_grantor || ' revokes it');
+        ELSIF l_common = 'YES' AND '&cont_all' IS NULL THEN
+          DBMS_OUTPUT.PUT_LINE('SELECT ON SYS.USER$ is a common grant here, and '
+            || 'is left: revoke it in CDB$ROOT with CONTAINER=ALL');
+        ELSIF l_common = 'YES' THEN
+          EXECUTE IMMEDIATE 'REVOKE SELECT ON SYS.USER$ FROM &eff_user CONTAINER=ALL';
+          DBMS_OUTPUT.PUT_LINE('revoked SELECT ON SYS.USER$ in every container '
+            || '(READ replaces it)');
+        ELSE
+          EXECUTE IMMEDIATE 'REVOKE SELECT ON SYS.USER$ FROM &eff_user';
+          DBMS_OUTPUT.PUT_LINE('revoked SELECT ON SYS.USER$ in this container '
+            || '(READ replaces it)');
+        END IF;
+      END LOOP;
+      CLOSE c_grants;
+      IF '&cont_all' IS NOT NULL THEN
+        OPEN c_grants FOR
+          'SELECT c.name FROM cdb_tab_privs p JOIN v$containers c ON c.con_id = p.con_id '
+          || 'WHERE p.grantee = :g AND p.owner = ''SYS'' AND p.table_name = ''USER$'' '
+          || 'AND p.privilege = ''SELECT'' AND p.common = ''NO'' AND p.con_id <> 1'
+          USING UPPER('&eff_user');
+        LOOP
+          FETCH c_grants INTO l_pdb;
+          EXIT WHEN c_grants%NOTFOUND;
+          DBMS_OUTPUT.PUT_LINE('SELECT ON SYS.USER$ granted locally in ' || l_pdb
+            || ' is left: revoke it in that PDB');
+        END LOOP;
+        CLOSE c_grants;
+      END IF;
+    ELSE
+      EXECUTE IMMEDIATE 'GRANT SELECT ON SYS.USER$ TO &eff_user&cont_all';
+      DBMS_OUTPUT.PUT_LINE('granted SELECT ON SYS.USER$, as this release has no READ '
+        || '(enables check --method hash and the failed-login guard)');
+    END IF;
   ELSE
     DBMS_OUTPUT.PUT_LINE('SYS.USER$ not granted: check --method hash unavailable, '
       || 'and login-based checks run without the LCOUNT lockout guard');

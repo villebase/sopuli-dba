@@ -305,12 +305,27 @@ The default path is a login attempt plus UC-1 §7's mitigations: never retry,
 reset on success, and report `ACCOUNT_STATUS`. All of it runs on the base grant
 set. [P2](../decisions/log.md#p2) records the decision.
 
-`SELECT ON SYS.USER$` is optional. `sql/oracle/00_install.sql` grants it only
+The grant on `SYS.USER$` is optional. `sql/oracle/00_install.sql` makes it only
 when `grant_user_dollar` is `Y`, and the default is `N`:
 
 ```sql
-GRANT SELECT ON SYS.USER$ TO sopuli_svc;   -- or c##sopuli_svc CONTAINER=ALL
+GRANT READ ON SYS.USER$ TO sopuli_svc;   -- or c##sopuli_svc CONTAINER=ALL
 ```
+
+It is `READ`, not `SELECT` ([#1514](../decisions/log.md#1514)). The tool only
+selects from `SYS.USER$`, and `READ` refuses `SELECT … FOR UPDATE`, which
+through `SELECT` lets the tool account hold up an account's logins (below).
+The script grants `READ` where `SYSTEM_PRIVILEGE_MAP` has `READ ANY TABLE`,
+which came with the `READ` object privilege in 12.1.0.2, and `SELECT` on 11.2
+and 12.1.0.1. Where it grants `READ`, it then revokes a `SELECT ON SYS.USER$`
+the account holds in that container, so running the script again moves an
+older install to `READ`. In `COMMON` mode it revokes a common grant with
+`CONTAINER=ALL` and a grant local to the root without it. It leaves three
+kinds of `SELECT` grant, names each, and does not fail: one another grantor
+made, which only that grantor can revoke (`ORA-01927`); in `COMMON` mode, one
+made locally inside a PDB, which it names by PDB; and in `PDB` mode, a common
+one, which only the root can revoke. The tool probes the read, so either
+grant gives the same capability.
 
 When the grant is present, the tool probes it as a capability at plan time
 (invariant 3) and uses it for these things:
@@ -342,11 +357,9 @@ database. An account that holds `ALTER USER` can already set any password, so
 reading the verifiers adds little to what it can do in the database. But
 verifiers can be attacked offline: a stolen copy is useful to an attacker who
 never touches the database again. A site makes that trade, not the tool.
-`23_lcount_view_probe.sql` found two more costs of this grant, described
-below: an account with the `DBA` role can read the verifiers through a view in
-the tool account's schema, and `SELECT … FOR UPDATE` lets the tool account
-hold up an account's logins. Whether to grant `READ` instead of `SELECT` is
-open (#1514).
+The grant also exposes the verifiers to every account with the `DBA` role,
+through a view in the tool account's schema, `READ` as much as `SELECT`
+(below, under `23_lcount_view_probe.sql`).
 
 The tool offers no narrower grant. One was measured and not adopted; the
 reasons are in [#124](../decisions/log.md#124). On the release measured, a
@@ -447,10 +460,9 @@ tool does not read such a view.
   owner loses its grant on `SYS.USER$`, the read gets `ORA-04063`, and it
   works again when the grant comes back.
 - **A `SELECT` grant lets its holder hold up logins.** Through `SELECT` on
-  the view, or on `SYS.USER$` itself as `grant_user_dollar=Y` grants it,
-  `SELECT … FOR UPDATE` locks a row of `SYS.USER$`. Until the lock ends, a
-  login to that account, with a right or a wrong password, and `ALTER USER`
-  on it, wait. `READ` refuses `FOR UPDATE` with `ORA-41900` or `ORA-01031`,
+  the view, or on `SYS.USER$` itself, `SELECT … FOR UPDATE` locks a row of
+  `SYS.USER$`. Until the lock ends, a login to that account, with a right or
+  a wrong password, and `ALTER USER` on it, wait. `READ` refuses `FOR UPDATE` with `ORA-41900` or `ORA-01031`,
   and still reads `LCOUNT`.
 - **A grant on `SYS.USER$` outside `SYS` shows the verifiers to the `DBA`
   role.** The `DBA` role cannot read `SYS.USER$`. But an account with `CREATE
@@ -466,7 +478,7 @@ tool does not read such a view.
 
 `check --method hash` compares the vault's password with the account's stored
 `T:` (12C, PBKDF2-SHA512) verifier. The tool regenerates the verifier
-client-side. Reading the stored one needs `SELECT ON SYS.USER$`, because it is in
+client-side. Reading the stored one needs `READ ON SYS.USER$`, because it is in
 `SPARE4`. So hash mode needs the grant, although the derivation does not.
 
 The layout, the derivation and the rules for a missing verifier are measured.
@@ -983,7 +995,7 @@ account's password alone.
 
 | Not granted | Why |
 |---|---|
-| `SELECT ANY DICTIONARY` | includes `SYS.USER$` and everything else. If hash mode is wanted, grant `SELECT ON SYS.USER$` alone |
+| `SELECT ANY DICTIONARY` | includes `SYS.USER$` and everything else. If hash mode is wanted, grant `READ ON SYS.USER$` alone |
 | `DBA`, `PDB_DBA`, `CDB_DBA` | the tool needs `ALTER USER`, not a role that carries a hundred other privileges |
 | `SYSDBA` / `SYSOPER` | no operation of the tool needs them |
 | `ALTER PROFILE` | no credential-sync verb edits a profile (UC-1 Q4). A profile is shared, so editing one reaches accounts nobody selected, and the config's account whitelist (invariant 5) cannot limit that. The tool reports the DDL that enables password rollover instead, and `doctor --check-privileges` reports this privilege if the service account holds it. Whether UC-4 may create and alter profiles is its own question; it would be a privilege of a principal UC-4 defines, not of this grant set |
@@ -1463,7 +1475,7 @@ row.
 | OS audit files (`audit_file_dest`): the `SYSDBA` path | **Clean** in position 1 on every release measured before the 23 codebase, with `AUDIT_SYS_OPERATIONS = TRUE`. In position 2, where `svc_user` is `SYS`, the DDL is written masked, `ACTION :[37] 'ALTER USER sopulitest IDENTIFIED BY *'`, and the only verbatim canary is the PL/SQL block. Position 2 ran on 21c, 19.3, 19.32 and 12.2, not on 18c or 11.2. The search must match the numbered canaries: matching the shared prefix finds the probe's own SQL text and reports a false leak | Nothing to do on releases before the 23 codebase. On 26ai the surface is absent, not clean: see the next row |
 | OS audit files on the 23 codebase | **The surface is gone, so a clean search there measures nothing.** On 26ai 23.26.2.0.0, `AUDIT_SYS_OPERATIONS = TRUE` is accepted and writes nothing useful: five files, each a session header and one `ACTION` line for the same internal call, and no `CREATE`, `ALTER` or `DROP USER` text. Traditional auditing is desupported from the 23 codebase, and this parameter belongs to it | Read it as an empty column, as the search labels one `INCONCLUSIVE`. There is nothing to protect here on the 23 codebase. That is a different claim from "we looked and found nothing" |
 | **Self-rotation**: `IDENTIFIED BY … REPLACE …` | **Audited, with both passwords masked.** The trail records `ALTER USER sopulitest IDENTIFIED BY * REPLACE *`, attributed to the account itself, not to a service account. The unified policy `ACTIONS ALTER USER` records it, and so does traditional `AUDIT USER` where it exists. The `REPLACE` clause carries the account's current password, masked with the same `*`. Not measured: self-rotation under a password verify function, which receives both passwords | The concern was that this path uses no `ALTER USER` privilege, so privilege auditing could miss it. It does not: **"rotations are audited" holds for self-rotation too**, which UC-1b needs. The tool does not have this path |
-| **`IDENTIFIED BY VALUES`**: the verifier | **Masked.** The trail records `ALTER USER sopulitest IDENTIFIED BY VALUES *`, and under a level-12 trace the DDL is cut short at the same character as the password form. No raw verifier appears in a trace file or an OS audit file. On 19.32.0.0.0 it is masked in the unified trail and absent from both `DBA_AUDIT_TRAIL` and `audit_file_dest`. That traditional half is absent, not clean, and the cause is not known | A restore-from-verifier path, if one is ever added, does not widen the audit exposure. The verifier can still be attacked offline wherever it can be read, which is ADR-001's question. The probe needs `SELECT ON SYS.USER$`; without it, this row is unanswered, not clean. A verifier written as a literal into a PL/SQL block leaks like any other literal (invariant 13) |
+| **`IDENTIFIED BY VALUES`**: the verifier | **Masked.** The trail records `ALTER USER sopulitest IDENTIFIED BY VALUES *`, and under a level-12 trace the DDL is cut short at the same character as the password form. No raw verifier appears in a trace file or an OS audit file. On 19.32.0.0.0 it is masked in the unified trail and absent from both `DBA_AUDIT_TRAIL` and `audit_file_dest`. That traditional half is absent, not clean, and the cause is not known | A restore-from-verifier path, if one is ever added, does not widen the audit exposure. The verifier can still be attacked offline wherever it can be read, which is ADR-001's question. The probe needs a grant on `SYS.USER$`; without it, this row is unanswered, not clean. A verifier written as a literal into a PL/SQL block leaks like any other literal (invariant 13) |
 | Network | encrypted when NNE or TLS is in use | `doctor` reports whether each connection is encrypted, and by what (§2). `creds apply`, `creds rotate` and `account reset-password` warn when they send a password over a connection that is not encrypted, `SOPULI-W031`, or whose encryption is not known, `SOPULI-W032` (`03-json-output.md` §3). Require NNE or TLS on the server |
 | Tool's own output and logs | redacted at the output serialiser. `--debug` logs each statement, and a statement that carries a password in its redacted form, `IDENTIFIED BY ***` | covered by the redaction release gate, UC-1 §11 |
 | Client-side tracing: Oracle Net tracing (`TRACE_LEVEL_CLIENT` in `sqlnet.ora`) and ODPI-C's `DPI_DEBUG_LEVEL` | **can record the statement text or the network packets**, and with them the password in `ALTER USER … IDENTIFIED BY`. The Oracle client reads both settings itself, from `sqlnet.ora` and from the environment | The tool cannot turn them off. Do not enable either on a machine that rotates or resets passwords. If one was enabled, treat its trace files as holding passwords |

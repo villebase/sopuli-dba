@@ -433,7 +433,7 @@ def test_a_release_without_password_change_date_falls_back(  # noqa: D401
     )
     assert PTIME_QUERY not in cursor.asked, "no grant was declared, so SYS.USER$ is not read"
     assert state.password_changed_unknown is not None
-    assert "SELECT ON SYS.USER$" in state.password_changed_unknown, "the reason names the remedy"
+    assert "READ ON SYS.USER$" in state.password_changed_unknown, "the reason names the remedy"
 
 
 def test_a_missing_oracle_maintained_column_is_none_and_not_false() -> None:

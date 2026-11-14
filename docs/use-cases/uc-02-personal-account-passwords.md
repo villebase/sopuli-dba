@@ -869,7 +869,7 @@ These absences are not the same:
   message carries what it said.
 - **The database will not say when.** `SOPULI-W021` already tells the causes
   apart: a release with no `DBA_USERS.PASSWORD_CHANGE_DATE` and no
-  `SELECT ON SYS.USER$` to read `PTIME` instead, which a grant fixes, or a value
+  `READ ON SYS.USER$` to read `PTIME` instead, which a grant fixes, or a value
   that could not be read, which is worth investigating (`03-json-output.md`).
   12.2.0.1.0 takes the fallback. 12.1 would too and is unmeasured
   (unverified: pw-changed-source).
@@ -1241,7 +1241,7 @@ either path. On the seen path, a login would consume the `EXPIRED` state that th
 reset exists to create. The reason that covers both paths is about the tool:
 **verification would put the password somewhere other than the store.** A login
 means the tool holds and uses a value that the unseen path otherwise only writes.
-A hash comparison needs the optional `SELECT ON SYS.USER$` grant, and must never
+A hash comparison needs the optional `READ ON SYS.USER$` grant, and must never
 bind a value (invariant 14). Both would spend the unseen path's own guarantee to
 learn something nobody asked for.
 

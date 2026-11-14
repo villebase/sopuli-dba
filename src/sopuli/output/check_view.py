@@ -154,7 +154,7 @@ def _verification(result: VerifyResult, *, previous_accepted: bool | None = None
 
     ``lcount`` and ``failed_login_attempts_limit`` are emitted as ``null`` rather
     than omitted when the guard is unavailable, because null here is a real
-    answer: ``SELECT ON SYS.USER$`` is an optional grant (decision P2), and a
+    answer: ``READ ON SYS.USER$`` is an optional grant (decision P2), and a
     common account outside ``CDB$ROOT`` has its count in the root (#1122). So
     "the guard was unavailable" is a thing a scheduled check must be able to
     report, and the detail says why. Omitting the keys would make an ungranted

@@ -185,7 +185,7 @@ common account reads `OPEN`, because its lock is kept in `CDB$ROOT`
 (`02-oracle-privileges.md` §2, [#1122](../decisions/log.md#1122)). So on a PDB
 target the lock of a common account is *not checked*, and the report never
 calls it OK. The count needs the optional
-`SELECT ON SYS.USER$` grant, does not exist on Autonomous Database, and reads 0
+`READ ON SYS.USER$` grant, does not exist on Autonomous Database, and reads 0
 for a common account in a PDB, because the count is kept in `CDB$ROOT`
 (`02-oracle-privileges.md` §2, [#1122](../decisions/log.md#1122)). Where the
 count cannot be read truthfully, the report shows `unknown`, never 0.

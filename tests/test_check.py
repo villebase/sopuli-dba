@@ -48,7 +48,7 @@ def test_a_password_that_works_is_in_sync() -> None:
     assert "v7" in outcome.detail
 
 
-UNGUARDED = "the lockout guard is unavailable: SELECT ON SYS.USER$ is not granted"
+UNGUARDED = "the lockout guard is unavailable: READ ON SYS.USER$ is not granted"
 
 
 def test_a_pass_without_the_lockout_guard_says_so() -> None:

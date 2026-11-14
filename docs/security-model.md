@@ -258,7 +258,7 @@ Four things prevent that:
    before they change the password, and after, to confirm it. No retries and no
    back-off loop: each password is tried once, never five times.
 2. **The tool looks before it leaps.** Where it has been granted
-   `SELECT ON SYS.USER$`, it reads how many failed attempts the account has
+   `READ ON SYS.USER$`, it reads how many failed attempts the account has
    already collected and compares that with the profile's limit. If one more
    attempt would leave less than the margin you asked for — `--lockout-margin`,
    two attempts by default — it does not try. The result is reported as
@@ -277,8 +277,10 @@ Four things prevent that:
 
    `UNVERIFIABLE` is the honest answer. The tool declines to find out, and names
    the fact that stopped it.
-3. **It says when the guard is unavailable.** `SELECT ON SYS.USER$` is an optional
-   grant, not part of the standard install, because it is a broad read. Where it
+3. **It says when the guard is unavailable.** `READ ON SYS.USER$` is an optional
+   grant, not part of the standard install, because it is a broad read: it
+   shows every password verifier to the tool account, and to every account
+   with the `DBA` role through a view in the tool account's schema. Where it
    has not been granted the tool cannot read the counter — and it reports that
    plainly instead of quietly skipping the check. The other three mitigations
    still apply.

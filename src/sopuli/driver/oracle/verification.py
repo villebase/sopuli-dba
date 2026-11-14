@@ -123,7 +123,7 @@ def margin_reason(
 
     * **``UNLIMITED``** -- there is no lockout on this profile, so there is
       nothing to protect and the attempt goes ahead.
-    * **``failed_logins is None``** -- ``SELECT ON SYS.USER$`` was never granted
+    * **``failed_logins is None``** -- ``READ ON SYS.USER$`` was never granted
       (an optional grant, decision P2), or the account is a common account whose
       count is in another container (#1122), so the guard is *unavailable*. The
       attempt still goes ahead, because `check` runs without a site-specific

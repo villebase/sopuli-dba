@@ -53,6 +53,7 @@ other than 19.24 and 19.32. One release update is not every release update.
 | `00_install.sql` | `23.26.2.0.0` | 2026-08-26 | — | All three modes, create and already-exists paths, both mode guards. `grant_pwfile` added and run 2026-09-05 (#296); `grant_connect_info` 2026-10-09 (#697) |
 | `00_install.sql` | `23.26.3.0.0` | 2026-11-07 | #1387 | `grant_report_reads` added: PDB mode by hand with `Y` and `N`, and the install-script tests |
 | `00_install.sql` | `23.26.3.0.0` | 2026-11-08 | #1389 | `grant_report_reads=Y` also grants `DBA_SCHEMA_PRIVS` where the view exists: PDB mode through probe 21 with `Y` and `N`, and the install-script tests. The branch for a release without the view is untried |
+| `00_install.sql` | `23.26.3.0.0` | 2026-11-14 | #1514 | `grant_user_dollar=Y` grants `READ ON SYS.USER$`, and revokes an existing `SELECT` on it: `COMMON` mode through the install-script tests, with the old grant common and local to the root, and `PDB` mode by hand. An account given `SELECT` by hand held `READ` alone after the run, read `LCOUNT` and `SPARE4`, and got `ORA-01031` on `SELECT … FOR UPDATE`. The branch that grants `SELECT`, for 11.2 and 12.1.0.1, is untried |
 | `00_install.sql` | `21.3.0.0.0` | 2026-09-08 | #380 | PDB and `CDB$ROOT`. Ran only after the service account's random password was cut from 31 to 30 bytes |
 | `00_install.sql` | `18.4.0.0.0` | 2026-09-08 | #381 | PDB and `CDB$ROOT` |
 | `00_install.sql` | `11.2.0.2.0` | 2026-09-08 | #382 | `NONCDB` mode, after two fixes for a non-CDB |

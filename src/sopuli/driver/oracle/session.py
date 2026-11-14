@@ -1191,7 +1191,7 @@ class OracleSession(ClosesConnection):
         ``describe`` -- `check` needs no site-specific grant (decisions P2 and Q1), and
         roles are a guardrail input for mutations, not for reading.
 
-        Where ``SELECT ON SYS.USER$`` was never granted, or the account is a
+        Where ``READ ON SYS.USER$`` was never granted, or the account is a
         common account outside ``CDB$ROOT`` (:meth:`_guard_gap`), a ``login``'s
         guard is **unavailable**, the attempt still goes ahead, and the result
         says so in ``detail`` rather than letting an absent guard read like a
@@ -1242,7 +1242,10 @@ class OracleSession(ClosesConnection):
             if gap is not None:
                 unguarded: str | None = f"the lockout guard is unavailable: {gap}"
             elif not self.scope().supports(OFFLINE_VERIFY):
-                unguarded = "the lockout guard is unavailable: SELECT ON SYS.USER$ is not granted"
+                unguarded = (
+                    "the lockout guard is unavailable: READ ON SYS.USER$ "
+                    "(SELECT before 12.1.0.2) is not granted"
+                )
             else:
                 unguarded = None
             counter = failed_logins(cursor, state.name) if unguarded is None else None
@@ -1303,7 +1306,7 @@ class OracleSession(ClosesConnection):
         """Why ``LCOUNT`` and the profile limit read here may not be ``name``'s.
 
         ``None`` where they are. Otherwise the reason, which every caller
-        reports. Granting ``SELECT ON SYS.USER$`` would not close this gap, so a
+        reports. Granting ``READ ON SYS.USER$`` would not close this gap, so a
         caller gives this reason before the grant's.
 
         Measured by ``sql/oracle/17_common_lcount_probe.sql`` on 23.26.3.0.0,
@@ -1552,7 +1555,7 @@ class OracleSession(ClosesConnection):
             )
         return (
             "`hash` compares the account's stored verifier, which is in SYS.USER$ "
-            "and needs the optional `GRANT SELECT ON SYS.USER$` "
+            "and needs the optional `GRANT READ ON SYS.USER$` (SELECT before 12.1.0.2) "
             "(02-oracle-privileges.md §2) -- grant it, or verify by `login`"
         )
 

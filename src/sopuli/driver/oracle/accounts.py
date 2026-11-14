@@ -288,7 +288,7 @@ ROLES_QUERY = (
 #: that is a decision rather than an omission: the accounts check 3 catches are
 #: largely caught by checks 2 and 4 as well, and widening what every service
 #: account needs for the remainder is a poor trade. So the grant is **optional**,
-#: the way ``SELECT ON SYS.USER$`` is (decision P2), and the answer here is three-valued:
+#: the way ``READ ON SYS.USER$`` is (decision P2), and the answer here is three-valued:
 #: a member, not a member, or *nobody looked*.
 #:
 #: ``count(*)`` rather than selecting the row, because the question is membership
@@ -388,7 +388,7 @@ ACCOUNTS_WITH_ROLE_QUERY = (
     "order by u.username"
 )
 
-#: Consecutive failed logins, behind the optional ``SELECT ON SYS.USER$`` grant
+#: Consecutive failed logins, behind the optional ``READ ON SYS.USER$`` grant
 #: (decision P2). Gated on the ``offline_verify`` capability, which gates this and
 #: :data:`PTIME_QUERY` in this build and nothing else.
 #:
@@ -991,8 +991,9 @@ def _password_changed(
         return None, "DBA_USERS.PASSWORD_CHANGE_DATE is empty for this account"
     if not user_dollar:
         return None, (
-            "this release has no DBA_USERS.PASSWORD_CHANGE_DATE; GRANT SELECT ON "
-            "SYS.USER$ to the service account to read the same date from SYS.USER$.PTIME"
+            "this release has no DBA_USERS.PASSWORD_CHANGE_DATE; GRANT READ ON "
+            "SYS.USER$ (SELECT before 12.1.0.2) to the service account to read the same "
+            "date from SYS.USER$.PTIME"
         )
     found = read(cursor, PTIME_QUERY, name=name)
     if found is None:
@@ -1434,8 +1435,8 @@ def lockout_evidence(
 
 #: Why no failed-login count was read, where the optional grant was not made.
 _NO_GRANT = (
-    "the failed-login count is in SYS.USER$; GRANT SELECT ON SYS.USER$ to the "
-    "service account to read it"
+    "the failed-login count is in SYS.USER$; GRANT READ ON SYS.USER$ (SELECT before "
+    "12.1.0.2) to the service account to read it"
 )
 
 

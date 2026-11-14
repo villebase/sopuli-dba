@@ -318,7 +318,7 @@ configurable.
 It attempts **one** login per account per run. No retries, no back-off loop, so a
 wrong password costs exactly one failed login rather than five.
 
-And where it has been granted `SELECT ON SYS.USER$`, it reads how many failed
+And where it has been granted `READ ON SYS.USER$`, it reads how many failed
 logins the account has already collected before it tries. If one more attempt
 would come too close to the profile's limit, it does not try:
 

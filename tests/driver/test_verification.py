@@ -79,7 +79,7 @@ def test_an_unlimited_profile_has_nothing_to_guard() -> None:
 
 
 def test_an_absent_counter_does_not_block_the_attempt() -> None:
-    """`SELECT ON SYS.USER$` is optional (decision P2), and `check` runs without
+    """`READ ON SYS.USER$` is optional (decision P2), and `check` runs without
     a site-specific grant. So an unavailable guard is not a refusal — it is a
     thing the caller has to say out loud, which `verify_password` does in
     `detail`."""

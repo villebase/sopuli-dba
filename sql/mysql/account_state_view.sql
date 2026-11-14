@@ -27,7 +27,8 @@
 -- partial revokes (restrictions), where partial_revokes is on. No verb that
 -- changes an account reads it. Without the view the reports say "not
 -- checked", with the reason, and still run. The retained-password flag is in
--- the view for a later read. A column grant must include every column a
+-- the view and is not read: creds finish-rollover sends DISCARD OLD PASSWORD
+-- on every run (#1511, decision 4). A column grant must include every column a
 -- command reads, or that command does not read the view.
 --
 -- What it creates, each step safe to run again:

@@ -75,8 +75,9 @@ the one required check (#1120).
     what `tests/command_reference.py` renders from the command tree. A pull
     request that changes a command, an option or a help text regenerates the
     reference with `python tests/command_reference.py`.
-  - `tests/test_verification_register.py` scans every `docs/**/*.md` plus
-    `README.md` and `CLAUDE.md` for `(unverified: <slug>)` markers.
+  - `tests/test_verification_register.py` scans every `docs/**/*.md`,
+    `src/**/*.py` and `sql/**/*.sql`, plus `README.md` and `CLAUDE.md`, for
+    `(unverified: <slug>)` markers.
   - `tests/test_doc_command_lines.py` parses every fenced `sopuli` command line
     against the real CLI.
   - `tests/test_doc_lists.py` compares each list marked
@@ -366,7 +367,7 @@ the code, and report the claims that are false. The project skill
 `.claude/skills/doc-drift-audit/SKILL.md` runs it, and says how to verify and
 record the findings.
 
-**Run the audit after every 50 merged pull requests.** One run costs about 2
+**Run the audit after every 50 merged pull requests.** One run costs 2 to 3
 million Sonnet tokens and 15 to 25 minutes, plus the time to verify and file the
 findings. That is too much for every release, because minor releases ship
 several times a week and patch releases ship for small fixes. A count of merged

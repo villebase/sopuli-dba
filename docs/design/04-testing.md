@@ -41,7 +41,7 @@ This is also why the matrix is keyed on capabilities, not versions (§3).
 | Supabase's database | `supabase/postgres`, pinned | supautils and its `supautils.reserved_roles`, which guardrail check 8 reads; a `postgres` account that is not a superuser. Tier 1 runs it in a profile of its own, `supabase`, so that a local tier-1 stack does not pull its image (#1111) |
 | SQL Server 2019/2022 | `mcr.microsoft.com/mssql/server` | a fifth driver, later |
 | HashiCorp Vault | `hashicorp/vault` dev mode | KV v2 **and** KV v1, mounted side by side |
-| File / age backend | none needed | the non-production store. This build has no code for it |
+| File / age backend | none needed | the non-production store. Its tests run in tier 0, on a file in a temporary directory |
 
 `test/compose.yaml` has a service for each Oracle release, and
 [`../maintainer-environments.md`](../maintainer-environments.md) §1 says how to
@@ -318,7 +318,7 @@ stack running, the same tests skip with a reason, as §1 requires.
 [`../maintainer-environments.md`](../maintainer-environments.md) §1 lists the
 variables the suite reads for Oracle, and their defaults.
 
-**Coverage is reported, not required** (#1453). `pytest --cov
+**Coverage is reported, not required** ([#1453](../decisions/log.md#1453)). `pytest --cov
 --cov-report=term-missing` measures which lines and branches of `src/sopuli` the
 run executed, and prints them with the missing line numbers. The settings are
 in `pyproject.toml`. Code run in a child process counts too, such as the real

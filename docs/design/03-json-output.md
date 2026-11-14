@@ -368,7 +368,7 @@ install. There is no separate palette for it:
 | `= degraded` | `attention` | it **answered** and cannot serve; the reader goes to the vault |
 | `= unreachable` | `bad` | nothing answered; the reader goes to the network |
 | `install.backends[].status` / `install.drivers[].status` = `not_installed` | `attention` | there is a `pip` line under the table |
-| `= not_implemented`, nothing configured | `muted` | true on every run of this build; colouring it would make every `doctor` look broken |
+| `= not_implemented`, nothing configured | `muted` | a backend or driver the build has no module for; colouring it would make every `doctor` look broken |
 | `= not_implemented`, something configured | `bad` | the run's actual failure, exit 9, and no install fixes it |
 | `targets[].reachable` = `false` | `bad` | |
 
@@ -383,8 +383,9 @@ cannot disagree.
   would make the rare `no` look ordinary again. `config show` colours `prod`
   and no other environment for the same reason.
 - `not_implemented` is the only status whose role depends on another column.
-  Unconfigured, it is true on every run and means nothing. Configured, it is why
-  the run exited 9.
+  Unconfigured, it means nothing to this run. Configured, it is why the run
+  exited 9. Every backend and driver in this build has its module, so no row
+  reports it today.
 
 `wallet_view` and `constraints_view` stay plain on purpose. They show prose and
 key-value blocks, not tables, so there is no column to scan, and colour would
@@ -3230,10 +3231,13 @@ nothing. `additionalProperties: false` and a closed `command` enum are worth
 their strictness only because every document describes a real run.
 
 **`sopuli about` is outside the rule, not an exception to it.** It exits 0 and
-emits no document, because it is not a run. It takes no options, reads no
-configuration, resolves no settings, touches no estate and prints compiled-in
-text, so there is no invocation to describe and nothing a consumer could branch
-on. It is in the same position as `--version` and `--help`. It is a verb, not a
+emits no document, because it is not a run. It takes no options of its own and
+refuses the global ones written before it, except `--color`, which it honours.
+The refusal names each option, except `--dry-run` and `--vault-token`, which
+have refusals of their own (`about_refusals` in `src/sopuli/cli.py`).
+It reads no configuration, resolves no settings, touches no estate and prints
+compiled-in text, so there is no invocation to describe and nothing a consumer
+could branch on. It is in the same position as `--version` and `--help`. It is a verb, not a
 flag, because of D2's grammar: a bare top-level command fits it, and a root-level
 `--about` would not.
 

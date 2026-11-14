@@ -265,19 +265,22 @@ is written one command at a time, and its registry entry lists the commands it
 is written for. Any other command refuses the target with `SOPULI-20006` before
 it resolves a credential or connects. The PostgreSQL entry lists UC-1's
 commands, `creds generate`, `apply`, `check`, `rotate`, `status` and
-`finish-rollover`, and UC-2's `account list`, `reset-password`, `suspend` and
-`expire-password`. That is every command that connects to a target. The config
+`finish-rollover`, UC-2's `account list`, `reset-password`, `suspend` and
+`expire-password`, and UC-5's `report accounts`, `report privileges` and
+`report history`. That is every command that connects to a target. The config
 also accepts `type: mysql`, and PyMySQL comes with `sopuli-dba[mysql]`.
 `doctor` connects to a MySQL server and reports the scope, `server`. The MySQL
 entry lists UC-1's `creds generate`, `apply`, `check`, `rotate`, `status` and
-`finish-rollover` (#1223, #1224), and UC-2's `account list`,
-`reset-password`, `suspend` and `expire-password` (#1225): every command that
-connects to a target, as for PostgreSQL. The config accepts `type: mariadb`
+`finish-rollover` (#1223, #1224), UC-2's `account list`,
+`reset-password`, `suspend` and `expire-password` (#1225), and UC-5's three
+`report` commands (#1460, #1461, #1482): every command that connects to a
+target, as for PostgreSQL. The config accepts `type: mariadb`
 too, and PyMySQL with PyNaCl comes with `sopuli-dba[mariadb]`. `doctor`
 connects to a MariaDB server and reports the scope, `server` (#1268). The
 MariaDB entry lists UC-1's `creds generate`, `apply`, `check`, `rotate` and
-`status` (#1270), UC-2's commands (#1272), and `finish-rollover` (#1271):
-every command that connects to a target. What
+`status` (#1270), UC-2's commands (#1272), `finish-rollover` (#1271), and
+UC-5's three `report` commands (#1460, #1462, #1483): every command that connects to
+a target. What
 PostgreSQL lacks, such as a rollover window, a profile, or a forced password
 change at next login, is refused at plan time by capability, not by product. A libpq older than 16 is a property of the client,
 not of the target, and is refused per account during the run: the one accepted
@@ -512,8 +515,8 @@ every backend except OCI, and `@stage=pending` works on a store with no versions
 because a stage is a key beside the value and not a generation of it.
 
 **`cas` cannot be emulated either**, because its purpose is atomicity. A store
-without it gets no lock, not a weaker lock. P5's advisory lock refuses KV v1, and
-would refuse the unbuilt `file` backend, unless the store is configured as `locking: advisory-only`. Then
+without it gets no lock, not a weaker lock. P5's advisory lock refuses KV v1 and
+the `file` backend, unless the store is configured as `locking: advisory-only`. Then
 the record is written without compare-and-set, and every run says so
 (`01-configuration.md` §3a).
 
@@ -1052,9 +1055,12 @@ first question is where their test database runs.
   to touch. A refusal is not that: a run refused before it changed anything
   prints the refusal alone. A real `account reset-password` prints its plan to
   stderr before its first target whether or not it asks (#863).
-- Every mutating command supports **`--confirm`**, with one exception: UC-2's
-  seen reset refuses it as a usage error (exit 2), because there the prompt
-  establishes that a person is present. **The tool asks for confirmation where
+- Every mutating command that changes a target or a store supports
+  **`--confirm`**, with one exception: UC-2's seen reset refuses it as a
+  usage error (exit 2), because there the prompt establishes that a person is
+  present. `keyring set` and `keyring delete` change only the OS keyring
+  entry they name, and no confirmation setting applies to them, so they take
+  no `--confirm`. **The tool asks for confirmation where
   the configuration asks for it, and nowhere else.** D10 has the decision. The
   table shows which triggers exist:
 

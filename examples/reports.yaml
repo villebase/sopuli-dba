@@ -6,7 +6,7 @@
 # accounts on those targets should look like: which database profile they sit
 # on, and what their password limits must be.
 #
-# Oracle can run all three reports, and PostgreSQL `report accounts`.
+# Oracle, PostgreSQL, MySQL and MariaDB can run all three reports.
 #
 # Check it before you use it:
 #     sopuli --config reports.yaml config validate

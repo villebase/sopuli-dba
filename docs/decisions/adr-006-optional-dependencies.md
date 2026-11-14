@@ -163,7 +163,7 @@ store that cannot work is failing at its one job, so E4 covers both halves:
 | this build has no module for it | *this build has no `<type>` backend yet — this is not something to install* |
 
 The cost accepted here is a **warning `pip` cannot act on**: a reader who writes
-`type: file` sees the second line on every run until the backend is written. That
+the type of a backend not yet written sees the second line on every run. That
 is worth paying because the action it names is a real one — *do not deploy this
 yet* — and because it is temporary by construction, disappearing backend by
 backend, where the silence it replaces was permanent. It is one code

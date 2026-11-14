@@ -180,7 +180,9 @@ role_lookup              ok
 
 `ok` is present, `--` is absent, and `?` is an environment that could not be
 reached. `password_value` is absent on Oracle because only the MariaDB driver
-reports it. The harness configures one environment per run, so the matrix has one
+reports it, under the conditions that `PASSWORD_VALUE` in
+`src/sopuli/driver/protocol.py` gives. It depends on the product, so no grant
+changes it. The harness configures one environment per run, so the matrix has one
 column.
 
 Watch the second skip count. A skip for an absent capability is correct. A skip

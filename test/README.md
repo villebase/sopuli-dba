@@ -215,12 +215,12 @@ starts `mariadb-matrix` sets `SOPULI_TEST_MARIADB1011_PORT`,
 `SOPULI_TEST_MARIADB123_PORT`, defaults 3311, 3314, 3318 and 3323. The suite
 reads none of them.
 
-A healthy tier-1 stack uses about 2.5 GB of memory in its containers, and about
-2.9 GB while the suite runs against it. Oracle Free is most of it, about 2.25 GB
-idle and 2.8 GB under the suite; `yopass` and `yopass-memcached` add about
-10 MiB. Those figures predate `mysql`, which adds about 440 MiB (measured
-after its tier-1 tests, 2026-11-01), and `mariadb`, which adds about 90 MiB
-(measured idle, 2026-11-04, before any test used it).
+Without `mysql` and `mariadb`, a healthy tier-1 stack uses about 2.5 GB of
+memory in its containers, and about 2.9 GB while the suite runs against it.
+Oracle Free is most of it, about 2.25 GB idle and 2.8 GB under the suite;
+`yopass` and `yopass-memcached` add about 10 MiB. `mysql` adds about 440 MiB
+(after its tier-1 tests, measured 2026-11-01), and `mariadb` about 90 MiB
+(idle, measured 2026-11-04).
 
 | Service | Port | Notes |
 |---|---|---|

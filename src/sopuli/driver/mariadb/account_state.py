@@ -63,7 +63,8 @@ VIEW = f"{SCHEMA}.{NAME}"
 INSTALL_SCRIPT = "sql/mariadb/account_state_view.sql"
 
 #: The columns the view may have. ``rollover_open`` is in the install script
-#: for a later decision (#1457) and is not read.
+#: and is not read: `creds finish-rollover` sends the current value alone on
+#: every run (#1511, decision 2).
 EXPECTED = frozenset(
     {
         "User",

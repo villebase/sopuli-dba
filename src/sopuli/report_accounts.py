@@ -4,9 +4,10 @@ Pure: the config and a survey of the target's accounts come in, rows come out.
 Nothing here connects. `docs/use-cases/uc-05-fleet-reports.md` §3 and §4 are
 the specification.
 
-**Four outcomes for a check, and OK has to be earned.** A check ends in
-`problem`, `ok`, `not_checked` (it could not run truthfully on this target) or
-`no_rule` (the file states nothing to compare). An account is `REPORT_OK` only
+**OK has to be earned.** A check ends in
+`problem`, `ok`, `not_checked` (it could not run truthfully on this target),
+`no_rule` (the file states nothing to compare) or `not_applicable` (the
+product has no such thing). An account is `REPORT_OK` only
 when every check had a rule, ran, and passed. That is the design's one hard
 rule: never report an account as fine when it is not.
 

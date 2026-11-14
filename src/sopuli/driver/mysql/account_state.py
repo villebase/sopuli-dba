@@ -48,8 +48,9 @@ SOURCE = "mysql.user"
 
 #: The columns the view may have. `report accounts` reads the limit and the
 #: lock time, and `report privileges` reads ``restrictions``.
-#: ``retained_password`` is in the install script for a later read (#1457)
-#: and is not read here.
+#: ``retained_password`` is in the install script and is not read:
+#: `creds finish-rollover` sends ``DISCARD OLD PASSWORD`` on every run (#1511,
+#: decision 4).
 EXPECTED = frozenset(
     {
         "User",

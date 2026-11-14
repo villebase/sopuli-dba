@@ -198,7 +198,7 @@ ORACLE_SUPPLIED = frozenset(
 #: :func:`_maintained` and :func:`_password_changed` read fixed positions, so a column
 #: inserted in the middle would move two fields that nothing would fail loudly
 #: about -- ``ORACLE_MAINTAINED`` would come back as a date and read as *not
-#: vendor-maintained*, which is guardrail check 5's input.
+#: vendor-maintained*, which is guardrail check 2's input.
 USER_QUERY = (
     "select username, account_status, profile, password_versions, "
     "oracle_maintained, password_change_date, expiry_date "

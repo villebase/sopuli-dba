@@ -1,8 +1,7 @@
 """The run document's ``targets`` section, and what ``doctor`` prints.
 
-`doctor` is the first consumer of the driver layer, and the only one that
-connects to every target and **mutates nothing**. Everything the `creds` verbs
-will depend on — the client, the credential, the connection, the scope
+`doctor` connects to every target and **mutates nothing**. Everything the
+`creds` verbs will depend on — the client, the credential, the connection, the scope
 assertion, the capability set — either works here or is reported as the reason
 it does not.
 

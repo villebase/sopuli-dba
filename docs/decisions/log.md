@@ -21,6 +21,10 @@ record has five fields in this order:
 A record must make sense without its issue. The issue is extra depth, not the
 only copy.
 
+A record says what was decided on its date. When a later change makes it
+stale, it keeps its text and gains a later pointer: `CONTRIBUTING.md`
+§*Refer to issues only in these ways* has the rule.
+
 A pull request that closes an issue labelled `decision` adds its record here.
 `tests/test_decision_log.py` checks the format, and that each record agrees with
 the register.

@@ -935,6 +935,7 @@ class MariadbSession(ClosesConnection):
         method: str = VERIFY_LOGIN,
         lockout_margin: int = 2,
         attempts: int = 1,
+        for_check: bool = False,
     ) -> VerifyResult:
         """Log in once as ``account`` with ``secret``, and say what that showed
         (:mod:`~sopuli.driver.mariadb.verification`).

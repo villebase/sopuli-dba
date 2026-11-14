@@ -143,8 +143,9 @@ class MysqlSession(ClosesConnection):
     #: (#1223). During a rotation that login always fails once, and on an
     #: account with ``FAILED_LOGIN_ATTEMPTS 1`` one failure blocks it for
     #: ``PASSWORD_LOCK_TIME`` days, a block a new password does not clear
-    #: (probe 04, LE5). The tool cannot read the setting, which is in
-    #: ``User_attributes``. Not on the protocol: a driver without it logs in.
+    #: (probe 04, LE5). The tool reads the setting only on 9.7.4 and later,
+    #: under an optional grant, and guards `creds check`'s login with it alone
+    #: (#1515). Not on the protocol: a driver without it logs in.
     verifies_before_change: ClassVar[bool] = False
 
     connection: Any
@@ -874,6 +875,7 @@ class MysqlSession(ClosesConnection):
         method: str = VERIFY_LOGIN,
         lockout_margin: int = 2,
         attempts: int = 1,
+        for_check: bool = False,
     ) -> VerifyResult:
         """Log in once as ``account`` with ``secret``, and say what that showed
         (:mod:`sopuli.driver.mysql.verification`).
@@ -890,6 +892,8 @@ class MysqlSession(ClosesConnection):
         account that does not exist or is locked.
 
         **The lockout guard** (#1515, :mod:`~sopuli.driver.mysql.verification`)
+        runs on `creds check`'s login only, ``for_check``: another verb's login
+        uses the password it just set or keeps, and is unguarded, as before. It
         reads the account's row of ``temporary_account_locks`` just before the
         login. A blocked account is not logged in as. Where ``attempts`` more
         failures would leave less than ``lockout_margin``, the result is
@@ -927,6 +931,8 @@ class MysqlSession(ClosesConnection):
             return _not_tried(reason)
         if declared.locked:
             return _not_tried("the account is locked; no login was attempted")
+        if not for_check:
+            return self._login(declared, secret, verification.Lockout())
         lockout = self._lockout(declared)
         limit = lockout.limit_text
         if lockout.blocked:
@@ -958,6 +964,15 @@ class MysqlSession(ClosesConnection):
         while the run is open then leaves the rest of the run unguarded, which
         fails open and is accepted: it saves a refused read per login."""
         if self._unguarded is not None:
+            return verification.Lockout(unguarded=self._unguarded)
+
+        def collecting(cursor: Any) -> bool:
+            cursor.execute(verification.PERFORMANCE_SCHEMA)
+            (on,) = cursor.fetchone()
+            return bool(int(on))
+
+        if not self._read(collecting):
+            self._unguarded = verification.NO_PERFORMANCE_SCHEMA
             return verification.Lockout(unguarded=self._unguarded)
 
         def read(cursor: Any) -> Any:

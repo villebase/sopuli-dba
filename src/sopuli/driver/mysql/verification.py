@@ -63,6 +63,7 @@ from sopuli.driver.mysql.errors import (
     ACCOUNT_LOCKED,
     MUST_CHANGE_PASSWORD_LOGIN,
 )
+from sopuli.driver.mysql.survey import LOCKS_TABLE, NO_SUCH_TABLE
 from sopuli.driver.mysql_family.errors import (
     ACCESS_DENIED,
     MUST_CHANGE_PASSWORD,
@@ -72,18 +73,24 @@ from sopuli.driver.mysql_family.errors import (
 from sopuli.driver.mysql_family.verification import competition
 from sopuli.driver.protocol import FAIL, PASS, UNAVAILABLE
 
-#: Where MySQL keeps the count of failed logins, from 9.7.4.
-LOCKS_TABLE = "performance_schema.temporary_account_locks"
-
-#: One account's row. The user name and host are bound: neither is a secret.
+#: One account's row, as `report accounts` reads the table
+#: (:mod:`~sopuli.driver.mysql.survey`), with ``LOCKED_UNTIL``. The user name
+#: and host are bound: neither is a secret. The guard reads only a ``user@%``
+#: account, whose host has no case to fold.
 LOCK_ROW = (
     "select FAILED_LOGIN_ATTEMPTS, REMAINING_LOGIN_ATTEMPTS, LOCKED, LOCKED_UNTIL "
     f"from {LOCKS_TABLE} where USER = %s and HOST = %s"
 )
 
-#: ``ER_NO_SUCH_TABLE``: a server older than the table, read under a grant
-#: broad enough to reach it.
-NO_SUCH_TABLE = 1146
+#: Whether the server collects ``performance_schema``. Where it does not, the
+#: table exists and is empty, and no row would read as nothing to guard.
+PERFORMANCE_SCHEMA = "select @@performance_schema"
+
+#: ``performance_schema`` is off.
+NO_PERFORMANCE_SCHEMA = (
+    "the lockout guard is unavailable: performance_schema is off on this server, "
+    f"so {LOCKS_TABLE} holds no rows"
+)
 
 #: Without the grant. The server checks the grant before the table, so a
 #: server without the table answers this too.

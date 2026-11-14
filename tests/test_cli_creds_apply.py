@@ -554,6 +554,7 @@ class FakeSession:
         method: str = VERIFY_LOGIN,
         lockout_margin: int = 2,
         attempts: int = 1,
+        for_check: bool = False,
     ) -> VerifyResult:
         self.attempts.append((account.upper(), secret.reveal()))
         self.budgets.append(attempts)
@@ -866,7 +867,6 @@ def test_without_a_login_first_a_pending_is_set_and_verified_after(
     assert result.exit_code == ExitCode.SUCCESS, result.output
     session = harness["sessions"][0]
     assert len(session.attempts) == 1, "only the login after the change"
-    assert session.budgets == [1], "the guard reserves the one login the run makes (#1515)"
     assert session.changed == [("ACME_WEB_USER", STAGED)]
     row = document(result)["results"][0]
     assert (row["state"], row["changed"]) == ("IN_SYNC", True)

@@ -140,8 +140,8 @@ def test_check_logs_in_as_a_user_s_only_account_at_any_host(stage: Stage) -> Non
     user = stage.account("%")
     stage.admin("alter user %s@'%%' identified by %s", (user, PASSWORD))
 
-    right = stage.session.verify_password(f"{user}@%", Secret(PASSWORD))
-    wrong = stage.session.verify_password(f"{user}@%", Secret("Not-the-pw9"))
+    right = stage.session.verify_password(f"{user}@%", Secret(PASSWORD), for_check=True)
+    wrong = stage.session.verify_password(f"{user}@%", Secret("Not-the-pw9"), for_check=True)
 
     assert right.result == "pass"
     assert right.latency_ms is not None
@@ -230,9 +230,9 @@ def test_the_guard_stops_a_login_that_would_come_too_close_to_the_limit(
         (user, PASSWORD),
     )
 
-    right = guarded.session.verify_password(f"{user}@%", Secret(PASSWORD))
-    wrong = guarded.session.verify_password(f"{user}@%", Secret("Not-the-pw9"))
-    after = guarded.session.verify_password(f"{user}@%", Secret(PASSWORD))
+    right = guarded.session.verify_password(f"{user}@%", Secret(PASSWORD), for_check=True)
+    wrong = guarded.session.verify_password(f"{user}@%", Secret("Not-the-pw9"), for_check=True)
+    after = guarded.session.verify_password(f"{user}@%", Secret(PASSWORD), for_check=True)
 
     assert right.result == "pass"
     assert (right.failed_logins, right.failed_login_limit) == (0, "3")
@@ -254,8 +254,12 @@ def test_a_blocked_account_is_not_logged_in_as(guarded: Stage) -> None:
         (user, PASSWORD),
     )
 
-    wrong = guarded.session.verify_password(f"{user}@%", Secret("Not-the-pw9"), lockout_margin=0)
-    after = guarded.session.verify_password(f"{user}@%", Secret(PASSWORD), lockout_margin=0)
+    wrong = guarded.session.verify_password(
+        f"{user}@%", Secret("Not-the-pw9"), lockout_margin=0, for_check=True
+    )
+    after = guarded.session.verify_password(
+        f"{user}@%", Secret(PASSWORD), lockout_margin=0, for_check=True
+    )
 
     assert wrong.result == "unavailable"
     assert "(3955)" in str(wrong.detail)
@@ -271,11 +275,29 @@ def test_a_limit_without_a_lock_time_has_nothing_to_guard(guarded: Stage) -> Non
     user = guarded.account("%")
     guarded.admin("alter user %s@'%%' identified by %s failed_login_attempts 1", (user, PASSWORD))
 
-    result = guarded.session.verify_password(f"{user}@%", Secret(PASSWORD))
+    result = guarded.session.verify_password(f"{user}@%", Secret(PASSWORD), for_check=True)
 
     assert result.result == "pass"
     assert result.failed_logins is None
     assert result.detail is None
+
+
+def test_another_verbs_login_is_not_guarded(guarded: Stage) -> None:
+    """The guard runs on `creds check`'s login only (#1515). The login after a
+    change uses the password just set, and goes ahead where check's would be
+    skipped, as before the guard."""
+    user = guarded.account("%")
+    guarded.admin(
+        "alter user %s@'%%' identified by %s failed_login_attempts 2 password_lock_time 1",
+        (user, PASSWORD),
+    )
+
+    checked = guarded.session.verify_password(f"{user}@%", Secret(PASSWORD), for_check=True)
+    other = guarded.session.verify_password(f"{user}@%", Secret(PASSWORD))
+
+    assert checked.result == "skipped", "2 of 2 left, and one more leaves less than 2"
+    assert other.result == "pass"
+    assert other.failed_logins is None
 
 
 def test_without_the_grant_the_guard_says_it_is_unavailable(stage: Stage) -> None:
@@ -287,7 +309,7 @@ def test_without_the_grant_the_guard_says_it_is_unavailable(stage: Stage) -> Non
         (user, PASSWORD),
     )
 
-    result = stage.session.verify_password(f"{user}@%", Secret(PASSWORD))
+    result = stage.session.verify_password(f"{user}@%", Secret(PASSWORD), for_check=True)
 
     assert result.result == "pass"
     assert result.failed_logins is None

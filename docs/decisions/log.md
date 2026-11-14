@@ -5907,24 +5907,32 @@ the register.
   3. **Without the table or the grant** (`1142`, `1146`): the login goes
      ahead, and the detail says the guard is unavailable and why. A session
      that was refused once does not read the table again.
-  4. **Every login through `verify_password`** is guarded, as on Oracle:
-     `creds check`'s, and the login after a change in `creds apply` and
-     `creds rotate`, with a budget of the one login the run makes there.
-     Where the guard stops that login, the change is not confirmed and the
-     vault is not promoted (invariant 7).
+  4. **`creds check`'s login only** (the maintainer's, after review). The
+     logins of `creds apply`, `creds rotate` and `creds finish-rollover`
+     stay unguarded on MySQL, as before. `verify_password` takes
+     `for_check`, which only `creds check` sets and other drivers ignore.
   5. **A blocked row** is not logged in as, and the detail names its
      `LOCKED_UNTIL`. Whether the row clears on its own after that date was
      not measured.
+  6. **`performance_schema` off**: the table is empty, so the guard is
+     unavailable, and says so.
 - **Why:** measured on 9.7.4, the table has a row from the creation of every
   account with a limit and a lock time, and none for an account the server
   never blocks, so it answers the whole question by itself. #1511 named the
   view as the source of the limit, before that was known. Reading the table
   alone keeps a site's object out of the guard, which is #1511's reason for
   leaving the verbs that change accounts alone, and needs one grant, not
-  two. Oracle's margin and words give one guard across the products.
+  two. Oracle's margin and words give one guard across the products. The
+  other verbs log in with the password the run just set or keeps, and a
+  guard there stopped a low-limit account's change from being confirmed and
+  promoted, and its rollover from closing.
 - **Rejected:**
   1. The limit from the view and the count from the table: a second read,
      a second grant, and a stale or wrong view could move the guard.
   2. A guard that refuses the login where the table cannot be read: `check`
      runs without the optional grant today, as on Oracle without the
      `SYS.USER$` grant.
+  3. Guarding every login, as on Oracle, with a fallback to the server's
+     record of a change where the guard stops the login after it: more code
+     in `cli.py` and `finish_rollover`, for logins that use a password the
+     run just set.

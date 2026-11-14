@@ -655,15 +655,14 @@ not logged in as. Measured on 9.7.4 (#1515):
   blocked row is not logged in as, and the detail names the date and says
   that `ACCOUNT UNLOCK` ends the block.
 
-The login that `creds apply` and `creds rotate` make after a change, to
-confirm it, is guarded too, as on Oracle. Its budget is one login, the only
-one the run makes on MySQL, where no login comes before a change. Where the
-guard stops it, the change is not confirmed and the vault is not promoted.
-On 9.7.4 an account with a limit of 3 and no failed logins was changed,
-confirmed and promoted.
+The guard runs on `creds check`'s login only. The login that `creds apply`,
+`creds rotate` and `creds finish-rollover` make uses the password the run
+just set or keeps, and is not guarded, unlike Oracle's. A guard there would
+stop a low-limit account's change from being confirmed and promoted.
 
 The optional view `sopuli.account_state` is not read: the table has the limit
 too. Without the grant, or on 8.0 and 8.4, which have no such table, the
 server answers `1142`, the login goes ahead, as on Oracle without the
 `SYS.USER$` grant, and each result's detail says the guard is unavailable
-and why.
+and why. Where `performance_schema` is off, the table has no rows, so the
+guard reads `@@performance_schema` first and says it is unavailable.

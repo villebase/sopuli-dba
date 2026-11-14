@@ -355,6 +355,7 @@ class _Session:
         method: str = protocol.VERIFY_LOGIN,
         lockout_margin: int = 2,
         attempts: int = 1,
+        for_check: bool = False,
     ) -> VerifyResult:
         return VerifyResult(method=method, result=protocol.PASS)
 

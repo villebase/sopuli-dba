@@ -114,6 +114,7 @@ class FakeSession:
         self.attempts: list[str] = []
         self.budgets: list[int] = []
         self.methods: list[str] = []
+        self.for_check: list[bool] = []
         self.required: list[str] = []
         self.required_values: list[str] = []
         self.refusal: Exception | None = None
@@ -133,10 +134,12 @@ class FakeSession:
         method: str = VERIFY_LOGIN,
         lockout_margin: int = 2,
         attempts: int = 1,
+        for_check: bool = False,
     ) -> VerifyResult:
         self.attempts.append(account)
         self.budgets.append(attempts)
         self.methods.append(method)
+        self.for_check.append(for_check)
         return self.answers[account.upper()]
 
     def require_verifier(self, account: str, secret: Secret) -> None:
@@ -572,6 +575,8 @@ def test_the_whole_budget_is_declared_before_the_first_attempt(
     run(runner, write_config(CONFIG), "--include-previous")
 
     assert all(session.budgets == [2, 2] for session in harness["sessions"])
+    # Both logins are check's, which MySQL's guard runs on (#1515).
+    assert all(session.for_check == [True, True] for session in harness["sessions"])
 
 
 def test_no_previous_password_reports_null_rather_than_false(

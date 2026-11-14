@@ -1173,6 +1173,7 @@ class OracleSession(ClosesConnection):
         method: str = VERIFY_LOGIN,
         lockout_margin: int = DEFAULT_MARGIN,
         attempts: int = 1,
+        for_check: bool = False,
     ) -> VerifyResult:
         """Does this password work here -- asked at most once, or not at all.
 

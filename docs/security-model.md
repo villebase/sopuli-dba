@@ -23,8 +23,10 @@ differs on each. The largest difference: on PostgreSQL 13 to 15, the `CREATEROLE
 attribute the tool account needs can change the password of every role that is
 not a superuser, so there the tool account is close to a superuser and only the
 tool enforces the config's whitelist. From 16 the server enforces it too. The
-secret store is HashiCorp Vault, or OCI Vault for the application-credential
-commands. Try it against a test database first.
+secret store is HashiCorp Vault, or OCI Vault or a `file` store for the
+application-credential commands. A `file` store is for development and CI, and
+every run that opens one warns that it is not for production. Try it against a
+test database first.
 
 ---
 
@@ -234,7 +236,10 @@ confirmation, and a lock that has not yet expired needs `--force` on top.
 ## 3. What stops a scheduled check from causing harm
 
 `sopuli creds check` answers one question: does the password in the vault still
-work on this database? The only way to answer it is to try logging in.
+work on this database? By default it answers by trying to log in. On Oracle,
+`--method hash` compares the vault's password with the account's stored 12C
+verifier instead, and does not log in; it needs the optional
+`SELECT ON SYS.USER$` grant. This section is about the login.
 
 That is the risk. A failed login counts against Oracle's `FAILED_LOGIN_ATTEMPTS`
 limit. A check that runs every hour against an account whose password has drifted

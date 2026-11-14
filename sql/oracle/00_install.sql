@@ -92,11 +92,12 @@
 --         grant_user_dollar=Y grants READ, not SELECT, where the release has
 --         it, and revokes an existing SELECT (2026-11-14, #1514). Run on 26ai
 --         Free 23.26.3.0.0 through tests/driver/test_oracle_install_script.py
---         in COMMON mode, and by hand as SYSDBA in PDB mode in FREEPDB1: an
---         account given SELECT ON SYS.USER$ by hand held READ alone after a
---         run with Y, read LCOUNT and SPARE4, and got ORA-01031 on
---         SELECT ... FOR UPDATE. The 11.2 branch, which grants SELECT, is
---         untried, and so is every other release.
+--         in COMMON mode, with the old SELECT common and local to the root,
+--         and by hand as SYSDBA in PDB mode in FREEPDB1: an account given
+--         SELECT ON SYS.USER$ by hand held READ alone after a run with Y, read
+--         LCOUNT and SPARE4, and got ORA-01031 on SELECT ... FOR UPDATE. The
+--         branch that grants SELECT (11.2 and 12.1.0.1) is untried, and so is
+--         every other release.
 --
 -- Run as SYS AS SYSDBA or an equivalent DBA.
 --
@@ -131,7 +132,7 @@ WHENEVER SQLERROR EXIT SQL.SQLCODE
 --   1 mode                COMMON | PDB | NONCDB
 --   2 svc_name            account name; COMMON mode prefixes it with C##
 --   3 svc_tablespace      default tablespace for the account
---   4 grant_user_dollar   Y grants READ on SYS.USER$ (SELECT on 11.2) -- see below
+--   4 grant_user_dollar   Y grants READ on SYS.USER$ (SELECT before 12.1.0.2) -- see below
 --   5 grant_set_container Y grants SET CONTAINER -- see below
 --   6 grant_pwfile        Y grants SELECT on SYS.V_$PWFILE_USERS -- see below
 --   7 grant_connect_info  Y grants SELECT on SYS.V_$SESSION_CONNECT_INFO -- see below
@@ -389,15 +390,20 @@ END;
 -- account can lock a USER$ row, and that account's logins and ALTER USER then
 -- wait until the lock ends (sql/oracle/23_lcount_view_probe.sql, LV4). READ
 -- came with READ ANY TABLE in 12.1.0.2, so the system privilege map answers
--- whether this release has it. 11.2 gets SELECT. Where READ is granted, an
--- existing SELECT ON SYS.USER$ is revoked after it, so running this script
--- again moves an install made with SELECT to READ.
+-- whether this release has it. 11.2 and 12.1.0.1 get SELECT. Where READ is
+-- granted, an existing SELECT ON SYS.USER$ in this container is revoked after
+-- it, so running this script again moves an install made with SELECT to READ.
+-- A common SELECT grant is revoked with CONTAINER=ALL, and only in COMMON
+-- mode: a PDB cannot revoke it, and says so. A SELECT granted locally inside
+-- a PDB is not seen from CDB$ROOT; revoke it in that PDB. The query names
+-- DBA_TAB_PRIVS.COMMON, a 12.1 column, so it is dynamic: 11.2 never runs it.
 --------------------------------------------------------------------------------
 PROMPT
 PROMPT [4] optional: SYS.USER$ (grant_user_dollar=&grant_user_dollar)
 DECLARE
   n_read   NUMBER;
-  n_select NUMBER;
+  c_grants SYS_REFCURSOR;
+  l_common VARCHAR2(3);
 BEGIN
   IF UPPER('&grant_user_dollar') = 'Y' THEN
     SELECT COUNT(*) INTO n_read FROM system_privilege_map
@@ -406,16 +412,29 @@ BEGIN
       EXECUTE IMMEDIATE 'GRANT READ ON SYS.USER$ TO &eff_user&cont_all';
       DBMS_OUTPUT.PUT_LINE('granted READ ON SYS.USER$ '
         || '(enables check --method hash and the failed-login guard)');
-      SELECT COUNT(*) INTO n_select FROM dba_tab_privs
-       WHERE grantee = UPPER('&eff_user') AND owner = 'SYS'
-         AND table_name = 'USER$' AND privilege = 'SELECT';
-      IF n_select > 0 THEN
-        EXECUTE IMMEDIATE 'REVOKE SELECT ON SYS.USER$ FROM &eff_user&cont_all';
-        DBMS_OUTPUT.PUT_LINE('revoked SELECT ON SYS.USER$ (READ replaces it)');
-      END IF;
+      OPEN c_grants FOR
+        'SELECT common FROM dba_tab_privs WHERE grantee = :g AND owner = ''SYS'' '
+        || 'AND table_name = ''USER$'' AND privilege = ''SELECT'''
+        USING UPPER('&eff_user');
+      LOOP
+        FETCH c_grants INTO l_common;
+        EXIT WHEN c_grants%NOTFOUND;
+        IF l_common = 'YES' AND '&cont_all' IS NULL THEN
+          DBMS_OUTPUT.PUT_LINE('SELECT ON SYS.USER$ is a common grant here, and '
+            || 'is left: revoke it in CDB$ROOT with CONTAINER=ALL');
+        ELSIF l_common = 'YES' THEN
+          EXECUTE IMMEDIATE 'REVOKE SELECT ON SYS.USER$ FROM &eff_user CONTAINER=ALL';
+          DBMS_OUTPUT.PUT_LINE('revoked SELECT ON SYS.USER$ in every container '
+            || '(READ replaces it)');
+        ELSE
+          EXECUTE IMMEDIATE 'REVOKE SELECT ON SYS.USER$ FROM &eff_user';
+          DBMS_OUTPUT.PUT_LINE('revoked SELECT ON SYS.USER$ (READ replaces it)');
+        END IF;
+      END LOOP;
+      CLOSE c_grants;
     ELSE
       EXECUTE IMMEDIATE 'GRANT SELECT ON SYS.USER$ TO &eff_user&cont_all';
-      DBMS_OUTPUT.PUT_LINE('granted SELECT ON SYS.USER$ (this release has no READ) '
+      DBMS_OUTPUT.PUT_LINE('granted SELECT ON SYS.USER$, as this release has no READ '
         || '(enables check --method hash and the failed-login guard)');
     END IF;
   ELSE

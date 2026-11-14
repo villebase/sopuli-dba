@@ -1242,7 +1242,10 @@ class OracleSession(ClosesConnection):
             if gap is not None:
                 unguarded: str | None = f"the lockout guard is unavailable: {gap}"
             elif not self.scope().supports(OFFLINE_VERIFY):
-                unguarded = "the lockout guard is unavailable: READ ON SYS.USER$ is not granted"
+                unguarded = (
+                    "the lockout guard is unavailable: READ ON SYS.USER$ "
+                    "(SELECT before 12.1.0.2) is not granted"
+                )
             else:
                 unguarded = None
             counter = failed_logins(cursor, state.name) if unguarded is None else None
@@ -1552,7 +1555,7 @@ class OracleSession(ClosesConnection):
             )
         return (
             "`hash` compares the account's stored verifier, which is in SYS.USER$ "
-            "and needs the optional `GRANT READ ON SYS.USER$` "
+            "and needs the optional `GRANT READ ON SYS.USER$` (SELECT before 12.1.0.2) "
             "(02-oracle-privileges.md §2) -- grant it, or verify by `login`"
         )
 

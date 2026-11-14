@@ -5866,7 +5866,8 @@ the register.
   second exposure?
 - **Decision:** the maintainer's:
   1. The script grants `READ ON SYS.USER$` where `SYSTEM_PRIVILEGE_MAP` has
-     `READ ANY TABLE` (12.1.0.2 and later), and `SELECT` on 11.2.
+     `READ ANY TABLE` (12.1.0.2 and later), and `SELECT` on 11.2 and
+     12.1.0.1.
   2. Where it grants `READ`, it revokes an existing `SELECT ON SYS.USER$`
      after the grant, so running the script again moves an install to `READ`.
   3. P2 and `02-oracle-privileges.md` §2 name the `DBA` role's read.

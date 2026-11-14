@@ -161,8 +161,8 @@ def test_the_survey_reads_every_account_and_resolves_default(account: Any) -> No
     else:
         assert row.failed_logins is None
         assert row.unreadable == (
-            "the failed-login count is in SYS.USER$; GRANT READ ON SYS.USER$ to the "
-            "service account to read it",
+            "the failed-login count is in SYS.USER$; GRANT READ ON SYS.USER$ (SELECT before "
+            "12.1.0.2) to the service account to read it",
         )
 
     system = by_name["SYSTEM"]

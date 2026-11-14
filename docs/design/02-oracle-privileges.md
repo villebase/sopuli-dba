@@ -316,9 +316,13 @@ It is `READ`, not `SELECT` ([#1514](../decisions/log.md#1514)). The tool only
 selects from `SYS.USER$`, and `READ` refuses `SELECT … FOR UPDATE`, which
 through `SELECT` lets the tool account hold up an account's logins (below).
 The script grants `READ` where `SYSTEM_PRIVILEGE_MAP` has `READ ANY TABLE`,
-which came with the `READ` object privilege in 12.1.0.2, and `SELECT` on 11.2.
-Where it grants `READ`, it then revokes a `SELECT ON SYS.USER$` the account
-holds, so running the script again moves an older install to `READ`. The tool
+which came with the `READ` object privilege in 12.1.0.2, and `SELECT` on 11.2
+and 12.1.0.1. Where it grants `READ`, it then revokes a `SELECT ON SYS.USER$`
+the account holds in that container, so running the script again moves an
+older install to `READ`. In `COMMON` mode it revokes a common grant with
+`CONTAINER=ALL` and a grant local to the root without it. A `SELECT` granted
+inside a PDB is not seen from the root, and a PDB cannot revoke a common grant:
+the script says so, and the DBA revokes it where it was made. The tool
 probes the read, so either grant gives the same capability.
 
 When the grant is present, the tool probes it as a capability at plan time

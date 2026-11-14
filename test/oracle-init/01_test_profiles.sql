@@ -105,7 +105,7 @@ END;
 -- Guarded, because the suite must stay green on versions where it fails.
 --
 -- READ where the release has it, as sql/oracle/00_install.sql grants it (#1514),
--- so the suite runs on the grant an install makes. SELECT on 11.2.
+-- so the suite runs on the grant an install makes. SELECT before 12.1.0.2.
 --------------------------------------------------------------------------------
 DECLARE
   l_priv VARCHAR2(6) := 'SELECT';

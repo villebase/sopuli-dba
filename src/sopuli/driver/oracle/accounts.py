@@ -992,7 +992,8 @@ def _password_changed(
     if not user_dollar:
         return None, (
             "this release has no DBA_USERS.PASSWORD_CHANGE_DATE; GRANT READ ON "
-            "SYS.USER$ to the service account to read the same date from SYS.USER$.PTIME"
+            "SYS.USER$ (SELECT before 12.1.0.2) to the service account to read the same "
+            "date from SYS.USER$.PTIME"
         )
     found = read(cursor, PTIME_QUERY, name=name)
     if found is None:
@@ -1434,8 +1435,8 @@ def lockout_evidence(
 
 #: Why no failed-login count was read, where the optional grant was not made.
 _NO_GRANT = (
-    "the failed-login count is in SYS.USER$; GRANT READ ON SYS.USER$ to the "
-    "service account to read it"
+    "the failed-login count is in SYS.USER$; GRANT READ ON SYS.USER$ (SELECT before "
+    "12.1.0.2) to the service account to read it"
 )
 
 

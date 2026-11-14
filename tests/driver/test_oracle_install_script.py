@@ -744,6 +744,7 @@ def test_the_optional_grants_are_off_unless_asked_for(
     assert first.returncode == 0, first.stdout[-2000:]
     default = grants_of(container, ROOT, install_account)
     assert "SELECT ON USER$" not in default
+    assert "READ ON USER$" not in default
     assert "SET CONTAINER" not in default
     assert "SELECT ON V_$SESSION_CONNECT_INFO" not in default
     assert not set(REPORT_READS) & default
@@ -799,20 +800,30 @@ def _has_read(container: str) -> bool:
     return found != ["0"]
 
 
+@pytest.mark.parametrize("common", [True, False], ids=["common-grant", "local-grant"])
 def test_running_the_script_again_moves_select_on_user_dollar_to_read(
-    container: str, scripts: str, clean: None, install_mode: str, install_account: str
+    container: str,
+    scripts: str,
+    clean: None,
+    install_mode: str,
+    install_account: str,
+    common: bool,
 ) -> None:
     """An install made with `SELECT ON SYS.USER$` ends with `READ` alone (#1514).
 
     Through `SELECT` the account can lock a `USER$` row, and that account's
     logins wait until the lock ends; `READ` refuses the lock. The grant comes
-    first and the revoke after it, so the account never lacks the read.
+    first and the revoke after it, so the account never lacks the read. In
+    `COMMON` mode the old grant may be common or local to the root, and each
+    is revoked in its own form.
     """
     if not _has_read(container):
         pytest.skip("this release has no READ object privilege: the script grants SELECT")
+    if common and install_mode != "COMMON":
+        pytest.skip("a common grant exists only in COMMON mode")
     first = sqlplus(container, ROOT, f"{scripts}/00_install.sql", install_mode, SVC)
     assert first.returncode == 0, first.stdout[-2000:]
-    cont_all = " CONTAINER=ALL" if install_mode == "COMMON" else ""
+    cont_all = " CONTAINER=ALL" if common else ""
     granted = _exec(
         container,
         ROOT,

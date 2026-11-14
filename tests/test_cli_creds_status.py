@@ -284,7 +284,8 @@ def test_the_age_is_the_vault_s(
 #: and without the `SYS.USER$` grant (decision #386).
 NO_COLUMN = (
     "this release has no DBA_USERS.PASSWORD_CHANGE_DATE; GRANT READ ON "
-    "SYS.USER$ to the service account to read the same date from SYS.USER$.PTIME"
+    "SYS.USER$ (SELECT before 12.1.0.2) to the service account to read the same "
+    "date from SYS.USER$.PTIME"
 )
 
 

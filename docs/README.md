@@ -865,11 +865,12 @@ The probes are in `sql/mssql/`, and the matrix of 2019, 2022 and 2025 is the
   identifies a server, and how does a contained database user behave?**
   Under the default collation, `SQL_Latin1_General_CP1_CI_AS`, login names
   compare without case: a second login differing only in case is refused,
-  `15025`, and `ALTER LOGIN` reaches a login by any case of its name.
+  `15025`, and `ALTER LOGIN` reaches a login by its name in upper case.
   `@@SERVERNAME`, `MachineName` and `ServerName` are the host's name. Nothing
-  else measured tells two servers apart: master's `service_broker_guid` is
-  all zeros, and msdb's comes with the image, the same on two containers of
-  one image. A contained user is out of the tool login's reach: `ALTER ANY
+  else measured tells two servers of one image apart: master's
+  `service_broker_guid` is all zeros, and msdb's comes with the image, the
+  same on a second container of each. A contained user is out of the tool
+  login's reach: `ALTER ANY
   LOGIN` cannot open its database, `18456`. A contained user granted `ALTER
   ANY USER` sets another's password, and is refused for a `db_owner` member,
   `15151`. `HASHED` is a syntax error for a contained user, `102`. A

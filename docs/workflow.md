@@ -83,7 +83,7 @@ the one required check (#1120).
   - `tests/test_doc_lists.py` compares each list marked
     `<!-- checked-list: … -->` with the CLI, the run schema or the palette. It
     also checks that the `schema_version` values in the samples of
-    `docs/local-testing.md` §11 have the build's major version. A minor
+    `docs/local-testing.md` have the build's major version. A minor
     version left behind there is for the drift audit to recapture.
   - `tests/test_doc_sections.py` checks that every `§` section reference, and
     every `Pn`, names a heading or decision that exists.

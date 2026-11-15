@@ -251,9 +251,12 @@ def test_the_install_lines_are_the_extras() -> None:
     assert sorted(re.findall(r"sopuli-dba\[([a-z]+)\]", text)) == sorted(extras)
 
 
-#: The line in `local-testing.md` §11 whose output starts with the run version.
+#: The command in `local-testing.md` whose output line starts with the run version.
 RUN_VERSION_COMMAND = "print(d['schema_version'],"
-EVENT_VERSION = re.compile(r'"schema_version":"([0-9]+\.[0-9]+)"')
+VERSION = re.compile(r"^[0-9]+\.[0-9]+$")
+SAMPLE_VERSION = re.compile(r'"schema_version"\s*:\s*"([^"]*)"')
+#: A run document has no `event` key, so this tells an event from a run document.
+EVENT_KEY = re.compile(r'"event"\s*:')
 
 
 def _major(version: str) -> str:
@@ -265,12 +268,19 @@ def _sample_versions() -> tuple[list[str], list[str]]:
     path = ROOT / "docs" / "local-testing.md"
     requires_repo(path)
     lines = path.read_text(encoding="utf-8").splitlines()
-    run = [
-        lines[number + 1].split()[0]
-        for number, line in enumerate(lines[:-1])
-        if RUN_VERSION_COMMAND in line and lines[number + 1].split()
-    ]
-    events = [version for line in lines for version in EVENT_VERSION.findall(line)]
+    run: list[str] = []
+    events: list[str] = []
+    for number, line in enumerate(lines):
+        if RUN_VERSION_COMMAND in line:
+            output = lines[number + 1].split() if number + 1 < len(lines) else []
+            run.append(output[0] if output else "")
+        for version in SAMPLE_VERSION.findall(line):
+            (events if EVENT_KEY.search(line) else run).append(version)
+    malformed = [v for v in run + events if not VERSION.match(v)]
+    assert not malformed, (
+        f"a schema_version sample in docs/local-testing.md is not a version: {malformed}; "
+        f"the output of `{RUN_VERSION_COMMAND}` must be on the line after it"
+    )
     return run, events
 
 

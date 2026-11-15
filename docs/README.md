@@ -870,10 +870,12 @@ The probes are in `sql/mssql/`, and the matrix of 2019, 2022 and 2025 is the
   `IsMustChange`, `IsExpired` and `DaysUntilExpiration` through
   `LOGINPROPERTY`. **No login locks:** with `CHECK_POLICY = ON`, 30 wrong
   passwords leave `IsLocked` 0 and `BadPasswordCount` 1, and the right
-  password logs in. Turning `CHECK_POLICY` off and on again, a `HASHED`
-  value sent with it off, `UNLOCK`, and a good login each reset
-  `BadPasswordCount` to 0. With `CHECK_EXPIRATION = ON` a new password has
-  90 days. `sql/mssql/03_lock_expiry_probe.py` measures it.
+  password logs in. Turning `CHECK_POLICY` off, `UNLOCK`, and a good login
+  each reset `BadPasswordCount` to 0, and so does a `HASHED` value, which
+  can only be sent with the policy turned off. A new password in clear
+  without `UNLOCK` does not. With `CHECK_EXPIRATION = ON` a new password has
+  90 days on the Linux images; on Windows the maximum age comes from the
+  host's or domain's policy. `sql/mssql/03_lock_expiry_probe.py` measures it.
 - `unverified` `mssql-windows-lockout` (#1538) — **When does a login lock on
   SQL Server for Windows, and what does a locked login answer?**
   On Windows, `CHECK_POLICY` applies the host's or domain's account lockout

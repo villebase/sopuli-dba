@@ -5,15 +5,16 @@ login's state, what it can read back, and what a login answers in each state:
 
   LK1  ALTER LOGIN ... DISABLE and ENABLE: what is_disabled reads, and what
        the login answers
-  LK2  CHECK_POLICY = ON and wrong passwords, one at a time, until the login
-       locks: after how many, what LOGINPROPERTY reads after each, and what
-       the right password answers once it is locked
+  LK2  CHECK_POLICY = ON and up to 30 wrong passwords, one at a time: what
+       each login answers, what IsLocked and BadPasswordCount read after
+       each, whether and when the login locks, and what the right password
+       then answers
   LK3  after two wrong passwords, what each statement a driver might send
-       does to BadPasswordCount: none; CHECK_POLICY = ON on its own;
-       CHECK_POLICY = OFF then ON; a HASHED value with CHECK_POLICY = OFF,
-       then CHECK_POLICY = ON, as a driver that sends values would (02); and
-       a password in clear with UNLOCK. LK3 was meant to measure each way to
-       end a lock, but LK2 finds no lock to end
+       does to BadPasswordCount, one change at a time: none; CHECK_POLICY =
+       ON on its own; CHECK_POLICY = OFF on its own, then ON; a HASHED value
+       with CHECK_POLICY = OFF, left off, then CHECK_POLICY = ON, as a
+       driver that sends values would (02); a password in clear; and the
+       same password with UNLOCK
   LK4  whether a login with the right password resets BadPasswordCount
   LK5  MUST_CHANGE: what IsMustChange reads, and what the login answers
   LK6  CHECK_EXPIRATION = ON: what IsExpired and DaysUntilExpiration read
@@ -33,21 +34,26 @@ RESULTS -- the same on every release
        0. A disabled login is refused, 18470, "The account is disabled". A
        second DISABLE is accepted
   LK2  **No lock.** With CHECK_POLICY = ON, 30 wrong passwords in a row do
-       not lock the login: IsLocked reads 0 after each, BadPasswordCount
-       reads 1 after each, and the right password then logs in. These are
-       the Linux images, where no Windows account policy applies; on Windows
-       the lockout comes from that policy, which is not measured here
-  LK3  BadPasswordCount stays 1 with nothing sent and after CHECK_POLICY =
-       ON on its own. It reads 0 after CHECK_POLICY = OFF then ON, after a
-       HASHED value with CHECK_POLICY = OFF then CHECK_POLICY = ON, and after
-       a password in clear with UNLOCK
+       not lock the login: each is refused 18456, IsLocked reads 0 after
+       each, BadPasswordCount reads 1 after each, and the right password
+       then logs in. These are the Linux images, where no Windows account
+       policy applies; on Windows the lockout comes from that policy, which
+       is not measured here
+  LK3  BadPasswordCount, 1 after the two wrong passwords, stays 1 with
+       nothing sent, after CHECK_POLICY = ON on its own, and after a new
+       password in clear. It reads 0 after CHECK_POLICY = OFF, after a HASHED
+       value sent with CHECK_POLICY = OFF (HASHED cannot be sent with the
+       policy on, 02), and after a password with UNLOCK. Turning the policy
+       on again leaves it 0
   LK4  the right password resets BadPasswordCount from 1 to 0
   LK5  the tool sets a password with MUST_CHANGE, which needs CHECK_POLICY
        and CHECK_EXPIRATION on. IsMustChange reads 1, DaysUntilExpiration 0,
        and the login is refused, 18488, "The password of the account must be
        changed". A new password without MUST_CHANGE clears it
   LK6  with CHECK_EXPIRATION = ON, a new password reads IsExpired 0 and
-       DaysUntilExpiration 90; with it off, DaysUntilExpiration reads NULL
+       DaysUntilExpiration 90; with it off, DaysUntilExpiration reads NULL.
+       The 90 days are the Linux image's; on Windows the maximum password
+       age comes from the host's or domain's policy
 
 HOW TO RUN, against the matrix (test/README.md), from the repo root:
 
@@ -115,29 +121,35 @@ def report(line: str) -> None:
     SEEN.append(line)
 
 
-def lock(service: str) -> tuple[int, set[str]]:
-    """Send wrong passwords until the login locks or MOST are sent.
+def lock(service: str) -> tuple[str, set[str]]:
+    """Send up to MOST wrong passwords, and stop at the first sign of a lock.
 
-    How many it took, 0 when none locked it, and each BadPasswordCount/IsLocked
-    pair read on the way, once each.
+    A sign is a login refused with 18486, or IsLocked reading 1. Returns when
+    the first sign came, as `after N`, or `not locked`, and each
+    answer:BadPasswordCount/IsLocked triple seen on the way, once each.
     """
-    counts = set()
+    seen = set()
     for sent in range(1, MOST + 1):
-        ch.login(service, ch.WRONG)
+        answer = ch.login(service, ch.WRONG)
         found = state(service)
-        counts.add(f"{found['BadPasswordCount']}/{found['IsLocked']}")
-        if found["IsLocked"] == "1":
-            return sent, counts
-    return 0, counts
+        seen.add(f"{answer}:{found['BadPasswordCount']}/{found['IsLocked']}")
+        if answer == "18486" or found["IsLocked"] == "1":
+            return f"after {sent}", seen
+    return "not locked", seen
 
 
 def probe(service: str) -> None:
     SEEN.clear()
     ch.setup(service)
     cases(service)
-    for got, recorded in zip(SEEN, RECORDED, strict=False):
-        ch.check(got.split(":")[0], got, recorded)
-    ch.check("lines", len(SEEN), len(RECORDED))
+    # By content, not position, so that one line missing or added is named
+    # alone, and does not shift every later line.
+    for line in RECORDED:
+        if line not in SEEN:
+            ch.check("missing", line, "printed")
+    for line in SEEN:
+        if line not in RECORDED:
+            ch.check("not recorded", line, "in RECORDED")
 
 
 def cases(service: str) -> None:
@@ -157,45 +169,45 @@ def cases(service: str) -> None:
 
     ch.reset(service, RIGHT, policy="ON")
     report(f"LK2 before: {short(state(service))}")
-    sent, counts = lock(service)
+    when, seen = lock(service)
     report(
-        f"LK2 {MOST} wrong passwords: locked after {sent}; "
-        f"BadPasswordCount/IsLocked read: {sorted(counts)}; "
+        f"LK2 up to {MOST} wrong passwords: {when}; "
+        f"answer:BadPasswordCount/IsLocked seen: {sorted(seen)}; "
         f"right password: {ch.login(service, RIGHT)}"
     )
 
     value = ch.password_hash(RIGHT, ch.draw_salt())
+    policy_on = f"ALTER LOGIN [{ACCOUNT}] WITH CHECK_POLICY = ON"
     for label, statements in (
         ("nothing", []),
-        ("CHECK_POLICY = ON alone", [f"ALTER LOGIN [{ACCOUNT}] WITH CHECK_POLICY = ON"]),
+        ("CHECK_POLICY = ON alone", [policy_on]),
         (
             "CHECK_POLICY = OFF, then ON",
-            [
-                f"ALTER LOGIN [{ACCOUNT}] WITH CHECK_POLICY = OFF",
-                f"ALTER LOGIN [{ACCOUNT}] WITH CHECK_POLICY = ON",
-            ],
+            [f"ALTER LOGIN [{ACCOUNT}] WITH CHECK_POLICY = OFF", policy_on],
         ),
         (
             "HASHED with CHECK_POLICY = OFF, then ON",
-            [
-                ch.hashed(ACCOUNT, value, ", CHECK_POLICY = OFF"),
-                f"ALTER LOGIN [{ACCOUNT}] WITH CHECK_POLICY = ON",
-            ],
+            [ch.hashed(ACCOUNT, value, ", CHECK_POLICY = OFF"), policy_on],
         ),
+        ("a password in clear", [f"ALTER LOGIN [{ACCOUNT}] WITH PASSWORD = {ch.quote(RIGHT)}"]),
         (
-            "a password in clear with UNLOCK",
+            "the same with UNLOCK",
             [f"ALTER LOGIN [{ACCOUNT}] WITH PASSWORD = {ch.quote(RIGHT)} UNLOCK"],
         ),
     ):
         ch.reset(service, RIGHT, policy="ON")
         ch.login(service, ch.WRONG)
         ch.login(service, ch.WRONG)
-        before = state(service)["BadPasswordCount"]
-        answers = [tool(service, statement) for statement in statements]
+        steps = [f"count {state(service)['BadPasswordCount']}"]
+        # The count after each statement, so that a reset is laid to the one
+        # statement that made it.
+        for statement in statements:
+            answer = tool(service, statement)
+            steps.append(f"{answer}, count {state(service)['BadPasswordCount']}")
         found = state(service)
         report(
-            f"LK3 two wrong passwords, then {label}: count {before}; {answers}; "
-            f"{short(found, 'BadPasswordCount', 'IsLocked', 'is_policy_checked')}; "
+            f"LK3 two wrong passwords, then {label}: {'; '.join(steps)}; "
+            f"{short(found, 'IsLocked', 'is_policy_checked')}; "
             f"right password: {ch.login(service, RIGHT)}"
         )
 
@@ -215,7 +227,8 @@ def cases(service: str) -> None:
     )
     report(f"LK5 MUST_CHANGE {must}: {short(state(service))}; login {ch.login(service, RIGHT)}")
     # A new password without MUST_CHANGE clears it, which reset() needs:
-    # CHECK_POLICY cannot be turned off while it is on, 15128.
+    # while MUST_CHANGE is on, neither CHECK_POLICY nor CHECK_EXPIRATION can
+    # be turned off, 15128.
     cleared = tool(service, f"ALTER LOGIN [{ACCOUNT}] WITH PASSWORD = {ch.quote(RIGHT + 'x')}")
     report(f"LK5 a new password: {cleared}; IsMustChange {state(service)['IsMustChange']}")
 
@@ -229,18 +242,20 @@ RECORDED = [
     "ENABLE ok, is_disabled 0, login ok",
     "LK2 before: IsLocked 0, BadPasswordCount 0, IsMustChange 0, IsExpired 0, "
     "DaysUntilExpiration NULL, is_disabled 0, is_policy_checked 1, is_expiration_checked 0",
-    f"LK2 {MOST} wrong passwords: locked after 0; BadPasswordCount/IsLocked read: ['1/0']; "
-    "right password: ok",
-    "LK3 two wrong passwords, then nothing: count 1; []; "
-    "BadPasswordCount 1, IsLocked 0, is_policy_checked 1; right password: ok",
-    "LK3 two wrong passwords, then CHECK_POLICY = ON alone: count 1; ['ok']; "
-    "BadPasswordCount 1, IsLocked 0, is_policy_checked 1; right password: ok",
-    "LK3 two wrong passwords, then CHECK_POLICY = OFF, then ON: count 1; ['ok', 'ok']; "
-    "BadPasswordCount 0, IsLocked 0, is_policy_checked 1; right password: ok",
+    f"LK2 up to {MOST} wrong passwords: not locked; "
+    "answer:BadPasswordCount/IsLocked seen: ['18456:1/0']; right password: ok",
+    "LK3 two wrong passwords, then nothing: count 1; "
+    "IsLocked 0, is_policy_checked 1; right password: ok",
+    "LK3 two wrong passwords, then CHECK_POLICY = ON alone: count 1; ok, count 1; "
+    "IsLocked 0, is_policy_checked 1; right password: ok",
+    "LK3 two wrong passwords, then CHECK_POLICY = OFF, then ON: count 1; ok, count 0; "
+    "ok, count 0; IsLocked 0, is_policy_checked 1; right password: ok",
     "LK3 two wrong passwords, then HASHED with CHECK_POLICY = OFF, then ON: count 1; "
-    "['ok', 'ok']; BadPasswordCount 0, IsLocked 0, is_policy_checked 1; right password: ok",
-    "LK3 two wrong passwords, then a password in clear with UNLOCK: count 1; ['ok']; "
-    "BadPasswordCount 0, IsLocked 0, is_policy_checked 1; right password: ok",
+    "ok, count 0; ok, count 0; IsLocked 0, is_policy_checked 1; right password: ok",
+    "LK3 two wrong passwords, then a password in clear: count 1; ok, count 1; "
+    "IsLocked 0, is_policy_checked 1; right password: ok",
+    "LK3 two wrong passwords, then the same with UNLOCK: count 1; ok, count 0; "
+    "IsLocked 0, is_policy_checked 1; right password: ok",
     "LK4 two wrong: count 1; right ok; count 0",
     "LK5 MUST_CHANGE ok: IsLocked 0, BadPasswordCount 0, IsMustChange 1, IsExpired 0, "
     "DaysUntilExpiration 0, is_disabled 0, is_policy_checked 1, is_expiration_checked 1; "

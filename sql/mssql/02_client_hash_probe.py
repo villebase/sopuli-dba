@@ -186,13 +186,16 @@ def client(
     UTF-8 in both directions. sqlcmd shows up to 8000 characters of a value
     (-y), and pads each column to its width, so each cell is stripped here; -W,
     which would not pad, cannot be used with -y. -I turns QUOTED_IDENTIFIER on,
-    as a driver's session has it, which sqlcmd leaves off.
+    as a driver's session has it, which sqlcmd leaves off. -m 1 leaves out a
+    message of severity 0, such as sp_configure's notice that a setting
+    changed, which is not an error.
     """
     done = subprocess.run(
         [
             "docker", "exec", "-i", "-e", "SQLCMDPASSWORD", container(service),
             *sqlcmd_path(service), "-S", "localhost", "-U", user, "-d", database,
             "-h", "-1", "-y", "8000", "-s", "|", "-f", "65001", "-r", "1", "-I",
+            "-m", "1",
         ],
         input=("SET NOCOUNT ON;\n" + script + "\nGO\n").encode("utf-8"),
         env={**os.environ, "SQLCMDPASSWORD": password},
@@ -327,16 +330,30 @@ def hashed(account: str, value: bytes, extra: str = "") -> str:
 
 
 def cleaned(service: str, body: Callable[[], None], *cleanups: Callable[[], None]) -> None:
-    """Run `body`, then each clean-up, even when `body` fails."""
+    """Run `body`, then each clean-up, even when `body` or an earlier clean-up fails.
+
+    The first failure is raised once every clean-up has run.
+    """
+    first: BaseException | None = None
     try:
         body()
-    finally:
-        for cleanup in cleanups:
+    except BaseException as exc:
+        first = exc
+    for cleanup in cleanups:
+        try:
             cleanup()
+        except BaseException as exc:
+            first = first or exc
+    if first is not None:
+        raise first
 
 
-def run(probe: Callable[[str], None]) -> int:
-    """Run `probe` on each server. Exit 1 on a difference or a failed step."""
+def run(probe: Callable[[str], None], finish: Callable[[], None] | None = None) -> int:
+    """Run `probe` on each server. Exit 1 on a difference or a failed step.
+
+    `finish`, if given, runs after the last server and before the verdict, for
+    a check that compares the servers.
+    """
     failed = False
     for service in SERVICES:
         try:
@@ -350,6 +367,8 @@ def run(probe: Callable[[str], None]) -> int:
             except StepError as exc:
                 print(f"CLEAN-UP FAILED: {exc}")
                 failed = True
+    if finish is not None:
+        finish()
     for difference in DIFFERENCES:
         print(f"DIFFERS: {difference}")
     if failed or DIFFERENCES:

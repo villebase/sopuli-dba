@@ -15,7 +15,7 @@ servers apart:
        ANY LOGIN, can set a contained user's password; whether a contained
        user granted ALTER ANY USER can, for an ordinary user and for a
        db_owner member; whether a HASHED value is accepted for one; and how
-       the user logs in, with and without the database named
+       the user logs in, naming its database and naming master
   ID4  a contained user and a login with the same name: whether both can
        exist, and which one a login to the contained database reaches
   ID5  msdb's service_broker_guid on a second container of each server's
@@ -67,8 +67,10 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 # 02's name starts with a digit, so it is loaded by its path.
@@ -139,8 +141,8 @@ def login_to(service: str, user: str, password: str, database: str) -> str:
 
 
 def probe(service: str) -> None:
-    # The restore is a clean-up of its own, so that a failed drop does not
-    # skip it.
+    # The restore is a clean-up of its own: ch.cleaned() runs each clean-up even
+    # when one before it fails, so a failed drop does not skip it.
     ch.cleaned(service, lambda: cases(service), lambda: drop_all(service), lambda: restore(service))
 
 
@@ -291,11 +293,13 @@ MSDB: dict[str, str] = {}
 def second_msdb(service: str) -> str:
     """msdb's service_broker_guid on a second container of the server's image.
 
-    The container is started for this, read once it answers, and removed.
+    The container is started for this, from the image ID the server runs (not
+    its tag, which a later pull may have moved), read once it answers, and
+    removed.
     """
     image = (
         subprocess.run(
-            ["docker", "inspect", "-f", "{{.Config.Image}}", ch.container(service)],
+            ["docker", "inspect", "-f", "{{.Image}}", ch.container(service)],
             capture_output=True,
             check=False,
         )
@@ -317,35 +321,44 @@ def second_msdb(service: str) -> str:
         raise ch.StepError(f"{service}: a second container: {started.stderr[:200]!r}")
     try:
         for _ in range(60):
+            # -b: a failed query exits non-zero, so its message is never read
+            # as the value.
             read = subprocess.run(
                 [
                     "docker", "exec", "-e", "SQLCMDPASSWORD", name,
                     *ch.sqlcmd_path(service), "-S", "localhost", "-U", "sa", "-h", "-1", "-W",
-                    "-Q", "SET NOCOUNT ON; SELECT CONVERT(varchar(36), service_broker_guid) "
-                    "FROM sys.databases WHERE name = 'msdb'",
+                    "-b", "-Q", "SET NOCOUNT ON; SELECT CONVERT(varchar(36), "
+                    "service_broker_guid) FROM sys.databases WHERE name = 'msdb'",
                 ],
                 env={**os.environ, "SQLCMDPASSWORD": ch.SA_PASSWORD},
                 capture_output=True,
                 check=False,
             )  # fmt: skip
-            if read.returncode == 0 and read.stdout.strip():
-                return read.stdout.decode().strip()
-            subprocess.run(["docker", "exec", name, "sleep", "2"], capture_output=True)
-        raise ch.StepError(f"{service}: the second container never answered")
+            value = read.stdout.decode().strip()
+            if read.returncode == 0 and GUID.fullmatch(value):
+                return value
+            time.sleep(2)
+        logs = subprocess.run(["docker", "logs", "--tail", "5", name], capture_output=True)
+        raise ch.StepError(
+            f"{service}: the second container never answered: {logs.stdout[-300:]!r}"
+        )
     finally:
         subprocess.run(["docker", "rm", "-f", name], capture_output=True, check=False)
 
 
-def main() -> int:
-    result = ch.run(probe)
-    # Across the servers: each image's msdb value is its own. Every server must
-    # have reached ID2, or there is nothing to compare.
+GUID = re.compile(r"[0-9A-F]{8}(-[0-9A-F]{4}){3}-[0-9A-F]{12}")
+
+
+def across() -> None:
+    """Each image's msdb value is its own. Every server must have reached ID2,
+    or there is nothing to compare."""
     distinct = len(MSDB) == len(ch.SERVICES) and len(set(MSDB.values())) == len(MSDB)
-    print(f"ID2 each image's msdb service_broker_guid is its own: {distinct}")
-    if not distinct:
-        print("\nA RESULT DIFFERS FROM THE HEADER, OR A STEP FAILED")
-        return 1
-    return result
+    print(f"\nID2 each image's msdb service_broker_guid is its own: {distinct}")
+    ch.check("ID2 across the servers", distinct, True)
+
+
+def main() -> int:
+    return ch.run(probe, finish=across)
 
 
 if __name__ == "__main__":

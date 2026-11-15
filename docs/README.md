@@ -866,23 +866,25 @@ The probes are in `sql/mssql/`, and the matrix of 2019, 2022 and 2025 is the
   Under the default collation, `SQL_Latin1_General_CP1_CI_AS`, login names
   compare without case: a second login differing only in case is refused,
   `15025`, and `ALTER LOGIN` reaches a login by its name in upper case.
-  `@@SERVERNAME`, `MachineName` and `ServerName` are the host's name. Nothing
-  else measured tells two servers of one image apart: master's
-  `service_broker_guid` is all zeros, and msdb's comes with the image, the
-  same on a second container of each. A contained user is out of the tool
-  login's reach: `ALTER ANY
-  LOGIN` cannot open its database, `18456`. A contained user granted `ALTER
-  ANY USER` sets another's password, and is refused for a `db_owner` member,
-  `15151`. `HASHED` is a syntax error for a contained user, `102`. A
-  contained user may share a login's name; in its database the user's
-  password logs in and the login's is refused. `sql/mssql/05_identity_probe.py`
-  measures it.
+  `@@SERVERNAME`, `MachineName` and `ServerName` are the container's
+  hostname. Nothing else measured tells two servers of one image apart:
+  master's `service_broker_guid` is all zeros, and msdb's comes with the
+  image, the same on a second container of each. A contained user is out of
+  the tool login's reach: `ALTER ANY LOGIN` cannot open its database,
+  `18456`. A contained user granted `ALTER ANY USER` sets another's password,
+  and is refused for a `db_owner` member, `15151`. `HASHED` is a syntax error
+  for a contained user, `102`. A contained user may share a login's name; in
+  its database the user's password logs in and the login's is refused.
+  `sql/mssql/05_identity_probe.py` measures it.
 - `unverified` `mssql-contained-password-text` (#1538) — **What does SQL Server
   keep of the text of `ALTER USER … WITH PASSWORD` in a contained database?**
   A contained user has no `HASHED` form, so the password always reaches the
-  server, and only what the server keeps of the statement decides whether
-  invariant 15 can hold for one. `sql/mssql/01_password_text_probe.py`
-  measures `CREATE LOGIN` and `ALTER LOGIN` only.
+  server. Whether a SQL Server driver could keep it out of the server's
+  records for a contained user, as invariant 15 does on PostgreSQL, MySQL and
+  MariaDB, depends on what the server keeps of the statement; D2 of #1538
+  decides whether that rule extends to SQL Server.
+  `sql/mssql/01_password_text_probe.py` measures `CREATE LOGIN` and `ALTER
+  LOGIN` only.
 
 ### Vault
 

@@ -843,7 +843,8 @@ The probes are in `sql/mssql/`, and the matrix of 2019, 2022 and 2025 is the
   which names the login and holds no password. The audit keeps the statement
   with the password as `******`, and so does the default trace for one that
   changes the policy. The plan cache, Query Store and the error log keep
-  none of the statements.
+  none of the statements, though each keeps a control statement the probe
+  sends.
   `sql/mssql/01_password_text_probe.py` measures it.
 - `verified` `mssql-client-hash` (#1538) — **Can the tool compute the stored
   value, and set it so that the password logs in?**

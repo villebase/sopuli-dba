@@ -15,16 +15,21 @@ it:
        refuses
   PT5  ALTER LOGIN ... WITH PASSWORD = 0x... HASHED, the form a client that
        computes the hash itself would send (02)
-  PT6  PT1's statement sent as dynamic SQL, EXEC (N'...')
+  PT6  PT1's statement sent as dynamic SQL, EXEC (N'...'), for a second
+       login, sopuli_probe_dyn, so that its rows can be told from PT1's
+  PT7  a control, which holds no password: a query whose comment holds a
+       marker, and xp_logevent with the marker. It shows that each place
+       records a statement it can hold, so that "no case" there means the
+       server kept none
 
 Each case is its own batch, sent from a database with Query Store on, so that
 Query Store can capture it. Each is read back from:
 
   xevents      an Extended Events session, on sql_batch_starting,
                sql_batch_completed, sql_statement_starting,
-               sql_statement_completed and error_reported, to a ring buffer.
-               A lost event fails the step, so that an event the server left
-               out is not one the buffer lost
+               sql_statement_completed and error_reported, to a ring buffer,
+               for events in that database only. A lost event fails the step,
+               so that an event the server left out is not one the buffer lost
   plan cache   sys.dm_exec_cached_plans with sys.dm_exec_sql_text, every
                statement cached, from this run or an earlier one
   query store  sys.query_store_query_text, in the database the run creates
@@ -53,21 +58,25 @@ time on servers just created, exit 0, and the same result every time.
 
 RESULTS -- the same on every release
 
-  answers  PT0, PT1, PT5 and PT6 succeed. PT2 fails, 15151, PT3 fails, 102,
-       and PT4 fails, 33064
+  answers  PT0, PT1, PT5, PT6 and PT7 succeed. PT2 fails, 15151, PT3 fails,
+       102, and PT4 fails, 33064
   xevents  no event of PT0, PT1, PT2, PT4 or PT5 holds its statement: the
        server leaves them out. PT3 is in the batch events, password in clear.
        PT6 is in the batch and statement events, password in clear. PT2's
-       error message names the login and holds no password
+       error message names the login and holds no password. The control,
+       PT7, is in the batch and statement events
   plan cache and query store
-       no case
+       only the control, PT7
   audit    PT0, PT1, PT2, PT4 and PT5 in BATCH_COMPLETED_GROUP (BCM), and in
        CR, PWR and PWPL, with the password or the value replaced by `******`.
-       PT3 and PT6 in BCM, password in clear
+       PT3 and PT6 in BCM, password in clear. PT6 also in PWR, masked. The
+       control in BCM
   trace    PT0 as Audit Addlogin Event, with no text. PT4 as Audit Login
-       Change Property Event, password replaced by `******`. No other case
+       Change Property Event, password replaced by `******`. No other case.
+       The default trace takes no statement of the probe's choosing, so it
+       has no control; the Addlogin row shows that it records
   error log
-       no case
+       only the control, PT7
 
   So a password statement sent as a batch of its own, which parses, keeps
   its password out of each place measured: its events are left out, and the
@@ -82,13 +91,13 @@ HOW TO RUN, against the matrix (test/README.md), from the repo root:
 
 It needs 02_client_hash_probe.py beside it.
 
-THROWAWAY SERVERS ONLY. It creates and drops the login sopuli_probe_pw, the
-database sopuli_probe_qs, the event session sopuli_probe_xe, and the server
-audit sopuli_probe_audit and its specification, and deletes the audit's files,
-which hold PT3's and PT6's test passwords in clear. A run that is stopped
-before its clean-up leaves those files in /var/opt/mssql/data/; the next run
-deletes them. The test passwords may also stay in the plan cache, the default
-trace and the error log until the server is recreated.
+THROWAWAY SERVERS ONLY. It creates and drops the logins sopuli_probe_pw and
+sopuli_probe_dyn, the database sopuli_probe_qs, the event session
+sopuli_probe_xe, and the server audit sopuli_probe_audit and its
+specification. It deletes the audit's files, which hold PT3's and PT6's test
+passwords in clear, also when a drop fails. A run that is stopped before its
+clean-up leaves those files in /var/opt/mssql/data/; the next run deletes
+them. The control's marker stays in the error log until it is cycled.
 """
 
 from __future__ import annotations
@@ -109,6 +118,9 @@ ch = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(ch)
 
 LOGIN = "sopuli_probe_pw"
+#: PT6's login, so that its masked rows can be told from PT1's: the statement
+#: inside EXEC is PT1's but for the name.
+LOGIN6 = "sopuli_probe_dyn"
 DATABASE = "sopuli_probe_qs"
 SESSION = "sopuli_probe_xe"
 AUDIT = "sopuli_probe_audit"
@@ -123,6 +135,7 @@ MARKERS = {
     "PT3": "PwParseMarker5s",
     "PT4": "pwpolicymarker",
     "PT6": "PwDynamicMarker6t",
+    "PT7": "ControlMarker8c",
 }
 #: PT5's value, of a password that no statement carries.
 SEED_HASH = ch.password_hash("PwSeedMarker7q", bytes.fromhex("0a0b0c0d")).hex()
@@ -133,7 +146,14 @@ STATEMENTS = {
     "PT3": f"ALTER LOGIN [{LOGIN}] WITH PASSWORD = N'{MARKERS['PT3']}' sopuli_bogus",
     "PT4": f"ALTER LOGIN [{LOGIN}] WITH PASSWORD = N'{MARKERS['PT4']}', CHECK_POLICY = ON",
     "PT5": f"ALTER LOGIN [{LOGIN}] WITH PASSWORD = 0x{SEED_HASH} HASHED",
-    "PT6": f"EXEC (N'ALTER LOGIN [{LOGIN}] WITH PASSWORD = N''{MARKERS['PT6']}''')",
+    "PT6": f"EXEC (N'ALTER LOGIN [{LOGIN6}] WITH PASSWORD = N''{MARKERS['PT6']}''')",
+    # The marker is in a comment, which parameterization leaves in the text,
+    # and the query reads a table, so that it has a plan to cache. xp_logevent
+    # writes the marker to the error log, and sends the client no message.
+    "PT7": (
+        f"SELECT /* {MARKERS['PT7']} */ COUNT(*) FROM sys.objects WHERE object_id > 0;\n"
+        f"EXEC xp_logevent 60000, N'{MARKERS['PT7']}', informational"
+    ),
 }
 #: The audit's action groups. Every release measured has each; a server
 #: without one refuses the specification, and the step fails.
@@ -151,7 +171,7 @@ EVENTS = (
 #: this order.
 SHAPES = (
     ("sopuli_bogus", "PT3"),
-    ("EXEC (", "PT6"),
+    (LOGIN6, "PT6"),
     ("CREATE LOGIN", "PT0"),
     ("sopuli_probe_missing", "PT2"),
     ("CHECK_POLICY = ON", "PT4"),
@@ -170,6 +190,7 @@ def ours(text: str) -> bool:
         return False
     return (
         LOGIN in text
+        or LOGIN6 in text
         or "sopuli_probe_missing" in text
         or SEED_HASH.lower() in text.lower()
         or any(marker in text for marker in MARKERS.values())
@@ -199,6 +220,21 @@ def label(text: str) -> str:
 
 
 def cleanup(service: str) -> None:
+    """Drop what the run made, and delete the audit's files, even if a drop fails."""
+    try:
+        drop(service)
+    finally:
+        # The audit's files hold PT3's and PT6's passwords in clear.
+        removed = subprocess.run(
+            ["docker", "exec", ch.container(service), "rm", "-rf", AUDIT_PATH],
+            capture_output=True,
+            check=False,
+        )
+        if removed.returncode != 0:
+            raise ch.StepError(f"{service}: removing {AUDIT_PATH}: {removed.stderr[:200]!r}")
+
+
+def drop(service: str) -> None:
     ch.sa(
         service,
         f"IF EXISTS (SELECT 1 FROM sys.server_event_sessions WHERE name = '{SESSION}') "
@@ -210,22 +246,25 @@ def cleanup(service: str) -> None:
         f"BEGIN ALTER SERVER AUDIT [{AUDIT}] WITH (STATE = OFF); DROP SERVER AUDIT [{AUDIT}] END;\n"
         f"IF DB_ID('{DATABASE}') IS NOT NULL BEGIN "
         f"ALTER DATABASE [{DATABASE}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; "
-        f"DROP DATABASE [{DATABASE}] END;\n" + ch.drop_login(LOGIN),
+        f"DROP DATABASE [{DATABASE}] END;\n" + ch.drop_login(LOGIN) + ";\n" + ch.drop_login(LOGIN6),
     )
-    # The audit's files hold PT3's and PT6's passwords in clear.
-    removed = subprocess.run(
-        ["docker", "exec", ch.container(service), "rm", "-rf", AUDIT_PATH],
-        capture_output=True,
-        check=False,
-    )
-    if removed.returncode != 0:
-        raise ch.StepError(f"{service}: removing {AUDIT_PATH}: {removed.stderr[:200]!r}")
 
 
 def prepare(service: str) -> None:
-    """Start the event session, the audit and Query Store."""
-    ch.sa(service, f"EXEC xp_create_subdir N'{AUDIT_PATH}'")
-    events = ", ".join(f"ADD EVENT sqlserver.{name}" for name in EVENTS)
+    """Create PT6's login; start the event session, the audit and Query Store.
+
+    The session records only events in the database the cases are sent from,
+    so that other work on the server does not fill its buffer.
+    """
+    ch.sa(
+        service,
+        f"EXEC xp_create_subdir N'{AUDIT_PATH}';\n"
+        f"CREATE LOGIN [{LOGIN6}] WITH PASSWORD = N'Acme-Probe-pw0', CHECK_POLICY = OFF",
+    )
+    events = ", ".join(
+        f"ADD EVENT sqlserver.{name} (WHERE (sqlserver.database_name = N'{DATABASE}'))"
+        for name in EVENTS
+    )
     ch.sa(
         service,
         f"CREATE EVENT SESSION [{SESSION}] ON SERVER {events} "
@@ -289,7 +328,8 @@ def xevents(service: str) -> list[str]:
         service,
         f"DECLARE @x xml = {target};\n"
         "SELECT e.value('@name', 'nvarchar(64)') + '.' + d.value('@name', 'nvarchar(64)') "
-        "+ '|' + REPLACE(d.value('(value)[1]', 'nvarchar(max)'), CHAR(10), ' ') "
+        "+ '|' + REPLACE(REPLACE(d.value('(value)[1]', 'nvarchar(max)'), CHAR(10), ' '), "
+        "CHAR(13), ' ') "
         "FROM @x.nodes('/RingBufferTarget/event') AS events(e) "
         "CROSS APPLY e.nodes('data') AS fields(d) "
         "WHERE d.value('@name', 'nvarchar(64)') IN ('batch_text', 'statement', 'message')",
@@ -322,7 +362,8 @@ def query_store(service: str) -> list[str]:
     out = ch.sa(
         service,
         "EXEC sp_query_store_flush_db;\n"
-        "SELECT '|' + REPLACE(query_sql_text, CHAR(10), ' ') FROM sys.query_store_query_text",
+        "SELECT '|' + REPLACE(REPLACE(query_sql_text, CHAR(10), ' '), CHAR(13), ' ') "
+        "FROM sys.query_store_query_text",
         DATABASE,
     )
     return labelled(out)
@@ -333,7 +374,8 @@ def audit(service: str, utc: str) -> list[str]:
     ch.sa(service, f"ALTER SERVER AUDIT [{AUDIT}] WITH (STATE = OFF)")
     out = ch.sa(
         service,
-        "SELECT action_id + '|' + REPLACE(ISNULL(statement, ''), CHAR(10), ' ') "
+        "SELECT action_id + '|' + REPLACE(REPLACE(ISNULL(statement, ''), CHAR(10), ' '), "
+        "CHAR(13), ' ') "
         f"FROM sys.fn_get_audit_file(N'{AUDIT_PATH}*', DEFAULT, DEFAULT) "
         f"WHERE event_time >= CONVERT(datetime2, '{utc}')",
     )
@@ -346,8 +388,11 @@ def default_trace(service: str, local: str) -> list[str]:
         service,
         "DECLARE @path nvarchar(260) = (SELECT path FROM sys.traces WHERE is_default = 1);\n"
         "SELECT CAST(e.name AS nvarchar(128)) + '|' + "
-        "REPLACE(ISNULL(CAST(t.TextData AS nvarchar(max)), "
-        "N'(no text) ' + ISNULL(t.TargetLoginName, t.ObjectName)), CHAR(10), ' ') "
+        # A row with no text is shown by the names it has, so that one about a
+        # case is kept; the event's name says which statement it is.
+        "REPLACE(REPLACE(COALESCE(CAST(t.TextData AS nvarchar(max)), "
+        "N'(no text) ' + COALESCE(t.TargetLoginName, t.ObjectName, N'')), "
+        "CHAR(10), ' '), CHAR(13), ' ') "
         "FROM sys.fn_trace_gettable(@path, DEFAULT) t "
         "JOIN sys.trace_events e ON e.trace_event_id = t.EventClass "
         f"WHERE t.StartTime >= CONVERT(datetime2, '{local}')",
@@ -405,19 +450,25 @@ ANSWERS = {
     "PT4": "33064",
     "PT5": "ok",
     "PT6": "ok",
+    "PT7": "ok",
 }
+#: Labels carry no count: two rows of one case in one place are one label.
 RECORDED = {
     "xevents": [
         "error_reported.message: PT2 message",
         "sql_batch_completed.batch_text: PT3 clear",
         "sql_batch_completed.batch_text: PT6 clear",
+        "sql_batch_completed.batch_text: PT7 clear",
         "sql_batch_starting.batch_text: PT3 clear",
         "sql_batch_starting.batch_text: PT6 clear",
+        "sql_batch_starting.batch_text: PT7 clear",
         "sql_statement_completed.statement: PT6 clear",
+        "sql_statement_completed.statement: PT7 clear",
         "sql_statement_starting.statement: PT6 clear",
+        "sql_statement_starting.statement: PT7 clear",
     ],
-    "plan cache": [],
-    "query store": [],
+    "plan cache": ["PT7 clear"],
+    "query store": ["PT7 clear"],
     "audit": [
         "BCM: PT0 masked",
         "BCM: PT1 masked",
@@ -426,17 +477,19 @@ RECORDED = {
         "BCM: PT4 masked",
         "BCM: PT5 masked",
         "BCM: PT6 clear",
+        "BCM: PT7 clear",
         "CR: PT0 masked",
         "PWPL: PT4 masked",
         "PWR: PT1 masked",
         "PWR: PT4 masked",
         "PWR: PT5 masked",
+        "PWR: PT6 masked",
     ],
     "trace": [
         "Audit Addlogin Event: no text",
         "Audit Login Change Property Event: PT4 masked",
     ],
-    "error log": [],
+    "error log": ["PT7 clear"],
 }
 
 

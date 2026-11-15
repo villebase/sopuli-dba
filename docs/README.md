@@ -938,9 +938,11 @@ The probes are in `sql/mssql/`, and the matrix of 2019, 2022 and 2025 is the
   encrypts a SQL Server login and tells its refusals apart?**
   On Windows and on Linux alike, pyodbc 5.5.0 with Microsoft ODBC Driver 18,
   mssql-python 1.17.0 and pymssql 2.4.6 encrypt when asked. python-tds 1.17.1
-  does not without a CA file. Only pyodbc gives the server's number for each
-  of a wrong password, a disabled login and a must-change login, `18456`,
-  `18470` and `18488`, at the end of the message. python-tds gives `18456`
+  encrypts only with a CA file, and then refuses the server's own
+  certificate. Only pyodbc gives the server's number for each of a wrong
+  password, a disabled login and a must-change login, `18456`, `18470` and
+  `18488`, in parentheses after the server's message, before
+  `(SQLDriverConnect)`. python-tds gives `18456`
   and `18488`, and waits out its timeout for a disabled login. pymssql gives
   `18456` for all three, and mssql-python gives no number. Every library logs
   in with a password of `; { } =` and a space; the ODBC libraries take it in

@@ -12,6 +12,7 @@
 #   docker compose --profile postgres-matrix up -d # PostgreSQL 13 to 18, on 5413 to 5418
 #   docker compose --profile mysql-matrix up -d    # MySQL 8.0, 8.4, 9, on 3380, 3384, 3390
 #   docker compose --profile mariadb-matrix up -d  # MariaDB 10.11, 11.4, 11.8, 12.3, on 3311, 3314, 3318, 3323
+#   docker compose --profile mssql-matrix up -d    # SQL Server 2019, 2022, 2025, on 14319, 14322, 14325
 #   docker compose --profile tier0 --profile pgbouncer up -d # + PgBouncer, on 6432 and 6433
 #   docker compose --profile tier0 --profile supabase up -d  # + Supabase's database, on 5440
 #   docker compose --profile oracle19c up -d # 19.3 EE, maintainer-only; see the service
@@ -43,8 +44,9 @@
 # starts mysql-matrix sets SOPULI_TEST_MYSQL80_PORT, SOPULI_TEST_MYSQL84_PORT and
 # SOPULI_TEST_MYSQL9_PORT, and one that starts mariadb-matrix sets
 # SOPULI_TEST_MARIADB1011_PORT, SOPULI_TEST_MARIADB114_PORT,
-# SOPULI_TEST_MARIADB118_PORT and SOPULI_TEST_MARIADB123_PORT. The suite reads
-# none of them. See README.md.
+# SOPULI_TEST_MARIADB118_PORT and SOPULI_TEST_MARIADB123_PORT, and one that
+# starts mssql-matrix sets SOPULI_TEST_MSSQL2019_PORT, SOPULI_TEST_MSSQL2022_PORT
+# and SOPULI_TEST_MSSQL2025_PORT. The suite reads none of them. See README.md.
 
 name: sopuli-test
 
@@ -95,6 +97,28 @@ x-mariadb-matrix: &mariadb-matrix
     interval: 5s
     timeout: 3s
     retries: 30
+
+# The settings mssql-2019, mssql-2022 and mssql-2025 share. The sa password
+# meets SQL Server's complexity rule. sqlcmd reads it from SQLCMDPASSWORD, so
+# it is not in argv. 2019 has sqlcmd in mssql-tools, the later images in
+# mssql-tools18, whose -C trusts the server's own certificate.
+x-mssql-matrix: &mssql-matrix
+  profiles: [mssql-matrix]
+  environment:
+    ACCEPT_EULA: "Y"
+    MSSQL_PID: Developer
+    MSSQL_SA_PASSWORD: Sopuli-test-1
+    SQLCMDPASSWORD: Sopuli-test-1
+  healthcheck:
+    test:
+      - CMD-SHELL
+      - >-
+        /opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -Q "SELECT 1" -b ||
+        /opt/mssql-tools/bin/sqlcmd -S localhost -U sa -Q "SELECT 1" -b
+    interval: 5s
+    timeout: 5s
+    retries: 40
+    start_period: 20s
 
 services:
 
@@ -410,6 +434,32 @@ services:
     ports:
       - "127.0.0.1:${SOPULI_TEST_MARIADB123_PORT:-3323}:3306"
       - "[::1]:${SOPULI_TEST_MARIADB123_PORT:-3323}:3306"
+
+  # SQL Server 2019, 2022 and 2025, Developer edition, for the probes in
+  # sql/mssql/ (#1538). Moving tags: a probe's header records the release
+  # `SERVERPROPERTY('ProductVersion')` read, never the tag. The images are
+  # amd64 only, and each server wants about 2 GB of memory, so do not start
+  # this beside tier 1's Oracle Free.
+  mssql-2019:
+    <<: *mssql-matrix
+    image: mcr.microsoft.com/mssql/server:2019-latest
+    ports:
+      - "127.0.0.1:${SOPULI_TEST_MSSQL2019_PORT:-14319}:1433"
+      - "[::1]:${SOPULI_TEST_MSSQL2019_PORT:-14319}:1433"
+
+  mssql-2022:
+    <<: *mssql-matrix
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    ports:
+      - "127.0.0.1:${SOPULI_TEST_MSSQL2022_PORT:-14322}:1433"
+      - "[::1]:${SOPULI_TEST_MSSQL2022_PORT:-14322}:1433"
+
+  mssql-2025:
+    <<: *mssql-matrix
+    image: mcr.microsoft.com/mssql/server:2025-latest
+    ports:
+      - "127.0.0.1:${SOPULI_TEST_MSSQL2025_PORT:-14325}:1433"
+      - "[::1]:${SOPULI_TEST_MSSQL2025_PORT:-14325}:1433"
 
   # ------------------------------------------------------------ pgbouncer ---
   # PgBouncer in front of postgres above, for sql/postgres/08_pgbouncer_probe.py

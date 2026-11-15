@@ -66,6 +66,14 @@ What each environment is, and what to know before using it:
   read them. The general log, the slow log and the statement consumers are
   off, and a probe turns on what it reads and sets it back. The client in the
   container is `mariadb`; only 10.11 also has `mysql`.
+- **mssql-matrix** (`mssql-2019`, `mssql-2022` and `mssql-2025`, ports 14319,
+  14322 and 14325) is one server each of SQL Server 2019, 2022 and 2025,
+  Developer edition, for the probes in `sql/mssql/`. The sa password is
+  `Sopuli-test-1`. The client in the container is `sqlcmd`: in
+  `/opt/mssql-tools/bin` on 2019, and in `/opt/mssql-tools18/bin` on the
+  others, where `-C` trusts the server's own certificate. The images are for
+  amd64 only. Each server used between 550 and 950 MiB of memory idle
+  (measured 2026-11-15), so do not start the profile beside tier 1.
 - **pgbouncer** (`pgbouncer` and `pgbouncer-ignore`, ports 6432 and 6433) is
   PgBouncer 1.26.0 in front of tier 0's `postgres`, for
   `sql/postgres/08_pgbouncer_probe.py`. Start it with tier 0:
@@ -106,6 +114,7 @@ docker compose --profile emulators up -d  # lowkey-vault, on 8443
 docker compose --profile postgres-matrix up -d  # PostgreSQL 13 to 18, on 5413 to 5418
 docker compose --profile mysql-matrix up -d     # MySQL 8.0, 8.4, 9, on 3380, 3384, 3390
 docker compose --profile mariadb-matrix up -d   # MariaDB 10.11, 11.4, 11.8, 12.3, on 3311, 3314, 3318, 3323
+docker compose --profile mssql-matrix up -d     # SQL Server 2019, 2022, 2025, on 14319, 14322, 14325
 docker compose --profile tier0 --profile pgbouncer up -d  # + PgBouncer, on 6432 and 6433
 docker compose --profile tier0 --profile supabase up -d  # + Supabase's database, on 5440
 docker compose --profile oracle19c up -d  # 19.3 EE, maintainer-only, 15-25 min the first time
@@ -197,7 +206,7 @@ fell back. `tests/test_compose_ports.py` checks the bindings.
 Everything else in the documentation uses the default names and ports: the
 `docker exec` commands, the Vault UI link below, the configuration samples in
 `docs/local-testing.md` and the run instructions in the headers of the scripts in
-`sql/oracle/`, `sql/postgres/`, `sql/mysql/` and `sql/mariadb/`. In the second clone, change the name and the
+`sql/oracle/`, `sql/postgres/`, `sql/mysql/`, `sql/mariadb/` and `sql/mssql/`. In the second clone, change the name and the
 port in them. The tier2's Oracle services, `oracle-nne`, `lowkey-vault` and the
 maintainer-only services keep fixed ports, so only one clone can run each of
 them. The `postgres-matrix` services each take a port variable of their own,
@@ -209,11 +218,13 @@ same holds for `SOPULI_TEST_PGBOUNCER_PORT` and
 `pgbouncer` profile. A second clone that starts the `supabase` profile sets
 `SOPULI_TEST_SUPABASE_PORT`, default 5440, which the suite does read. One that
 starts `mysql-matrix` sets `SOPULI_TEST_MYSQL80_PORT`, `SOPULI_TEST_MYSQL84_PORT`
-and `SOPULI_TEST_MYSQL9_PORT`, defaults 3380, 3384 and 3390, and one that
+and `SOPULI_TEST_MYSQL9_PORT`, defaults 3380, 3384 and 3390, one that
 starts `mariadb-matrix` sets `SOPULI_TEST_MARIADB1011_PORT`,
 `SOPULI_TEST_MARIADB114_PORT`, `SOPULI_TEST_MARIADB118_PORT` and
-`SOPULI_TEST_MARIADB123_PORT`, defaults 3311, 3314, 3318 and 3323. The suite
-reads none of them.
+`SOPULI_TEST_MARIADB123_PORT`, defaults 3311, 3314, 3318 and 3323, and one
+that starts `mssql-matrix` sets `SOPULI_TEST_MSSQL2019_PORT`,
+`SOPULI_TEST_MSSQL2022_PORT` and `SOPULI_TEST_MSSQL2025_PORT`, defaults 14319,
+14322 and 14325. The suite reads none of them.
 
 A tier-1 stack starts `mysql` and `mariadb` too. The rest of it uses about
 2.5 GB of memory in its containers idle, and about 2.9 GB while the suite runs

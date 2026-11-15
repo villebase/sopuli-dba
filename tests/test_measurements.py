@@ -5,15 +5,16 @@ Tier 0: reads Markdown, SQL comments and Python docstrings.
 `docs/measurements.md` is the one place that says which script ran on which
 release. It has one part for Oracle, for the scripts in `sql/oracle/`, one for
 PostgreSQL, for the scripts in `sql/postgres/`, one for MySQL, for the
-scripts in `sql/mysql/`, and one for MariaDB, for the scripts in
-`sql/mariadb/`. Each script's header records
+scripts in `sql/mysql/`, one for MariaDB, for the scripts in
+`sql/mariadb/`, and one for SQL Server, for the scripts in `sql/mssql/`.
+Each script's header records
 the same runs in more detail. This module checks that the two name the same
 releases, so a run recorded in one and not the other fails here.
 
 An Oracle release is written in full, five numbers: `19.32.0.0.0`, not `19c`. A
 PostgreSQL release is two numbers: `16.15`, not `16`. A MySQL release is three:
 `8.4.13`, not `8.4`, and so is a MariaDB release: `10.11.19`, not `10.11`. A
-SQL script's header is
+SQL Server release is four: `16.0.4325.4`, not `2022`. A SQL script's header is
 the comment block at the top, up to its first line that is not a comment. A
 Python probe's header is its module docstring, read with `ast` so that the
 probe, which imports a vendor client, is not imported. A release a header writes
@@ -71,6 +72,10 @@ _MYSQL_RELEASE = r"(?<![\d.])(?:8|9|1\d)\.\d{1,2}\.\d{1,3}(?!\d|\.\d)"
 #: A MariaDB release, such as `10.11.19` or `12.3.3`. The major release is two
 #: digits from 10, so a MySQL release such as `8.4.13` holds none.
 _MARIADB_RELEASE = r"(?<![\d.])1\d\.\d{1,2}\.\d{1,3}(?!\d|\.\d)"
+#: A SQL Server release, such as `16.0.4325.4`: a major release of two digits
+#: from 10, 0, a build of four digits, and a revision. Four numbers, so an
+#: Oracle release, which has five, holds none.
+_MSSQL_RELEASE = r"(?<![\d.])1\d\.0\.\d{4}\.\d{1,3}(?!\d|\.\d)"
 
 ORACLE = Product(
     name="oracle",
@@ -104,7 +109,15 @@ MARIADB = Product(
     release=re.compile(_MARIADB_RELEASE),
     client=re.compile(r"client(?:\s|--)+`?" + _MARIADB_RELEASE + "`?"),
 )
-PRODUCTS = (ORACLE, POSTGRES, MYSQL, MARIADB)
+MSSQL = Product(
+    name="mssql",
+    scripts=ROOT / "sql" / "mssql",
+    releases_heading="## SQL Server releases",
+    marker="<!-- measurements: mssql scripts -->",
+    release=re.compile(_MSSQL_RELEASE),
+    client=re.compile(r"client(?:\s|--)+`?" + _MSSQL_RELEASE + "`?"),
+)
+PRODUCTS = (ORACLE, POSTGRES, MYSQL, MARIADB, MSSQL)
 
 #: Every script and probe whose header is checked, with its product.
 PROBES = [
@@ -246,6 +259,9 @@ def test_a_script_header_and_the_matrix_name_the_same_releases(
         (MYSQL, "Python 3.13.12, psycopg 3.3.6, Oracle 19.3.0.0.0", set()),
         (MARIADB, "run on 10.11.19 and 12.3.3, the mariadb:10.11 image", {"10.11.19", "12.3.3"}),
         (MARIADB, "as MySQL 8.4.13 does, with Python 3.13.12", set()),
+        (MARIADB, "SQL Server 16.0.4325.4 is not a MariaDB release", set()),
+        (MSSQL, "run on 15.0.4510.2 and 17.0.5065.9.", {"15.0.4510.2", "17.0.5065.9"}),
+        (MSSQL, "Oracle 19.3.0.0.0, MariaDB 10.11.19, Python 3.13.12", set()),
     ],
     ids=[
         "client-dropped",
@@ -262,6 +278,9 @@ def test_a_script_header_and_the_matrix_name_the_same_releases(
         "mysql-other-numbers-are-not-releases",
         "mariadb-releases",
         "mariadb-a-mysql-release-is-not-one",
+        "mariadb-a-sql-server-release-is-not-one",
+        "mssql-releases",
+        "mssql-other-numbers-are-not-releases",
     ],
 )
 def test_a_client_is_told_from_a_database_by_its_words(

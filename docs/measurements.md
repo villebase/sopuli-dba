@@ -1,11 +1,12 @@
 # Measurements
 
-This file says what has been run on which Oracle, PostgreSQL, MySQL or MariaDB
-release, when, and what it showed. It is the one place for that. Other
-documents link here instead of listing releases themselves. The PostgreSQL
-results are in [their own part](#postgresql-releases), after the Oracle ones,
-the MySQL results [after those](#mysql-releases), and the MariaDB results
-[last](#mariadb-releases).
+This file says what has been run on which Oracle, PostgreSQL, MySQL, MariaDB
+or SQL Server release, when, and what it showed. It is the one place for that.
+Other documents link here instead of listing releases themselves. The
+PostgreSQL results are in [their own part](#postgresql-releases), after the
+Oracle ones, the MySQL results [after those](#mysql-releases), the MariaDB
+results [next](#mariadb-releases), and the SQL Server results
+[last](#sql-server-releases).
 
 A result holds only for the release it names. Oracle's retention and auditing
 behaviour is not a documented guarantee, and it differs between releases: 11.2
@@ -434,3 +435,28 @@ library in docker.
 | `global_privileges_view.sql` | `11.4.13` | 2026-11-13 | #1483 | As on 10.11.19 |
 | `global_privileges_view.sql` | `11.8.9` | 2026-11-13 | #1483 | As on 10.11.19, and the tier-1 tests of the view, `test_mariadb_global_privileges_live.py` |
 | `global_privileges_view.sql` | `12.3.3` | 2026-11-13 | #1483 | As on 10.11.19. A definer narrowed to `SELECT` on `mysql.global_priv`, a view with an extra column and one whose definer was dropped each leave the global level *not checked* with `SOPULI-W074`, the first named by the tool account's own row missing; a revoked grant leaves it *not checked* with the reason alone. Running the script again mends each |
+
+## SQL Server releases
+
+A SQL Server release is four numbers, such as `16.0.4325.4`, as
+`SERVERPROPERTY('ProductVersion')` reads it. Name it in full, never "2022".
+The scripts are in `sql/mssql/`, and `tests/test_measurements.py` checks their
+headers against the table below in the same way.
+
+| Release | Product, and where it ran |
+|---|---|
+| `15.0.4510.2` | SQL Server 2019, Developer edition, the `mcr.microsoft.com/mssql/server:2019-latest` image, `test/compose.yaml` profile `mssql-matrix`, as pulled on 2026-11-15 |
+| `16.0.4325.4` | SQL Server 2022, Developer edition, the `2022-latest` image, the same profile, as pulled on 2026-11-15 |
+| `17.0.5065.9` | SQL Server 2025, Developer edition, the `2025-latest` image, the same profile, as pulled on 2026-11-15 |
+
+Not measured: every other release, SQL Server on Windows, Azure SQL Database
+and Azure SQL Managed Instance.
+
+## SQL Server scripts
+
+<!-- measurements: mssql scripts -->
+| Script | Release | Date | Issue | Result |
+|---|---|---|---|---|
+| `02_client_hash_probe.py` | `15.0.4510.2` | 2026-11-15 | #1538 | The server stores version `0x0200`, SHA-512 over the UTF-16LE password and a 4-byte salt, and a value the probe computes agrees. A login with only `ALTER ANY LOGIN` sets a `0x0200` value with `HASHED`, and the password logs in. `0x0300` is refused, `15021`. **A value is checked for its length and version only**: a `0x0100` value of 26 bytes is accepted, and the former password stops logging in. `HASHED` is refused on a login with `CHECK_POLICY = ON`, `33020`, and accepted with `, CHECK_POLICY = OFF` in the same statement, without the policy's checks; the policy can then be turned on again. `HASHED MUST_CHANGE` is refused, `15099` or `33020`; `HASHED UNLOCK` is accepted. A password of 129 characters is refused in clear, `15156`, and accepted as a value. The tool login reads `NULL` for another login's hash |
+| `02_client_hash_probe.py` | `16.0.4325.4` | 2026-11-15 | #1538 | As on 15.0.4510.2, but a `0x0300` value, PBKDF2-HMAC-SHA512 with 100,000 rounds, is also accepted, and its password logs in. A `0x0300` value of zeros is accepted too, and the former password stops logging in |
+| `02_client_hash_probe.py` | `17.0.5065.9` | 2026-11-15 | #1538 | As on 16.0.4325.4, but the server stores `0x0300` itself, and a value the probe computes agrees |

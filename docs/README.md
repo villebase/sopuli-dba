@@ -825,6 +825,28 @@ in `sql/mariadb/`, and the matrix of 10.11, 11.4, 11.8 and 12.3 is the
   as it blocked one with no global privilege. `02-mariadb-privileges.md` §2.4 has the details.
   `sql/mariadb/15_report_read_probe.py` measures it.
 
+### SQL Server
+
+These entries are measured before a SQL Server driver is designed (#1538).
+The probes are in `sql/mssql/`, and the matrix of 2019, 2022 and 2025 is the
+`mssql-matrix` profile of `test/compose.yaml`.
+[measurements.md](measurements.md) names each release in full.
+
+- `verified` `mssql-client-hash` (#1538) — **Can the tool compute the stored
+  value, and set it so that the password logs in?**
+  Yes. A value is a 2-byte version, a 4-byte salt and a 64-byte digest of the
+  UTF-16LE password and the salt: SHA-512 for `0x0200`, PBKDF2-HMAC-SHA512
+  with 100,000 rounds for `0x0300`. 2019 and 2022 store `0x0200`, 2025 stores
+  `0x0300`, and 2019 refuses `0x0300`. A login with only `ALTER ANY LOGIN`
+  sets a value with `ALTER LOGIN … WITH PASSWORD = 0x… HASHED`, and the
+  password logs in. The server checks only the value's length and version, so
+  a wrong value is accepted, and the login's password is then lost. `HASHED`
+  is refused on a login with `CHECK_POLICY = ON`; with `, CHECK_POLICY = OFF`
+  in the same statement it is accepted, and the policy can be turned on again
+  afterwards. The policy's checks are not applied to the password. `HASHED`
+  cannot be sent with `MUST_CHANGE`. The tool login reads `NULL` for another
+  login's hash. `sql/mssql/02_client_hash_probe.py` measures it.
+
 ### Vault
 
 - `verified` `vault-cas-conflict` (#103, #104) — **What does a real Vault's

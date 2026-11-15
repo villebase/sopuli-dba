@@ -185,13 +185,16 @@ def client(
     UTF-8 in both directions. sqlcmd shows up to 8000 characters of a value
     (-y), and pads each column to its width, so each cell is stripped here; -W,
     which would not pad, cannot be used with -y. -I turns QUOTED_IDENTIFIER on,
-    as a driver's session has it, which sqlcmd leaves off.
+    as a driver's session has it, which sqlcmd leaves off. -m 1 leaves out a
+    message of severity 0, such as sp_configure's notice that a setting
+    changed, which is not an error.
     """
     done = subprocess.run(
         [
             "docker", "exec", "-i", "-e", "SQLCMDPASSWORD", container(service),
             *sqlcmd_path(service), "-S", "localhost", "-U", user, "-d", database,
             "-h", "-1", "-y", "8000", "-s", "|", "-f", "65001", "-r", "1", "-I",
+            "-m", "1",
         ],
         input=("SET NOCOUNT ON;\n" + script + "\nGO\n").encode("utf-8"),
         env={**os.environ, "SQLCMDPASSWORD": password},

@@ -861,6 +861,27 @@ The probes are in `sql/mssql/`, and the matrix of 2019, 2022 and 2025 is the
   afterwards. The policy's checks are not applied to the password. `HASHED`
   cannot be sent with `MUST_CHANGE`. The tool login reads `NULL` for another
   login's hash. `sql/mssql/02_client_hash_probe.py` measures it.
+- `verified` `mssql-identity` (#1538) — **How are login names compared, what
+  identifies a server, and how does a contained database user behave?**
+  Under the default collation, `SQL_Latin1_General_CP1_CI_AS`, login names
+  compare without case: a second login differing only in case is refused,
+  `15025`, and `ALTER LOGIN` reaches a login by any case of its name.
+  `@@SERVERNAME`, `MachineName` and `ServerName` are the host's name. Nothing
+  else measured tells two servers apart: master's `service_broker_guid` is
+  all zeros, and msdb's comes with the image, the same on two containers of
+  one image. A contained user is out of the tool login's reach: `ALTER ANY
+  LOGIN` cannot open its database, `18456`. A contained user granted `ALTER
+  ANY USER` sets another's password, and is refused for a `db_owner` member,
+  `15151`. `HASHED` is a syntax error for a contained user, `102`. A
+  contained user may share a login's name; in its database the user's
+  password logs in and the login's is refused. `sql/mssql/05_identity_probe.py`
+  measures it.
+- `unverified` `mssql-contained-password-text` (#1538) — **What does SQL Server
+  keep of the text of `ALTER USER … WITH PASSWORD` in a contained database?**
+  A contained user has no `HASHED` form, so the password always reaches the
+  server, and only what the server keeps of the statement decides whether
+  invariant 15 can hold for one. `sql/mssql/01_password_text_probe.py`
+  measures `CREATE LOGIN` and `ALTER LOGIN` only.
 
 ### Vault
 

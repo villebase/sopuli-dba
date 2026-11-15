@@ -2,23 +2,30 @@
 
 #1538, M5 and M6. A tool login holds only ALTER ANY LOGIN, the grant 02 found
 enough to set a password. This measures which logins it can then change, and
-what it can read of their privileges:
+what logins with each grant can read of the others' privileges:
 
-  GR1  for logins that hold each kind of administrative power, whether the
-       tool can set the password, and if it can, whether the login then has
-       that power: a member of sysadmin, of securityadmin, of a server role
-       of the probe's that holds CONTROL SERVER, and logins granted CONTROL
-       SERVER, ALTER ANY LOGIN or IMPERSONATE ANY LOGIN. And, to contrast,
-       logins with power that is not over logins: one granted VIEW SERVER
-       STATE, a member of dbcreator, the db_owner of a database, and one
-       with no grant
-  GR2  whether the tool can disable sa, or set sa's password
-  GR3  what the tool reads of each login's privileges: its rows in
+  GR1  for each target login, whether the tool can set its password, and if
+       it can, whether the login then logs in with sysadmin, CONTROL SERVER
+       or ALTER ANY LOGIN. The targets: a member of each fixed server role
+       but public (sysadmin, securityadmin, serveradmin, setupadmin,
+       processadmin, diskadmin, dbcreator, bulkadmin); a member of a server
+       role of the probe's that holds CONTROL SERVER; logins granted CONTROL
+       SERVER, ALTER ANY LOGIN, IMPERSONATE ANY LOGIN, ALTER ANY SERVER ROLE,
+       ALTER ANY CONNECTION, ALTER SETTINGS, SHUTDOWN or VIEW SERVER STATE;
+       the db_owner of a database; and a login with no grant
+  GR2  whether the tool may alter sa, by a statement that changes nothing if
+       it is accepted: ALTER LOGIN [sa] WITH DEFAULT_DATABASE = [master],
+       sa's default database already
+  GR3  what each reader sees of each target: its rows in
        sys.server_role_members and sys.server_permissions, and
-       IS_SRVROLEMEMBER for it. Read first by a login with no grant, then by
-       the tool with ALTER ANY LOGIN alone, and then with VIEW ANY
-       DEFINITION, and on releases that have it VIEW ANY SECURITY
-       DEFINITION, granted to the tool too
+       IS_SRVROLEMEMBER('sysadmin', name). The readers: a login with no
+       grant; the tool, with ALTER ANY LOGIN; a login with VIEW ANY
+       DEFINITION alone; and, on releases that have it, a login with VIEW
+       ANY SECURITY DEFINITION alone. Only server-level catalogs are read,
+       so a database role, such as db_owner, is not seen here
+  GR4  whether the login with ALTER ANY SERVER ROLE, once the tool has set
+       its password, can add itself to the probe's role that holds CONTROL
+       SERVER, and to sysadmin, and what it then holds
 
 STATUS: run on 15.0.4510.2, 16.0.4325.4 and 17.0.5065.9, the
 mcr.microsoft.com/mssql/server 2019-latest, 2022-latest and 2025-latest images
@@ -28,23 +35,33 @@ the same result every time.
 
 RESULTS -- the same on every release, except where noted
 
-  GR1  **The server keeps ALTER ANY LOGIN away from every administrative
-       login.** The tool is refused, 15151, "does not exist or you do not
-       have permission", for the members of sysadmin, securityadmin and the
-       role that holds CONTROL SERVER, and for the logins granted CONTROL
-       SERVER, ALTER ANY LOGIN or IMPERSONATE ANY LOGIN. It sets the
-       password of the four others: VIEW SERVER STATE, dbcreator, db_owner of
-       a database, and no grant. Each of the four then logs in, and holds
-       none of sysadmin, CONTROL SERVER and ALTER ANY LOGIN. So a db_owner
-       or a dbcreator can be taken over by the tool
-  GR2  the tool can neither disable sa nor set its password, 15151
-  GR3  the tool, with ALTER ANY LOGIN alone, sees every target's server role
-       rows and server permission rows, and IS_SRVROLEMEMBER('sysadmin') for
-       each. VIEW ANY DEFINITION and VIEW ANY SECURITY DEFINITION change
-       nothing it sees. A login with no grant sees none of the others' rows,
-       only its own CONNECT SQL, but IS_SRVROLEMEMBER('sysadmin') still
-       answers 1 for the sysadmin member. 15.0.4510.2 has no VIEW ANY
-       SECURITY DEFINITION, and refuses its GRANT, 102
+  GR1  the tool is refused, 15151, "does not exist or you do not have
+       permission", for six targets: the members of sysadmin, securityadmin
+       and the role that holds CONTROL SERVER, and the logins granted
+       CONTROL SERVER, ALTER ANY LOGIN or IMPERSONATE ANY LOGIN. It sets the
+       password of every other target, and each logs in holding none of
+       sysadmin, CONTROL SERVER and ALTER ANY LOGIN: serveradmin,
+       setupadmin, processadmin, diskadmin, dbcreator and bulkadmin; ALTER
+       ANY SERVER ROLE, ALTER ANY CONNECTION, ALTER SETTINGS, SHUTDOWN and
+       VIEW SERVER STATE; the db_owner; and no grant. 15.0.4510.2 refuses to
+       add a member to bulkadmin on Linux, 16202, so it has no bulkadmin
+       target
+  GR2  the tool's ALTER LOGIN [sa] WITH DEFAULT_DATABASE = [master] is
+       accepted: ALTER ANY LOGIN reaches at least one of sa's settings. The
+       probe sends sa nothing that would change it, so whether the tool may
+       set sa's password or disable it is not measured here
+  GR3  the tool, with ALTER ANY LOGIN alone, and a login with VIEW ANY
+       DEFINITION alone or VIEW ANY SECURITY DEFINITION alone, each see
+       every target's server role and server permission rows, and
+       IS_SRVROLEMEMBER('sysadmin') for each. A login with no grant sees none
+       of the targets' rows, but IS_SRVROLEMEMBER('sysadmin') still answers
+       1 for the sysadmin member. The db_owner reads as a login with no
+       grant. 15.0.4510.2 has no VIEW ANY SECURITY DEFINITION, and refuses
+       its GRANT, 102
+  GR4  **ALTER ANY LOGIN reaches CONTROL SERVER.** The login with ALTER ANY
+       SERVER ROLE, whose password the tool set, adds itself to the role
+       that holds CONTROL SERVER, and then holds CONTROL SERVER and ALTER
+       ANY LOGIN. Adding itself to sysadmin is refused, 15151
 
 HOW TO RUN, against the matrix (test/README.md), from the repo root:
 
@@ -52,10 +69,11 @@ HOW TO RUN, against the matrix (test/README.md), from the repo root:
 
 It needs 02_client_hash_probe.py beside it.
 
-THROWAWAY SERVERS ONLY. It creates the logins sopuli_probe_tool and
-sopuli_probe_t_*, and the server role sopuli_probe_role, and drops them at
-the end. It sets each target login's password, and never sa's: GR2 sends
-sa's statement only as the tool, and records the refusal.
+THROWAWAY SERVERS ONLY. It creates the logins sopuli_probe_tool,
+sopuli_probe_t_* and sopuli_probe_r_*, the server role sopuli_probe_role and
+the database sopuli_probe_grants, and drops them at the end. It sets each
+target login's password, and never changes sa: GR2's statement sets what sa
+already has.
 """
 
 from __future__ import annotations
@@ -78,23 +96,48 @@ DATABASE = "sopuli_probe_grants"
 #: Test passwords, not credentials.
 FIRST = "Acme-Target-pw1"
 SECOND = "Acme-Target-pw2"
-#: Each target login, and the statements that give it its power.
+
+
+def member(role: str) -> str:
+    return f"ALTER SERVER ROLE [{role}] ADD MEMBER [{{name}}]"
+
+
+def granted(permission: str) -> str:
+    return f"GRANT {permission} TO [{{name}}]"
+
+
+#: Each target, by its short name, and the statement that gives it its power.
+#: The login is sopuli_probe_t_<short name>.
 TARGETS = {
-    "sopuli_probe_t_sysadmin": ["ALTER SERVER ROLE sysadmin ADD MEMBER [{name}]"],
-    "sopuli_probe_t_secadmin": ["ALTER SERVER ROLE securityadmin ADD MEMBER [{name}]"],
-    "sopuli_probe_t_role": [f"ALTER SERVER ROLE [{ROLE}] ADD MEMBER [{{name}}]"],
-    "sopuli_probe_t_control": ["GRANT CONTROL SERVER TO [{name}]"],
-    "sopuli_probe_t_altany": ["GRANT ALTER ANY LOGIN TO [{name}]"],
-    "sopuli_probe_t_imp": ["GRANT IMPERSONATE ANY LOGIN TO [{name}]"],
-    # Contrasts: a server grant that is not administrative, a fixed role
-    # that is not about logins, and the owner's role in one database.
-    "sopuli_probe_t_view": ["GRANT VIEW SERVER STATE TO [{name}]"],
-    "sopuli_probe_t_dbcreator": ["ALTER SERVER ROLE dbcreator ADD MEMBER [{name}]"],
-    "sopuli_probe_t_dbowner": [
+    "sysadmin": member("sysadmin"),
+    "securityadmin": member("securityadmin"),
+    "serveradmin": member("serveradmin"),
+    "setupadmin": member("setupadmin"),
+    "processadmin": member("processadmin"),
+    "diskadmin": member("diskadmin"),
+    "dbcreator": member("dbcreator"),
+    "bulkadmin": member("bulkadmin"),
+    "role": member(ROLE),
+    "control": granted("CONTROL SERVER"),
+    "altany": granted("ALTER ANY LOGIN"),
+    "impersonate": granted("IMPERSONATE ANY LOGIN"),
+    "altrole": granted("ALTER ANY SERVER ROLE"),
+    "altconn": granted("ALTER ANY CONNECTION"),
+    "settings": granted("ALTER SETTINGS"),
+    "shutdown": granted("SHUTDOWN"),
+    "viewstate": granted("VIEW SERVER STATE"),
+    "dbowner": (
         f"EXEC (N'USE [{DATABASE}]; CREATE USER [{{name}}] FOR LOGIN [{{name}}]; "
         f"ALTER ROLE db_owner ADD MEMBER [{{name}}]')"
-    ],
-    "sopuli_probe_t_plain": [],
+    ),
+    "plain": "",
+}
+#: The readers of GR3, by short name, and the grant each holds besides the
+#: tool's. The login is sopuli_probe_r_<short name>; the tool is itself.
+READERS = {
+    "none": "",
+    "viewdef": "VIEW ANY DEFINITION",
+    "viewsec": "VIEW ANY SECURITY DEFINITION",
 }
 #: What a login checks of its own power once it has logged in.
 POWER = (
@@ -104,6 +147,14 @@ POWER = (
 )
 
 
+def target(short: str) -> str:
+    return f"sopuli_probe_t_{short}"
+
+
+def reader(short: str) -> str:
+    return f"sopuli_probe_r_{short}"
+
+
 def drop_all(service: str) -> None:
     ch.sa(
         service,
@@ -111,7 +162,7 @@ def drop_all(service: str) -> None:
         f"ALTER DATABASE [{DATABASE}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; "
         f"DROP DATABASE [{DATABASE}] END",
     )
-    for name in TARGETS:
+    for name in [*map(target, TARGETS), *map(reader, READERS)]:
         ch.sa(service, ch.drop_login(name))
     ch.sa(
         service,
@@ -120,7 +171,13 @@ def drop_all(service: str) -> None:
     )
 
 
-def setup(service: str) -> str:
+def setup(service: str) -> tuple[str, list[str]]:
+    """Create the targets and the readers.
+
+    Returns the release, and the short names of the targets and the readers
+    that could be made. A target or reader whose grant the server refuses is
+    recorded in REFUSED and left out.
+    """
     found = ch.setup(service)
     drop_all(service)
     ch.sa(
@@ -128,140 +185,134 @@ def setup(service: str) -> str:
         f"CREATE SERVER ROLE [{ROLE}];\nGRANT CONTROL SERVER TO [{ROLE}];\n"
         f"CREATE DATABASE [{DATABASE}]",
     )
-    for name, grants in TARGETS.items():
+    targets = []
+    for short, grant in TARGETS.items():
+        name = target(short)
         ch.sa(
-            service,
-            f"CREATE LOGIN [{name}] WITH PASSWORD = {ch.quote(FIRST)}, CHECK_POLICY = OFF;\n"
-            + ";\n".join(grant.format(name=name) for grant in grants),
+            service, f"CREATE LOGIN [{name}] WITH PASSWORD = {ch.quote(FIRST)}, CHECK_POLICY = OFF"
         )
-    return found
+        if grant:
+            _, errors = ch.client(service, "sa", ch.SA_PASSWORD, grant.format(name=name))
+            if errors:
+                print(f"GR1 target {short}: its grant is refused: {ch.code(errors)}")
+                REFUSED[f"target {short}"] = ch.code(errors)
+                continue
+        targets.append(short)
+    made = []
+    for short, grant in READERS.items():
+        name = reader(short)
+        ch.sa(
+            service, f"CREATE LOGIN [{name}] WITH PASSWORD = {ch.quote(FIRST)}, CHECK_POLICY = OFF"
+        )
+        if grant:
+            _, errors = ch.client(service, "sa", ch.SA_PASSWORD, f"GRANT {grant} TO [{name}]")
+            if errors:
+                print(f"GR3 reader {short}: GRANT {grant}: {ch.code(errors)}")
+                REFUSED[f"reader {short}"] = ch.code(errors)
+                continue
+        made.append(short)
+    return found, targets, made
 
 
-def reads(service: str, name: str, reader: str = ch.TOOL, password: str = ch.TOOL_PASSWORD) -> str:
-    """What `reader` sees of `name`: role rows, permission rows, IS_SRVROLEMEMBER."""
+def reads(service: str, login: str, password: str) -> dict[str, str]:
+    """What `login` sees of each target, as `role rows,permission rows,sysadmin`."""
+    names = ", ".join(f"('{short}')" for short in TARGETS)
     out, errors = ch.client(
         service,
-        reader,
+        login,
         password,
-        "SELECT CAST((SELECT COUNT(*) FROM sys.server_role_members m "
+        "SELECT t.short + '|' "
+        "+ CAST((SELECT COUNT(*) FROM sys.server_role_members m "
         "JOIN sys.server_principals p ON p.principal_id = m.member_principal_id "
-        f"WHERE p.name = '{name}') AS varchar(5)) + ',' "
+        "WHERE p.name = 'sopuli_probe_t_' + t.short) AS varchar(5)) + ',' "
         "+ CAST((SELECT COUNT(*) FROM sys.server_permissions s "
         "JOIN sys.server_principals p ON p.principal_id = s.grantee_principal_id "
-        f"WHERE p.name = '{name}') AS varchar(5)) + ',' "
-        f"+ ISNULL(CAST(IS_SRVROLEMEMBER('sysadmin', '{name}') AS varchar(2)), 'NULL')",
+        "WHERE p.name = 'sopuli_probe_t_' + t.short) AS varchar(5)) + ',' "
+        "+ ISNULL(CAST(IS_SRVROLEMEMBER('sysadmin', 'sopuli_probe_t_' + t.short) "
+        "AS varchar(2)), 'NULL') "
+        f"FROM (VALUES {names}) AS t(short)",
     )
-    return out if not errors else ch.code(errors)
+    if errors:
+        raise ch.StepError(f"{service}: {login}'s read: {errors}")
+    return dict(line.split("|", 1) for line in out.splitlines())
 
 
-#: Each result line, as the probe prints it.
-SEEN: list[str] = []
-
-
-def report(line: str) -> None:
-    print(line)
-    SEEN.append(line)
+#: Each target or reader whose grant the server refused, on the server run last.
+REFUSED: dict[str, str] = {}
 
 
 def probe(service: str) -> None:
-    SEEN.clear()
     ch.cleaned(service, lambda: cases(service), lambda: drop_all(service))
 
 
 def cases(service: str) -> None:
-    major = setup(service).split(".")[0]
-    for name in TARGETS:
+    REFUSED.clear()
+    found, targets, made = setup(service)
+    major = found.split(".")[0]
+
+    for short in targets:
+        name = target(short)
         answer = ch.as_tool(service, f"ALTER LOGIN [{name}] WITH PASSWORD = {ch.quote(SECOND)}")
         if answer == "ok":
             out, errors = ch.client(service, name, SECOND, POWER)
             power = out if not errors else ch.code(errors)
         else:
             power = "-"
-        report(f"GR1 {name}: set by the tool {answer}; sysadmin,CONTROL SERVER,ALTER ANY: {power}")
+        print(f"GR1 {short}: set by the tool {answer}; sysadmin,CONTROL SERVER,ALTER ANY: {power}")
+        expected = ("15151", "-") if short in PROTECTED else ("ok", "0,0,0")
+        ch.check(f"GR1 {short}", (answer, power), expected)
 
-    report(f"GR2 DISABLE sa: {ch.as_tool(service, 'ALTER LOGIN [sa] DISABLE')}")
-    report(
-        "GR2 sa's password: "
-        f"{ch.as_tool(service, f'ALTER LOGIN [sa] WITH PASSWORD = {ch.quote(SECOND)}')}"
+    default = ch.sa(
+        service, "SELECT default_database_name FROM sys.server_principals WHERE name = 'sa'"
     )
+    noop = ch.as_tool(service, f"ALTER LOGIN [sa] WITH DEFAULT_DATABASE = [{default}]")
+    print(f"GR2 sa's default database {default}; the tool sets it again: {noop}")
+    ch.check("GR2", (default, noop), ("master", "ok"))
 
-    plain = "sopuli_probe_t_plain"
-    rows = {
-        name.removeprefix("sopuli_probe_t_"): reads(service, name, plain, SECOND)
-        for name in TARGETS
-    }
-    report(f"GR3 a login with no grant (role rows,permission rows,IS_SRVROLEMEMBER): {rows}")
-    for label, grant in (
-        ("ALTER ANY LOGIN alone", ""),
-        ("and VIEW ANY DEFINITION", "VIEW ANY DEFINITION"),
-        ("and VIEW ANY SECURITY DEFINITION", "VIEW ANY SECURITY DEFINITION"),
-    ):
-        if grant:
-            _, errors = ch.client(service, "sa", ch.SA_PASSWORD, f"GRANT {grant} TO [{ch.TOOL}]")
-            if errors:
-                report(f"GR3 {label}: GRANT {ch.code(errors)}")
-                continue
-        rows = {name.removeprefix("sopuli_probe_t_"): reads(service, name) for name in TARGETS}
-        report(f"GR3 {label} (role rows,permission rows,IS_SRVROLEMEMBER): {rows}")
+    seen = {"tool": reads(service, ch.TOOL, ch.TOOL_PASSWORD)}
+    for short in made:
+        seen[short] = reads(service, reader(short), FIRST)
+    for who, rows in seen.items():
+        print(f"GR3 {who} (role rows,permission rows,sysadmin): {rows}")
+        for short in targets:
+            ch.check(f"GR3 {who} {short}", rows.get(short), SEES[who](short))
+    refused = {"target bulkadmin": "16202", "reader viewsec": "102"} if major == "15" else {}
+    ch.check("refused grants", dict(REFUSED), refused)
 
-    recorded = recorded_lines(major)
-    # By content, not position, so that one line missing or added is named alone.
-    for line in recorded:
-        if line not in SEEN:
-            ch.check("missing", line, "printed")
-    for line in SEEN:
-        if line not in recorded:
-            ch.check("not recorded", line, "in RECORDED")
-
-
-#: GR1's line for each target: the tool sets the password of only the four
-#: with no administrative power.
-REFUSED = (
-    "sysadmin",
-    "secadmin",
-    "role",
-    "control",
-    "altany",
-    "imp",
-)
-#: GR3's reads, (role rows,permission rows,IS_SRVROLEMEMBER), as the tool sees
-#: each target, and as a login with no grant sees it.
-BY_TOOL = (
-    "{'sysadmin': '1,1,1', 'secadmin': '1,1,0', 'role': '1,1,0', 'control': '0,2,0', "
-    "'altany': '0,2,0', 'imp': '0,2,0', 'view': '0,2,0', 'dbcreator': '1,1,0', "
-    "'dbowner': '0,1,0', 'plain': '0,1,0'}"
-)
-BY_PLAIN = (
-    "{'sysadmin': '0,0,1', 'secadmin': '0,0,0', 'role': '0,0,0', 'control': '0,0,0', "
-    "'altany': '0,0,0', 'imp': '0,0,0', 'view': '0,0,0', 'dbcreator': '0,0,0', "
-    "'dbowner': '0,0,0', 'plain': '0,1,0'}"
-)
-READS = "(role rows,permission rows,IS_SRVROLEMEMBER)"
+    # The login with ALTER ANY SERVER ROLE, whose password the tool set in GR1,
+    # adds itself to roles.
+    name = target("altrole")
+    steps = []
+    for role in (ROLE, "sysadmin"):
+        _, errors = ch.client(
+            service, name, SECOND, f"ALTER SERVER ROLE [{role}] ADD MEMBER [{name}]"
+        )
+        steps.append(f"to {role}: {ch.code(errors)}")
+    out, errors = ch.client(service, name, SECOND, POWER)
+    power = out if not errors else ch.code(errors)
+    joined = "; ".join(steps)
+    print(f"GR4 altrole adds itself {joined}; then sysadmin,CONTROL SERVER,ALTER ANY: {power}")
+    ch.check("GR4", (steps, power), ([f"to {ROLE}: ok", "to sysadmin: 15151"], "0,1,1"))
 
 
-def recorded_lines(major: str) -> list[str]:
-    """The lines a release prints. Only 2019, major release 15, differs: it has
-    no VIEW ANY SECURITY DEFINITION, and refuses the GRANT as a syntax error."""
-    lines = []
-    for name in TARGETS:
-        short = name.removeprefix("sopuli_probe_t_")
-        if short in REFUSED:
-            lines.append(f"GR1 {name}: set by the tool 15151; sysadmin,CONTROL SERVER,ALTER ANY: -")
-        else:
-            lines.append(
-                f"GR1 {name}: set by the tool ok; sysadmin,CONTROL SERVER,ALTER ANY: 0,0,0"
-            )
-    lines += [
-        "GR2 DISABLE sa: 15151",
-        "GR2 sa's password: 15151",
-        f"GR3 a login with no grant {READS}: {BY_PLAIN}",
-        f"GR3 ALTER ANY LOGIN alone {READS}: {BY_TOOL}",
-        f"GR3 and VIEW ANY DEFINITION {READS}: {BY_TOOL}",
-        "GR3 and VIEW ANY SECURITY DEFINITION: GRANT 102"
-        if major == "15"
-        else f"GR3 and VIEW ANY SECURITY DEFINITION {READS}: {BY_TOOL}",
-    ]
-    return lines
+#: The targets the tool cannot change, by short name.
+PROTECTED = frozenset({"sysadmin", "securityadmin", "role", "control", "altany", "impersonate"})
+
+
+def all_rows(short: str) -> str:
+    """What a reader that sees every row reads of a target."""
+    roles = 1 if TARGETS[short].startswith("ALTER SERVER ROLE") else 0
+    # Every login holds CONNECT SQL; a GRANT adds one row.
+    permissions = 2 if TARGETS[short].startswith("GRANT") else 1
+    return f"{roles},{permissions},{1 if short == 'sysadmin' else 0}"
+
+
+def none_but_own(short: str) -> str:
+    """What a reader that sees no other login's rows reads of a target."""
+    return f"0,0,{1 if short == 'sysadmin' else 0}"
+
+
+SEES = {"tool": all_rows, "none": none_but_own, "viewdef": all_rows, "viewsec": all_rows}
 
 
 def main() -> int:

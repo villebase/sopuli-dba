@@ -864,17 +864,24 @@ The probes are in `sql/mssql/`, and the matrix of 2019, 2022 and 2025 is the
 - `verified` `mssql-tool-grants` (#1538) — **Which logins can a tool login
   with only `ALTER ANY LOGIN` change, and what does it read of their
   privileges?**
-  Only those with no power over logins or the server. The server refuses it,
-  `15151`, for `sa`, for the members of `sysadmin`, `securityadmin` and a
-  server role that holds `CONTROL SERVER`, and for logins granted `CONTROL
-  SERVER`, `ALTER ANY LOGIN` or `IMPERSONATE ANY LOGIN`. It sets the
-  password of a login granted `VIEW SERVER STATE`, of a member of
-  `dbcreator`, and of a database's `db_owner`, and that login then logs in:
-  power over databases is not protected. It reads every login's rows in
+  The server refuses it, `15151`, for the members of `sysadmin`,
+  `securityadmin` and a server role that holds `CONTROL SERVER`, and for
+  logins granted `CONTROL SERVER`, `ALTER ANY LOGIN` or `IMPERSONATE ANY
+  LOGIN`. It sets the password of every other login measured: the members of
+  `serveradmin`, `setupadmin`, `processadmin`, `diskadmin`, `dbcreator` and
+  `bulkadmin`; logins granted `ALTER ANY SERVER ROLE`, `ALTER ANY
+  CONNECTION`, `ALTER SETTINGS`, `SHUTDOWN` or `VIEW SERVER STATE`; and a
+  database's `db_owner`. **That reaches `CONTROL SERVER`:** the login with
+  `ALTER ANY SERVER ROLE` adds itself to a server role that holds `CONTROL
+  SERVER`. It is refused `sysadmin`. The tool may also change a setting of
+  `sa` (its default database). It reads every login's rows in
   `sys.server_role_members` and `sys.server_permissions`, and
-  `IS_SRVROLEMEMBER` for any login; `VIEW ANY DEFINITION` adds nothing. A
-  login with no grant sees none of those rows, but `IS_SRVROLEMEMBER` still
-  answers for a fixed role. `sql/mssql/04_grants_probe.py` measures it.
+  `IS_SRVROLEMEMBER('sysadmin', …)` for each; a login with `VIEW ANY
+  DEFINITION` alone, or `VIEW ANY SECURITY DEFINITION` alone where the
+  release has it, reads the same. A login with no grant sees none of the
+  others' rows, but `IS_SRVROLEMEMBER('sysadmin', …)` still answers for
+  them. These are server-level reads: a `db_owner` reads as a login with no
+  grant. `sql/mssql/04_grants_probe.py` measures it.
 
 ### Vault
 

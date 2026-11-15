@@ -968,12 +968,13 @@ The probes are in `sql/mssql/`, and the matrix of 2019, 2022 and 2025 is the
   and `sys.sql_logins`, with its policy flags, its `LOGINPROPERTY` dates
   (`PasswordLastSetTime` among them), and its rows in
   `sys.server_role_members` and `sys.server_permissions`. A database the
-  login has no user in refuses it, `916`. `CONNECT ANY DATABASE` opens every
-  database, and with `VIEW ANY DEFINITION` reads each one's users, role
-  members and permissions; alone it sees no row. `password_hash` reads NULL
-  to every reader. **No source gives a login's last good login:** no catalog
-  view keeps it, and with the default auditing the error log records failed
-  logins only. `sp_readerrorlog` needs `VIEW SERVER STATE`, `VIEW ANY ERROR
+  login has no user in refuses it, `916`. `CONNECT ANY DATABASE` opened the
+  probe's database, and with `VIEW ANY DEFINITION` read its users, role
+  members and permissions; alone it saw no row. `password_hash` reads NULL
+  to every reader. **No source measured gives a login's last good login:**
+  no catalog view has a column for it, and at the images' auditing level, 2,
+  the error log records failed logins only. A server audit's
+  `SUCCESSFUL_LOGIN_GROUP` is not measured. `sp_readerrorlog` needs `VIEW SERVER STATE`, `VIEW ANY ERROR
   LOG` (2022 and later) or `securityadmin`; `xp_readerrorlog` is refused to
   all of them. The same on 2019, 2022 and 2025.
   `sql/mssql/07_report_reads_probe.py` measures it.

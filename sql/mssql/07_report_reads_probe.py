@@ -18,10 +18,13 @@ what each read returns about one subject login:
        sys.database_permissions, or the error that stops the read
   RP5  sessions: whether sys.dm_exec_sessions shows the reader a session not
        its own
-  RP6  the error log: whether xp_readerrorlog runs for the reader
-  RP7  the last login, as sa: whether the error log records the subject's
-       good login and its failed one, with the images' default login
-       auditing. No catalog view keeps a login's last login
+  RP6  the error log: whether xp_readerrorlog, and sp_readerrorlog, run for
+       the reader
+  RP7  the last login, as sa: the server's login auditing level, and
+       whether the error log, read from the moment before the subject's
+       logins, records its good login and its failed one. No catalog view
+       has a column for a login's last login. Other sources, such as a
+       server audit's SUCCESSFUL_LOGIN_GROUP, are not measured
 
 The subject is a member of processadmin, holds VIEW SERVER STATE besides
 CONNECT SQL, and has a user in the probe's database, in db_datareader and
@@ -45,8 +48,10 @@ syntax error, 102
 
   RP1-3  a reader with no grant sees nothing of the subject: no row, NULL
        dates, no role or permission rows. **VIEW ANY DEFINITION alone reads
-       all of RP1 to RP3**: the login, its policy flags, its dates, its 1
-       role row and its 2 permission rows. So do ALTER ANY LOGIN, VIEW ANY
+       all of RP1 to RP3**: the login, its policy flags, its dates
+       (PasswordLastSetTime a date; BadPasswordTime, read before any failed
+       login, the 1900-01-01 default), its 1 role row and its 2 permission
+       rows. So do ALTER ANY LOGIN, VIEW ANY
        SECURITY DEFINITION and securityadmin. password_hash reads NULL for
        every reader. VIEW SERVER STATE, CONNECT ANY DATABASE and VIEW ANY
        ERROR LOG alone read none of it
@@ -58,9 +63,9 @@ syntax error, 102
   RP6  xp_readerrorlog is refused to every reader, 229, securityadmin
        included. sp_readerrorlog runs for securityadmin, VIEW SERVER STATE
        and VIEW ANY ERROR LOG, and is refused to the others, 27219
-  RP7  with the images' default auditing, the error log records the failed
-       login and not the good one. So no source measured gives a login's
-       last good login
+  RP7  the auditing level is 2, failed logins only, and the error log
+       records the failed login and not the good one. So no source measured
+       gives a login's last good login
 
 HOW TO RUN, against the matrix (test/README.md), from the repo root:
 
@@ -133,13 +138,20 @@ READS: dict[str, str] = {
         "(SELECT CASE WHEN password_hash IS NULL THEN 'NULL' ELSE 'value' END "
         f"FROM sys.sql_logins WHERE name = '{SUBJECT}')"
     ),
+    # A date reads as `value`, or as `1900` for the 1900-01-01 a property
+    # holds before its event, such as BadPasswordTime before a failed login.
     **{
         f"RP2 {prop}": (
-            f"(SELECT CASE WHEN LOGINPROPERTY('{SUBJECT}', '{prop}') IS NULL "
-            "THEN 'NULL' ELSE 'value' END)"
+            f"(SELECT CASE WHEN LOGINPROPERTY('{SUBJECT}', '{prop}') IS NULL THEN 'NULL' "
+            f"WHEN YEAR(CAST(LOGINPROPERTY('{SUBJECT}', '{prop}') AS datetime)) = 1900 "
+            "THEN '1900' ELSE 'value' END)"
         )
-        for prop in ("PasswordLastSetTime", "BadPasswordTime", "DaysUntilExpiration")
+        for prop in ("PasswordLastSetTime", "BadPasswordTime")
     },
+    "RP2 DaysUntilExpiration": (
+        f"(SELECT CASE WHEN LOGINPROPERTY('{SUBJECT}', 'DaysUntilExpiration') IS NULL "
+        "THEN 'NULL' ELSE 'value' END)"
+    ),
     "RP3 server_role_members": (
         "(SELECT COUNT(*) FROM sys.server_role_members "
         f"WHERE member_principal_id = {subject_id('sys.server_principals')})"
@@ -182,11 +194,12 @@ def batch() -> str:
             # Dynamic SQL, so that a database the reader cannot open is an
             # error the CATCH sees, not one that stops the whole batch.
             statement = read.removeprefix("EXEC:").replace("'", "''")
+            # An error-log read has no value: that it ran is the result.
+            value = "'ok'" if label.startswith("RP6") else "CAST(@v AS varchar(10))"
             body = (
                 "SET @v = NULL; "
                 f"EXEC sp_executesql N'{statement}', N'@v int OUTPUT', @v OUTPUT; "
-                f"SELECT '{label}|' + CASE WHEN '{label}' LIKE 'RP6%' THEN 'ok' "
-                "ELSE CAST(@v AS varchar(10)) END"
+                f"SELECT '{label}|' + {value}"
             )
         else:
             body = f"SELECT '{label}|' + ISNULL(CAST({read} AS varchar(32)), 'no row')"
@@ -251,19 +264,30 @@ def setup(service: str) -> list[str]:
 
 
 def last_login(service: str) -> dict[str, str]:
-    """RP7: what the error log keeps of the subject's good and failed login."""
+    """RP7: the auditing level, and what the error log keeps of the subject's
+    good and failed login, from the moment before them."""
+    found = {
+        "RP7 login auditing level": ch.sa(
+            service,
+            "DECLARE @level int; EXEC master.dbo.xp_instance_regread N'HKEY_LOCAL_MACHINE', "
+            r"N'Software\Microsoft\MSSQLServer\MSSQLServer', N'AuditLevel', @level OUTPUT; "
+            "SELECT ISNULL(CAST(@level AS varchar(5)), 'none')",
+        )
+    }
+    # Milliseconds, which xp_readerrorlog's start time takes as text.
+    since = ch.sa(service, "SELECT CONVERT(varchar(23), DATEADD(second, -1, GETDATE()), 121)")
     _, errors = ch.client(service, SUBJECT, PASSWORD, "SELECT 1")
     if errors:
         raise ch.StepError(f"{service}: the subject's login: {errors}")
     _, errors = ch.client(service, SUBJECT, ch.WRONG, "SELECT 1")
     if not errors:
         raise ch.StepError(f"{service}: the subject logged in with a wrong password")
-    found = {}
     for label, words in (("good", "Login succeeded"), ("failed", "Login failed")):
         count = ch.sa(
             service,
             "DECLARE @log TABLE (d datetime, p nvarchar(64), t nvarchar(max)); "
-            f"INSERT INTO @log EXEC xp_readerrorlog 0, 1, N'{words}', N'{SUBJECT}'; "
+            f"INSERT INTO @log EXEC xp_readerrorlog 0, 1, N'{words}', N'{SUBJECT}', "
+            f"'{since}', NULL; "
             "SELECT CAST(COUNT(*) AS varchar(10)) FROM @log",
         )
         found[f"RP7 {label} login in the error log"] = (
@@ -275,12 +299,15 @@ def last_login(service: str) -> dict[str, str]:
 def cases(service: str) -> None:
     found = ch.release(service)
     print(f"\n== {service}: {found}")
+    REFUSED.clear()
     made = setup(service)
     major = found.split(".")[0]
     for short in READERS:
+        # Every reader, so that a grant recorded as refused that is now
+        # accepted is a difference too.
+        recorded = RECORDED_REFUSED.get((major, short))
+        ch.check(f"{service} reader {short} refused", REFUSED.get(short), recorded)
         if short not in made:
-            recorded = RECORDED_REFUSED.get((major, short))
-            ch.check(f"{service} reader {short}", REFUSED[short], recorded)
             continue
         got = reads(service, reader(short), PASSWORD)
         for label in READS:
@@ -296,7 +323,7 @@ def probe(service: str) -> None:
     ch.cleaned(service, lambda: cases(service), lambda: drop_all(service))
 
 
-#: Each reader whose grant the server refused, on the server run last.
+#: Each reader whose grant the server refused, on the server being run.
 REFUSED: dict[str, str] = {}
 #: The refused grants, by major release and reader: 15 has neither permission.
 RECORDED_REFUSED = {("15", "viewsec"): "102", ("15", "errorlog"): "102"}
@@ -327,7 +354,8 @@ SERVER = {
     "RP1 policy flags": "1,1",
     "RP1 password_hash": "NULL",
     "RP2 PasswordLastSetTime": "value",
-    "RP2 BadPasswordTime": "value",
+    # Read before the subject's failed login (RP7), so the 1900 default.
+    "RP2 BadPasswordTime": "1900",
     "RP2 DaysUntilExpiration": "value",
     "RP3 server_role_members": "1",
     "RP3 server_permissions": "2",
@@ -354,11 +382,9 @@ BY_READER: dict[str, dict[str, str]] = {
     "securityadmin": {**SERVER, **ERROR_LOG},
 }
 RECORDED: dict[tuple[str, str], str] = {
-    **{
-        (short, label): value
-        for short, reads in BY_READER.items()
-        for label, value in reads.items()
-    },
+    **{(short, label): value for short, seen in BY_READER.items() for label, value in seen.items()},
+    # 2: failed logins only, the default.
+    ("sa", "RP7 login auditing level"): "2",
     ("sa", "RP7 good login in the error log"): "not recorded",
     ("sa", "RP7 failed login in the error log"): "recorded",
 }

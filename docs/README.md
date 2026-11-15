@@ -880,8 +880,9 @@ The probes are in `sql/mssql/`, and the matrix of 2019, 2022 and 2025 is the
   DEFINITION` alone, or `VIEW ANY SECURITY DEFINITION` alone where the
   release has it, reads the same. A login with no grant sees none of the
   others' rows, but `IS_SRVROLEMEMBER('sysadmin', …)` still answers for
-  them. These are server-level reads: a `db_owner` reads as a login with no
-  grant. `sql/mssql/04_grants_probe.py` measures it.
+  them. These are server-level reads, so a `db_owner` shows no more than a
+  login with no grant: its power is in the database.
+  `sql/mssql/04_grants_probe.py` measures it.
 
 ### Vault
 

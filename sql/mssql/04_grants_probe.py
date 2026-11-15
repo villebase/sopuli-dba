@@ -31,7 +31,9 @@ STATUS: run on 15.0.4510.2, 16.0.4325.4 and 17.0.5065.9, the
 mcr.microsoft.com/mssql/server 2019-latest, 2022-latest and 2025-latest images
 of test/compose.yaml profile mssql-matrix, as pulled on 2026-11-15, with
 Python 3.13.12 on Windows 11 AMD64, on 2026-11-15 (#1538). Twice, exit 0, and
-the same result every time.
+the same result every time, on servers the other probes in this folder had run
+on before. The probe creates what it measures and drops it first, so what
+those runs left does not reach its results.
 
 RESULTS -- the same on every release, except where noted
 
@@ -55,9 +57,10 @@ RESULTS -- the same on every release, except where noted
        every target's server role and server permission rows, and
        IS_SRVROLEMEMBER('sysadmin') for each. A login with no grant sees none
        of the targets' rows, but IS_SRVROLEMEMBER('sysadmin') still answers
-       1 for the sysadmin member. The db_owner reads as a login with no
-       grant. 15.0.4510.2 has no VIEW ANY SECURITY DEFINITION, and refuses
-       its GRANT, 102
+       1 for the sysadmin member. The db_owner target shows no server role
+       row and only CONNECT SQL, as the target with no grant does: its power
+       is in the database. 15.0.4510.2 has no VIEW ANY SECURITY DEFINITION,
+       and refuses its GRANT, 102
   GR4  **ALTER ANY LOGIN reaches CONTROL SERVER.** The login with ALTER ANY
        SERVER ROLE, whose password the tool set, adds itself to the role
        that holds CONTROL SERVER, and then holds CONTROL SERVER and ALTER
@@ -70,7 +73,8 @@ HOW TO RUN, against the matrix (test/README.md), from the repo root:
 It needs 02_client_hash_probe.py beside it.
 
 THROWAWAY SERVERS ONLY. It creates the logins sopuli_probe_tool,
-sopuli_probe_t_* and sopuli_probe_r_*, the server role sopuli_probe_role and
+sopuli_probe_hash (02's setup makes it), sopuli_probe_t_* and
+sopuli_probe_r_*, the server role sopuli_probe_role and
 the database sopuli_probe_grants, and drops them at the end. It sets each
 target login's password, and never changes sa: GR2's statement sets what sa
 already has.
@@ -98,17 +102,22 @@ FIRST = "Acme-Target-pw1"
 SECOND = "Acme-Target-pw2"
 
 
-def member(role: str) -> str:
-    return f"ALTER SERVER ROLE [{role}] ADD MEMBER [{{name}}]"
+#: A target's grant: the statement that gives it its power, and the server role
+#: rows and server permission rows it then has. Every login holds CONNECT SQL,
+#: one permission row.
+Target = tuple[str, int, int]
 
 
-def granted(permission: str) -> str:
-    return f"GRANT {permission} TO [{{name}}]"
+def member(role: str) -> Target:
+    return f"ALTER SERVER ROLE [{role}] ADD MEMBER [{{name}}]", 1, 1
 
 
-#: Each target, by its short name, and the statement that gives it its power.
-#: The login is sopuli_probe_t_<short name>.
-TARGETS = {
+def granted(permission: str) -> Target:
+    return f"GRANT {permission} TO [{{name}}]", 0, 2
+
+
+#: Each target, by its short name. The login is sopuli_probe_t_<short name>.
+TARGETS: dict[str, Target] = {
     "sysadmin": member("sysadmin"),
     "securityadmin": member("securityadmin"),
     "serveradmin": member("serveradmin"),
@@ -126,11 +135,14 @@ TARGETS = {
     "settings": granted("ALTER SETTINGS"),
     "shutdown": granted("SHUTDOWN"),
     "viewstate": granted("VIEW SERVER STATE"),
+    # A database role: no server role row, and only CONNECT SQL.
     "dbowner": (
         f"EXEC (N'USE [{DATABASE}]; CREATE USER [{{name}}] FOR LOGIN [{{name}}]; "
-        f"ALTER ROLE db_owner ADD MEMBER [{{name}}]')"
+        f"ALTER ROLE db_owner ADD MEMBER [{{name}}]')",
+        0,
+        1,
     ),
-    "plain": "",
+    "plain": ("", 0, 1),
 }
 #: The readers of GR3, by short name, and the grant each holds besides the
 #: tool's. The login is sopuli_probe_r_<short name>; the tool is itself.
@@ -155,42 +167,46 @@ def reader(short: str) -> str:
     return f"sopuli_probe_r_{short}"
 
 
+def logins() -> list[str]:
+    return [*map(target, TARGETS), *map(reader, READERS)]
+
+
 def drop_all(service: str) -> None:
+    """Drop the database, every login and the role, in one batch."""
     ch.sa(
         service,
         f"IF DB_ID('{DATABASE}') IS NOT NULL BEGIN "
         f"ALTER DATABASE [{DATABASE}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; "
-        f"DROP DATABASE [{DATABASE}] END",
-    )
-    for name in [*map(target, TARGETS), *map(reader, READERS)]:
-        ch.sa(service, ch.drop_login(name))
-    ch.sa(
-        service,
+        f"DROP DATABASE [{DATABASE}] END;\n"
+        + ";\n".join(ch.drop_login(name) for name in logins())
+        + ";\n"
         f"IF EXISTS (SELECT 1 FROM sys.server_principals WHERE name = '{ROLE}' AND type = 'R') "
         f"DROP SERVER ROLE [{ROLE}]",
     )
 
 
-def setup(service: str) -> tuple[str, list[str]]:
+def setup(service: str) -> tuple[str, list[str], list[str]]:
     """Create the targets and the readers.
 
-    Returns the release, and the short names of the targets and the readers
-    that could be made. A target or reader whose grant the server refuses is
-    recorded in REFUSED and left out.
+    Returns the release; the short names of the targets that could be made;
+    and the short names of the readers that could be made. A target or
+    reader whose grant the server refuses is recorded in REFUSED and left
+    out.
     """
     found = ch.setup(service)
     drop_all(service)
     ch.sa(
         service,
         f"CREATE SERVER ROLE [{ROLE}];\nGRANT CONTROL SERVER TO [{ROLE}];\n"
-        f"CREATE DATABASE [{DATABASE}]",
+        f"CREATE DATABASE [{DATABASE}];\n"
+        + ";\n".join(
+            f"CREATE LOGIN [{name}] WITH PASSWORD = {ch.quote(FIRST)}, CHECK_POLICY = OFF"
+            for name in logins()
+        ),
     )
     targets = []
-    for short, grant in TARGETS.items():
+    for short, (grant, _, _) in TARGETS.items():
         name = target(short)
-        ch.sa(
-            service, f"CREATE LOGIN [{name}] WITH PASSWORD = {ch.quote(FIRST)}, CHECK_POLICY = OFF"
-        )
         if grant:
             _, errors = ch.client(service, "sa", ch.SA_PASSWORD, grant.format(name=name))
             if errors:
@@ -201,9 +217,6 @@ def setup(service: str) -> tuple[str, list[str]]:
     made = []
     for short, grant in READERS.items():
         name = reader(short)
-        ch.sa(
-            service, f"CREATE LOGIN [{name}] WITH PASSWORD = {ch.quote(FIRST)}, CHECK_POLICY = OFF"
-        )
         if grant:
             _, errors = ch.client(service, "sa", ch.SA_PASSWORD, f"GRANT {grant} TO [{name}]")
             if errors:
@@ -250,9 +263,12 @@ def cases(service: str) -> None:
     found, targets, made = setup(service)
     major = found.split(".")[0]
 
+    changed = set()
     for short in targets:
         name = target(short)
         answer = ch.as_tool(service, f"ALTER LOGIN [{name}] WITH PASSWORD = {ch.quote(SECOND)}")
+        if answer == "ok":
+            changed.add(short)
         if answer == "ok":
             out, errors = ch.client(service, name, SECOND, POWER)
             power = out if not errors else ch.code(errors)
@@ -280,7 +296,9 @@ def cases(service: str) -> None:
     ch.check("refused grants", dict(REFUSED), refused)
 
     # The login with ALTER ANY SERVER ROLE, whose password the tool set in GR1,
-    # adds itself to roles.
+    # adds itself to roles. Without GR1's change there is nothing to measure.
+    if "altrole" not in changed:
+        raise ch.StepError(f"{service}: GR4 needs GR1 to have set altrole's password")
     name = target("altrole")
     steps = []
     for role in (ROLE, "sysadmin"):
@@ -301,9 +319,7 @@ PROTECTED = frozenset({"sysadmin", "securityadmin", "role", "control", "altany",
 
 def all_rows(short: str) -> str:
     """What a reader that sees every row reads of a target."""
-    roles = 1 if TARGETS[short].startswith("ALTER SERVER ROLE") else 0
-    # Every login holds CONNECT SQL; a GRANT adds one row.
-    permissions = 2 if TARGETS[short].startswith("GRANT") else 1
+    _, roles, permissions = TARGETS[short]
     return f"{roles},{permissions},{1 if short == 'sysadmin' else 0}"
 
 

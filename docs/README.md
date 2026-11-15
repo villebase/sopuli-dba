@@ -834,14 +834,16 @@ The probes are in `sql/mssql/`, and the matrix of 2019, 2022 and 2025 is the
 
 - `verified` `mssql-password-text` (#1538) — **What does SQL Server keep of the
   text of a password change?**
-  Not the password, for a statement that parses. `CREATE LOGIN` and `ALTER
-  LOGIN … WITH PASSWORD`, also when the statement fails to run, are left out
-  of Extended Events, and the audit keeps them with the password as
-  `******`. The default trace keeps one that changes the policy, the same
-  way. The plan cache, Query Store and the error log keep none of them. Two
-  cases keep the password in clear, in Extended Events and in the audit's
-  `BATCH_COMPLETED_GROUP`: a statement that fails to parse, and a statement
-  inside dynamic SQL, `EXEC (N'…')`.
+  It depends on how the statement is sent. **In clear**, in Extended Events
+  and in the audit's `BATCH_COMPLETED_GROUP`, when the statement fails to
+  parse, or when it is sent inside dynamic SQL, `EXEC (N'…')`, which parses.
+  **Not the password**, when `CREATE LOGIN` or `ALTER LOGIN … WITH PASSWORD`
+  is sent as a batch of its own and parses, also when it then fails to run.
+  Extended Events then has no event with its text: only an error's message,
+  which names the login and holds no password. The audit keeps the statement
+  with the password as `******`, and so does the default trace for one that
+  changes the policy. The plan cache, Query Store and the error log keep
+  none of the statements.
   `sql/mssql/01_password_text_probe.py` measures it.
 - `verified` `mssql-client-hash` (#1538) — **Can the tool compute the stored
   value, and set it so that the password logs in?**

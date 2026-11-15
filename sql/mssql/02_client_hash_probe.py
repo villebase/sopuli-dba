@@ -190,18 +190,23 @@ def client(
     message of severity 0, such as sp_configure's notice that a setting
     changed, which is not an error.
     """
-    done = subprocess.run(
-        [
-            "docker", "exec", "-i", "-e", "SQLCMDPASSWORD", container(service),
-            *sqlcmd_path(service), "-S", "localhost", "-U", user, "-d", database,
-            "-h", "-1", "-y", "8000", "-s", "|", "-f", "65001", "-r", "1", "-I",
-            "-m", "1",
-        ],
-        input=("SET NOCOUNT ON;\n" + script + "\nGO\n").encode("utf-8"),
-        env={**os.environ, "SQLCMDPASSWORD": password},
-        capture_output=True,
-        check=False,
-    )  # fmt: skip
+    try:
+        done = subprocess.run(
+            [
+                "docker", "exec", "-i", "-e", "SQLCMDPASSWORD", container(service),
+                *sqlcmd_path(service), "-S", "localhost", "-U", user, "-d", database,
+                "-h", "-1", "-y", "8000", "-s", "|", "-f", "65001", "-r", "1", "-I",
+                "-m", "1",
+            ],
+            input=("SET NOCOUNT ON;\n" + script + "\nGO\n").encode("utf-8"),
+            env={**os.environ, "SQLCMDPASSWORD": password},
+            capture_output=True,
+            check=False,
+            # A server that stops answering fails the step, not the run.
+            timeout=300,
+        )  # fmt: skip
+    except subprocess.TimeoutExpired as exc:
+        raise StepError(f"{service}: {user}: no answer in 300 seconds") from exc
     out = "\n".join(
         "|".join(cell.strip() for cell in line.split("|"))
         for line in done.stdout.decode("utf-8", "replace").splitlines()

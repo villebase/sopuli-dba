@@ -16,9 +16,12 @@ own. This measures, on a group of two replicas with CLUSTER_TYPE = NONE:
        group_id, its own role in sys.dm_hadr_availability_replica_states,
        and the replicas sys.availability_replicas lists. Whether the two
        give the same group_id
-  AG4  on the secondary, which allows every connection: whether a login
-       there can read the group's database and write to it, and whether
-       ALTER LOGIN works there
+  AG4  on the secondary, which allows every connection: whether sa there
+       can read the group's database and write to it, and whether ALTER
+       LOGIN works there
+
+AG1's reads wait until a table made on the primary after the change is in
+the secondary's copy of the database: what could reach the secondary has.
   AG5  a contained group, where the release has it: a login made in the
        group's master on the primary, whether the secondary's group master
        has it, and whether a password set there on the primary logs in on
@@ -35,10 +38,11 @@ on 2026-11-15 (#1538). Twice, exit 0, and the same result every time.
 RESULTS -- the same on 15.0.4510.2 and 17.0.5065.9, except AG5
 
   AG0  on 16.0.4325.4 **the group does not form**: the secondary's JOIN
-       fails, 47106 "Download configuration timeout", and 41158. In each
-       run the secondary's sqlservr used a full CPU from the moment the
-       primary connected and stopped answering logins; with endpoint
-       encryption off it failed the same way. Nothing below was measured
+       either fails, 47106 "Download configuration timeout", and 41158, or
+       gives no answer in 300 seconds; both were seen. In the runs watched,
+       the secondary's sqlservr used a full CPU from the moment the primary
+       connected and stopped answering logins; with endpoint encryption off
+       it failed the same way. Nothing below was measured
        on 16.0.4325.4 (unverified: mssql-ag-2022)
   AG1  **a login and its password are each replica's own**. A login made on
        the primary does not exist on the secondary (0). For a login made on
@@ -63,16 +67,19 @@ HOW TO RUN, against the matrix (test/README.md), from the repo root:
 
     .venv/Scripts/python sql/mssql/08_availability_group_probe.py
 
-It needs 02_client_hash_probe.py beside it. It does not touch the matrix's
-servers: for each, it starts two containers of the server's image,
+It needs 02_client_hash_probe.py beside it, and the matrix running: for each
+server, it starts two containers of the server's image,
 <project>-<service>-ag1-1 and -ag2-1, with HADR on and the matrix's sa
-password, on the matrix's network, and removes them at the end.
+password, on the matrix's network, and removes them at the end. It measures
+nothing on the matrix's servers; 02's shared runner drops 02's logins there
+if they exist.
 """
 
 from __future__ import annotations
 
 import importlib.util
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -117,10 +124,13 @@ def host(service: str, n: int) -> str:
 
 
 def docker(*args: str, check: bool = True) -> str:
-    done = subprocess.run(
-        ["docker", *args], capture_output=True, check=False,
-        env={**os.environ, "MSYS_NO_PATHCONV": "1", "MSSQL_SA_PASSWORD": ch.SA_PASSWORD},
-    )  # fmt: skip
+    try:
+        done = subprocess.run(
+            ["docker", *args], capture_output=True, check=False, timeout=300,
+            env={**os.environ, "MSYS_NO_PATHCONV": "1", "MSSQL_SA_PASSWORD": ch.SA_PASSWORD},
+        )  # fmt: skip
+    except subprocess.TimeoutExpired as exc:
+        raise ch.StepError(f"docker {args[0]}: no answer in 300 seconds") from exc
     if check and done.returncode != 0:
         raise ch.StepError(f"docker {args[0]}: {done.stderr.decode()[-300:]}")
     return done.stdout.decode().strip()
@@ -237,19 +247,37 @@ def group(service: str, name: str, database: str, contained: bool) -> None:
 
 def logs_in(side: str, user: str, password: str, database: str = "master") -> str:
     out, errors = ch.client(side, user, password, "SELECT SUSER_SNAME()", database)
-    return "logs in" if not errors else ch.code(errors)
+    if errors:
+        return ch.code(errors)
+    return "logs in" if out == user else f"logs in as {out}"
 
 
 def until(read: Callable[[], str], wanted: str) -> str:
-    """`read()`, retried for up to 20 seconds while it is not `wanted`: a
-    change on the primary reaches the secondary a moment later."""
-    got = read()
-    for _ in range(10):
+    """`read()`, retried for up to 20 seconds while it is not `wanted` or
+    fails: a change on the primary reaches the secondary a moment later."""
+    got = ""
+    for attempt in range(11):
+        if attempt:
+            time.sleep(2)
+        try:
+            got = read()
+        except ch.StepError as exc:
+            got = f"failed: {exc}"[:200]
+            continue
         if got == wanted:
             break
-        time.sleep(2)
-        got = read()
     return got
+
+
+def caught_up(service: str, mark: str) -> None:
+    """Wait until a table made on the primary is in the secondary's copy of
+    the database, so that what the primary did before it has had its chance
+    to reach the secondary."""
+    one, two = replica(service, 1), replica(service, 2)
+    ch.sa(one, f"CREATE TABLE dbo.[{mark}] (i int)", DATABASE)
+    seen = until(lambda: count(two, "sys.tables", mark, DATABASE), "1")
+    if seen != "1":
+        raise ch.StepError(f"{service}: {mark} never reached the secondary: {seen}")
 
 
 def count(side: str, view: str, name: str, database: str = "master") -> str:
@@ -269,10 +297,17 @@ def formed(service: str) -> str:
     try:
         group(service, GROUP, DATABASE, contained=False)
     except ch.StepError as exc:
-        numbers = [n for n in ("47106", "41158") if n in str(exc)]
-        if not numbers:
+        # The JOIN fails with error numbers, as ch.client lists them,
+        # "(47106, 'Cannot join ...')", or does not answer at all. Either
+        # is `no`; which one is printed, as it differs from run to run.
+        numbers = re.findall(r"\((\d+), ['\"]", str(exc))
+        if numbers:
+            print(f"AG0 the JOIN failed: {','.join(numbers)}")
+        elif "no answer in" in str(exc):
+            print(f"AG0 the JOIN did not answer: {exc}")
+        else:
             raise
-        return ",".join(numbers)
+        return "no"
     return "yes"
 
 
@@ -295,7 +330,7 @@ def measure(service: str, major: str, results: dict[str, str]) -> None:
     one, two = replica(service, 1), replica(service, 2)
     # AG1
     ch.sa(one, f"CREATE LOGIN [{ONE_SIDE}] WITH PASSWORD = {ch.quote(FIRST)}, CHECK_POLICY = OFF")
-    time.sleep(5)
+    caught_up(service, "sopuli_probe_mark1")
     results["AG1 a login made on the primary, on the secondary"] = count(
         two, "sys.server_principals", ONE_SIDE
     )
@@ -306,7 +341,7 @@ def measure(service: str, major: str, results: dict[str, str]) -> None:
             "CHECK_POLICY = OFF",
         )
     ch.sa(one, f"ALTER LOGIN [{BOTH}] WITH PASSWORD = {ch.quote(SECOND)}")
-    time.sleep(5)
+    caught_up(service, "sopuli_probe_mark2")
     for label, side in (("primary", one), ("secondary", two)):
         for which, password in (("first", FIRST), ("second", SECOND)):
             results[f"AG1 {label}, the {which} password"] = logs_in(side, BOTH, password)
@@ -387,7 +422,7 @@ def probe(service: str) -> None:
 #: What every release answered, by label; by (major release, label) where one differs.
 RECORDED: dict[object, str] = {
     "AG0 the group forms": "yes",
-    ("16", "AG0 the group forms"): "47106,41158",
+    ("16", "AG0 the group forms"): "no",
     "AG1 a login made on the primary, on the secondary": "0",
     "AG1 primary, the first password": "18456",
     "AG1 primary, the second password": "logs in",

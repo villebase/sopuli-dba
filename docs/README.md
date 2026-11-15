@@ -981,7 +981,8 @@ The probes are in `sql/mssql/`, and the matrix of 2019, 2022 and 2025 is the
 - `unverified` `mssql-ag-2022` (#1538) — **Does an Availability Group form
   on SQL Server 2022 on Linux, and does it keep logins as 2019 and 2025 do?**
   With the 16.0.4325.4 image in Docker Desktop on WSL 2, the secondary's JOIN
-  failed every time, `47106` "Download configuration timeout" and `41158`.
+  failed every time: `47106` "Download configuration timeout" and `41158`, or
+  no answer in 300 seconds.
   The secondary's sqlservr used a full CPU from the moment the primary
   connected and stopped answering logins, with endpoint encryption on or
   off; the same setup formed a group on 2019 and 2025. Measuring it needs

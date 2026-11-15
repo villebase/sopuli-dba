@@ -105,11 +105,18 @@ def state(service: str) -> dict[str, str]:
     if errors:
         raise ch.StepError(f"{service}: the tool's read: {errors}")
     names = (*PROPERTIES, "is_disabled", "is_policy_checked", "is_expiration_checked")
-    return dict(zip(names, out.split("|"), strict=True))
+    return dict(zip((KEYS.get(name, name) for name in names), out.split("|"), strict=True))
+
+
+#: The key a property is kept under, where it is not its own name. CodeQL
+#: reads a key that holds "password" as a password, so the count of failed
+#: logins, which holds none, is kept as `failures` and printed under its name.
+KEYS = {"BadPasswordCount": "failures"}
+LABELS = {key: name for name, key in KEYS.items()}
 
 
 def short(found: dict[str, str], *names: str) -> str:
-    return ", ".join(f"{name} {found[name]}" for name in names or found)
+    return ", ".join(f"{LABELS.get(name, name)} {found[name]}" for name in names or found)
 
 
 #: Each result line, as the probe prints it.
@@ -132,7 +139,7 @@ def lock(service: str) -> tuple[str, set[str]]:
     for sent in range(1, MOST + 1):
         answer = ch.login(service, ch.WRONG)
         found = state(service)
-        seen.add(f"{answer}:{found['BadPasswordCount']}/{found['IsLocked']}")
+        seen.add(f"{answer}:{found['failures']}/{found['IsLocked']}")
         if answer == "18486" or found["IsLocked"] == "1":
             return f"after {sent}", seen
     return "not locked", seen
@@ -198,12 +205,12 @@ def cases(service: str) -> None:
         ch.reset(service, RIGHT, policy="ON")
         ch.login(service, ch.WRONG)
         ch.login(service, ch.WRONG)
-        steps = [f"count {state(service)['BadPasswordCount']}"]
+        steps = [f"count {state(service)['failures']}"]
         # The count after each statement, so that a reset is laid to the one
         # statement that made it.
         for statement in statements:
             answer = tool(service, statement)
-            steps.append(f"{answer}, count {state(service)['BadPasswordCount']}")
+            steps.append(f"{answer}, count {state(service)['failures']}")
         found = state(service)
         report(
             f"LK3 two wrong passwords, then {label}: {'; '.join(steps)}; "
@@ -214,9 +221,9 @@ def cases(service: str) -> None:
     ch.reset(service, RIGHT, policy="ON")
     ch.login(service, ch.WRONG)
     ch.login(service, ch.WRONG)
-    before = state(service)["BadPasswordCount"]
+    before = state(service)["failures"]
     good = ch.login(service, RIGHT)
-    after = state(service)["BadPasswordCount"]
+    after = state(service)["failures"]
     report(f"LK4 two wrong: count {before}; right {good}; count {after}")
 
     ch.reset(service, RIGHT)

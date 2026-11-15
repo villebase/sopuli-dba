@@ -962,6 +962,21 @@ The probes are in `sql/mssql/`, and the matrix of 2019, 2022 and 2025 is the
   certificate check failed with the pyOpenSSL of the day (`'X509' object has
   no attribute 'get_extension'`). Measuring it needs a server certificate
   issued by a CA the client trusts.
+- `verified` `mssql-report-reads` (#1538) — **Which grants does a read-only
+  report login need on SQL Server, and what can it not read?**
+  `VIEW ANY DEFINITION` alone reads every login in `sys.server_principals`
+  and `sys.sql_logins`, with its policy flags, its `LOGINPROPERTY` dates
+  (`PasswordLastSetTime` among them), and its rows in
+  `sys.server_role_members` and `sys.server_permissions`. A database the
+  login has no user in refuses it, `916`. `CONNECT ANY DATABASE` opens every
+  database, and with `VIEW ANY DEFINITION` reads each one's users, role
+  members and permissions; alone it sees no row. `password_hash` reads NULL
+  to every reader. **No source gives a login's last good login:** no catalog
+  view keeps it, and with the default auditing the error log records failed
+  logins only. `sp_readerrorlog` needs `VIEW SERVER STATE`, `VIEW ANY ERROR
+  LOG` (2022 and later) or `securityadmin`; `xp_readerrorlog` is refused to
+  all of them. The same on 2019, 2022 and 2025.
+  `sql/mssql/07_report_reads_probe.py` measures it.
 
 ### Vault
 

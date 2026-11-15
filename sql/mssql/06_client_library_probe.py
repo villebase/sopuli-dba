@@ -7,7 +7,8 @@ policy allows. This measures four, on Windows and on Linux:
   CL1  encryption: what sys.dm_exec_connections.encrypt_option reads for a
        connection that asks for none, and for one that asks for it. The
        matrix's servers make their own certificates, so the ODBC libraries
-       and pymssql are told to trust the server's certificate. python-tds
+       are told to trust the server's certificate. pymssql is asked for
+       encryption="require", which checks no certificate at all. python-tds
        has no such setting: it encrypts only when given a CA file, and is
        given certifi's bundle
   CL2  refusals: what the library's exception carries for a wrong
@@ -25,7 +26,8 @@ connects unencrypted there: encrypted, it never reaches the login (CL1).
 
 The libraries, as installed from PyPI: mssql-python 1.17.0, pyodbc 5.5.0
 with Microsoft ODBC Driver 18 for SQL Server 18.7.1.1, pymssql 2.4.6, and
-python-tds 1.17.1 with pyOpenSSL 26.4.0 and certifi 2026.10.23. Strict
+python-tds 1.17.1 with pyOpenSSL 26.4.0, cryptography 50.0.2 and certifi
+2026.10.23. Strict
 encryption (TDS 8), and a certificate the server was given, are not measured:
 see `mssql-client-tls` in docs/README.md §Verify before implementing.
 
@@ -42,19 +44,19 @@ RESULTS -- the same on every release and on both platforms
        when not (FALSE). python-tds, given a CA file, verifies the server's
        certificate, and refuses the server's own one: OpenSSL.SSL.Error,
        "certificate verify failed". So it cannot encrypt to these servers
-  CL2  **only pyodbc tells the three refusals apart**: 18456, 18470 and
-       18488, as "(18470)" after the server's message and before
-       "(SQLDriverConnect)". python-tds gives the
-       number as an attribute for a wrong password (18456) and a must-change
-       login (18488), and for a disabled login waits out its login timeout
-       and raises TimeoutError. pymssql gives 18456 for all three.
-       mssql-python gives no number: the server's message is in the text,
-       and the exception class differs (ProgrammingError for a disabled
-       login, OperationalError for the others)
+  CL2  **only pyodbc gives the server's number for all three**: 18456,
+       18470 and 18488, as "(18470)" after the server's message and before
+       "(SQLDriverConnect)". python-tds gives the number as an attribute
+       for a wrong password (18456) and a must-change login (18488), and for
+       a disabled login waits out its login timeout and raises
+       TimeoutError. pymssql gives 18456 for all three, and its messages
+       for the disabled and must-change logins hold only DB-Lib's own text,
+       not the server's reason. mssql-python gives no number: the server's
+       message, reason included, is in the text, and the exception class
+       differs (ProgrammingError for a disabled login, OperationalError for
+       the others)
   CL3  every library logs in with the password of ; { } = and a space. The
-       ODBC libraries take it in braces, a closing brace doubled.
-       mssql-python refuses a keyword it does not know, such as "Connection
-       Timeout", before it connects (ConnectionStringParseError)
+       ODBC libraries take it in braces, a closing brace doubled
 
 HOW TO RUN, against the matrix (test/README.md), from the repo root, with the
 four libraries installed in the Python that runs it and ODBC Driver 18 on the
@@ -113,7 +115,8 @@ REFUSALS = {
 QUERY = (
     "SELECT SUSER_SNAME(), encrypt_option FROM sys.dm_exec_connections WHERE session_id = @@SPID"
 )
-_ODBC_NUMBER = re.compile(r"\((1\d{4})\)")
+#: The number the ODBC driver puts in parentheses after the server's message.
+_ODBC_NUMBER = re.compile(r"\((\d{3,6})\) \(SQLDriverConnect\)")
 
 
 def braced(value: str) -> str:
@@ -211,7 +214,9 @@ def measure(host: str, port: int) -> dict[str, str]:
                 _, option = query(connect, host, port, ACCOUNT, GOOD, encrypt)
                 got = option
             except Exception as exc:  # noqa: BLE001 - the result is the failure
-                got = f"refused, {type(exc).__name__}"
+                kind = f"{type(exc).__module__}.{type(exc).__name__}"
+                verify = ", certificate verify failed" * ("verify failed" in str(exc))
+                got = f"refused, {kind}{verify}"
             results[f"CL1 {name} {'encrypt' if encrypt else 'plain'}"] = got
         encrypt = name not in UNENCRYPTED
         for case, (user, password) in REFUSALS.items():
@@ -251,8 +256,7 @@ def setup(service: str) -> str:
 
 
 def teardown(service: str) -> None:
-    for name in LOGINS:
-        ch.sa(service, ch.drop_login(name))
+    ch.sa(service, ";\n".join(ch.drop_login(name) for name in LOGINS))
 
 
 def build() -> None:
@@ -288,7 +292,9 @@ def here() -> str:
 
 
 def compare(service: str, where: str, results: dict[str, str]) -> None:
-    for label, got in results.items():
+    # Every label of either side, so a case the run left out is a difference too.
+    for label in [*RECORDED, *(label for label in results if label not in RECORDED)]:
+        got = results.get(label)
         print(f"{label} [{where}]: {got}")
         ch.check(f"{service} {where} {label}", got, RECORDED.get(label))
 
@@ -325,7 +331,7 @@ RECORDED: dict[str, str] = {
     "CL2 pymssql must change": "OperationalError, 18456",
     "CL3 pymssql": "logged in",
     "CL1 python-tds plain": "FALSE",
-    "CL1 python-tds encrypt": "refused, Error",
+    "CL1 python-tds encrypt": "refused, OpenSSL.SSL.Error, certificate verify failed",
     "CL2 python-tds wrong password": "OperationalError, 18456",
     "CL2 python-tds disabled": "TimeoutError, none",
     "CL2 python-tds must change": "OperationalError, 18488",

@@ -944,7 +944,8 @@ The probes are in `sql/mssql/`, and the matrix of 2019, 2022 and 2025 is the
   `18488`, in parentheses after the server's message, before
   `(SQLDriverConnect)`. python-tds gives `18456`
   and `18488`, and waits out its timeout for a disabled login. pymssql gives
-  `18456` for all three, and mssql-python gives no number. Every library logs
+  `18456` for all three, without the server's reason. mssql-python gives no
+  number, but the server's message, reason included. Every library logs
   in with a password of `; { } =` and a space; the ODBC libraries take it in
   braces, a closing brace doubled. pymssql is LGPL. Strict encryption is not
   measured (unverified: mssql-client-tls).

@@ -170,6 +170,7 @@ _ODBC = re.compile(r"^Sqlcmd: Error: Microsoft ODBC Driver \d+ for SQL Server : 
 #: and the number sys.messages gives that text. Most specific first.
 LOGIN_MESSAGES = (
     ("because the account is currently locked out", 18486),
+    ("The account is disabled", 18470),
     ("The password of the account has expired", 18487),
     ("The password of the account must be changed", 18488),
     ("Login failed for user", 18456),

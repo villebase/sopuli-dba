@@ -934,6 +934,34 @@ The probes are in `sql/mssql/`, and the matrix of 2019, 2022 and 2025 is the
   decides whether that rule extends to SQL Server.
   `sql/mssql/01_password_text_probe.py` measures `CREATE LOGIN` and `ALTER
   LOGIN` only.
+- `verified` `mssql-client-library` (#1538) — **Which Python client library
+  encrypts a SQL Server login and tells its refusals apart?**
+  On Windows and on Linux alike, pyodbc 5.5.0 with Microsoft ODBC Driver 18,
+  mssql-python 1.17.0 and pymssql 2.4.6 encrypt when asked. python-tds 1.17.1
+  encrypts only with a CA file, and then refuses the server's own
+  certificate. Only pyodbc gives the server's number for each of a wrong
+  password, a disabled login and a must-change login, `18456`, `18470` and
+  `18488`, in parentheses after the server's message, before
+  `(SQLDriverConnect)`. python-tds gives `18456`
+  and `18488`, and waits out its timeout for a disabled login. pymssql gives
+  `18456` for all three, without the server's reason. mssql-python gives no
+  number, but the server's message, reason included. Every library logs
+  in with a password of `; { } =` and a space; the ODBC libraries take it in
+  braces, a closing brace doubled. pymssql is LGPL. Strict encryption is not
+  measured (unverified: mssql-client-tls).
+  `sql/mssql/06_client_library_probe.py` measures it.
+- `unverified` `mssql-client-tls` (#1538) — **Does each client library
+  connect with strict encryption (TDS 8), and verify the server's
+  certificate?**
+  Against a 2022 container given a self-signed certificate for server
+  authentication, the server refused every strict connection, `17821`, "A
+  valid TLS certificate is not configured to accept strict (TDS 8.0 and
+  above) connections". With TLS 1.3 allowed and encryption forced, the
+  connections hung. ODBC Driver 18's `ServerCertificate` did not make a
+  self-signed certificate trusted for `Encrypt=yes`. python-tds 1.17.1's
+  certificate check failed with the pyOpenSSL of the day (`'X509' object has
+  no attribute 'get_extension'`). Measuring it needs a server certificate
+  issued by a CA the client trusts.
 
 ### Vault
 

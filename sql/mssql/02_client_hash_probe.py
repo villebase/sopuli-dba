@@ -15,8 +15,9 @@ sends a SCRAM verifier. This measures, on each server:
   CH4  whether a value is accepted for a password that CHECK_POLICY would
        refuse, on a login with CHECK_POLICY = ON
   CH5  whether HASHED is accepted with MUST_CHANGE, and with UNLOCK
-  CH6  the longest password sa can set, and whether a value for a longer one
-       is accepted and logs in
+  CH6  the longest password sa can set, and whether the tool can set a value
+       for a longer one. The longer one's login is not tried (RESULTS says
+       why), and CH3 shows that a value is accepted whatever password it is of
   CH7  what the tool login reads of another login's hash
 
 A stored value is a version of 2 bytes, a salt of 4 bytes, and a digest of 64
@@ -210,9 +211,9 @@ def client(
         text = found[1].strip()
         number = next((n for words, n in LOGIN_MESSAGES if words in text), 0)
         errors.append((number, text))
-    if err and not errors:
+    if (err or done.returncode != 0) and not errors:
         # Not the server's answer: docker, or sqlcmd itself.
-        raise StepError(f"{service}: {user}: {err[:200]}")
+        raise StepError(f"{service}: {user}: exit {done.returncode}: {(err or out)[:200]}")
     return out, errors
 
 
@@ -304,7 +305,10 @@ def stored(service: str, account: str = ACCOUNT) -> bytes:
         "SELECT CONVERT(varchar(max), "
         f"CAST(LOGINPROPERTY('{account}', 'PasswordHash') AS varbinary(256)), 2)",
     )
-    return bytes.fromhex(hexed)
+    value = bytes.fromhex(hexed)
+    if len(value) < 6:
+        raise StepError(f"{service}: {account}: no stored value read, got {hexed[:40]!r}")
+    return value
 
 
 def reset(service: str, password: str, policy: str = "OFF", expiration: str = "OFF") -> None:
@@ -357,16 +361,16 @@ def run(probe: Callable[[str], None]) -> int:
 # ------------------------------------------------------------------ probes --
 
 
-#: CH2's refusals, by release and version. Every other pair is accepted.
-CH2_REFUSED = {("15.0.4510.2", 3): "15021"}
+#: CH2's refusals, by major release and version. Every other pair is accepted.
+#: Keyed by the major release, as CH1 is, so that a new cumulative update of
+#: one is compared with what its predecessor answered.
+CH2_REFUSED = {("15", 3): "15021"}
 
 
 def probe(service: str) -> None:
     """Run CH1 to CH7 on one server, print each result, and check it."""
-    setup(service)
-
-    found = release(service)
-    native = "0300" if found.startswith("17.") else "0200"
+    major = setup(service).split(".")[0]
+    native = "0300" if major == "17" else "0200"
     for password in PASSWORDS:
         sa(service, f"ALTER LOGIN [{ACCOUNT}] WITH PASSWORD = {quote(password)}")
         value = stored(service)
@@ -383,7 +387,7 @@ def probe(service: str) -> None:
         answer = as_tool(service, hashed(ACCOUNT, value))
         if answer != "ok":
             print(f"CH2 version 0x0{version}00, set by the tool: {answer}")
-            check(f"CH2 0x0{version}00", answer, CH2_REFUSED.get((found, version), "ok"))
+            check(f"CH2 0x0{version}00", answer, CH2_REFUSED.get((major, version), "ok"))
             continue
         as_sent = stored(service) == value
         good, wrong = login(service, password), login(service, WRONG)
@@ -395,7 +399,7 @@ def probe(service: str) -> None:
         check(
             f"CH2 0x0{version}00",
             (answer, as_sent, good, wrong, former),
-            (CH2_REFUSED.get((found, version), "ok"), True, "ok", "18456", "18456"),
+            (CH2_REFUSED.get((major, version), "ok"), True, "ok", "18456", "18456"),
         )
         before = password
 
@@ -408,7 +412,7 @@ def probe(service: str) -> None:
         (
             "version 0x0300, 70 bytes",
             "0x0300" + "00" * 68,
-            ("15021", 70, "ok") if found == "15.0.4510.2" else ("ok", 70, "18456"),
+            ("15021", 70, "ok") if major == "15" else ("ok", 70, "18456"),
         ),
     ):
         reset(service, before)

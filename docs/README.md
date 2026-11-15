@@ -962,6 +962,30 @@ The probes are in `sql/mssql/`, and the matrix of 2019, 2022 and 2025 is the
   certificate check failed with the pyOpenSSL of the day (`'X509' object has
   no attribute 'get_extension'`). Measuring it needs a server certificate
   issued by a CA the client trusts.
+- `verified` `mssql-availability-groups` (#1538) — **Does a password change
+  on an Availability Group's primary reach a secondary, and can the tool tell
+  two targets are replicas of one group?**
+  On 2019 and 2025, on a two-replica group with `CLUSTER_TYPE = NONE`: no.
+  A login and its password are each replica's own: a password set on the
+  primary is refused on the secondary, `18456`, where the old one still logs
+  in, also for a login made on both with one SID. The group's database, and
+  its users, reach the secondary, where a write is refused, `3906`, and
+  `ALTER LOGIN` works. Each replica names the group and its own role in
+  `sys.availability_groups` and `sys.dm_hadr_availability_replica_states`,
+  lists both replicas, and gives the same `group_id`, so two targets can be
+  told to be one group. **A contained group (2022 and later) is the
+  exception:** on 2025, a login made in the group's master on the primary,
+  and a password set there, reach the secondary's group master and log in
+  there. On 2022 the group did not form (unverified: mssql-ag-2022).
+  `sql/mssql/08_availability_group_probe.py` measures it.
+- `unverified` `mssql-ag-2022` (#1538) — **Does an Availability Group form
+  on SQL Server 2022 on Linux, and does it keep logins as 2019 and 2025 do?**
+  With the 16.0.4325.4 image in Docker Desktop on WSL 2, the secondary's JOIN
+  failed every time, `47106` "Download configuration timeout" and `41158`.
+  The secondary's sqlservr used a full CPU from the moment the primary
+  connected and stopped answering logins, with endpoint encryption on or
+  off; the same setup formed a group on 2019 and 2025. Measuring it needs
+  another host, such as a Linux VM, or another 2022 update.
 
 ### Vault
 

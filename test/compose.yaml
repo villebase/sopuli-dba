@@ -438,8 +438,8 @@ services:
   # SQL Server 2019, 2022 and 2025, Developer edition, for the probes in
   # sql/mssql/ (#1538). Moving tags: a probe's header records the release
   # `SERVERPROPERTY('ProductVersion')` read, never the tag. The images are
-  # amd64 only, and each server wants about 2 GB of memory, so do not start
-  # this beside tier 1's Oracle Free.
+  # amd64 only. Each server used 550 to 950 MiB idle (README.md), so do not
+  # start this beside tier 1's Oracle Free.
   mssql-2019:
     <<: *mssql-matrix
     image: mcr.microsoft.com/mssql/server:2019-latest

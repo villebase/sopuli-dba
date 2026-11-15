@@ -836,8 +836,9 @@ The probes are in `sql/mssql/`, and the matrix of 2019, 2022 and 2025 is the
   value, and set it so that the password logs in?**
   Yes. A value is a 2-byte version, a 4-byte salt and a 64-byte digest of the
   UTF-16LE password and the salt: SHA-512 for `0x0200`, PBKDF2-HMAC-SHA512
-  with 100,000 rounds for `0x0300`. 2019 and 2022 store `0x0200`, 2025 stores
-  `0x0300`, and 2019 refuses `0x0300`. A login with only `ALTER ANY LOGIN`
+  with 100,000 rounds for `0x0300`. The release decides which one a server
+  stores, and whether it accepts `0x0300`;
+  [measurements.md](measurements.md) names each. A login with only `ALTER ANY LOGIN`
   sets a value with `ALTER LOGIN … WITH PASSWORD = 0x… HASHED`, and the
   password logs in. The server checks only the value's length and version, so
   a wrong value is accepted, and the login's password is then lost. `HASHED`

@@ -5,6 +5,7 @@ secondaries. Logins live in each instance's master, which no group copies,
 unless the group is contained (2022 and later), which has a master of its
 own. This measures, on a group of two replicas with CLUSTER_TYPE = NONE:
 
+  AG0  whether the group forms at all: the secondary's JOIN
   AG1  a login made on the primary: whether it exists on the secondary;
        and, for a login made on both with one SID, whether a password set on
        the primary reaches the secondary: which password then logs in on
@@ -19,15 +20,13 @@ own. This measures, on a group of two replicas with CLUSTER_TYPE = NONE:
   AG4  on the secondary, which allows every connection: whether sa there
        can read the group's database and write to it, and whether ALTER
        LOGIN works there
-
-AG1's reads wait until a table made on the primary after the change is in
-the secondary's copy of the database: what could reach the secondary has.
   AG5  a contained group, where the release has it: a login made in the
        group's master on the primary, whether the secondary's group master
        has it, and whether a password set there on the primary logs in on
        the secondary
 
-  AG0  whether the group forms at all: the secondary's JOIN
+AG1's reads wait until a table made on the primary after the change is in
+the secondary's copy of the database: what could reach the secondary has.
 
 STATUS: run on 15.0.4510.2, 16.0.4325.4 and 17.0.5065.9, the
 mcr.microsoft.com/mssql/server 2019-latest, 2022-latest and 2025-latest images
@@ -123,17 +122,17 @@ def host(service: str, n: int) -> str:
     return f"sopuli{service.removeprefix('mssql-')}ag{n}"
 
 
-def docker(*args: str, check: bool = True) -> str:
+def docker(*args: str, check: bool = True, timeout: int = 300) -> str:
     try:
         done = subprocess.run(
-            ["docker", *args], capture_output=True, check=False, timeout=300,
+            ["docker", *args], capture_output=True, check=False, timeout=timeout,
             env={**os.environ, "MSYS_NO_PATHCONV": "1", "MSSQL_SA_PASSWORD": ch.SA_PASSWORD},
         )  # fmt: skip
     except subprocess.TimeoutExpired as exc:
-        raise ch.StepError(f"docker {args[0]}: no answer in 300 seconds") from exc
+        raise ch.StepError(f"docker {args[0]}: no answer in {timeout} seconds") from exc
     if check and done.returncode != 0:
-        raise ch.StepError(f"docker {args[0]}: {done.stderr.decode()[-300:]}")
-    return done.stdout.decode().strip()
+        raise ch.StepError(f"docker {args[0]}: {done.stderr.decode('utf-8', 'replace')[-300:]}")
+    return done.stdout.decode("utf-8", "replace").strip()
 
 
 def start(service: str) -> None:
@@ -149,15 +148,28 @@ def start(service: str) -> None:
             "-e", "MSSQL_ENABLE_HADR=1", image,
         )  # fmt: skip
     for n in (1, 2):
-        for _ in range(60):
-            try:
-                if ch.sa(replica(service, n), "SELECT 1") == "1":
-                    break
-            except ch.StepError:
-                pass
-            time.sleep(2)
-        else:
-            raise ch.StepError(f"{replica(service, n)} never answered")
+        ready(service, n)
+
+
+def ready(service: str, n: int) -> None:
+    """Wait up to two minutes for replica n to answer. Each try is a short
+    sqlcmd of its own, and ch's helpers are first used once one answers, so
+    that ch.sqlcmd_path is read from a running server."""
+    name = ch.container(replica(service, n))
+    deadline = time.monotonic() + 120
+    while time.monotonic() < deadline:
+        tried = subprocess.run(
+            ["docker", "exec", "-e", "SQLCMDPASSWORD", name, "sh", "-c",
+             "for s in /opt/mssql-tools18/bin/sqlcmd /opt/mssql-tools/bin/sqlcmd; do "
+             '[ -x "$s" ] && exec "$s" -C -S localhost -U sa -l 5 -b -Q "SELECT 1"; '
+             "done; exit 1"],
+            env={**os.environ, "SQLCMDPASSWORD": ch.SA_PASSWORD},
+            capture_output=True, check=False, timeout=30,
+        )  # fmt: skip
+        if tried.returncode == 0:
+            return
+        time.sleep(2)
+    raise ch.StepError(f"{replica(service, n)} never answered")
 
 
 def remove(service: str) -> None:
@@ -226,11 +238,21 @@ def group(service: str, name: str, database: str, contained: bool) -> None:
         f"REPLICA ON {spec};\n"
         f"ALTER AVAILABILITY GROUP [{name}] GRANT CREATE ANY DATABASE",
     )
-    ch.sa(
-        two,
-        f"ALTER AVAILABILITY GROUP [{name}] JOIN WITH (CLUSTER_TYPE = NONE);\n"
-        f"ALTER AVAILABILITY GROUP [{name}] GRANT CREATE ANY DATABASE",
-    )
+    try:
+        ch.sa(
+            two,
+            f"ALTER AVAILABILITY GROUP [{name}] JOIN WITH (CLUSTER_TYPE = NONE);\n"
+            f"ALTER AVAILABILITY GROUP [{name}] GRANT CREATE ANY DATABASE",
+        )
+    except ch.StepError as exc:
+        raise JoinError(str(exc)) from exc
+    synchronized(service, database)
+
+
+def synchronized(service: str, database: str) -> None:
+    """Wait up to two minutes for the secondary's copy of `database`."""
+    two = replica(service, 2)
+    state = ""
     for _ in range(60):
         state = ch.sa(
             two,
@@ -292,11 +314,16 @@ def as_sa(side: str, statement: str, database: str = "master") -> str:
     return ch.code(errors)
 
 
+class JoinError(ch.StepError):  # type: ignore[name-defined,misc]
+    """The secondary's JOIN failed; any other step's failure is a StepError."""
+
+
 def formed(service: str) -> str:
-    """`yes`, or the error numbers of the step that failed."""
+    """`yes`, or `no` when the secondary's JOIN fails. Any other step that
+    fails stops the server's run, as everywhere else."""
     try:
         group(service, GROUP, DATABASE, contained=False)
-    except ch.StepError as exc:
+    except JoinError as exc:
         # The JOIN fails with error numbers, as ch.client lists them,
         # "(47106, 'Cannot join ...')", or does not answer at all. Either
         # is `no`; which one is printed, as it differs from run to run.
@@ -393,6 +420,9 @@ def measure(service: str, major: str, results: dict[str, str]) -> None:
     else:
         group(service, CONTAINED, CONTAINED_DATABASE, contained=True)
         master = f"{CONTAINED}_master"
+        # The group's master is seeded to the secondary as its database is:
+        # wait for both before the login is made.
+        synchronized(service, master)
         ch.sa(
             one,
             f"CREATE LOGIN [{IN_GROUP}] WITH PASSWORD = {ch.quote(FIRST)}, CHECK_POLICY = OFF",

@@ -861,6 +861,55 @@ The probes are in `sql/mssql/`, and the matrix of 2019, 2022 and 2025 is the
   afterwards. The policy's checks are not applied to the password. `HASHED`
   cannot be sent with `MUST_CHANGE`. The tool login reads `NULL` for another
   login's hash. `sql/mssql/02_client_hash_probe.py` measures it.
+- `verified` `mssql-lock-expiry` (#1538) — **What can a login with only
+  `ALTER ANY LOGIN` do to another login's state, read back, and expect at
+  its login, on the Linux images?**
+  It disables and enables a login (`is_disabled`; a disabled login is
+  refused, `18470`), and sets `MUST_CHANGE` (`IsMustChange` reads 1; the
+  login is refused, `18488`). It reads `IsLocked`, `BadPasswordCount`,
+  `IsMustChange`, `IsExpired` and `DaysUntilExpiration` through
+  `LOGINPROPERTY`. **No login locks:** with `CHECK_POLICY = ON`, 30 wrong
+  passwords leave `IsLocked` 0, and the right password logs in.
+  `BadPasswordCount` reads 1 after the first wrong password and after every
+  later one: it does not count past 1. Turning `CHECK_POLICY` off, a new
+  password with `UNLOCK`, and a good login each set it back to 0. A new
+  password in clear without `UNLOCK` does not, as a rotation would send it. A
+  `HASHED` value can only be sent with the policy turned off, which sets it
+  back to 0 in that statement. With `CHECK_EXPIRATION = ON` a new password
+  has 90 days on the Linux images; what sets the age on Windows is not
+  measured (unverified: mssql-windows-policy).
+  `sql/mssql/03_lock_expiry_probe.py` measures it.
+- `unverified` `mssql-windows-policy` (#1538) — **On SQL Server for Windows,
+  when does a login lock, what does a locked login answer, and what sets a
+  password's maximum age?**
+  On Windows, `CHECK_POLICY` and `CHECK_EXPIRATION` apply the host's or
+  domain's account policy, which the Linux images do not have. The lockout
+  threshold, what `BadPasswordCount` and `IsLocked` read on the way, the
+  answer `18486`, and the maximum age are not measured: the public suite has
+  no Windows server. Until they are, a check that logs in on SQL Server
+  cannot compute a lockout margin.
+- `verified` `mssql-tool-grants` (#1538) — **Which logins can a tool login
+  with only `ALTER ANY LOGIN` change, and what does it read of their
+  privileges?**
+  The server refuses it, `15151`, for the members of `sysadmin`,
+  `securityadmin` and a server role that holds `CONTROL SERVER`, and for
+  logins granted `CONTROL SERVER`, `ALTER ANY LOGIN` or `IMPERSONATE ANY
+  LOGIN`. It sets the password of every other login measured: the members of
+  `serveradmin`, `setupadmin`, `processadmin`, `diskadmin`, `dbcreator` and
+  `bulkadmin`; logins granted `ALTER ANY SERVER ROLE`, `ALTER ANY
+  CONNECTION`, `ALTER SETTINGS`, `SHUTDOWN` or `VIEW SERVER STATE`; and a
+  database's `db_owner`. **That reaches `CONTROL SERVER`:** the login with
+  `ALTER ANY SERVER ROLE` adds itself to a server role that holds `CONTROL
+  SERVER`. It is refused `sysadmin`. The tool may also change a setting of
+  `sa` (its default database). It reads every login's rows in
+  `sys.server_role_members` and `sys.server_permissions`, and
+  `IS_SRVROLEMEMBER('sysadmin', …)` for each; a login with `VIEW ANY
+  DEFINITION` alone, or `VIEW ANY SECURITY DEFINITION` alone where the
+  release has it, reads the same. A login with no grant sees none of the
+  others' rows, but `IS_SRVROLEMEMBER('sysadmin', …)` still answers for
+  them. These are server-level reads, so a `db_owner` shows no more than a
+  login with no grant: its power is in the database.
+  `sql/mssql/04_grants_probe.py` measures it.
 - `verified` `mssql-identity` (#1538) — **How are login names compared, what
   identifies a server, and how does a contained database user behave?**
   Under the default collation, `SQL_Latin1_General_CP1_CI_AS`, login names

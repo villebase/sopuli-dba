@@ -31,6 +31,7 @@ from repo_files import requires_repo
 from sopuli.cli import cli
 from sopuli.driver.protocol import Driver, Session
 from sopuli.output.document import SCHEMA_VERSION
+from sopuli.output.emit import EVENT_SCHEMA_VERSION
 from sopuli.output.palette import Role, role_for_state
 from sopuli.store.protocol import NativeStaging, SecretStore
 
@@ -248,3 +249,39 @@ def test_the_install_lines_are_the_extras() -> None:
     text = "\n".join(_block("docs/design/00-principles.md", "extras"))
 
     assert sorted(re.findall(r"sopuli-dba\[([a-z]+)\]", text)) == sorted(extras)
+
+
+#: The line in `local-testing.md` §11 whose output starts with the run version.
+RUN_VERSION_COMMAND = "print(d['schema_version'],"
+EVENT_VERSION = re.compile(r'"schema_version":"([0-9]+\.[0-9]+)"')
+
+
+def _major(version: str) -> str:
+    return version.split(".", 1)[0]
+
+
+def _sample_versions() -> tuple[list[str], list[str]]:
+    """The run and event versions the samples in `local-testing.md` print."""
+    path = ROOT / "docs" / "local-testing.md"
+    requires_repo(path)
+    lines = path.read_text(encoding="utf-8").splitlines()
+    run = [
+        lines[number + 1].split()[0]
+        for number, line in enumerate(lines[:-1])
+        if RUN_VERSION_COMMAND in line and lines[number + 1].split()
+    ]
+    events = [version for line in lines for version in EVENT_VERSION.findall(line)]
+    return run, events
+
+
+def test_the_samples_have_the_build_major_version() -> None:
+    # Only the major part is checked. A minor bump only adds fields (03-json-output.md
+    # §8), so an older minor in a sample misleads nobody, and the drift audit
+    # recaptures it. A major bump renames or removes fields, so the samples must be
+    # captured again from a real run (#1536).
+    run, events = _sample_versions()
+    assert run, f"no output line after `{RUN_VERSION_COMMAND}` in docs/local-testing.md"
+    assert events, "no event with a schema_version in docs/local-testing.md"
+
+    assert {_major(v) for v in run} == {_major(SCHEMA_VERSION)}, run
+    assert {_major(v) for v in events} == {_major(EVENT_SCHEMA_VERSION)}, events

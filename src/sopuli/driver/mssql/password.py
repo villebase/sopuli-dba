@@ -24,12 +24,9 @@ the session's to read; this module takes it as an argument.
 not that a password matches it (CH3). The login after the change is what
 catches a fault here, not the server.
 
-**A password is at most 128 characters.** The server refuses 129 in clear,
-``15156``, and takes a value for a longer one (CH6). A character here is a
-UTF-16 code unit, as the server's ``nvarchar`` counts it, so a character
-outside the Basic Multilingual Plane counts as two. Only ASCII and one Latin
-character were measured; counting code units can refuse a password the server
-would take, never the other way round.
+**A password is at most 128 UTF-16 code units** (:mod:`.limits`). The server
+takes a value for a longer one (CH6), so :func:`password_value` admits the
+password before it computes anything.
 
 The statement that carries the value is built elsewhere: this module renders
 the value as the hex literal it goes in.
@@ -44,6 +41,7 @@ import hashlib
 import secrets as csprng
 
 from sopuli.config import charsets
+from sopuli.driver.mssql.limits import LIMIT, MAX_PASSWORD_CHARACTERS
 from sopuli.driver.protocol import DriverError
 from sopuli.secrets import Secret
 
@@ -57,9 +55,6 @@ PBKDF2_ROUNDS = 100_000
 SALT_LENGTH = 4
 DIGEST_LENGTH = 64
 VALUE_LENGTH = 2 + SALT_LENGTH + DIGEST_LENGTH
-
-#: The longest password, in UTF-16 code units (CH6).
-MAX_PASSWORD_CHARACTERS = 128
 
 
 class PasswordNotAdmissibleError(DriverError):
@@ -80,18 +75,18 @@ def admit(secret: Secret) -> None:
         raise PasswordNotAdmissibleError("the password is empty")
     if any(charsets.is_control(character) for character in text):
         raise PasswordNotAdmissibleError("the password contains control characters")
-    try:
-        encoded = text.encode("utf-16-le")
-    except UnicodeEncodeError:
-        raise PasswordNotAdmissibleError("the password cannot be encoded as UTF-16") from None
-    length = len(encoded) // 2
-    if length > MAX_PASSWORD_CHARACTERS:
+    # Checked without catching the codec's error: that error holds the whole
+    # password, and would stay on the next exception's context.
+    if not LIMIT.encodable(text):
+        raise PasswordNotAdmissibleError("the password cannot be encoded as UTF-16")
+    units = LIMIT.width(text) // 2
+    if units > MAX_PASSWORD_CHARACTERS:
         raise PasswordNotAdmissibleError(
-            f"the password is {length} characters, and a SQL Server target takes at most "
-            f"{MAX_PASSWORD_CHARACTERS}",
+            f"the password is {units} UTF-16 code units, and a SQL Server target takes at "
+            f"most {MAX_PASSWORD_CHARACTERS}",
             hint=(
                 "the server refuses a longer one; lower the policy's `length`. A character "
-                "outside the Basic Multilingual Plane counts as two"
+                "outside the Basic Multilingual Plane is two code units"
             ),
         )
 
@@ -104,10 +99,13 @@ def draw_salt() -> bytes:
 def password_value(secret: Secret, version: int, *, salt: bytes | None = None) -> bytes:
     """The value SQL Server stores for ``secret``, in ``version``, with a new salt.
 
-    ``salt`` is for tests, which compare a value with the server's own.
+    ``salt`` is for tests, which compare a value with the server's own. The
+    password is admitted first: the server stores a value for any password,
+    one it would refuse in clear included (CH3, CH6).
     """
     if version not in VERSIONS:
         raise ValueError(f"not a password value version this driver computes: 0x{version:04x}")
+    admit(secret)
     if salt is None:
         salt = draw_salt()
     elif len(salt) != SALT_LENGTH:

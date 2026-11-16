@@ -8,10 +8,12 @@ to this module cannot change them with it.
 
 from __future__ import annotations
 
+import secrets
+
 import pytest
 
+from sopuli.driver.mssql.limits import LIMIT, MAX_PASSWORD_CHARACTERS
 from sopuli.driver.mssql.password import (
-    MAX_PASSWORD_CHARACTERS,
     PBKDF2_SHA512,
     SHA512,
     VALUE_LENGTH,
@@ -64,13 +66,31 @@ def test_the_value_agrees_with_the_measured_reference(
 
 
 @pytest.mark.parametrize("version", [SHA512, PBKDF2_SHA512])
-def test_a_new_value_has_the_servers_shape_and_a_fresh_salt(version: int) -> None:
+def test_a_new_value_has_the_servers_shape_and_a_salt_of_its_own(
+    version: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    drawn = iter([b"\x01\x02\x03\x04", b"\x05\x06\x07\x08"])
+    # The module's `csprng` is the `secrets` module.
+    monkeypatch.setattr(secrets, "token_bytes", lambda n: next(drawn))
+
     first = password_value(Secret("Acme-App-pw1"), version)
     second = password_value(Secret("Acme-App-pw1"), version)
 
     assert len(first) == VALUE_LENGTH == 70
     assert first[:2] == version.to_bytes(2, "big")
-    assert first[2:6] != second[2:6], "each value draws its own salt"
+    assert (first[2:6], second[2:6]) == (b"\x01\x02\x03\x04", b"\x05\x06\x07\x08")
+
+
+def test_the_value_is_computed_only_for_an_admitted_password() -> None:
+    """The server stores a value for any password (CH3, CH6), so the module
+    admits it first, whoever calls it."""
+    with pytest.raises(PasswordNotAdmissibleError, match="129 UTF-16 code units"):
+        password_value(Secret("A" * 129), SHA512, salt=SALT)
+
+
+def test_the_limit_is_the_same_in_bytes_and_in_code_units() -> None:
+    assert LIMIT.max_bytes == 2 * MAX_PASSWORD_CHARACTERS == 256
+    assert LIMIT.width(chr(0x1F600)) == 4
 
 
 @pytest.mark.parametrize("version", [0x0100, 0x0400, 2, 0])
@@ -122,9 +142,9 @@ def test_the_longest_password_is_admitted() -> None:
         ("Acme\x85pw", "control characters"),
         ("Acme\x00pw", "control characters"),
         ("Acme" + chr(0xD800) + "pw", "UTF-16"),
-        ("A" * (MAX_PASSWORD_CHARACTERS + 1), "129 characters"),
+        ("A" * (MAX_PASSWORD_CHARACTERS + 1), "129 UTF-16 code units"),
         # Outside the Basic Multilingual Plane: two code units each.
-        (chr(0x1F600) * 65, "130 characters"),
+        (chr(0x1F600) * 65, "130 UTF-16 code units"),
     ],
 )
 def test_admit_refuses_what_the_target_cannot_take(password: str, message: str) -> None:
@@ -132,3 +152,5 @@ def test_admit_refuses_what_the_target_cannot_take(password: str, message: str) 
         admit(Secret(password))
 
     assert raised.value.category == "policy"
+    assert not password or password not in str(raised.value)
+    assert raised.value.__context__ is None, "a codec error would hold the password"

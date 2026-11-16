@@ -109,7 +109,9 @@ Give the login no other permission, no server role, and no database user.
 
 UC-5's reports run as the tool login (open: #1555). With §2.1's grant alone
 they read every login, its policy flags, its dates, and its server roles and
-permissions (RP1 to RP3). `VIEW ANY DEFINITION` alone reads the same, and so
+permissions (RP1 to RP3). A user-defined server role is read by its id only,
+and one role's membership of another not at all
+(`12_guardrail_paths_probe.py`, PA2). `VIEW ANY DEFINITION` alone reads the same, and so
 does `securityadmin`.
 
 Two grants are optional:
@@ -238,9 +240,16 @@ The server already refuses the password of a member of `sysadmin`,
 holds `CONTROL SERVER`, `ALTER ANY LOGIN` or `IMPERSONATE ANY LOGIN`, `15151`
 (GR1). The guardrail refuses them at plan time instead (invariant 4). The
 server does not refuse a login that holds `ALTER ANY SERVER ROLE`, which is
-the measured gap (§1, GR4). The grants on one object give the same path
-through one login or one role; they are from the documentation and not
-measured.
+the measured gap (§1, GR4). The grants on one object are gaps too: the
+server lets the tool set the password of a login that holds any of them
+(`12_guardrail_paths_probe.py`, PA1). `CONTROL` or `IMPERSONATE` on a login
+reaches that login's power through `EXECUTE AS`. `CONTROL`, `ALTER` or `TAKE
+OWNERSHIP` on a server role that holds `CONTROL SERVER`, and ownership of
+one, each let the holder add itself to the role (PA3). `ALTER` on a login
+reached no power, and `TAKE OWNERSHIP` on a login cannot be granted: the
+`GRANT` is a syntax error (PA3, open: #1567). The server refuses the password
+of a member of a role nested in a role that holds `CONTROL SERVER`, `15151`
+(PA1).
 
 | Where | What it shows |
 |---|---|
@@ -248,8 +257,15 @@ measured.
 | `sys.server_permissions` | server permissions, and permissions on one login or one server role, with `class` and `major_id` naming the object |
 | `sys.server_principals.owning_principal_id` | the owner of a user-defined server role |
 
-The tool login reads the first two (GR3). Its read of the third is not
-measured (open: #1553). The guardrail does not read database
+With `ALTER ANY LOGIN` alone, the tool login reads less than the table shows
+(PA2). It does not see a user-defined server role's row in
+`sys.server_principals`, so it reads neither the role's name nor its
+`owning_principal_id`. It does not see a membership row whose member is a
+role, so it cannot follow one role nested in another. It reads a login's own
+grants and memberships, with a role named by its id, and that role's grants
+by the id. With `VIEW ANY DEFINITION` as well, it reads every row the table
+names (PA4). What the tool login must hold, and what the guardrail does
+where it cannot see a path, is open (open: #1567). The guardrail does not read database
 paths, such as `db_owner` in `msdb` or a `TRUSTWORTHY` database owned by a
 member of `sysadmin`: they are database-level reads, and none was measured.
 

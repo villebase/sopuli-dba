@@ -617,7 +617,13 @@ runs.** The unseen path already needs a store as its delivery target, so on the
 default path the record costs nothing extra. The seen (`manual`) path may have no
 store at all, and that is exactly the site `manual` exists for. Requiring a store
 would take the fallback away from the estates that have nothing else. So a reset
-with no store configured is **not refused**; it warns (§3.4).
+with no store configured is **not refused**; it warns (§3.4). SQL Server's
+unseen reset is the exception: there the record also holds the login's
+`CHECK_POLICY` and `CHECK_EXPIRATION` before the change, so that a stopped run
+can restore them. An unseen reset of a SQL Server login whose `CHECK_POLICY`
+is on is refused at plan time where no store is configured
+([`02-mssql-privileges.md`](../design/02-mssql-privileges.md) §6.3,
+[#1554](../decisions/log.md#1554), open: #1554).
 
 There is one record per **(target, account)**, under a prefix of its own. This is
 not the unit UC-1 locks on, and the difference matters. UC-1 keys on the vault

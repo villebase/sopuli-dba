@@ -923,6 +923,16 @@ The probes are in `sql/mssql/`, and the matrix of 2019, 2022 and 2025 is the
   measured. The tool login reads `sys.dm_os_host_info`, which names the
   host's platform. `sql/mssql/09_windows_policy_probe.py` measures it (WP0 to
   WP3, WP6, WP7).
+- `unverified` `mssql-domain-policy` (#1551) — **Under a domain's account
+  policy, do failed logins count while `CHECK_POLICY` is off, as they do not
+  under a local one?**
+  Probe 09 sets a local policy, because a hosted runner cannot become or join
+  a domain controller. SQL Server keeps the lockout count itself and takes
+  only the policy's values from Windows, so the answer is very likely the
+  same, but that is not measured. Decision 5 of
+  [#1551](decisions/log.md#1551) works on a domain-joined host as on a local
+  policy. Measuring it needs a Windows Server joined to a domain, with probe
+  09's WP5 run there.
 - `verified` `mssql-tool-grants` (#1538) — **Which logins can a tool login
   with only `ALTER ANY LOGIN` change, and what does it read of their
   privileges?**

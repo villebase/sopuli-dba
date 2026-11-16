@@ -6114,8 +6114,9 @@ the register.
   on Windows a login may lock at a threshold the tool cannot read
   (`mssql-windows-policy`).
 - **Decision:** the maintainer's, as proposed. It depends on the host's
-  platform, which the driver reads as a capability from
-  `sys.dm_os_host_info`:
+  platform, which the tool login reads from `sys.dm_os_host_info`
+  (`mssql-windows-policy`, WP0). #1550 builds that capability, so #1551
+  depends on it:
   1. On Linux, `apply` logs in first, as on Oracle and PostgreSQL, and
      leaves a password that already works alone.
   2. On Windows, `apply` and `rotate` do not log in before a change, as on
@@ -6126,6 +6127,15 @@ the register.
      to invariant 9's exceptions.
   3. On either host, a login the driver makes reads `IsLocked` first, and a
      locked login is `unavailable`, with no login.
+
+  The review of #1559 raised two more, which the maintainer decided:
+
+  4. A change on Windows to a login that `IsLocked` reports locked goes
+     ahead, and the result names the lock it ended, with a warning code. The
+     change ends the lockout, because it turns the policy off.
+  5. On a host that takes its policy from a domain, the tool works as under
+     a local policy. Whether failed logins while the policy is off count
+     there is not measured (unverified: mssql-domain-policy).
 - **Why:**
   1. The Linux images never lock a login (`mssql-lock-expiry`), so a login
      before a change costs nothing, and `apply` repairs drift there.
@@ -6136,6 +6146,20 @@ the register.
      MySQL and MariaDB use for the same reason.
   3. A locked login answers its right password `18456`, as a wrong one
      (`mssql-windows-policy`), so a login cannot tell a lock from drift.
+  4. While a promotion is held on Windows, each resend of `pending` turns the
+     policy off, so it clears the history and `BadPasswordCount` and ends a
+     lockout on every scheduled run. That cost is accepted because it lasts
+     only while a rotation is held, a state a failed target causes and an
+     operator ends, and each run reports `changed: true`, so it is not
+     hidden. Rejected option 3 would pay it on every run of a converged
+     estate, while reporting no change.
+  5. A login an attack has locked is the one that most needs a new
+     password, and the new password ends what the attack was guessing. The
+     warning keeps the lock from passing unseen.
+  6. SQL Server keeps the lockout count itself, and a domain supplies only
+     the threshold, so the count very likely behaves as under a local
+     policy. That is an inference, not a measurement. The login it guards
+     fails only if the driver computed a wrong value.
 - **Rejected:**
   1. Refusing `apply` and `rotate` on Windows: nothing measured requires it,
      and most SQL Server estates run on Windows.
@@ -6146,6 +6170,13 @@ the register.
      needs a change. It would clear the password history and
      `BadPasswordCount`, unlock a login an attack had locked, and write two
      `ALTER LOGIN` events, while the run reports `changed: false`.
+  4. Refusing a change to a locked login: a rotation would stop on the
+     login under attack, and an operator's unlock by hand has the same
+     effect as the change.
+  5. Refusing on a domain-joined host until it is measured: how a session
+     tells one is not measured either, and most Windows estates would get
+     no UC-1. Measuring it needs a domain controller, which a hosted runner
+     cannot become.
 
 ## #1554
 
@@ -6163,6 +6194,12 @@ the register.
      plan time, and names the seen reset, which works on such a login.
   3. Where `IsLocked` reads 1, the seen reset sends `UNLOCK` with
      `MUST_CHANGE`. The unseen reset unlocks by turning the policy off.
+
+  Applying H4 to these, as the review of #1559 asked: a reset keeps flags
+  that a stopped reset recorded and did not restore, as UC-1 does. The
+  unseen reset makes no login with the new password, because H4 never
+  verifies. `IsLocked` is SQL Server's `LOCKED(TIMED)`, and a disabled
+  login, `is_disabled` 1, its plain `LOCKED`, which a reset refuses.
 - **Why:**
   1. Turning the policy on again leaves `CHECK_EXPIRATION` off
      (`mssql-policy-off`), so a run that stopped after the change, with
@@ -6173,7 +6210,9 @@ the register.
      `15128`. The seen reset keeps the policy on, so it works there.
   3. A new password alone leaves a locked login locked, and its owner would
      be refused. `MUST_CHANGE` and `UNLOCK` are accepted together
-     (`mssql-windows-policy`). This is H4's rule on every product.
+     (`mssql-windows-policy`). H4 unlocks a lock nobody chose and refuses one
+     somebody chose. A lockout after failed logins is the first kind: it ends
+     by itself (WP3). `account suspend` sets the second, `DISABLE`.
 - **Rejected:**
   1. No record, with `doctor` and `account list` reporting a login whose
      policy is off: the recovery is by hand, and a lost expiry flag is easy

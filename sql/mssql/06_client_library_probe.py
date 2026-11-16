@@ -27,9 +27,9 @@ connects unencrypted there: encrypted, it never reaches the login (CL1).
 The libraries, as installed from PyPI: mssql-python 1.17.0, pyodbc 5.5.0
 with Microsoft ODBC Driver 18 for SQL Server 18.7.1.1, pymssql 2.4.6, and
 python-tds 1.17.1 with pyOpenSSL 26.4.0, cryptography 50.0.2 and certifi
-2026.10.23. Strict
-encryption (TDS 8), and a certificate the server was given, are not measured:
-see `mssql-client-tls` in docs/README.md §Verify before implementing.
+2026.10.23. Strict encryption (TDS 8), and a certificate the server was given,
+are measured for pyodbc by 10_client_tls_probe.py, which runs in this probe's
+Linux image.
 
 STATUS: run on 15.0.4510.2, 16.0.4325.4 and 17.0.5065.9, the
 mcr.microsoft.com/mssql/server 2019-latest, 2022-latest and 2025-latest images

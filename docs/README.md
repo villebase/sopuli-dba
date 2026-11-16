@@ -991,21 +991,30 @@ The probes are in `sql/mssql/`, and the matrix of 2019, 2022 and 2025 is the
   `18456` for all three, without the server's reason. mssql-python gives no
   number, but the server's message, reason included. Every library logs
   in with a password of `; { } =` and a space; the ODBC libraries take it in
-  braces, a closing brace doubled. pymssql is LGPL. Strict encryption is not
-  measured (unverified: mssql-client-tls).
+  braces, a closing brace doubled. pymssql is LGPL. Strict encryption and
+  certificate checks are `mssql-client-tls`.
   `sql/mssql/06_client_library_probe.py` measures it.
-- `unverified` `mssql-client-tls` (#1538) — **Does each client library
+- `verified` `mssql-client-tls` (#1538, #1549) — **Does the chosen client
   connect with strict encryption (TDS 8), and verify the server's
   certificate?**
-  Against a 2022 container given a self-signed certificate for server
-  authentication, the server refused every strict connection, `17821`, "A
-  valid TLS certificate is not configured to accept strict (TDS 8.0 and
-  above) connections". With TLS 1.3 allowed and encryption forced, the
-  connections hung. ODBC Driver 18's `ServerCertificate` did not make a
-  self-signed certificate trusted for `Encrypt=yes`. python-tds 1.17.1's
-  certificate check failed with the pyOpenSSL of the day (`'X509' object has
-  no attribute 'get_extension'`). Measuring it needs a server certificate
-  issued by a CA the client trusts.
+  Measured for pyodbc 5.5.0 with ODBC Driver 18, the client of decision 6 of
+  [#1538](decisions/log.md#1538), from Windows and from Linux, against a
+  server certificate issued by a CA the probe creates. **`Encrypt=yes`
+  checks the chain** on both clients: with the CA in no trust store it is
+  refused. On Linux it connects once the CA is in the system store, and it
+  **checks the name**: it refuses an address the certificate does not hold,
+  and connects there with `HostNameInCertificate`. **There is no CA-file
+  setting:** `ServerCertificate` set to the CA's certificate never connects.
+  **`Encrypt=strict` connects only on 17.0.5065.9.** On 15.0.4510.2 and
+  16.0.4325.4 the server resets every strict connection, `10054`, on both
+  clients. On 17.0.5065.9,
+  `ServerCertificate` set to the server's own certificate connects with
+  strict, on both clients; with `Encrypt=yes` it never does.
+  `TrustServerCertificate` connects with `Encrypt=yes` and does nothing for
+  strict. A CA in the Windows certificate store, and the name check on
+  Windows, are not measured, because the probe does not change the store. The other libraries of
+  `mssql-client-library` are not measured here.
+  `sql/mssql/10_client_tls_probe.py` measures it.
 - `verified` `mssql-report-reads` (#1538) — **Which grants does a read-only
   report login need on SQL Server, and what can it not read?**
   `VIEW ANY DEFINITION` alone reads every login in `sys.server_principals`

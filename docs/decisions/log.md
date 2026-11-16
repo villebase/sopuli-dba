@@ -5974,3 +5974,98 @@ the register.
      the lock until a DBA revokes it by hand.
   2. Keeping `SELECT` and documenting the lock: the tool needs nothing that
      `SELECT` gives beyond `READ`.
+
+## #1538
+
+- **Decided:** 2026-11-16, #1538
+- **Question:** The SQL Server driver. What is an account? How does a
+  password reach the server? How does `creds check` work? What happens in an
+  Availability Group, and to a login with administrative grants? Which client
+  library, which releases, and does a login name need new tokens in a vault
+  path? The measurements are in `docs/README.md` §*SQL Server*.
+- **Decision:** the maintainer's, each as proposed on the issue:
+  1. An account is a SQL Server login on an instance. Contained database
+     users and Azure SQL Database are refused. Windows and Entra logins hold
+     no password, so they are refused too.
+  2. UC-1 sets a password with `ALTER LOGIN … WITH PASSWORD = 0x… HASHED,
+     CHECK_POLICY = OFF`, a value the tool computes, and then turns the
+     login's policy back on as it was. The password never reaches the server.
+     UC-2 sends the password in clear only where it needs `MUST_CHANGE`,
+     which `HASHED` refuses. That statement is sent as a batch of its own,
+     never inside `EXEC`, and always parses. The UC-2 driver PR adds this
+     exception to invariant 15. The tool sends `0x0300` where the server
+     takes it, and decides that from a capability, not from the release.
+  3. `creds check` logs in. Where the host has a lockout the tool cannot
+     read, on Windows until `mssql-windows-policy` is measured, the check is
+     refused. The tool never reads `password_hash`.
+  4. Each replica of an Availability Group is a target of its own, and the
+     promotion gate waits for each one the config declares. `doctor` warns
+     when a target is in a group whose other replicas the config does not
+     declare. A login in a contained group's own master is refused.
+  5. A guardrail no flag waives refuses a managed login that is in
+     `sysadmin` or `securityadmin`, or in a server role that holds one of the
+     permissions below, or that holds one of them itself: `CONTROL SERVER`,
+     `ALTER ANY LOGIN`, `IMPERSONATE ANY LOGIN`, `ALTER ANY SERVER ROLE`, and
+     `CONTROL`, `ALTER` or `IMPERSONATE` on one login.
+  6. The client is pyodbc with Microsoft ODBC Driver 18, in an `mssql` extra.
+  7. Supported releases are 2019 and later. Azure SQL Managed Instance is
+     not tested; capabilities decide what runs on it.
+  8. A login name gets no new token. The rules of [#935](#935) and
+     [#940](#940) apply to it as they do to every product, and the driver
+     quotes a name in brackets with `]` doubled.
+- **Why:**
+  1. A login with `ALTER ANY LOGIN` cannot open a contained database,
+     `18456`. A contained user needs a tool user in each database, has no
+     `HASHED` form, and can share a login's name. What the server keeps of
+     its password statement is not measured.
+  2. SQL Server hides the text of a password statement that is sent alone
+     and parses, but not one that fails to parse or runs inside `EXEC`. That
+     is narrower than the gap on MySQL, but it is still a record of the
+     password that the tool depends on the server to hide. `HASHED` removes
+     the dependence wherever it can be used. Its costs are accepted: the
+     server applies no policy check, so the tool's policy is the only one; a
+     wrong value is accepted, so the login after a change is what catches a
+     bug; and on 2019 the value is a single SHA-512 round. `MUST_CHANGE` has
+     no `HASHED` form, and without it `account expire-password` and the seen
+     reset cannot make the owner choose a password.
+  3. Every reader measured gets `NULL` for `password_hash`. Reading it needs
+     more than `ALTER ANY LOGIN`, and gives the tool every login's hash,
+     which [#1202](#1202) refused on MySQL. The Linux images do not lock a
+     login, so a login check there costs nothing.
+  4. A login and its password belong to each replica, also with one SID,
+     and each replica names its group and every replica in it. A contained
+     group copies its logins, so two declared replicas would be one account,
+     and changing it on a secondary is not measured.
+  5. The server already refuses `ALTER ANY LOGIN` for the first set, `15151`.
+     The guardrail refuses them at plan time instead (invariant 4). A login
+     with `ALTER ANY SERVER ROLE` can add itself to a role that holds
+     `CONTROL SERVER`, and the tool can set its password. A grant on one
+     login is a server permission the tool account reads in the same view.
+  6. Only pyodbc with ODBC Driver 18 gives the server's number for a wrong
+     password, a disabled login and a login that must change its password,
+     `18456`, `18470` and `18488`. Errors carry the vendor code.
+  7. 2019, 2022 and 2025 are measured. 2017's extended support ends in
+     October 2027.
+  8. SQL Server escapes `]` by doubling it, so a bracket needs no refusal as
+     `"` does on Oracle. A login has no host part to split off, as MySQL's
+     has.
+- **Rejected:**
+  1. Contained users beside logins: two account models in one driver, a
+     tool user per database, and a password that always reaches the server.
+  2. `HASHED` everywhere: `account expire-password` and the seen reset
+     would be refused on SQL Server. Plaintext everywhere: UC-1 would depend
+     on what the server hides, with no need to.
+  3. Comparing the hash on the client: the tool account would need about
+     `CONTROL SERVER`, and would read every login's hash.
+  4. Refusing every target in an Availability Group: each replica already
+     behaves as a target of its own, and the tool can see the group.
+  5. Adding database paths to the guardrail, such as `db_owner` in `msdb` or
+     a `TRUSTWORTHY` database owned by a `sysadmin`: they are database-level
+     reads, and none was measured.
+  6. mssql-python: its errors carry the message but no number. pymssql:
+     `18456` for every refusal, no certificate check, and LGPL. python-tds:
+     encrypts only with a CA file, and then refuses the server's own
+     certificate.
+  7. Keeping 2017: it is not measured, and it leaves support before long.
+  8. A token for a login name: it has no part a vault path cannot hold that
+     the existing rules do not already refuse.

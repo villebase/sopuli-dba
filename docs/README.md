@@ -928,10 +928,9 @@ The probes are in `sql/mssql/`, and the matrix of 2019, 2022 and 2025 is the
 - `unverified` `mssql-contained-password-text` (#1538) — **What does SQL Server
   keep of the text of `ALTER USER … WITH PASSWORD` in a contained database?**
   A contained user has no `HASHED` form, so the password always reaches the
-  server. Whether a SQL Server driver could keep it out of the server's
-  records for a contained user, as invariant 15 does on PostgreSQL, MySQL and
-  MariaDB, depends on what the server keeps of the statement; D2 of #1538
-  decides whether that rule extends to SQL Server.
+  server. A SQL Server driver refuses contained users
+  ([#1538](decisions/log.md#1538)), and this measurement comes before any
+  change to that.
   `sql/mssql/01_password_text_probe.py` measures `CREATE LOGIN` and `ALTER
   LOGIN` only.
 - `verified` `mssql-client-library` (#1538) — **Which Python client library

@@ -7,10 +7,12 @@ import pytest
 from sopuli.driver.mssql.password import SHA512, password_value
 from sopuli.driver.mssql.statements import (
     MAX_NAME_CHARACTERS,
+    LoginNameError,
     quoted_name,
     restore_policy,
     set_password_value,
 )
+from sopuli.exit_codes import ExitCode
 from sopuli.secrets import Secret
 
 SALT = bytes.fromhex("A1B2C3D4")
@@ -44,11 +46,17 @@ def test_the_longest_name_is_taken() -> None:
         ("a" * (MAX_NAME_CHARACTERS + 1), "at most 128"),
         # Outside the Basic Multilingual Plane: two code units each.
         (chr(0x1F600) * 65, "at most 128"),
+        ("acme" + chr(0xD800), "cannot be encoded as UTF-16"),
+        ("acme_app ", "space"),
+        (" acme_app", "space"),
     ],
 )
-def test_a_name_no_login_can_have_is_refused(login: str, message: str) -> None:
-    with pytest.raises(ValueError, match=message):
+def test_a_name_no_statement_can_address_is_a_config_error(login: str, message: str) -> None:
+    with pytest.raises(LoginNameError, match=message) as raised:
         quoted_name(login)
+
+    assert raised.value.category == "config"
+    assert raised.value.exit_code == ExitCode.CONFIG_INVALID
 
 
 def test_the_change_sends_the_value_and_turns_the_policy_off() -> None:

@@ -103,7 +103,7 @@ purpose.
 
 from __future__ import annotations
 
-import hashlib
+import importlib.util
 import os
 import re
 import secrets
@@ -111,6 +111,17 @@ import subprocess
 import sys
 import time
 from collections.abc import Callable
+from pathlib import Path
+
+# 02's name starts with a digit, so it is loaded by its path. Only its hash is
+# used: 02 reaches its servers through docker, which this runner has not.
+_SPEC = importlib.util.spec_from_file_location(
+    "mssql_client_hash_probe", Path(__file__).resolve().parent / "02_client_hash_probe.py"
+)
+assert _SPEC is not None
+assert _SPEC.loader is not None
+ch = importlib.util.module_from_spec(_SPEC)
+_SPEC.loader.exec_module(ch)
 
 SERVER = os.environ.get("SOPULI_MSSQL_SERVER", r".\SQLEXPRESS")
 THRESHOLD = int(os.environ.get("SOPULI_PROBE_LOCKOUT_THRESHOLD", "5"))
@@ -242,10 +253,8 @@ def quote(password: str) -> str:
 
 
 def hashed(password: str) -> str:
-    """A 0x0200 value: version, a 4-byte salt, SHA-512 of UTF-16LE password and salt."""
-    salt = secrets.token_bytes(4)
-    digest = hashlib.sha512(password.encode("utf-16-le") + salt).digest()
-    return "0x" + (b"\x02\x00" + salt + digest).hex().upper()
+    """A 0x0200 value, as 02 computes it, with a salt of its own."""
+    return "0x" + ch.password_hash(password, ch.draw_salt()).hex().upper()
 
 
 def fresh(expiration: bool = False) -> None:

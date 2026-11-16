@@ -869,6 +869,15 @@ The probes are in `sql/mssql/`, and the matrix of 2019, 2022 and 2025 is the
   a refused `HASHED` statement changes nothing but costs a statement. No
   property or catalog row that names the accepted versions is measured.
   Every release measured takes `0x0200`.
+- `unverified` `mssql-policy-off` (#1538) — **What does `CHECK_POLICY = OFF`
+  clear, and does a failed login while it is off count toward a lockout?**
+  Microsoft's documentation says turning the policy off also turns
+  `CHECK_EXPIRATION` off, clears the password history and resets
+  `lockout_time`. `sql/mssql/03_lock_expiry_probe.py` measures only that it
+  sets `BadPasswordCount` back to 0, on the Linux images, which never lock.
+  Decision 2 of [#1538](decisions/log.md#1538) logs in while the policy is
+  off, on the documentation's word that such a login counts toward no
+  lockout. Measuring both needs a Windows host (see `mssql-windows-policy`).
 - `verified` `mssql-lock-expiry` (#1538) — **What can a login with only
   `ALTER ANY LOGIN` do to another login's state, read back, and expect at
   its login, on the Linux images?**

@@ -5988,11 +5988,19 @@ the register.
      users and Azure SQL Database are refused. Windows and Entra logins hold
      no password, so they are refused too.
   2. UC-1 sets a password with `ALTER LOGIN … WITH PASSWORD = 0x… HASHED,
-     CHECK_POLICY = OFF`, a value the tool computes, and then turns the
-     login's policy back on as it was. The password never reaches the server.
-     UC-2 sends the password in clear only where it needs `MUST_CHANGE`,
-     which `HASHED` refuses. That statement is sent as a batch of its own,
-     never inside `EXEC`, and always parses. The first driver PR that
+     CHECK_POLICY = OFF`, a value the tool computes. The password never
+     reaches the server. A change runs in this order, on every host: read
+     the login's `CHECK_POLICY` and `CHECK_EXPIRATION`, and record them in
+     the vault's `pending` entry; send `HASHED`; log in with the new password
+     while the policy is off; then set both flags back as they were. A run
+     after a crash between the steps restores the flags from the vault.
+     UC-2 sends the password in clear only for the seen reset, which needs
+     `MUST_CHANGE`, and `HASHED` refuses it. That statement is sent as a
+     batch of its own, never inside `EXEC`, and always parses. `MUST_CHANGE`
+     needs `CHECK_POLICY` and `CHECK_EXPIRATION` on, so the seen reset
+     leaves both on. `account expire-password` is refused at plan time:
+     `MUST_CHANGE` is taken only with a new password, so the server cannot
+     expire a password and keep it. The first driver PR that
      changes a password adds SQL Server to invariant 15, with this
      exception. The tool sends `0x0300` where the server takes it, and
      decides that from a capability, not from the release. How to read that
@@ -6030,9 +6038,16 @@ the register.
      the dependence wherever it can be used. Its costs are accepted: the
      server applies no policy check, so the tool's policy is the only one; a
      wrong value is accepted, so the login after a change is what catches a
-     bug; and on 2019 the value is a single SHA-512 round. `MUST_CHANGE` has
-     no `HASHED` form, and without it `account expire-password` and the seen
-     reset cannot make the owner choose a password.
+     bug; and on 2019 the value is a single SHA-512 round. Turning the policy
+     off also turns `CHECK_EXPIRATION` off, clears the password history and
+     resets the lockout, which unlocks a locked login whose password the
+     same step changes (unverified: mssql-policy-off). Recording the flags
+     first makes the two statements safe to interrupt. The login while the
+     policy is off counts toward no lockout, so it also checks a `HASHED`
+     value on a host whose lockout the tool cannot read. `MUST_CHANGE` has
+     no `HASHED` form, and without it the seen reset cannot make the owner
+     choose a password. It also needs a new password, so `account
+     expire-password` would replace the password the owner knows.
   3. Every reader measured gets `NULL` for `password_hash`. Reading it needs
      more than `ALTER ANY LOGIN`, and gives the tool every login's hash,
      which [#1202](#1202) refused on MySQL. The Linux images do not lock a
@@ -6060,9 +6075,15 @@ the register.
 - **Rejected:**
   1. Contained users beside logins: two account models in one driver, a
      tool user per database, and a password that always reaches the server.
-  2. `HASHED` everywhere: `account expire-password` and the seen reset
-     would be refused on SQL Server. Plaintext everywhere: UC-1 would depend
-     on what the server hides, with no need to.
+  2. `HASHED` everywhere: the server could not make the owner of a seen
+     reset choose a password. Plaintext everywhere: UC-1 would depend on
+     what the server hides, with no need to. `account expire-password` as a
+     reset with a password nobody is told: the owner is locked out until
+     somebody resets it. Refusing `creds apply` and `rotate` on a Windows
+     host until its lockout is measured: the login while the policy is off
+     needs no lockout margin. Restoring the flags without recording them
+     first: after a crash, nothing would know what they were, and the
+     operator would have to find and restore them by hand.
   3. Comparing the hash on the client: the tool account would need about
      `CONTROL SERVER`, and would read every login's hash.
   4. Refusing every target in an Availability Group: each replica already

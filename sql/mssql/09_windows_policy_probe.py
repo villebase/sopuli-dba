@@ -103,6 +103,9 @@ class StepError(Exception):
 def _connect(credentials: str) -> object:
     import pyodbc  # type: ignore[import-not-found]
 
+    # A pooled connection keeps its session open after close(), and a login
+    # with an open session cannot be dropped, 15434. Each step logs in anew.
+    pyodbc.pooling = False
     return pyodbc.connect(
         f"Driver={{{DRIVER}}};Server={SERVER};Database=master;{credentials}Encrypt=no;",
         autocommit=True,
@@ -160,7 +163,14 @@ def login(password: str) -> str:
 
 def props() -> dict[str, str]:
     """The account's LOGINPROPERTY values and policy flags, as the tool reads them."""
-    columns = ", ".join(f"LOGINPROPERTY(N'{ACCOUNT}', '{name}')" for name in PROPERTIES)
+    # LOGINPROPERTY returns sql_variant, which pyodbc cannot fetch. A date is
+    # converted to ISO 8601, so that shape() can tell the default from a date.
+    columns = ", ".join(
+        f"CONVERT(nvarchar(30), CAST(LOGINPROPERTY(N'{ACCOUNT}', '{name}') AS datetime), 126)"
+        if name.endswith("Time")
+        else f"CAST(LOGINPROPERTY(N'{ACCOUNT}', '{name}') AS nvarchar(64))"
+        for name in PROPERTIES
+    )
     rows = as_login(
         TOOL, TOOL_PASSWORD,
         f"SELECT {columns}, is_policy_checked, is_expiration_checked "
@@ -341,6 +351,12 @@ def setup() -> None:
 
 
 def teardown() -> None:
+    sessions = admin(
+        "SELECT session_id FROM sys.dm_exec_sessions "
+        f"WHERE login_name IN (N'{ACCOUNT}', N'{TOOL}') AND session_id <> @@SPID"
+    )
+    for (session,) in sessions:
+        admin(f"KILL {int(str(session))}")
     admin(f"{drop(ACCOUNT)}; {drop(TOOL)}")
 
 
@@ -366,7 +382,10 @@ def main() -> int:
         print(f"STEP FAILED: {exc}")
         return 1
     finally:
-        teardown()
+        try:
+            teardown()
+        except Exception as exc:  # noqa: BLE001 - keep the first error in view
+            print(f"CLEAN-UP FAILED: {exc}")
     differences = 0
     for label in [*RECORDED, *(label for label in results if label not in RECORDED)]:
         got = results.get(label)

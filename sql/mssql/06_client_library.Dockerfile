@@ -1,6 +1,8 @@
 # The Linux client of 06_client_library_probe.py: Microsoft's ODBC Driver 18
 # and the four Python client libraries the probe measures, at the versions its
 # header names. The probe builds it as sopuli-mssql-clients and removes nothing.
+# 10_client_tls_probe.py runs in it too: it needs pyodbc, cryptography,
+# ca-certificates and root, to put its CA in the system trust store.
 FROM python:3.13.18-slim-bookworm
 RUN apt-get update \
  && apt-get install -y --no-install-recommends curl gnupg ca-certificates \

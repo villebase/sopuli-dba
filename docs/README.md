@@ -878,8 +878,12 @@ The probes are in `sql/mssql/`, and the matrix of 2019, 2022 and 2025 is the
   `CHECK_EXPIRATION` off and the login unlocked. **While the policy is off,
   failed logins do not count:** seven wrong passwords, past a threshold of 5,
   leave the count at 0, and the login is not locked once the policy is on
-  again. So the login that decision 2 of [#1538](decisions/log.md#1538)
-  makes while the policy is off cannot lock the login.
+  again. So, under a local policy, the login that decision 2 of
+  [#1538](decisions/log.md#1538) makes while the policy is off cannot lock
+  the login. Under a domain's policy, the case of most Windows hosts, it is
+  not measured. `HistoryLength` reading 0 is the only sign measured that the
+  history is cleared: a password that another login sets is accepted even
+  from the history (`mssql-windows-policy`), so reusing one cannot show it.
   `sql/mssql/09_windows_policy_probe.py` measures it (WP4 to WP7).
 - `verified` `mssql-lock-expiry` (#1538) — **What can a login with only
   `ALTER ANY LOGIN` do to another login's state, read back, and expect at

@@ -465,18 +465,25 @@ def main() -> int:
     if sys.argv[1:2] == ["--prepare"]:
         return prepare()
     results: dict[str, str] = {}
+    failed = ""
     try:
         setup()
         for case in CASES:
             case(results)
-    except StepError as exc:
-        print(f"STEP FAILED: {exc}")
-        return 1
+    except Exception as exc:  # noqa: BLE001 - print what was measured before it
+        failed = f"STEP FAILED: {type(exc).__name__}: {exc}"
     finally:
         try:
             teardown()
         except Exception as exc:  # noqa: BLE001 - keep the first error in view
             print(f"CLEAN-UP FAILED: {exc}")
+    if failed:
+        # A run takes minutes to set up, so the cases measured before the
+        # failure are printed rather than lost. The run still exits 1.
+        for label, got in results.items():
+            print(f"{label}: {got}")
+        print(failed)
+        return 1
     differences = 0
     for label in [*RECORDED, *(label for label in results if label not in RECORDED)]:
         got = results.get(label)

@@ -29,6 +29,9 @@ jobs:
       SOPULI_PROBE_LOCKOUT_MINUTES: "1"
     defaults:
       run:
+        # pwsh fails a step on the last native command's exit code only. Each
+        # step that runs more than one native command checks each one with
+        # Assert-Exit.
         shell: pwsh
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -41,28 +44,37 @@ jobs:
         # The lockout window may not be longer than the duration. The maximum
         # age gives WP7 a value of the run's choosing.
         run: |
+          function Assert-Exit($what) { if ($LASTEXITCODE -ne 0) { throw "$what exited $LASTEXITCODE" } }
           net accounts /lockoutthreshold:$env:SOPULI_PROBE_LOCKOUT_THRESHOLD `
             /lockoutduration:$env:SOPULI_PROBE_LOCKOUT_MINUTES `
             /lockoutwindow:$env:SOPULI_PROBE_LOCKOUT_MINUTES `
             /uniquepw:5 /maxpwage:42 /minpwage:0
+          Assert-Exit "net accounts (set)"
           net accounts
+          Assert-Exit "net accounts (show)"
       - name: Install SQL Server Express
         run: choco install sql-server-express -y --no-progress
       - name: Install ODBC Driver 18, where the image lacks it
         run: |
+          function Assert-Exit($what) { if ($LASTEXITCODE -ne 0) { throw "$what exited $LASTEXITCODE" } }
           if (-not (Get-OdbcDriver -Name "ODBC Driver 18 for SQL Server" -ErrorAction SilentlyContinue)) {
             choco install sqlserver-odbcdriver -y --no-progress
+            Assert-Exit "choco install sqlserver-odbcdriver"
           }
           Get-OdbcDriver -Name "ODBC Driver 1*" | Select-Object Name, Platform
       - name: Install pyodbc
-        run: python -m pip install --require-hashes -r .github/requirements/mssql-windows-probe.txt
+        run: python -m pip install --require-hashes -r sql/mssql/09_windows_policy_requirements.txt
       - name: Turn on SQL Server authentication
         run: |
+          function Assert-Exit($what) { if ($LASTEXITCODE -ne 0) { throw "$what exited $LASTEXITCODE" } }
           python -I sql/mssql/09_windows_policy_probe.py --prepare
+          Assert-Exit "the probe's --prepare"
           Restart-Service -Name 'MSSQL$SQLEXPRESS' -Force
       - name: Run the probe, first time
+        id: first
         run: python -I sql/mssql/09_windows_policy_probe.py
       - name: Run the probe, second time
-        # Also after a first run that differed, so the two can be compared.
-        if: success() || failure()
+        # Also after a first run that differed, so the two can be compared,
+        # but not after a failed install or setup.
+        if: success() || steps.first.outcome == 'failure'
         run: python -I sql/mssql/09_windows_policy_probe.py

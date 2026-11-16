@@ -1,0 +1,6 @@
+# The Python client of sql/mssql/09_windows_policy_probe.py, on the
+# windows-latest runner of .github/workflows/mssql-windows-probe.yml.
+# Pinned by hash: pip download --only-binary=:all: --platform win_amd64
+# --python-version 3.13 --no-deps pyodbc==5.5.0, then pip hash.
+pyodbc==5.5.0 \
+    --hash=sha256:fd3fbf8c41aecbede38888403f24706b63dc1853bddca80fd0f11e4c608bc9ee

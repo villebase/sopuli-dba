@@ -31,7 +31,7 @@ the intended division.
 
 Regenerate the committed artefact with::
 
-    python -m sopuli.config.schema > docs/schemas/sopuli-config-5.2.schema.json
+    python -m sopuli.config.schema > docs/schemas/sopuli-config-5.3.schema.json
 """
 
 from __future__ import annotations
@@ -65,7 +65,7 @@ from sopuli.config import (
 #: `01-configuration.md` §9b says when it changes. What each shape accepts and
 #: refuses, and why, is in the function that builds it: its docstring or its
 #: ``description``.
-SCHEMA_VERSION = "5.2"
+SCHEMA_VERSION = "5.3"
 
 SCHEMA_FILENAME = f"sopuli-config-{SCHEMA_VERSION}.schema.json"
 
@@ -594,8 +594,8 @@ _TARGET_TYPES: dict[str, Schema] = {
     "dsn": {
         **STRING,
         "description": (
-            "Oracle: host:port/service, or a TNS alias. PostgreSQL, MySQL and MariaDB: "
-            "host:port, "
+            "Oracle: host:port/service, or a TNS alias. PostgreSQL, MySQL, MariaDB and "
+            "SQL Server: host:port, "
             "never a connection URI or a keyword string, which can carry a password."
         ),
     },
@@ -606,6 +606,7 @@ _TARGET_TYPES: dict[str, Schema] = {
     "postgres": _ref("target_postgres"),
     "mysql": _ref("target_mysql"),
     "mariadb": _ref("target_mariadb"),
+    "mssql": _ref("target_mssql"),
     "labels": _ref("labels"),
     "safety": _ref("safety"),
 }
@@ -744,6 +745,45 @@ def _target_mysql(
         min_properties=1,
         description=(
             f"How the tool connects to a {product} server. Only on a `type: {type_}` target."
+        ),
+    )
+
+
+def _target_mssql() -> Schema:
+    """``mssql:``. Which keys go with which ``encrypt`` is checked after
+    expansion, as `sopuli config validate` reports it."""
+    return _object(
+        keys=targets.MSSQL_KEYS,
+        types={
+            "encrypt": {
+                **_enum(targets.MSSQL_ENCRYPT_MODES),
+                "description": (
+                    "ODBC Driver 18's Encrypt: `optional` (no), `mandatory` (yes) or `strict` "
+                    "(TDS 8). Default `mandatory`, which checks the server's certificate "
+                    "against the operating system's trust store."
+                ),
+            },
+            "trust_server_certificate": {
+                **BOOLEAN,
+                "description": (
+                    "Encrypt without checking the server's certificate. Only with "
+                    "`encrypt: mandatory`; warns on every run."
+                ),
+            },
+            "host_name_in_certificate": {
+                **STRING,
+                "description": "The name the certificate must hold, where the dsn names another.",
+            },
+            "server_certificate": {
+                **STRING,
+                "description": (
+                    "The server's own certificate, pinned. Only with `encrypt: strict`."
+                ),
+            },
+        },
+        min_properties=1,
+        description=(
+            "How the tool connects to a SQL Server instance. Only on a `type: mssql` target."
         ),
     )
 
@@ -1536,6 +1576,7 @@ def build_schema() -> Schema:
                 "How the tool's connection uses TLS, with the values of MySQL's --ssl-mode, "
                 "which the MariaDB client does not have. Default `VERIFY_IDENTITY`.",
             ),
+            "target_mssql": _target_mssql(),
             "target_set": _target_set(),
             "target_patch": _target_patch(),
             "for_each": _for_each(),

@@ -35,6 +35,7 @@ from sopuli.config.model import (
     ExpandedTarget,
     Override,
     Target,
+    TargetMssql,
     TargetMysql,
     TargetOracle,
     TargetPostgres,
@@ -43,6 +44,9 @@ from sopuli.config.selection import select
 from sopuli.config.targets import (
     EXTERNAL,
     MARIADB,
+    MSSQL,
+    MSSQL_UNENCRYPTED_ENCRYPT_MODE,
+    MSSQL_VERIFYING_ENCRYPT_MODES,
     MYSQL,
     MYSQL_UNENCRYPTED_SSL_MODE,
     MYSQL_VERIFYING_SSL_MODES,
@@ -68,10 +72,11 @@ _HOST_AND_PORT = re.compile(
 class _Tls:
     """A product's TLS keys, and the values that matter about them."""
 
-    #: The key that holds the mode, and the key that holds the CA file.
+    #: The key that holds the mode, and the key that holds the CA file. SQL
+    #: Server has no CA file: its client checks the operating system's store.
     mode: str
-    ca: str
-    #: The modes that check the server against the CA file.
+    ca: str | None
+    #: The modes that check the server's certificate.
     verifying: tuple[str, ...]
     #: The one mode certain to connect without encryption.
     unencrypted: str
@@ -80,7 +85,13 @@ class _Tls:
     #: The other verifying mode, named beside the default in a refusal.
     alternative: str
     #: The block as the run reads it, with its defaults filled in.
-    settings: Callable[[Target], TargetPostgres | TargetMysql]
+    settings: Callable[[Target], TargetPostgres | TargetMysql | TargetMssql]
+    #: A boolean key that, set to true, turns the check off under a verifying
+    #: mode: SQL Server's ``trust_server_certificate``.
+    trust: str | None = None
+    #: What a message says the verifying mode needs, for a product with no CA
+    #: file key.
+    remedy: str | None = None
 
 
 @dataclass(frozen=True)
@@ -169,6 +180,31 @@ _PRODUCTS: dict[str, _Product] = {
             settings=lambda target: target.mariadb_settings,
         ),
     ),
+    MSSQL: _Product(
+        name="SQL Server",
+        article="a",
+        block="mssql",
+        whole="instance",
+        owner="a SQL Server login belongs to the whole instance",
+        dsn_hint=(
+            "write host:port, such as mssql-dev.example.com:1433. TLS goes in "
+            "`mssql.encrypt`; the password is never written in this file (P2)"
+        ),
+        tls=_Tls(
+            mode="encrypt",
+            ca=None,
+            verifying=MSSQL_VERIFYING_ENCRYPT_MODES,
+            unencrypted=MSSQL_UNENCRYPTED_ENCRYPT_MODE,
+            default="mandatory",
+            alternative="strict",
+            settings=lambda target: target.mssql_settings,
+            trust="trust_server_certificate",
+            remedy=(
+                "with the CA that issued the server's certificate in the operating "
+                "system's trust store, which ODBC Driver 18 checks the server against"
+            ),
+        ),
+    ),
 }
 
 
@@ -188,12 +224,15 @@ class TlsSetting:
 
     #: Where the mode is written: the override's line where one wrote it.
     at: KeyPath
-    #: The key, such as ``sslmode``, and its value.
+    #: The key, such as ``sslmode``, and its value. SQL Server's
+    #: ``trust_server_certificate: true`` is reported as its own key and value,
+    #: since it is what turns the check off.
     key: str
     mode: str
-    #: The key that names a CA file.
-    ca: str
-    #: The default mode, which is the one to recommend.
+    #: What the default needs to verify, as a message says it: a CA file key,
+    #: or the trust store.
+    remedy: str
+    #: The value to recommend for ``key``: the default.
     default: str
     #: Whether the mode checks the server's certificate.
     verifies: bool
@@ -208,12 +247,28 @@ def tls_setting(expanded: ExpandedTarget) -> TlsSetting | None:
     tls = product.tls
     if tls is None:
         return None
-    mode = getattr(tls.settings(expanded.target), tls.mode)
+    settings = tls.settings(expanded.target)
+    mode = getattr(settings, tls.mode)
+    remedy = (
+        f"with `{tls.ca}` naming the CA that issued the server's certificate"
+        if tls.ca is not None
+        else (tls.remedy or "")
+    )
+    if tls.trust is not None and getattr(settings, tls.trust) and mode in tls.verifying:
+        return TlsSetting(
+            at=block_key_at(expanded, product.block, tls.trust),
+            key=tls.trust,
+            mode="true",
+            remedy=remedy,
+            default="false",
+            verifies=False,
+            never_encrypts=False,
+        )
     return TlsSetting(
         at=block_key_at(expanded, product.block, tls.mode),
         key=tls.mode,
         mode=mode,
-        ca=tls.ca,
+        remedy=remedy,
         default=tls.default,
         verifies=mode in tls.verifying,
         never_encrypts=mode == tls.unencrypted,
@@ -226,6 +281,8 @@ def check_products(config: Config) -> None:
         _refuse_other_blocks(expanded)
         if expanded.target.type != ORACLE:
             _check_host_and_port_product(expanded)
+        if expanded.target.type == MSSQL:
+            _check_mssql_keys(expanded)
 
 
 def _written_blocks(target: Target) -> dict[str, bool]:
@@ -236,6 +293,7 @@ def _written_blocks(target: Target) -> dict[str, bool]:
         POSTGRESQL: target.postgres is not None,
         MYSQL: target.mysql is not None,
         MARIADB: target.mariadb is not None,
+        MSSQL: target.mssql is not None,
     }
 
 
@@ -295,13 +353,63 @@ def _check_host_and_port_product(expanded: ExpandedTarget) -> None:
     _check_dsn(expanded, product)
 
 
+#: What each of SQL Server's keys needs of ``encrypt``, and why: a key that would
+#: do nothing under the mode is refused, as a CA file the mode ignores is, so the
+#: file does not claim a check the connection does not make
+#: (``sql/mssql/10_client_tls_probe.py``).
+_MSSQL_KEY_MODES: dict[str, tuple[tuple[str, ...], str]] = {
+    "trust_server_certificate": (
+        ("mandatory",),
+        "it does nothing under `strict` (TL7), and `optional` does not encrypt",
+    ),
+    "server_certificate": (
+        ("strict",),
+        "ODBC Driver 18 connected with a pinned certificate only under `strict` (TL5)",
+    ),
+    "host_name_in_certificate": (
+        ("mandatory", "strict"),
+        "`optional` does not encrypt, so there is no certificate to check",
+    ),
+}
+
+
+def _check_mssql_keys(expanded: ExpandedTarget) -> None:
+    """SQL Server's keys, each under a mode where it does something.
+
+    Also refuses ``host_name_in_certificate`` beside ``trust_server_certificate:
+    true``: the name is checked only where the certificate is.
+    """
+    settings = expanded.target.mssql_settings
+    for key, (modes, why) in _MSSQL_KEY_MODES.items():
+        value = getattr(settings, key)
+        if value in (None, False) or settings.encrypt in modes:
+            continue
+        allowed = " or ".join(f"`{mode}`" for mode in modes)
+        raise ConfigError(
+            f"target {expanded.name!r} sets `mssql.{key}` under `encrypt: "
+            f"{settings.encrypt}`, where it does nothing",
+            at=block_key_at(expanded, "mssql", key),
+            hint=f"use it only with `encrypt: {allowed}`: {why}",
+        )
+    if settings.trust_server_certificate and settings.host_name_in_certificate is not None:
+        raise ConfigError(
+            f"target {expanded.name!r} sets `mssql.host_name_in_certificate` and "
+            "`trust_server_certificate: true`, which checks no name",
+            at=block_key_at(expanded, "mssql", "host_name_in_certificate"),
+            hint=(
+                "drop `trust_server_certificate`, and put the CA that issued the server's "
+                "certificate in the operating system's trust store"
+            ),
+        )
+
+
 def _refuse_an_unused_ca_file(expanded: ExpandedTarget, product: _Product) -> None:
     """A CA file the mode ignores. libpq ignores it below `require`, and under
     `require` turns the mode into `verify-ca` without saying so; MySQL checks
     the server against it only under its two verifying modes."""
     tls = product.tls
     block = getattr(expanded.target, product.block)
-    if tls is None or block is None or getattr(block, tls.ca) is None:
+    if tls is None or tls.ca is None or block is None or getattr(block, tls.ca) is None:
         return
     mode = getattr(block, tls.mode)
     if mode in tls.verifying:

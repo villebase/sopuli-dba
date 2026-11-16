@@ -280,7 +280,10 @@ connects to a MariaDB server and reports the scope, `server` (#1268). The
 MariaDB entry lists UC-1's `creds generate`, `apply`, `check`, `rotate` and
 `status` (#1270), UC-2's commands (#1272), `finish-rollover` (#1271), and
 UC-5's three `report` commands (#1460, #1462, #1483): every command that connects to
-a target. What
+a target. The config accepts `type: mssql`, and pyodbc comes with
+`sopuli-dba[mssql]`, beside Microsoft's ODBC Driver 18, a system package
+([#1538](../decisions/log.md#1538), decision 6). Its entry lists no command
+yet, so every command refuses a SQL Server target (open: #1549). What
 PostgreSQL lacks, such as a rollover window, a profile, or a forced password
 change at next login, is refused at plan time by capability, not by product. A libpq older than 16 is a property of the client,
 not of the target, and is refused per account during the run: the one accepted
@@ -604,6 +607,7 @@ pip install "sopuli-dba[oracle]"       # + python-oracledb, to reach Oracle
 pip install "sopuli-dba[postgres]"     # + psycopg, to reach PostgreSQL
 pip install "sopuli-dba[mysql]"        # + PyMySQL, to reach MySQL
 pip install "sopuli-dba[mariadb]"      # + PyMySQL and PyNaCl, for MariaDB
+pip install "sopuli-dba[mssql]"        # + pyodbc, for SQL Server, with ODBC Driver 18
 pip install "sopuli-dba[hashicorp]"    # + HashiCorp Vault
 pip install "sopuli-dba[oci]"          # + OCI Vault / Secrets
 pip install "sopuli-dba[file]"         # + age, for the file store (development and CI)
@@ -912,7 +916,7 @@ Config files are validated against a published JSON Schema. `sopuli config
 validate` is a first-class command and exits non-zero on unknown keys — a typo in
 a credential tool must never be silently ignored.
 
-The schema is `docs/schemas/sopuli-config-5.2.schema.json`. `sopuli/config/schema.py`
+The schema is `docs/schemas/sopuli-config-5.3.schema.json`. `sopuli/config/schema.py`
 generates it from the config layer, so it cannot drift from what the tool
 accepts. It is structural: an editor that uses it catches a typo, and the rules
 that span several keys stay in the validators, where an error can name the key.

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/villebase/sopuli-dba/schemas/sopuli-config-5.2.schema.json",
+  "$id": "https://github.com/villebase/sopuli-dba/schemas/sopuli-config-5.3.schema.json",
   "title": "sopuli-dba configuration",
   "type": "object",
   "description": "A sopuli-dba configuration file (docs/design/01-configuration.md).\n\nStructural only, and deliberately so. It describes key names, types, closed sets, required keys, and rejects unknown keys -- which is what makes editor completion and P3's \"a typo in a credential tool must never be silently ignored\" work while somebody is typing.\n\nThe rules it does not express are enforced by `sopuli config validate`, whose errors name the offending key: the inline form and `applications:` are mutually exclusive; `secret` and `secret_template` are mutually exclusive; two accounts may not resolve to one secret ref; `require:` may not exceed `length:` or ask for specials a charset does not have; `allow:` belongs to `charset: custom`; an `auth:` block may carry only the keys its own `method:` takes; every vault, policy, group, profile and target name written anywhere must be declared in the section that declares it; a `for_each` must use one inner dimension throughout; a profile may not set a key that would change scope; a `reports.accounts` rule needs `login:`, `settings:`, `oracle.profile` or `postgresql.valid_until`, names each account once across the rules, and may not give an application account an `oracle.profile`; and a `reports.oracle.profiles` name appears once. A file this schema accepts may still be refused there.",
@@ -506,13 +506,14 @@
             "oracle",
             "postgresql",
             "mysql",
-            "mariadb"
+            "mariadb",
+            "mssql"
           ]
         },
         "dsn": {
           "type": "string",
           "minLength": 1,
-          "description": "Oracle: host:port/service, or a TNS alias. PostgreSQL, MySQL and MariaDB: host:port, never a connection URI or a keyword string, which can carry a password."
+          "description": "Oracle: host:port/service, or a TNS alias. PostgreSQL, MySQL, MariaDB and SQL Server: host:port, never a connection URI or a keyword string, which can carry a password."
         },
         "environment": {
           "type": "string",
@@ -537,6 +538,9 @@
         },
         "mariadb": {
           "$ref": "#/$defs/target_mariadb"
+        },
+        "mssql": {
+          "$ref": "#/$defs/target_mssql"
         },
         "labels": {
           "$ref": "#/$defs/labels"
@@ -710,6 +714,37 @@
         }
       }
     },
+    "target_mssql": {
+      "type": "object",
+      "description": "How the tool connects to a SQL Server instance. Only on a `type: mssql` target.",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "encrypt": {
+          "type": "string",
+          "enum": [
+            "optional",
+            "mandatory",
+            "strict"
+          ],
+          "description": "ODBC Driver 18's Encrypt: `optional` (no), `mandatory` (yes) or `strict` (TDS 8). Default `mandatory`, which checks the server's certificate against the operating system's trust store."
+        },
+        "trust_server_certificate": {
+          "type": "boolean",
+          "description": "Encrypt without checking the server's certificate. Only with `encrypt: mandatory`; warns on every run."
+        },
+        "host_name_in_certificate": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The name the certificate must hold, where the dsn names another."
+        },
+        "server_certificate": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The server's own certificate, pinned. Only with `encrypt: strict`."
+        }
+      }
+    },
     "target_set": {
       "type": "object",
       "description": "A target template plus the dimensions to expand it over (§4). Listing 35 PDBs by hand is not viable; this generates them.",
@@ -732,13 +767,14 @@
             "oracle",
             "postgresql",
             "mysql",
-            "mariadb"
+            "mariadb",
+            "mssql"
           ]
         },
         "dsn": {
           "type": "string",
           "minLength": 1,
-          "description": "Oracle: host:port/service, or a TNS alias. PostgreSQL, MySQL and MariaDB: host:port, never a connection URI or a keyword string, which can carry a password."
+          "description": "Oracle: host:port/service, or a TNS alias. PostgreSQL, MySQL, MariaDB and SQL Server: host:port, never a connection URI or a keyword string, which can carry a password."
         },
         "environment": {
           "type": "string",
@@ -763,6 +799,9 @@
         },
         "mariadb": {
           "$ref": "#/$defs/target_mariadb"
+        },
+        "mssql": {
+          "$ref": "#/$defs/target_mssql"
         },
         "labels": {
           "$ref": "#/$defs/labels"
@@ -794,13 +833,14 @@
             "oracle",
             "postgresql",
             "mysql",
-            "mariadb"
+            "mariadb",
+            "mssql"
           ]
         },
         "dsn": {
           "type": "string",
           "minLength": 1,
-          "description": "Oracle: host:port/service, or a TNS alias. PostgreSQL, MySQL and MariaDB: host:port, never a connection URI or a keyword string, which can carry a password."
+          "description": "Oracle: host:port/service, or a TNS alias. PostgreSQL, MySQL, MariaDB and SQL Server: host:port, never a connection URI or a keyword string, which can carry a password."
         },
         "environment": {
           "type": "string",
@@ -825,6 +865,9 @@
         },
         "mariadb": {
           "$ref": "#/$defs/target_mariadb"
+        },
+        "mssql": {
+          "$ref": "#/$defs/target_mssql"
         },
         "labels": {
           "$ref": "#/$defs/labels"

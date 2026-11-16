@@ -39,7 +39,7 @@ This is also why the matrix is keyed on capabilities, not versions (§3).
 | MySQL 8.0, 8.4 and 9 | `mysql:8.4`; `mysql:8.0`, `mysql:8.4`, `mysql:9` | the MySQL driver: tier 1 uses `mysql:8.4`, and the `mysql-matrix` profile starts all three for the probes in `sql/mysql/`, which are run by hand |
 | MariaDB 10.11 to 12.3 | `mariadb:11.8`; `mariadb:10.11`, `mariadb:11.4`, `mariadb:11.8`, `mariadb:12.3` | the MariaDB driver: tier 1 uses `mariadb:11.8`, and the `mariadb-matrix` profile starts all four for the probes in `sql/mariadb/`, which are run by hand |
 | Supabase's database | `supabase/postgres`, pinned | supautils and its `supautils.reserved_roles`, which guardrail check 8 reads; a `postgres` account that is not a superuser. Tier 1 runs it in a profile of its own, `supabase`, so that a local tier-1 stack does not pull its image (#1111) |
-| SQL Server 2019/2022 | `mcr.microsoft.com/mssql/server` | a fifth driver, later |
+| SQL Server 2019, 2022 and 2025 | `mcr.microsoft.com/mssql/server:2019-latest`, `:2022-latest`, `:2025-latest` | the `mssql-matrix` profile starts all three for the probes in `sql/mssql/`, which are run by hand. The driver is not built ([#1538](../decisions/log.md#1538)) |
 | HashiCorp Vault | `hashicorp/vault` dev mode | KV v2 **and** KV v1, mounted side by side |
 | File / age backend | none needed | the non-production store. Its tests run in tier 0, on a file in a temporary directory |
 

@@ -827,7 +827,8 @@ in `sql/mariadb/`, and the matrix of 10.11, 11.4, 11.8 and 12.3 is the
 
 ### SQL Server
 
-These entries are measured before a SQL Server driver is designed (#1538).
+These entries were measured to design the SQL Server driver, whose decisions
+are in [#1538](decisions/log.md#1538).
 The probes are in `sql/mssql/`, and the matrix of 2019, 2022 and 2025 is the
 `mssql-matrix` profile of `test/compose.yaml`.
 [measurements.md](measurements.md) names each release in full.
@@ -861,6 +862,22 @@ The probes are in `sql/mssql/`, and the matrix of 2019, 2022 and 2025 is the
   afterwards. The policy's checks are not applied to the password. `HASHED`
   cannot be sent with `MUST_CHANGE`. The tool login reads `NULL` for another
   login's hash. `sql/mssql/02_client_hash_probe.py` measures it.
+- `unverified` `mssql-hash-version` (#1538) — **How can the tool tell, before
+  it changes a password, whether the server takes a `0x0300` value?**
+  2019 refuses `0x0300`, `15021`; 2022 and 2025 take it. The tool reads `NULL`
+  for every login's hash, so it cannot copy the version a server stores, and
+  a refused `HASHED` statement changes nothing but costs a statement. No
+  property or catalog row that names the accepted versions is measured.
+  Every release measured takes `0x0200`.
+- `unverified` `mssql-policy-off` (#1538) — **What does `CHECK_POLICY = OFF`
+  clear, and does a failed login while it is off count toward a lockout?**
+  Microsoft's documentation says turning the policy off also turns
+  `CHECK_EXPIRATION` off, clears the password history and resets
+  `lockout_time`. `sql/mssql/03_lock_expiry_probe.py` measures only that it
+  sets `BadPasswordCount` back to 0, on the Linux images, which never lock.
+  Decision 2 of [#1538](decisions/log.md#1538) logs in while the policy is
+  off, on the documentation's word that such a login counts toward no
+  lockout. Measuring both needs a Windows host (see `mssql-windows-policy`).
 - `verified` `mssql-lock-expiry` (#1538) — **What can a login with only
   `ALTER ANY LOGIN` do to another login's state, read back, and expect at
   its login, on the Linux images?**
@@ -928,10 +945,9 @@ The probes are in `sql/mssql/`, and the matrix of 2019, 2022 and 2025 is the
 - `unverified` `mssql-contained-password-text` (#1538) — **What does SQL Server
   keep of the text of `ALTER USER … WITH PASSWORD` in a contained database?**
   A contained user has no `HASHED` form, so the password always reaches the
-  server. Whether a SQL Server driver could keep it out of the server's
-  records for a contained user, as invariant 15 does on PostgreSQL, MySQL and
-  MariaDB, depends on what the server keeps of the statement; D2 of #1538
-  decides whether that rule extends to SQL Server.
+  server. A SQL Server driver refuses contained users
+  ([#1538](decisions/log.md#1538)), and this measurement comes before any
+  change to that.
   `sql/mssql/01_password_text_probe.py` measures `CREATE LOGIN` and `ALTER
   LOGIN` only.
 - `verified` `mssql-client-library` (#1538) — **Which Python client library

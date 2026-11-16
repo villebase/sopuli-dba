@@ -6004,7 +6004,10 @@ the register.
      changes a password adds SQL Server to invariant 15, with this
      exception. The tool sends `0x0300` where the server takes it, and
      decides that from a capability, not from the release. How to read that
-     capability is not known yet (unverified: mssql-hash-version).
+     capability is not known yet (`mssql-hash-version`). #1550 later
+     measured it: a `CREATE LOGIN` with a `0x0300` value, rolled back,
+     answers `15021` where the server refuses `0x0300`, and leaves no login.
+     Which way the driver reads it is #1564.
   3. `creds check` logs in. Where the host has a lockout the tool cannot
      read, on Windows until `mssql-windows-policy` is measured, the check is
      refused. The tool never reads `password_hash`. #1557 later measured it

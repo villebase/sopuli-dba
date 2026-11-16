@@ -863,13 +863,18 @@ The probes are in `sql/mssql/`, and the matrix of 2019, 2022 and 2025 is the
   afterwards. The policy's checks are not applied to the password. `HASHED`
   cannot be sent with `MUST_CHANGE`. The tool login reads `NULL` for another
   login's hash. `sql/mssql/02_client_hash_probe.py` measures it.
-- `unverified` `mssql-hash-version` (#1538) — **How can the tool tell, before
-  it changes a password, whether the server takes a `0x0300` value?**
-  2019 refuses `0x0300`, `15021`; 2022 and 2025 take it. The tool reads `NULL`
-  for every login's hash, so it cannot copy the version a server stores, and
-  a refused `HASHED` statement changes nothing but costs a statement. No
-  property or catalog row that names the accepted versions is measured.
-  Every release measured takes `0x0200`.
+- `verified` `mssql-hash-version` (#1538, #1550) — **How can the tool tell,
+  before it changes a password, whether the server takes a `0x0300` value?**
+  2019 refuses `0x0300`, `15021`; 2022 and 2025 take it, and every release
+  measured takes `0x0200`. The tool reads `NULL` for every login's hash, so it
+  cannot copy the version a server stores. Three ways tell, as a login with
+  only `ALTER ANY LOGIN`. `CREATE LOGIN` with a `0x0300` value inside a
+  transaction that is rolled back answers `15021` or `ok`, and leaves no
+  login. A refused `0x0300` change changes nothing, also with `, CHECK_POLICY
+  = OFF` in it. `SERVERPROPERTY('ProductMajorVersion')` reads 15, 16 or 17. A
+  value sent to a login that does not exist is no check: it answers `15151`
+  in either version. Which way the driver uses is #1564.
+  `sql/mssql/11_hash_version_probe.py` measures it.
 - `verified` `mssql-policy-off` (#1538, #1557) — **What does `CHECK_POLICY =
   OFF` clear, and does a failed login while it is off count toward a
   lockout?**

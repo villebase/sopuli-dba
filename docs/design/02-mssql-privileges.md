@@ -283,9 +283,12 @@ digest of the password in UTF-16LE followed by the salt:
   2025 stores it itself. 2019 refuses it, `15021`.
 
 The driver's value agrees with the server's own for the same password and salt
-(CH1). The driver sends `0x0300` where the server takes it. How the driver
-reads that capability before a change is not measured
-(unverified: mssql-hash-version).
+(CH1). The driver sends `0x0300` where the server takes it. A login with
+only `ALTER ANY LOGIN` can tell before a change. `CREATE LOGIN` with a
+`0x0300` value, inside a transaction that is rolled back, answers `15021`
+where the server refuses `0x0300`, and `ok` where it takes it, and leaves no
+login. A refused `0x0300` change changes nothing (`11_hash_version_probe.py`,
+HV3, HV6). Which of these the driver uses is open (open: #1564).
 
 `HASHED` is refused on a login with `CHECK_POLICY = ON`, `33020` (CH4). So a
 change runs in this order, on every host:

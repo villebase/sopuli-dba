@@ -78,7 +78,7 @@ the agent cannot read this skill.
 | uc5 | `docs/use-cases/uc-05-fleet-reports.md` |
 | oracle | `docs/design/02-oracle-privileges.md` |
 | measurements | `docs/measurements.md` |
-| products | `docs/design/00-principles.md`, `docs/design/02-postgres-privileges.md`, `docs/design/02-mysql-privileges.md`, `docs/design/02-mariadb-privileges.md` |
+| products | `docs/design/00-principles.md`, `docs/design/02-postgres-privileges.md`, `docs/design/02-mysql-privileges.md`, `docs/design/02-mariadb-privileges.md`, `docs/design/02-mssql-privileges.md` |
 | process | `docs/design/04-testing.md`, `docs/workflow.md`, `docs/maintainer-environments.md`, `test/README.md`, `CONTRIBUTING.md`, `CLAUDE.md`, `.github/copilot-instructions.md` |
 | front | `README.md`, `SECURITY.md`, `docs/getting-started.md`, `docs/security-model.md` |
 | local-testing | `docs/local-testing.md` |

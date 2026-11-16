@@ -6007,7 +6007,10 @@ the register.
      capability is not known yet (unverified: mssql-hash-version).
   3. `creds check` logs in. Where the host has a lockout the tool cannot
      read, on Windows until `mssql-windows-policy` is measured, the check is
-     refused. The tool never reads `password_hash`.
+     refused. The tool never reads `password_hash`. #1557 later measured it
+     (`mssql-windows-policy`): `LOGINPROPERTY` gives no lockout threshold, so
+     the tool still cannot compute a lockout margin on Windows, and a locked
+     login answers its right password `18456`, as a wrong one.
   4. Each replica of an Availability Group is a target of its own, and the
      promotion gate waits for each one the config declares. `doctor` warns
      when a target is in a group whose other replicas the config does not
@@ -6041,12 +6044,16 @@ the register.
      bug; and on 2019 the value is a single SHA-512 round. Turning the policy
      off also turns `CHECK_EXPIRATION` off, clears the password history and
      resets the lockout, which unlocks a locked login whose password the
-     same step changes (unverified: mssql-policy-off). Recording the flags
-     first makes the two statements safe to interrupt. The login while the
-     policy is off counts toward no lockout, so it also checks a `HASHED`
-     value on a host whose lockout the tool cannot read. `MUST_CHANGE` has
-     no `HASHED` form, and without it the seen reset cannot make the owner
-     choose a password. It also needs a new password, so `account
+     same step changes. Recording the flags first makes the two statements
+     safe to interrupt. The login while the policy is off counts toward no
+     lockout, so it also checks a `HASHED` value on a host whose lockout the
+     tool cannot read. #1557 later measured both on SQL Server 2022 Express
+     on Windows, under a local policy (`mssql-policy-off`): turning the
+     policy off unlocked the login, set `HistoryLength` to 0 and turned
+     `CHECK_EXPIRATION` off, and failed logins while it was off did not
+     count. A domain's policy is not measured. `MUST_CHANGE` has no `HASHED`
+     form, and without it the seen reset cannot make the owner choose a
+     password. It also needs a new password, so `account
      expire-password` would replace the password the owner knows.
   3. Every reader measured gets `NULL` for `password_hash`. Reading it needs
      more than `ALTER ANY LOGIN`, and gives the tool every login's hash,

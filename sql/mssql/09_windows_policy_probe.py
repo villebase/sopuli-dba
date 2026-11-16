@@ -41,9 +41,46 @@ difference, or a step that fails, makes it exit 1.
 
 It MEASURES and decides nothing.
 
-STATUS: not yet run.
+STATUS: run on 16.0.1000.6, SQL Server 2022 Express as Chocolatey's
+sql-server-express installed it, on Windows Server 2025 Datacenter, the
+windows-latest GitHub Actions runner, with Python 3.13.17 and ODBC Driver 18,
+on 2026-11-16 (#1557). The local policy: lockout threshold 5, duration and
+observation window 1 minute, history 5, maximum age 42 days, minimum age 0.
+Twice in one job, exit 1 both times only because RESULTS was empty, and the
+same result both times.
 
-RESULTS -- not yet measured
+RESULTS -- 16.0.1000.6 on Windows Server 2025, local policy
+
+  WP0  the tool login, with only ALTER ANY LOGIN, reads sys.dm_os_host_info:
+       host_platform `Windows`
+  WP1  LOGINPROPERTY gives BadPasswordCount, BadPasswordTime,
+       DaysUntilExpiration, HistoryLength, IsExpired, IsLocked,
+       IsMustChange, LockoutTime and PasswordLastSetTime. **None of them is
+       the lockout threshold**, or the duration
+  WP2  each wrong password is refused 18456 and adds 1 to BadPasswordCount.
+       The fifth, the threshold, locks the login: IsLocked 1, LockoutTime
+       set. The sixth leaves the count at 5
+  WP3  **a locked login answers its right password 18456**, as a wrong one,
+       not 18486; that login sets BadPasswordCount to 0 and the login stays
+       locked. Once the duration has passed, the right password logs in and
+       IsLocked reads 0
+  WP4  on a locked login, CHECK_POLICY = OFF unlocks it and sets the count to
+       0, and turning the policy on again keeps it unlocked. A HASHED value
+       with CHECK_POLICY = OFF unlocks it, and the value's password logs in.
+       A new password with UNLOCK unlocks it. **MUST_CHANGE and UNLOCK are
+       accepted together**: the login is unlocked and answers 18488. A new
+       password alone leaves it locked, and the new password is refused 18456
+  WP5  two wrong passwords set the count to 2; the HASHED value with
+       CHECK_POLICY = OFF sets it to 0. **With the policy off, seven wrong
+       passwords leave the count at 0 and the login unlocked**, and after
+       CHECK_POLICY = ON the login is still unlocked and its password logs in
+  WP6  the tool sets a password twice, then the first one again: accepted.
+       The history does not stop a password set with ALTER LOGIN by another
+       login. HistoryLength reads 1 after CREATE LOGIN and grows by one with
+       each password. CHECK_POLICY = OFF sets it to 0, and ON again to 1
+  WP7  with CHECK_EXPIRATION = ON, a new password has DaysUntilExpiration 42,
+       the policy's maximum age. CHECK_POLICY = OFF turns CHECK_EXPIRATION off
+       too, and CHECK_POLICY = ON leaves it off
 
 HOW TO RUN: .github/workflows/mssql-windows-probe.yml runs it on a
 windows-latest runner, after it installs SQL Server Express and sets the
@@ -338,8 +375,61 @@ def wp7(results: dict[str, str]) -> None:
 
 CASES: tuple[Callable[[dict[str, str]], None], ...] = (wp0, wp1, wp2_wp3, wp4, wp5, wp6, wp7)
 
-#: What the server answered. Empty until the first run measures it.
-RECORDED: dict[str, str] = {}
+#: What the server answered, under the local policy the workflow sets.
+RECORDED: dict[str, str] = {
+    "WP0 tool reads sys.dm_os_host_info": "yes, Windows",
+    "WP1 properties": (
+        "BadPasswordCount 0, BadPasswordTime default, DaysUntilExpiration NULL, "
+        "HistoryLength 1, IsExpired 0, IsLocked 0, IsMustChange 0, LockoutTime default, "
+        "PasswordLastSetTime set"
+    ),
+    "WP2 wrong password 1": "18456; BadPasswordCount 1, IsLocked 0, LockoutTime default",
+    "WP2 wrong password 2": "18456; BadPasswordCount 2, IsLocked 0, LockoutTime default",
+    "WP2 wrong password 3": "18456; BadPasswordCount 3, IsLocked 0, LockoutTime default",
+    "WP2 wrong password 4": "18456; BadPasswordCount 4, IsLocked 0, LockoutTime default",
+    "WP2 wrong password 5": "18456; BadPasswordCount 5, IsLocked 1, LockoutTime set",
+    "WP2 wrong password 6": "18456; BadPasswordCount 5, IsLocked 1, LockoutTime set",
+    "WP3 right password while locked": "18456; BadPasswordCount 0, IsLocked 1, LockoutTime set",
+    "WP3 right password after the duration": (
+        "logged in; BadPasswordCount 0, IsLocked 0, LockoutTime default"
+    ),
+    "WP4 CHECK_POLICY = OFF": (
+        "locked; ok; BadPasswordCount 0, IsLocked 0, LockoutTime default; login logged in"
+    ),
+    "WP4 then CHECK_POLICY = ON": (
+        "ok; BadPasswordCount 0, IsLocked 0, LockoutTime default; login logged in"
+    ),
+    "WP4 HASHED, CHECK_POLICY = OFF": (
+        "locked; ok; BadPasswordCount 0, IsLocked 0, LockoutTime default; login logged in"
+    ),
+    "WP4 UNLOCK": (
+        "locked; ok; BadPasswordCount 0, IsLocked 0, LockoutTime default; login logged in"
+    ),
+    "WP4 MUST_CHANGE UNLOCK": (
+        "locked; ok; BadPasswordCount 0, IsLocked 0, LockoutTime default; login 18488"
+    ),
+    "WP4 a new password alone": (
+        "locked; ok; BadPasswordCount 5, IsLocked 1, LockoutTime set; login 18456"
+    ),
+    "WP5 two wrong passwords": "BadPasswordCount 2, IsLocked 0, LockoutTime default",
+    "WP5 HASHED, CHECK_POLICY = OFF": "ok; BadPasswordCount 0, IsLocked 0, LockoutTime default",
+    "WP5 wrong passwords while off": (
+        "18456, 18456, 18456, 18456, 18456, 18456, 18456; "
+        "BadPasswordCount 0, IsLocked 0, LockoutTime default"
+    ),
+    "WP5 CHECK_POLICY = ON": (
+        "ok; BadPasswordCount 0, IsLocked 0, LockoutTime default; login logged in"
+    ),
+    "WP6 set A": "ok; HistoryLength 2",
+    "WP6 set B": "ok; HistoryLength 3",
+    "WP6 set A again": "ok; HistoryLength 4",
+    "WP6 CHECK_POLICY = OFF": "ok; HistoryLength 0",
+    "WP6 CHECK_POLICY = ON": "ok; HistoryLength 1",
+    "WP6 set A after off and on": "ok; HistoryLength 2",
+    "WP7 a new password": "ok; DaysUntilExpiration 42, is_expiration_checked True",
+    "WP7 CHECK_POLICY = OFF": "ok; is_policy_checked False, is_expiration_checked False",
+    "WP7 CHECK_POLICY = ON": "ok; is_policy_checked True, is_expiration_checked False",
+}
 
 
 def setup() -> None:

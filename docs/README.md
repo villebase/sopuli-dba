@@ -869,15 +869,18 @@ The probes are in `sql/mssql/`, and the matrix of 2019, 2022 and 2025 is the
   a refused `HASHED` statement changes nothing but costs a statement. No
   property or catalog row that names the accepted versions is measured.
   Every release measured takes `0x0200`.
-- `unverified` `mssql-policy-off` (#1538) — **What does `CHECK_POLICY = OFF`
-  clear, and does a failed login while it is off count toward a lockout?**
-  Microsoft's documentation says turning the policy off also turns
-  `CHECK_EXPIRATION` off, clears the password history and resets
-  `lockout_time`. `sql/mssql/03_lock_expiry_probe.py` measures only that it
-  sets `BadPasswordCount` back to 0, on the Linux images, which never lock.
-  Decision 2 of [#1538](decisions/log.md#1538) logs in while the policy is
-  off, on the documentation's word that such a login counts toward no
-  lockout. Measuring both needs a Windows host (see `mssql-windows-policy`).
+- `verified` `mssql-policy-off` (#1538, #1557) — **What does `CHECK_POLICY =
+  OFF` clear, and does a failed login while it is off count toward a
+  lockout?**
+  On SQL Server 2022 on Windows, under a local policy: turning the policy off
+  unlocks a locked login, sets `BadPasswordCount` to 0, sets `HistoryLength`
+  to 0, and turns `CHECK_EXPIRATION` off. Turning the policy on again leaves
+  `CHECK_EXPIRATION` off and the login unlocked. **While the policy is off,
+  failed logins do not count:** seven wrong passwords, past a threshold of 5,
+  leave the count at 0, and the login is not locked once the policy is on
+  again. So the login that decision 2 of [#1538](decisions/log.md#1538)
+  makes while the policy is off cannot lock the login.
+  `sql/mssql/09_windows_policy_probe.py` measures it (WP4 to WP7).
 - `verified` `mssql-lock-expiry` (#1538) — **What can a login with only
   `ALTER ANY LOGIN` do to another login's state, read back, and expect at
   its login, on the Linux images?**
@@ -893,18 +896,28 @@ The probes are in `sql/mssql/`, and the matrix of 2019, 2022 and 2025 is the
   password in clear without `UNLOCK` does not, as a rotation would send it. A
   `HASHED` value can only be sent with the policy turned off, which sets it
   back to 0 in that statement. With `CHECK_EXPIRATION = ON` a new password
-  has 90 days on the Linux images; what sets the age on Windows is not
-  measured (unverified: mssql-windows-policy).
+  has 90 days on the Linux images; on Windows the host's policy sets it
+  (`mssql-windows-policy`).
   `sql/mssql/03_lock_expiry_probe.py` measures it.
-- `unverified` `mssql-windows-policy` (#1538) — **On SQL Server for Windows,
-  when does a login lock, what does a locked login answer, and what sets a
-  password's maximum age?**
-  On Windows, `CHECK_POLICY` and `CHECK_EXPIRATION` apply the host's or
-  domain's account policy, which the Linux images do not have. The lockout
-  threshold, what `BadPasswordCount` and `IsLocked` read on the way, the
-  answer `18486`, and the maximum age are not measured: the public suite has
-  no Windows server. Until they are, a check that logs in on SQL Server
-  cannot compute a lockout margin.
+- `verified` `mssql-windows-policy` (#1538, #1557) — **On SQL Server for
+  Windows, when does a login lock, what does a locked login answer, and what
+  sets a password's maximum age?**
+  On SQL Server 2022 Express on Windows Server 2025, under a local policy of
+  threshold 5, duration 1 minute and maximum age 42 days: each wrong password
+  adds 1 to `BadPasswordCount`, and the fifth locks the login (`IsLocked` 1,
+  `LockoutTime` set). **A locked login answers its right password `18456`**,
+  as it answers a wrong one, so a refusal does not tell a lock from a wrong
+  password; read `IsLocked` first. Once the duration has passed, the right
+  password logs in. A new password with `UNLOCK`, or `CHECK_POLICY = OFF`,
+  ends the lock; a new password alone does not. `MUST_CHANGE` and `UNLOCK`
+  are accepted in one statement. **`LOGINPROPERTY` gives no lockout
+  threshold**, so the tool cannot compute a lockout margin from the server.
+  The policy's maximum age is the new password's `DaysUntilExpiration`. A
+  password that another login sets with `ALTER LOGIN` is not refused by the
+  history. A domain's policy, and other releases on Windows, are not
+  measured. The tool login reads `sys.dm_os_host_info`, which names the
+  host's platform. `sql/mssql/09_windows_policy_probe.py` measures it (WP0 to
+  WP3, WP6, WP7).
 - `verified` `mssql-tool-grants` (#1538) — **Which logins can a tool login
   with only `ALTER ANY LOGIN` change, and what does it read of their
   privileges?**

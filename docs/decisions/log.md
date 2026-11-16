@@ -6041,10 +6041,13 @@ the register.
      bug; and on 2019 the value is a single SHA-512 round. Turning the policy
      off also turns `CHECK_EXPIRATION` off, clears the password history and
      resets the lockout, which unlocks a locked login whose password the
-     same step changes (unverified: mssql-policy-off). Recording the flags
+     same step changes. Recording the flags
      first makes the two statements safe to interrupt. The login while the
      policy is off counts toward no lockout, so it also checks a `HASHED`
-     value on a host whose lockout the tool cannot read. `MUST_CHANGE` has
+     value on a host whose lockout the tool cannot read. #1557 later
+     measured both on SQL Server 2022 on Windows (`mssql-policy-off`): the
+     side effects are as the documentation says, and failed logins while the
+     policy is off do not count. `MUST_CHANGE` has
      no `HASHED` form, and without it the seen reset cannot make the owner
      choose a password. It also needs a new password, so `account
      expire-password` would replace the password the owner knows.

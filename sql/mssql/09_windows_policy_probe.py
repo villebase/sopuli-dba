@@ -47,7 +47,8 @@ windows-latest GitHub Actions runner, with Python 3.13.17 and ODBC Driver 18,
 on 2026-11-16 (#1557). The local policy: lockout threshold 5, duration and
 observation window 1 minute, history 5, maximum age 42 days, minimum age 0.
 Twice in one job, exit 1 both times only because RESULTS was empty, and the
-same result both times.
+same result both times; then twice again in a new job, on a new runner,
+against the recorded RESULTS, exit 0 both times.
 
 RESULTS -- 16.0.1000.6 on Windows Server 2025, local policy
 

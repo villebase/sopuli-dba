@@ -3,17 +3,14 @@ name: mssql-windows-probe
 # Runs sql/mssql/09_windows_policy_probe.py on SQL Server Express on a Windows
 # runner, the only Windows SQL Server the project can reach (#1557). The probe
 # measures the server's password policy under a local account policy this job
-# sets, and checks its results against its RESULTS header. It runs on demand,
-# and on a pull request that changes the probe or this file. It is not part of
-# `ci`, and nothing requires it.
+# sets, and checks its results against its RESULTS header. It runs on demand
+# only: it takes several minutes to install SQL Server, and a path filter on a
+# pull_request trigger would leave its check unreported on every other pull
+# request (tests/test_workflow_prose_list.py). It is not part of `ci`, and
+# nothing requires it.
 
 on:
   workflow_dispatch:
-  pull_request:
-    paths:
-      - sql/mssql/09_windows_policy_probe.py
-      - .github/workflows/mssql-windows-probe.yml
-      - .github/requirements/mssql-windows-probe.txt
 
 permissions:
   contents: read

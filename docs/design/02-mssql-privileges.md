@@ -314,11 +314,28 @@ until step 4 has run, also when a new `pending` replaces the old one
 run. The driver reads `IsMustChange` and refuses such a login at plan time,
 naming it (invariant 4).
 
-**How `creds apply` tells that a target already holds `pending` is open
-(#1551).** The tool login reads no hash (§2.1). A login with `pending` tells
-it on Linux, where no login locks (§7); on Windows such a login is refused
-until its lockout is measured. Sending the value again on every run would be
-a new exception to invariant 9.
+**How `creds apply` tells that a target already holds the password depends
+on the host** ([#1551](../decisions/log.md#1551), open: #1551). The tool login
+reads no hash (§2.1), and the driver reads the host's platform as a
+capability (§7):
+
+- **On Linux**, where no login locks, `apply` logs in first, as on Oracle and
+  PostgreSQL, and leaves a password that already works alone. It reads
+  `IsLocked` before that login, and reports a locked login as `unavailable`
+  without logging in.
+- **On Windows**, `apply` and `rotate` do not log in before a change, as on
+  MySQL and MariaDB. They set a password only from the vault's `pending`, or
+  for a rollback, and an account with only `current` is `SKIPPED`. While a
+  rotation's promotion is held, each `apply` sets the `pending` again and
+  reports `changed: true`, an exception to invariant 9 that ends when the
+  rotation completes. The login of step 3 is the only one, and it runs while
+  the policy is off. A login that `IsLocked` reports locked is changed all
+  the same, which ends the lockout, and the result names the lock it ended,
+  with a warning code. Under a domain's policy, whether a failed login while
+  the policy is off counts is not measured (unverified: mssql-domain-policy).
+
+A check that turns the policy off to log in safely was rejected: it would
+change the login on every run, also when nothing needs a change.
 
 **The server takes a wrong value.** It checks a value's length and version,
 not that a password matches it. A `0x0100` value of 26 bytes, or a `0x0300`
@@ -362,6 +379,17 @@ the password in clear, once (decision 2, open: #1554):
 ALTER LOGIN [jdoe] WITH PASSWORD = N'<password>' MUST_CHANGE, CHECK_POLICY = ON, CHECK_EXPIRATION = ON;
 ```
 
+A reset follows H4's rule on locks. `IsLocked` is a lockout after failed
+logins, which nobody chose and which ends by itself, as Oracle's
+`LOCKED(TIMED)` does (WP3). Where it reads 1, the statement also unlocks the
+login: `PASSWORD = N'<password>' MUST_CHANGE UNLOCK, …`. A new password alone
+leaves a locked login locked, and its owner would then be refused, `18456`.
+`MUST_CHANGE` and `UNLOCK` are accepted together, and the login then answers
+`18488` (`09_windows_policy_probe.py`, WP4). A disabled login,
+`is_disabled` 1, is the lock somebody chose, as Oracle's plain `LOCKED` is:
+`account suspend` sets it. A reset refuses a disabled login at plan time, on
+either path ([#1554](../decisions/log.md#1554), open: #1554).
+
 The statement is a batch of its own, never inside `EXEC`. The password is a
 Unicode string literal with each `'` doubled, so the statement always
 parses. The server then keeps it with the password left out or masked
@@ -371,11 +399,29 @@ parses. The server then keeps it with the password left out or masked
 be turned off while it is pending (LK5). So the seen reset leaves both on. On
 the Linux images a new password then expires after 90 days (LK6).
 
-The unseen path sends a value, in the order of §6.2. UC-2 has no `pending`
-entry, so step 1 needs another place to record the flags before the change.
-Where that is, is open (#1554). A login whose `MUST_CHANGE` is pending, such
-as one a seen reset left before its owner's first logon, is refused at plan
-time (§6.2); whether a second reset offers a way past that is open (#1554).
+The unseen path sends a value with steps 1, 2 and 4 of §6.2, which also ends
+a lockout. It makes no login with the new password: a reset never verifies,
+because a login would use the password outside the store (H4). A wrong value
+from the driver is caught by its tier-1 tests, not by the reset.
+
+UC-2 has no `pending` entry, so step 1 records the flags in the reset's
+metadata record (UC-2 §3.1), before the change. Where that record already
+holds flags that a stopped reset recorded and did not restore, the reset
+keeps them and does not read again, as UC-1's step 1 does: a second read
+would record the policy that the stopped run left off. Where no store is
+configured, neither a `reset_records:` store nor a delivery method's
+`vault:`, and the login's `CHECK_POLICY` is on, the unseen reset is refused
+at plan time: a run that stopped after step 2 would leave the policy, and
+`CHECK_EXPIRATION` with it, off for good. Where both flags are off and no
+record holds others, there is nothing to restore, and no record is needed
+([#1554](../decisions/log.md#1554), open: #1554).
+
+A login whose `MUST_CHANGE` is pending, such as one a seen reset left before
+its owner's first logon, cannot take a value (§6.2). The unseen reset refuses
+it at plan time and names the seen reset, which keeps the policy on and so
+works on such a login. The unseen path does not clear `MUST_CHANGE` with a
+plain password first: that would widen invariant 15's exception beyond the
+seen reset.
 
 **`account expire-password` is refused at plan time.** `MUST_CHANGE` is taken
 only with a new password, so the server cannot expire a password and keep it.

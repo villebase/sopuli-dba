@@ -1000,17 +1000,19 @@ The probes are in `sql/mssql/`, and the matrix of 2019, 2022 and 2025 is the
   Measured for pyodbc 5.5.0 with ODBC Driver 18, the client of decision 6 of
   [#1538](decisions/log.md#1538), from Windows and from Linux, against a
   server certificate issued by a CA the probe creates. **`Encrypt=yes`
-  checks the chain and the name**: it is refused with the CA in no trust
-  store, connects once the CA is in Linux's system store, refuses an address
-  the certificate does not hold, and connects there with
-  `HostNameInCertificate`. **There is no CA-file setting:** `ServerCertificate`
-  set to the CA's certificate never connects. `ServerCertificate` set to the
-  server's own certificate connects only with `Encrypt=strict`.
-  **`Encrypt=strict` connects only on 17.0.5065.9**; on 15.0.4510.2 and
-  16.0.4325.4 the server resets every strict connection, `10054`.
+  checks the chain** on both clients: with the CA in no trust store it is
+  refused. On Linux it connects once the CA is in the system store, and it
+  **checks the name**: it refuses an address the certificate does not hold,
+  and connects there with `HostNameInCertificate`. **There is no CA-file
+  setting:** `ServerCertificate` set to the CA's certificate never connects.
+  **`Encrypt=strict` connects only on 17.0.5065.9.** On 15.0.4510.2 and
+  16.0.4325.4 the server resets every strict connection, `10054`, on both
+  clients. On 17.0.5065.9,
+  `ServerCertificate` set to the server's own certificate connects with
+  strict, on both clients; with `Encrypt=yes` it never does.
   `TrustServerCertificate` connects with `Encrypt=yes` and does nothing for
-  strict. A CA in the Windows certificate store is not measured, because the
-  probe does not change the store. The other libraries of
+  strict. A CA in the Windows certificate store, and the name check on
+  Windows, are not measured, because the probe does not change the store. The other libraries of
   `mssql-client-library` are not measured here.
   `sql/mssql/10_client_tls_probe.py` measures it.
 - `verified` `mssql-report-reads` (#1538) — **Which grants does a read-only

@@ -37,11 +37,14 @@ STATUS: run on 15.0.4510.2, 16.0.4325.4 and 17.0.5065.9, the
 mcr.microsoft.com/mssql/server 2019-latest, 2022-latest and 2025-latest images
 of test/compose.yaml profile mssql-matrix, as pulled on 2026-11-15, on
 2026-11-16 (#1549). Clients: pyodbc 5.5.0 with ODBC Driver 18 for SQL Server
-18.7.1.1, from Windows 11 (Python 3.13.12) and from Linux (06's image). Three
-times; the first failed on 15.0.4510.2 and on Windows for reasons of the
-probe's own, fixed since: the Windows client connects to 127.0.0.1, because
-`localhost` resolves to ::1 there first and that connection is refused. The
-results were the same every time a case ran.
+18.7.1.1, from Windows 11 (Python 3.13.12) and from Linux (06's image).
+Five times; the first failed on 15.0.4510.2 and on Windows for reasons of
+the probe's own, fixed since: the Windows client connects to 127.0.0.1,
+because `localhost` resolves to ::1 there first and that connection is
+refused. Up to the fourth, the Windows client's strict refusals were
+labelled by their "SSL Provider" prefix; the message also carries 10054,
+which the probe now looks for first. The results were the same every time a
+case ran.
 
 RESULTS -- the same on 15.0.4510.2 and 16.0.4325.4; 17.0.5065.9 where noted
 
@@ -50,15 +53,17 @@ RESULTS -- the same on 15.0.4510.2 and 16.0.4325.4; 17.0.5065.9 where noted
        SSL provider error (Windows)
   TL2  with the CA in the system trust store, Encrypt=yes connects
        encrypted (Linux; the Windows store was not changed)
-  TL3  **Encrypt=strict is refused on 15.0.4510.2 and 16.0.4325.4**: the
-       server resets the connection, 10054, also with the CA trusted. On
-       17.0.5065.9 it connects encrypted with the CA trusted
-  TL4  **Encrypt=yes checks the name**: with the CA trusted, a connection to
-       an address the certificate does not hold is refused; with
-       HostNameInCertificate set to a name it holds, it connects
+  TL3  **Encrypt=strict is refused on 15.0.4510.2 and 16.0.4325.4**, in
+       every case and on both clients: the server resets the connection,
+       10054 ("forcibly closed by the remote host"), also with the CA
+       trusted. On 17.0.5065.9 it connects encrypted with the CA trusted
+       (Linux)
+  TL4  **Encrypt=yes checks the name** (Linux): with the CA trusted, a
+       connection to an address the certificate does not hold is refused;
+       with HostNameInCertificate set to a name it holds, it connects
   TL5  ServerCertificate set to the server's own certificate: refused with
-       Encrypt=yes; with Encrypt=strict it connects on 17.0.5065.9, on both
-       clients, and is refused on the others
+       Encrypt=yes on every release. With Encrypt=strict it connects on
+       17.0.5065.9 only, on both clients
   TL6  **ServerCertificate set to the CA's certificate never connects**,
        with Encrypt=yes or strict, on any release or client
   TL7  TrustServerCertificate=yes connects encrypted with Encrypt=yes, and
@@ -85,6 +90,7 @@ import importlib.util
 import ipaddress
 import json
 import os
+import platform
 import re
 import subprocess
 import sys
@@ -115,6 +121,7 @@ CERTS = "/var/opt/mssql/certs"
 QUERY = "SELECT encrypt_option FROM sys.dm_exec_connections WHERE session_id = @@SPID"
 #: The ODBC driver's reasons, shortened to what stays the same between runs.
 REASONS = (
+    ("(10054)", "connection reset, 10054"),
     ("certificate verify failed", "certificate verify failed"),
     ("17821", "17821"),
     ("Login timeout expired", "login timeout"),
@@ -154,8 +161,9 @@ def connect(host: str, port: int, extra: str) -> str:
 
 def measure(host: str, port: int, certs: Path) -> dict:
     """The cases that need the CA in no trust store."""
-    server_pem = certs / "server.pem"
-    ca_pem = certs / "ca.pem"
+    # Braced, as the password is, so that a path with `;` or `}` stays one value.
+    server_pem = cl.braced(str(certs / "server.pem"))
+    ca_pem = cl.braced(str(certs / "ca.pem"))
     cases: dict[str, tuple[str, str]] = {
         "TL1 Encrypt=yes, CA not trusted": (host, "Encrypt=yes;"),
         "TL5 Encrypt=yes, ServerCertificate = server": (
@@ -351,8 +359,10 @@ def teardown(service: str) -> None:
 
 def on_linux(service: str, certs: Path) -> dict:
     name = ch.container(service)
+    # The address on the network the client joins, not on any other.
+    network = f"{ch.PROJECT}_default"
     address = docker(
-        "inspect", "-f", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", name
+        "inspect", "-f", f'{{{{(index .NetworkSettings.Networks "{network}").IPAddress}}}}', name
     )
     ipaddress.ip_address(address)  # a refusal here is a step that failed
     output = docker(
@@ -374,12 +384,17 @@ def probe(service: str) -> None:
         with tempfile.TemporaryDirectory() as directory:
             certs = Path(directory)
             issue(certs, [ch.container(service), "localhost"])
-            configure(service, certs)
             try:
+                # Inside the try: a failure after mssql-conf has written the
+                # settings must still set them back.
+                configure(service, certs)
                 variable = f"SOPULI_TEST_{service.upper().replace('-', '')}_PORT"
                 port = int(os.environ.get(variable, cl.PORTS[service]))
-                windows = measure("127.0.0.1", port, certs)
-                compare(service, "Windows", windows, RECORDED_WINDOWS.get(major, {}))
+                # Only a Windows host's answers are recorded; another host's
+                # differ from nothing recorded, and say so.
+                host = platform.system()
+                recorded = RECORDED_WINDOWS.get(major, {}) if host == "Windows" else {}
+                compare(service, host, measure("127.0.0.1", port, certs), recorded)
                 linux = on_linux(service, certs)
                 compare(service, "Linux", linux, RECORDED_LINUX.get(major, {}))
             finally:
@@ -396,19 +411,16 @@ def compare(service: str, where: str, results: dict, recorded: dict[str, str]) -
         ch.check(f"{service} {where} {label}", got, recorded.get(label))
 
 
-_RESET = (
-    "refused, 08001: '08001', '[08001] [Microsoft][ODBC Driver 18 for SQL Server]"
-    "TCP Provider: Error code 0x2746 (10054) (SQLDriverConnect)')"
-)
+_RESET = "refused, connection reset, 10054"
 #: The Windows client's answers on 2019 and 2022, which agree.
 _WINDOWS_2019 = {
     "TL1 Encrypt=yes, CA not trusted": "refused, SSL provider error",
     "TL5 Encrypt=yes, ServerCertificate = server": "refused, SSL provider error",
-    "TL5 Encrypt=strict, ServerCertificate = server": "refused, SSL provider error",
+    "TL5 Encrypt=strict, ServerCertificate = server": _RESET,
     "TL6 Encrypt=yes, ServerCertificate = CA": "refused, SSL provider error",
-    "TL6 Encrypt=strict, ServerCertificate = CA": "refused, SSL provider error",
+    "TL6 Encrypt=strict, ServerCertificate = CA": _RESET,
     "TL7 Encrypt=yes, TrustServerCertificate": "encrypted",
-    "TL7 Encrypt=strict, TrustServerCertificate": "refused, SSL provider error",
+    "TL7 Encrypt=strict, TrustServerCertificate": _RESET,
     "TL8 Encrypt=no": "not encrypted",
 }
 #: The Linux client's answers on 2019 and 2022, which agree.
@@ -433,6 +445,8 @@ RECORDED_WINDOWS: dict[str, dict[str, str]] = {
     "17": {
         **_WINDOWS_2019,
         "TL5 Encrypt=strict, ServerCertificate = server": "encrypted",
+        "TL6 Encrypt=strict, ServerCertificate = CA": "refused, SSL provider error",
+        "TL7 Encrypt=strict, TrustServerCertificate": "refused, SSL provider error",
     },
 }
 #: What the Linux client answered, by major release and label.
@@ -461,6 +475,13 @@ def main() -> int:
         print(json.dumps(results))
         return 0
     print(cl.here())
+    try:
+        # 06's image, built as 06 builds it, so that the ODBC driver measured
+        # is the one its Dockerfile names.
+        cl.build()
+    except ch.StepError as exc:
+        print(f"STEP FAILED: {exc}")
+        return 1
     return ch.run(probe)
 
 

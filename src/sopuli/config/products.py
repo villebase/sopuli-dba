@@ -45,6 +45,8 @@ from sopuli.config.targets import (
     EXTERNAL,
     MARIADB,
     MSSQL,
+    MSSQL_MANDATORY,
+    MSSQL_STRICT,
     MSSQL_UNENCRYPTED_ENCRYPT_MODE,
     MSSQL_VERIFYING_ENCRYPT_MODES,
     MYSQL,
@@ -195,8 +197,8 @@ _PRODUCTS: dict[str, _Product] = {
             ca=None,
             verifying=MSSQL_VERIFYING_ENCRYPT_MODES,
             unencrypted=MSSQL_UNENCRYPTED_ENCRYPT_MODE,
-            default="mandatory",
-            alternative="strict",
+            default=MSSQL_MANDATORY,
+            alternative=MSSQL_STRICT,
             settings=lambda target: target.mssql_settings,
             trust="trust_server_certificate",
             remedy=(
@@ -359,16 +361,18 @@ def _check_host_and_port_product(expanded: ExpandedTarget) -> None:
 #: (``sql/mssql/10_client_tls_probe.py``).
 _MSSQL_KEY_MODES: dict[str, tuple[tuple[str, ...], str]] = {
     "trust_server_certificate": (
-        ("mandatory",),
+        (MSSQL_MANDATORY,),
         "it does nothing under `strict` (TL7), and `optional` does not encrypt",
     ),
     "server_certificate": (
-        ("strict",),
+        (MSSQL_STRICT,),
         "ODBC Driver 18 connected with a pinned certificate only under `strict` (TL5)",
     ),
+    # The name check was measured under `mandatory` only (TL4). Whether `strict`
+    # checks the name, beside a pinned certificate or not, is not measured.
     "host_name_in_certificate": (
-        ("mandatory", "strict"),
-        "`optional` does not encrypt, so there is no certificate to check",
+        (MSSQL_MANDATORY,),
+        "the name check was measured there only (TL4), and `optional` does not encrypt",
     ),
 }
 
@@ -378,6 +382,11 @@ def _check_mssql_keys(expanded: ExpandedTarget) -> None:
 
     Also refuses ``host_name_in_certificate`` beside ``trust_server_certificate:
     true``: the name is checked only where the certificate is.
+
+    Where a target set's template wrote the key and an override changed
+    ``encrypt``, the refusal names the override's line: an override cannot
+    remove a key its template writes, as :func:`_refuse_an_unused_ca_file`
+    says of a CA file.
     """
     settings = expanded.target.mssql_settings
     for key, (modes, why) in _MSSQL_KEY_MODES.items():
@@ -385,11 +394,24 @@ def _check_mssql_keys(expanded: ExpandedTarget) -> None:
         if value in (None, False) or settings.encrypt in modes:
             continue
         allowed = " or ".join(f"`{mode}`" for mode in modes)
+        template_wrote_it = (
+            "mssql.encrypt" in expanded.patched and f"mssql.{key}" not in expanded.patched
+        )
+        if template_wrote_it:
+            at = block_key_at(expanded, "mssql", "encrypt")
+            hint = (
+                f"set `encrypt: {allowed}` in the override, or put this target in a target "
+                f"set of its own: an override cannot remove `{key}`, which its template "
+                f"writes. {why[0].upper()}{why[1:]}"
+            )
+        else:
+            at = block_key_at(expanded, "mssql", key)
+            hint = f"use it only with `encrypt: {allowed}`: {why}"
         raise ConfigError(
             f"target {expanded.name!r} sets `mssql.{key}` under `encrypt: "
             f"{settings.encrypt}`, where it does nothing",
-            at=block_key_at(expanded, "mssql", key),
-            hint=f"use it only with `encrypt: {allowed}`: {why}",
+            at=at,
+            hint=hint,
         )
     if settings.trust_server_certificate and settings.host_name_in_certificate is not None:
         raise ConfigError(

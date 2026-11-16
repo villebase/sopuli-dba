@@ -736,7 +736,7 @@
         "host_name_in_certificate": {
           "type": "string",
           "minLength": 1,
-          "description": "The name the certificate must hold, where the dsn names another."
+          "description": "The name the certificate must hold, where the dsn names another. Only with `encrypt: mandatory`."
         },
         "server_certificate": {
           "type": "string",

@@ -166,18 +166,24 @@ MSSQL_KEYS = (
     "server_certificate",
 )
 
-#: How the connection is encrypted, from weakest to strongest: ODBC Driver
-#: 18's `Encrypt=no`, `yes` and `strict`, named as the decision on #1549 names
-#: them. `optional` is accepted for the reason :data:`POSTGRES_SSLMODES` gives.
-MSSQL_ENCRYPT_MODES = ("optional", "mandatory", "strict")
+#: The three `encrypt` values: ODBC Driver 18's `Encrypt=no`, `yes` and
+#: `strict`, named as the decision on #1549 names them. `TargetMssql`'s default
+#: is written out there, because the model cannot import this module.
+MSSQL_OPTIONAL = "optional"
+MSSQL_MANDATORY = "mandatory"
+MSSQL_STRICT = "strict"
+
+#: How the connection is encrypted, from weakest to strongest. `optional` is
+#: accepted for the reason :data:`POSTGRES_SSLMODES` gives.
+MSSQL_ENCRYPT_MODES = (MSSQL_OPTIONAL, MSSQL_MANDATORY, MSSQL_STRICT)
 
 #: The `encrypt` values under which the server's certificate is checked:
 #: `mandatory` unless `trust_server_certificate` is set, and `strict` always
 #: (`sql/mssql/10_client_tls_probe.py`, TL1 to TL7).
-MSSQL_VERIFYING_ENCRYPT_MODES = ("mandatory", "strict")
+MSSQL_VERIFYING_ENCRYPT_MODES = (MSSQL_MANDATORY, MSSQL_STRICT)
 
 #: The one `encrypt` value certain to connect without encryption.
-MSSQL_UNENCRYPTED_ENCRYPT_MODE = "optional"
+MSSQL_UNENCRYPTED_ENCRYPT_MODE = MSSQL_OPTIONAL
 
 
 def build_targets(document: dict[str, Any]) -> tuple[Target, ...]:

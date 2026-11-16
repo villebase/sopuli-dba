@@ -772,7 +772,10 @@ def _target_mssql() -> Schema:
             },
             "host_name_in_certificate": {
                 **STRING,
-                "description": "The name the certificate must hold, where the dsn names another.",
+                "description": (
+                    "The name the certificate must hold, where the dsn names another. Only "
+                    "with `encrypt: mandatory`."
+                ),
             },
             "server_certificate": {
                 **STRING,

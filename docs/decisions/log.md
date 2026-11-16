@@ -6232,7 +6232,8 @@ the register.
 - **Decision:** the maintainer's, as proposed. `encrypt` is `optional`,
   `mandatory` (the default) or `strict`. `trust_server_certificate` encrypts
   without a check, only under `mandatory`, and warns on every run with
-  `SOPULI-W058`. `host_name_in_certificate` names the name to check, and
+  `SOPULI-W058`. `host_name_in_certificate` names the name to check, only
+  under `mandatory`, the one mode whose name check was measured (TL4), and
   `server_certificate` pins the server's own certificate, only under
   `strict`. There is no key for a CA file.
 - **Why:** `Encrypt=yes` checks the chain and the name (TL1, TL4), so

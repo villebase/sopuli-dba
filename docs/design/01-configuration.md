@@ -1883,7 +1883,8 @@ A SQL Server target is the **instance**. A login belongs to the whole instance,
 so there is no database to name. The client is pyodbc with Microsoft ODBC
 Driver 18, which is a system package, as Oracle's Instant Client is
 ([#1538](../decisions/log.md#1538), decision 6). The tool cannot run commands
-against a SQL Server target yet (open: #1549).
+against a SQL Server target yet: every command but `doctor` refuses one, and
+`doctor` reports the driver as not written (open: #1549).
 
 ```yaml
 targets:
@@ -1897,19 +1898,21 @@ targets:
 |---|---|---|
 | `encrypt` | `mandatory` | how the connection is encrypted, as ODBC Driver 18's `Encrypt`: `optional` (`no`), `mandatory` (`yes`) or `strict` (TDS 8) |
 | `trust_server_certificate` | `false` | `true` encrypts without checking the server's certificate. Only with `encrypt: mandatory` |
-| `host_name_in_certificate` | none | the name the server's certificate holds, where the `dsn` names the server another way, such as by its address |
+| `host_name_in_certificate` | none | the name the server's certificate holds, where the `dsn` names the server another way, such as by its address. Only with `encrypt: mandatory` |
 | `server_certificate` | none | the server's own certificate, which the connection then accepts and no other. Only with `encrypt: strict` |
 
 These are settings, and the block is optional. The `dsn` is `host:port`, by
 the rule for PostgreSQL above.
 
 **`mandatory` checks the server's certificate against the operating system's
-trust store.** It checks the chain and the name: a connection is refused when
-the CA that issued the certificate is not trusted, or when the certificate does
-not hold the name the `dsn` uses (`sql/mssql/10_client_tls_probe.py`, TL1 and
-TL4). Put that CA in the operating system's store on the machine that runs the
-tool: the Windows certificate store, or the system store that OpenSSL reads on
-Linux.
+trust store.** A connection is refused when the CA that issued the certificate
+is not trusted, from Windows and from Linux (`sql/mssql/10_client_tls_probe.py`,
+TL1). On Linux it connects once that CA is in the system store that OpenSSL
+reads, and is refused when the certificate does not hold the name the `dsn`
+uses (TL2, TL4). Put the CA in the operating system's store on the machine that
+runs the tool. A CA in the Windows certificate store, and the name check on
+Windows, are not measured: the probe does not change that store
+(`mssql-client-tls`).
 
 **There is no key for a CA file.** ODBC Driver 18's `ServerCertificate`, the
 only file it takes, never connected when it named a CA, under any `Encrypt`
@@ -1918,7 +1921,9 @@ certificate, under `strict` only, so that is what `server_certificate` is.
 
 **`strict` is not the default**, because SQL Server 2019 and 2022 reset every
 strict connection in the measurements, and only 2025 accepted one (TL3,
-`mssql-client-tls`).
+`mssql-client-tls`). A server that does not accept `strict` is refused at
+plan time, naming the target, rather than failing partway through a run
+(invariant 4; open: #1549).
 
 `optional`, and `trust_server_certificate: true`, warn with `SOPULI-W058` on
 every run, once per target: anything on the network path can then present its
@@ -1927,12 +1932,17 @@ own certificate and read the password a run sets. Under `require_encryption`,
 nothing is refused, naming the target and the key: `trust_server_certificate`
 under `strict`, where it changes nothing (TL7), or under `optional`;
 `server_certificate` under anything but `strict`; and
-`host_name_in_certificate` under `optional`, or beside
-`trust_server_certificate: true`, where no name is checked.
+`host_name_in_certificate` under anything but `mandatory`, the one mode whose
+name check was measured, or beside `trust_server_certificate: true`, where no
+name is checked. Where a target set's template writes the key and an override
+changes `encrypt`, the refusal names the override's `encrypt` line, because an
+override cannot remove a key its template writes.
 
 **An account on a SQL Server target is a login name**, written as it is:
-`acme_app`. It has no host part. Names compare as the server compares them,
-which under the default collation is without case
+`acme_app`. It has no host part. The config compares two names by `upper()`,
+as for every product, so it refuses `acme_app` and `ACME_APP` declared on one
+target (invariant 5). That matches the server under its default collation,
+which compares login names without case
 ([`02-mssql-privileges.md`](02-mssql-privileges.md) §4).
 
 Keeping the key for an unchecked connection was the maintainer's choice

@@ -329,8 +329,9 @@ DRIVERS: dict[str, DatabaseDriver] = {
         ),
     ),
     # Declared before its session exists (#1549): until it is written the type
-    # resolves to `DriverNotImplementedError`, and every command refuses a SQL
-    # Server target with SOPULI-20006. The client is pyodbc with Microsoft ODBC
+    # resolves to `DriverNotImplementedError`. Every command but `doctor`
+    # refuses a SQL Server target with SOPULI-20006, and `doctor` reports the
+    # driver as not written. The client is pyodbc with Microsoft ODBC
     # Driver 18, a system package like Oracle's Instant Client (#1538, decision
     # 6). No command is written for it yet.
     "mssql": DatabaseDriver(

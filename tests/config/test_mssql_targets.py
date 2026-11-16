@@ -147,6 +147,8 @@ def test_the_dsn_is_host_and_port(dsn: str) -> None:
             "server_certificate",
         ),
         ({"encrypt": "optional", "host_name_in_certificate": "db"}, "host_name_in_certificate"),
+        # Measured under `mandatory` only (TL4).
+        ({"encrypt": "strict", "host_name_in_certificate": "db"}, "host_name_in_certificate"),
     ],
 )
 def test_a_key_under_a_mode_where_it_does_nothing_is_refused(
@@ -170,7 +172,6 @@ def test_a_name_to_check_beside_no_check_is_refused() -> None:
     "block",
     [
         {"encrypt": "mandatory", "host_name_in_certificate": "mssql-dev.example.com"},
-        {"encrypt": "strict", "host_name_in_certificate": "mssql-dev.example.com"},
         {"encrypt": "strict", "server_certificate": "/etc/sopuli/server.pem"},
         {"trust_server_certificate": False, "encrypt": "strict"},
     ],
@@ -224,7 +225,7 @@ def test_an_override_patches_the_mssql_block_key_by_key() -> None:
                 "dsn": "mssql-{env}.example.com:1433",
                 "mssql": {"host_name_in_certificate": "mssql-{env}.example.com"},
                 "for_each": {"env": {"dev": {}, "qa": {}}},
-                "overrides": {"mssql-qa": {"mssql": {"encrypt": "strict"}}},
+                "overrides": {"mssql-qa": {"mssql": {"encrypt": "mandatory"}}},
             }
         }
     )
@@ -232,7 +233,9 @@ def test_an_override_patches_the_mssql_block_key_by_key() -> None:
     rendered = {expanded.name: expanded.target.mssql for expanded in config.expanded_targets}
     assert rendered == {
         "mssql-dev": TargetMssql(host_name_in_certificate="mssql-dev.example.com"),
-        "mssql-qa": TargetMssql(encrypt="strict", host_name_in_certificate="mssql-qa.example.com"),
+        "mssql-qa": TargetMssql(
+            encrypt="mandatory", host_name_in_certificate="mssql-qa.example.com"
+        ),
     }
 
 
@@ -251,6 +254,27 @@ def test_an_override_that_makes_a_key_do_nothing_is_refused_at_the_override() ->
     )
 
     assert "'mssql-qa' sets `mssql.trust_server_certificate` under `encrypt: strict`" in rendered
+    # The line to change is the override's `encrypt`: it cannot remove the
+    # template's key.
+    assert "overrides.mssql-qa.mssql.encrypt" in rendered
+    assert "an override cannot remove `trust_server_certificate`" in rendered
+
+
+def test_a_key_the_override_wrote_is_refused_at_its_own_line() -> None:
+    rendered = refused(
+        target_sets={
+            "mssql": {
+                "name": "mssql-{env}",
+                "type": "mssql",
+                "dsn": "mssql-{env}.example.com:1433",
+                "for_each": {"env": {"dev": {}, "qa": {}}},
+                "overrides": {"mssql-qa": {"mssql": {"server_certificate": "/etc/qa.pem"}}},
+            }
+        }
+    )
+
+    assert "overrides.mssql-qa.mssql.server_certificate" in rendered
+    assert "use it only with `encrypt: `strict``" in rendered
 
 
 # ------------------------------------------------------------ config show ---
@@ -288,6 +312,19 @@ def test_an_account_is_a_bare_login_name() -> None:
     }
 
     loaded(targets=[SERVER], applications=[application])
+
+
+def test_two_spellings_of_one_login_are_refused() -> None:
+    """Invariant 5 compares names by `upper()`, which is how the default
+    collation compares logins."""
+    application = {
+        "name": "acme",
+        "targets": [SERVER["name"]],
+        "accounts": ["acme_app_user", "ACME_APP_USER"],
+        "secret_template": "apps/acme#DB/{account}",
+    }
+
+    refused(targets=[SERVER], applications=[application])
 
 
 # ------------------------------------------------------------- the driver ---

@@ -59,6 +59,10 @@ PERMITTED = {
         "mysql_native_password or ed25519 value the statement carries (invariant 15). "
         "The password itself is not sent"
     ),
+    "driver/mssql/password.py": (
+        "the driver call, for SQL Server: the password is hashed on this machine into the "
+        "value `ALTER LOGIN … HASHED` carries (#1551). The password itself is not sent"
+    ),
     "output/policy_view.py": "`policy sample --reveal` -- the third; a sample is not a credential",
     "output/reset_view.py": (
         "UC-2's seen reset -- the fourth, under five structural guards (decision #439)"

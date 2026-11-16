@@ -12,7 +12,12 @@ The supported releases are 2019 and later (decision 7). Each probe ran on
 15.0.4510.2, 16.0.4325.4 and 17.0.5065.9, the 2019, 2022 and 2025 images of
 the `mssql-matrix` profile in `test/compose.yaml`. These are SQL Server on
 Linux. Where SQL Server on Windows differs, or may differ, this document says
-so. Azure SQL Managed Instance has no image and is not tested.
+so. Azure SQL Managed Instance has no image and is not tested. Azure SQL
+Database is refused (decision 1): it is not an instance with logins in its
+own `master` that the tool can manage. The driver reads the edition from
+`SERVERPROPERTY('EngineEdition')`, where Azure SQL Database answers 5 by
+Microsoft's documentation, and refuses the target at plan time
+(open: #1549).
 
 A SQL Server target is one instance (open: #1549). An account is a SQL
 Server login on that instance: a row of `sys.server_principals` of type `S`.
@@ -139,7 +144,7 @@ refused to all of them, `229` (RP6). The reports do not read the error log.
 | `securityadmin` | it grants most server permissions. Microsoft's documentation says to treat it as equal to `sysadmin` |
 | `ALTER ANY SERVER ROLE` | it adds a login to a server role, and so reaches `CONTROL SERVER` (GR4) |
 | `IMPERSONATE ANY LOGIN`, or `IMPERSONATE` or `CONTROL` on a login | it lets the tool login act as another login, with that login's permissions |
-| `VIEW SERVER STATE` | it shows every session (RP5). No read of §2.1 is known to need it; whether a capability read does is open (#1550) |
+| `VIEW SERVER STATE` | it shows every session (RP5). Microsoft documents it as the grant that reads `sys.dm_hadr_availability_replica_states` (§4), and #1550 measures what the tool login reads of a group without it. It stays off this list only if that read needs it and no narrower grant serves |
 | a database user in `msdb` | no operation of the tool needs one, and `msdb` holds the SQL Server Agent jobs, which may run as an administrator |
 
 ---
@@ -169,7 +174,9 @@ password (decision 1, open: #1549):
 **A contained user may have a login's name.** In its database the user's
 password logs in, and the login's is refused, `18456` (ID4). The tool changes
 the login's password, and the contained user keeps its own. The tool does not
-see contained users.
+see contained users. Every login the tool makes names `master` as its
+database, so a contained user in the login's default database does not answer
+it (§7).
 
 **One hostname is the only identity measured.** `@@SERVERNAME`,
 `SERVERPROPERTY('MachineName')` and `SERVERPROPERTY('ServerName')` are each
@@ -179,21 +186,29 @@ comes with the image: a second container of one image reads the same value
 (open: #1549).
 
 **Each replica of an Availability Group is a target of its own**
-(decision 4). A login and its password are each replica's own. A password set
-on the primary is refused on the secondary, `18456`, where the old one still
-logs in, also for a login made on both with one SID
-(`08_availability_group_probe.py`, AG1). `ALTER LOGIN` works on a secondary
-(AG4). The promotion gate waits for every declared replica (invariant 7).
-Each replica names the group, its own role and every replica, and gives the
-same `group_id` (AG3). `doctor` warns when a target is in a group whose other
-replicas the config does not declare (open: #1550).
+(decision 4). On 15.0.4510.2 and 17.0.5065.9, a login and its password are
+each replica's own. A password set on the primary is refused on the
+secondary, `18456`, where the old one still logs in, also for a login made on
+both with one SID (`08_availability_group_probe.py`, AG1). `ALTER LOGIN`
+works on a secondary (AG4). The promotion gate waits for every declared
+replica (invariant 7). Each replica names the group, its own role and every
+replica, and gives the same `group_id` (AG3). `doctor` warns when a target is
+in a group whose other replicas the config does not declare (open: #1550).
+**No group formed on 16.0.4325.4 in the matrix, so none of this is measured
+on 2022** (unverified: mssql-ag-2022).
+
+The probe read the group as `sa`. Which of these reads the tool login can
+make is not measured: Microsoft documents `VIEW SERVER STATE` as the grant
+for `sys.dm_hadr_availability_replica_states` (§3). Where the tool login
+cannot tell whether a target is in a group, the group is unknown, not absent:
+`doctor` says the check could not be made, and does not report the target as
+outside a group (open: #1550).
 
 A contained group, 2022 and later, has a `master` of its own, which it copies
-to every replica: a login made there on the primary, and a password set there,
-log in on the secondary (AG5). The tool refuses such a login. How a session
-tells that it is in a contained group's `master` is not measured
-(open: #1550). The group did not form on 16.0.4325.4 in the matrix
-(unverified: mssql-ag-2022).
+to every replica: on 17.0.5065.9, a login made there on the primary, and a
+password set there, log in on the secondary (AG5). The tool refuses such a
+login. How a session tells that it is in a contained group's `master` is not
+measured (open: #1550).
 
 ---
 
@@ -210,13 +225,19 @@ The tool refuses to manage a login that, itself or through a server role
   refuses, or owns such a role.
 
 No flag waives it. Membership is followed through server roles that are
-members of other server roles. The guardrail applies to the password verbs,
-and the tool's own login is exempt, as on MySQL
+members of other server roles. Every login is a member of the server role
+`public`, which has no rows in `sys.server_role_members`, so the guardrail
+reads `public`'s grants as every login's: a grant of `ALTER ANY SERVER ROLE`
+to `public` refuses every managed login. The guardrail applies to the
+password verbs, and the tool's own login is exempt, as on MySQL
 ([#1222](../decisions/log.md#1222)).
 
-The server already refuses the first two lines' logins, `15151` (GR1). The
-guardrail refuses them at plan time instead (invariant 4). `ALTER ANY SERVER
-ROLE` is the measured gap (§1). The grants on one object give the same path
+The server already refuses the password of a member of `sysadmin`,
+`securityadmin` or a role that holds `CONTROL SERVER`, and of a login that
+holds `CONTROL SERVER`, `ALTER ANY LOGIN` or `IMPERSONATE ANY LOGIN`, `15151`
+(GR1). The guardrail refuses them at plan time instead (invariant 4). The
+server does not refuse a login that holds `ALTER ANY SERVER ROLE`, which is
+the measured gap (§1, GR4). The grants on one object give the same path
 through one login or one role; they are from the documentation and not
 measured.
 
@@ -226,7 +247,8 @@ measured.
 | `sys.server_permissions` | server permissions, and permissions on one login or one server role, with `class` and `major_id` naming the object |
 | `sys.server_principals.owning_principal_id` | the owner of a user-defined server role |
 
-The tool login reads all three (GR3). The guardrail does not read database
+The tool login reads the first two (GR3). Its read of the third is not
+measured (open: #1553). The guardrail does not read database
 paths, such as `db_owner` in `msdb` or a `TRUSTWORTHY` database owned by a
 member of `sysadmin`: they are database-level reads, and none was measured.
 
@@ -269,7 +291,9 @@ reads that capability before a change is not measured
 change runs in this order, on every host:
 
 1. Read the login's `is_policy_checked` and `is_expiration_checked`, and
-   record them in the vault's `pending` entry.
+   record them in the vault's `pending` entry. Where the entry already holds
+   recorded flags, keep them and do not read again: a run that stopped after
+   step 2 left the policy off, and a second read would record that.
 2. Send the value, with the policy turned off in the same statement:
 
    ```sql
@@ -280,7 +304,21 @@ change runs in this order, on every host:
 4. Set `CHECK_POLICY` and `CHECK_EXPIRATION` back to the values of step 1.
 
 A run that stops between the steps leaves the policy off. The next run reads
-the recorded values from the vault and sets them back.
+the recorded values from the vault and sets them back. The record stays
+until step 4 has run, also when a new `pending` replaces the old one
+(open: #1551).
+
+**A login whose `MUST_CHANGE` is pending cannot take a value.** While
+`IsMustChange` reads 1, the server refuses to turn `CHECK_POLICY` off,
+`15128` (`03_lock_expiry_probe.py`, the note beside LK5), so step 2 cannot
+run. The driver reads `IsMustChange` and refuses such a login at plan time,
+naming it (invariant 4).
+
+**How `creds apply` tells that a target already holds `pending` is open
+(#1551).** The tool login reads no hash (§2.1). A login with `pending` tells
+it on Linux, where no login locks (§7); on Windows such a login is refused
+until its lockout is measured. Sending the value again on every run would be
+a new exception to invariant 9.
 
 **The server takes a wrong value.** It checks a value's length and version,
 not that a password matches it. A `0x0100` value of 26 bytes, or a `0x0300`
@@ -330,7 +368,11 @@ parses. The server then keeps it with the password left out or masked
 be turned off while it is pending (LK5). So the seen reset leaves both on. On
 the Linux images a new password then expires after 90 days (LK6).
 
-The unseen path sends a value, in the order of §6.2.
+The unseen path sends a value, in the order of §6.2. UC-2 has no `pending`
+entry, so step 1 needs another place to record the flags before the change.
+Where that is, is open (#1554). A login whose `MUST_CHANGE` is pending, such
+as one a seen reset left before its owner's first logon, is refused at plan
+time (§6.2); whether a second reset offers a way past that is open (#1554).
 
 **`account expire-password` is refused at plan time.** `MUST_CHANGE` is taken
 only with a new password, so the server cannot expire a password and keep it.
@@ -362,7 +404,12 @@ gives the server's number for each refusal; the other clients measured do not
 (`06_client_library_probe.py`, CL2). A password is passed in braces, with each
 `}` doubled; a password of `; { } =` and a space logs in (CL3).
 
-What the server answers, measured with the right password:
+Every login names `master` as its database. A contained user that shares the
+login's name answers a login to its own database, and refuses the login's
+password there, `18456`; at `master` the login answers (ID4). The login's
+default database therefore does not decide the result.
+
+What the server answers:
 
 | Login | Answer |
 |---|---|

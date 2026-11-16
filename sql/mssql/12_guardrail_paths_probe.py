@@ -21,8 +21,12 @@ The paths, each held by its own login sopuli_probe_h_<path>:
 
   on one login, the tool login (`tool`) and a member of sysadmin (`admin`):
        CONTROL, ALTER, IMPERSONATE and TAKE OWNERSHIP. The holder tries
-       EXECUTE AS LOGIN, and ALTER LOGIN ... WITH PASSWORD, setting the
-       password the login already has
+       EXECUTE AS LOGIN; ALTER LOGIN ... WITH PASSWORD, setting the password
+       the login already has; ALTER LOGIN ... WITH DEFAULT_DATABASE, setting
+       the one it has; and ALTER LOGIN ... DISABLE, which sa undoes at once
+  on a server role, each path has a role that holds CONTROL SERVER, and one
+       nested in it, made again for it, so that no path's result depends on
+       an earlier one's
   on a server role that holds CONTROL SERVER: CONTROL, ALTER and TAKE
        OWNERSHIP. The holder tries ALTER SERVER ROLE ... ADD MEMBER itself,
        and, if that is refused, ALTER AUTHORIZATION ON SERVER ROLE to itself
@@ -33,8 +37,9 @@ The paths, each held by its own login sopuli_probe_h_<path>:
        that holds CONTROL SERVER. The holder tries nothing
   public: ALTER ANY SERVER ROLE granted to public, and a holder with no
        grant of its own, which tries ADD MEMBER itself. The tool's read of
-       public's row (grantee principal_id 2) is part of PA2. The grant is
-       revoked at once
+       public's row (grantee principal_id 2) is part of PA2. PA1 runs before
+       the grant, and the grant is revoked once the holder has tried, also
+       when a step fails
 
   PA4  for the role paths, what a second reader reads, one that holds VIEW
        ANY DEFINITION besides ALTER ANY LOGIN
@@ -42,29 +47,33 @@ The paths, each held by its own login sopuli_probe_h_<path>:
 STATUS: run on 15.0.4510.2, 16.0.4325.4 and 17.0.5065.9, the
 mcr.microsoft.com/mssql/server 2019-latest, 2022-latest and 2025-latest images
 of test/compose.yaml profile mssql-matrix, as pulled on 2026-11-15, with
-Python 3.13.12 on Windows 11 AMD64, on 2026-11-17 (#1553). Six times while the
-probe was written, and twice more against this header, exit 0. Every run gave
-the same result.
+Python 3.13.12 on Windows 11 AMD64, on 2026-11-17 (#1553). Nine times while
+the probe was written, and twice more against this header, exit 0. Every run
+of a case gave the same result.
 
 RESULTS -- the same on every release
 
   PA1  the tool sets the password of every holder but one: the member of a
        role nested in the role that holds CONTROL SERVER, which it is refused,
-       15151, as GR1 recorded for a direct member
+       15151, as GR1 recorded for a direct member. The public holder's
+       password is set before the grant to public, which the tool would
+       otherwise hold too
   PA3  **CONTROL or IMPERSONATE on one login reaches that login's power**:
        EXECUTE AS the tool login holds ALTER ANY LOGIN, and EXECUTE AS the
        sysadmin member holds sysadmin. Neither sets the login's password,
-       15151. ALTER on one login reaches no power: EXECUTE AS is refused,
-       15406, the password is refused, 15151, and DEFAULT_DATABASE is set.
-       CONTROL sets DEFAULT_DATABASE too, and IMPERSONATE does not, 15151.
+       15151, nor disables it, 15151. ALTER on one login reaches no power:
+       EXECUTE AS is refused, 15406, the password and DISABLE are refused,
+       15151, and DEFAULT_DATABASE is set. CONTROL sets DEFAULT_DATABASE too,
+       and IMPERSONATE does not, 15151. Renaming a login is not tried.
        **TAKE OWNERSHIP on a login cannot be granted**: the GRANT is a syntax
-       error
+       error, so PA1 to PA3 are not measured for it
        **Every role path reaches CONTROL SERVER**: CONTROL or ALTER on the
-       role that holds it lets the holder add itself; TAKE OWNERSHIP does not,
-       15151, but ALTER AUTHORIZATION to itself does, and then it adds
-       itself; the owner of such a role adds itself. ALTER ANY SERVER ROLE
-       granted to public lets a login with no grant of its own add itself.
-       The nested member holds CONTROL SERVER without trying anything
+       role that holds it lets the holder add itself. With TAKE OWNERSHIP,
+       adding itself is refused, 15151, but ALTER AUTHORIZATION to itself is
+       accepted, and then adding itself is too. The owner of such a role adds
+       itself. ALTER ANY SERVER ROLE granted to public lets a login with no
+       grant of its own add itself. The nested member holds CONTROL SERVER
+       without trying anything
   PA2  **the tool, with ALTER ANY LOGIN alone, does not see a user-defined
        server role's row**: its name, and the owner owning_principal_id
        names, are not read. It reads a holder's grant on a role and its
@@ -84,11 +93,14 @@ HOW TO RUN, against the matrix (test/README.md), from the repo root:
 It needs 02_client_hash_probe.py beside it.
 
 THROWAWAY SERVERS ONLY. It creates the logins sopuli_probe_tool,
-sopuli_probe_hash (02's setup makes it), sopuli_probe_admin and
+sopuli_probe_hash (02's setup makes it), sopuli_probe_admin (a member of
+sysadmin), sopuli_probe_viewer (ALTER ANY LOGIN and VIEW ANY DEFINITION) and
 sopuli_probe_h_*, and the server roles sopuli_probe_ctl, sopuli_probe_nest
 and sopuli_probe_owned, and drops them at the end. It grants ALTER ANY SERVER
-ROLE to public and revokes it in the same step, and again at the end. It
-sets the tool's and the admin's passwords to the ones they already have.
+ROLE to public and revokes it in the same step, and again at the end. Its
+holders send the tool and admin logins ALTER LOGIN statements: the password
+and default database each already has, and DISABLE, which sa follows with
+ENABLE.
 """
 
 from __future__ import annotations
@@ -216,6 +228,9 @@ def role_row(service: str, role: str, reader: Reader = TOOL_READER) -> str:
         "LEFT JOIN sys.server_principals AS o ON o.principal_id = r.owning_principal_id "
         f"WHERE r.principal_id = {role_id}",
     )
+    if out.isdigit():
+        # as_login's error code, not an owner's name.
+        raise ch.StepError(f"{service}: {reader[0]}: reading {role}'s row: {out}")
     row = "no row" if out == "ok" else f"owned by {out}"
     # The role's own grants and memberships, by its id, which the tool reads
     # from a member's row even where it does not see the role's.
@@ -239,10 +254,7 @@ def setup(service: str) -> str:
         f"ALTER SERVER ROLE [sysadmin] ADD MEMBER [{ADMIN}];\n"
         f"CREATE LOGIN [{VIEWER}] WITH PASSWORD = {ch.quote(VIEWER_PASSWORD)}, "
         "CHECK_POLICY = OFF;\n"
-        f"GRANT ALTER ANY LOGIN TO [{VIEWER}];\nGRANT VIEW ANY DEFINITION TO [{VIEWER}];\n"
-        f"CREATE SERVER ROLE [{CONTROL_ROLE}];\nGRANT CONTROL SERVER TO [{CONTROL_ROLE}];\n"
-        f"CREATE SERVER ROLE [{NESTED}];\n"
-        f"ALTER SERVER ROLE [{CONTROL_ROLE}] ADD MEMBER [{NESTED}]",
+        f"GRANT ALTER ANY LOGIN TO [{VIEWER}];\nGRANT VIEW ANY DEFINITION TO [{VIEWER}]",
     )
     for path in paths():
         ch.sa(
@@ -251,6 +263,20 @@ def setup(service: str) -> str:
             "CHECK_POLICY = OFF",
         )
     return found
+
+
+def fresh_roles(service: str) -> None:
+    """The role that holds CONTROL SERVER, and the role nested in it, made
+    again for each path, so that no path's result depends on one before it:
+    a path's holder adds itself to the role, or takes it over."""
+    for role in ROLES:
+        ch.sa(service, drop_role(role))
+    ch.sa(
+        service,
+        f"CREATE SERVER ROLE [{CONTROL_ROLE}];\nGRANT CONTROL SERVER TO [{CONTROL_ROLE}];\n"
+        f"CREATE SERVER ROLE [{NESTED}];\n"
+        f"ALTER SERVER ROLE [{CONTROL_ROLE}] ADD MEMBER [{NESTED}]",
+    )
 
 
 def grant(service: str, path: str) -> str:
@@ -310,40 +336,49 @@ def attempt(service: str, path: str) -> str:
     setting = as_login(
         service, name, TOOL_SET, f"ALTER LOGIN [{target}] WITH DEFAULT_DATABASE = [master]"
     )
-    return f"execute as {impersonated}; set password {reset}; set default database {setting}"
+    # Whether the holder can disable the login. sa enables it again at once.
+    try:
+        disable = as_login(service, name, TOOL_SET, f"ALTER LOGIN [{target}] DISABLE")
+    finally:
+        ch.sa(service, f"ALTER LOGIN [{target}] ENABLE")
+    return (
+        f"execute as {impersonated}; set password {reset}; set default database {setting}; "
+        f"disable {disable}"
+    )
 
 
 _LOGIN_SET = "set password 15151; set default database"
+_DISABLE = "; disable 15151"
 
 #: Each path's result: the grant, PA1, PA2, PA3's attempt, what the holder
 #: then holds, and PA4. The same on every release unless RECORDED_BY says.
 RECORDED: dict[str, object] = {
     "control_tool": (
         "ok", "ok", "CONTROL/SERVER_PRINCIPAL/sopuli_probe_tool | -",
-        f"execute as 0,0,1; {_LOGIN_SET} ok", "0,0,0", "",
+        f"execute as 0,0,1; {_LOGIN_SET} ok{_DISABLE}", "0,0,0", "",
     ),
     "alter_tool": (
         "ok", "ok", "ALTER/SERVER_PRINCIPAL/sopuli_probe_tool | -",
-        f"execute as 15406; {_LOGIN_SET} ok", "0,0,0", "",
+        f"execute as 15406; {_LOGIN_SET} ok{_DISABLE}", "0,0,0", "",
     ),
     "impersonate_tool": (
         "ok", "ok", "IMPERSONATE/SERVER_PRINCIPAL/sopuli_probe_tool | -",
-        f"execute as 0,0,1; {_LOGIN_SET} 15151", "0,0,0", "",
+        f"execute as 0,0,1; {_LOGIN_SET} 15151{_DISABLE}", "0,0,0", "",
     ),
-    "take_tool": ("syntax error", "ok", "- | -", "not granted", "0,0,0", ""),
+    "take_tool": ("syntax error", "not measured", "- | -", "not granted", "0,0,0", ""),
     "control_admin": (
         "ok", "ok", "CONTROL/SERVER_PRINCIPAL/sopuli_probe_admin | -",
-        f"execute as 1,1,1; {_LOGIN_SET} ok", "0,0,0", "",
+        f"execute as 1,1,1; {_LOGIN_SET} ok{_DISABLE}", "0,0,0", "",
     ),
     "alter_admin": (
         "ok", "ok", "ALTER/SERVER_PRINCIPAL/sopuli_probe_admin | -",
-        f"execute as 15406; {_LOGIN_SET} ok", "0,0,0", "",
+        f"execute as 15406; {_LOGIN_SET} ok{_DISABLE}", "0,0,0", "",
     ),
     "impersonate_admin": (
         "ok", "ok", "IMPERSONATE/SERVER_PRINCIPAL/sopuli_probe_admin | -",
-        f"execute as 1,1,1; {_LOGIN_SET} 15151", "0,0,0", "",
+        f"execute as 1,1,1; {_LOGIN_SET} 15151{_DISABLE}", "0,0,0", "",
     ),
-    "take_admin": ("syntax error", "ok", "- | -", "not granted", "0,0,0", ""),
+    "take_admin": ("syntax error", "not measured", "- | -", "not granted", "0,0,0", ""),
     "control_role": (
         "ok", "ok",
         "CONTROL/SERVER_PRINCIPAL/#id | - | sopuli_probe_ctl no row, grants CONTROL SERVER, "
@@ -367,12 +402,13 @@ RECORDED: dict[str, object] = {
     ),
     "nested": (
         "ok", "15151",
-        "- | #id | sopuli_probe_ctl no row, grants CONTROL SERVER, membership rows 3 "
+        # The tool sees the holder's row in the nested role, and not the
+        # nested role's row in the role that holds CONTROL SERVER.
+        "- | #id | sopuli_probe_ctl no row, grants CONTROL SERVER, membership rows 0 "
         "| sopuli_probe_nest no row, grants -, membership rows 1",
         "nothing tried", "0,1,1",
-        # take_role, before it, made its holder the owner of sopuli_probe_ctl.
-        "- | sopuli_probe_nest | sopuli_probe_ctl owned by sopuli_probe_h_take_role, "
-        "grants CONTROL SERVER, membership rows 4 "
+        "- | sopuli_probe_nest | sopuli_probe_ctl owned by sa, "
+        "grants CONTROL SERVER, membership rows 1 "
         "| sopuli_probe_nest owned by sa, grants -, membership rows 2",
     ),
     "public": (
@@ -393,36 +429,25 @@ def cases(service: str) -> None:
     major = setup(service).split(".")[0]
     for path in paths():
         name = holder(path)
-        granted = grant(service, path)
-        sets = ch.as_tool(service, f"ALTER LOGIN [{name}] WITH PASSWORD = {ch.quote(TOOL_SET)}")
-        view = tool_view(service, name)
-        extra = ""
-        if path == "owner":
-            extra = " | owner " + role_row(service, OWNED)
-        if path in ("nested", "control_role"):
-            extra = f" | {CONTROL_ROLE} " + role_row(service, CONTROL_ROLE)
-        if path == "nested":
-            extra += f" | {NESTED} " + role_row(service, NESTED)
+        fresh_roles(service)
+        set_by_tool = f"ALTER LOGIN [{name}] WITH PASSWORD = {ch.quote(TOOL_SET)}"
         if path == "public":
-            extra = " | public " + tool_view(service, "public")
-        viewer = ""
-        if path in ("owner", "control_role", "nested"):
-            role = OWNED if path == "owner" else CONTROL_ROLE
-            viewer = f"{tool_view(service, name, VIEWER_READER)} | {role} " + role_row(
-                service, role, VIEWER_READER
-            )
-            if path == "nested":
-                viewer += f" | {NESTED} " + role_row(service, NESTED, VIEWER_READER)
-        if sets != "ok":
-            # The tool could not set it; sa does, so that the holder can try.
-            ch.sa(service, f"ALTER LOGIN [{name}] WITH PASSWORD = {ch.quote(TOOL_SET)}")
-        tried = attempt(service, path) if granted == "ok" else "not granted"
+            # Before the grant: once public holds ALTER ANY SERVER ROLE, the
+            # tool holds it too, and PA1 would measure a different tool.
+            sets = ch.as_tool(service, set_by_tool)
+            granted = grant(service, path)
+        else:
+            granted = grant(service, path)
+            # A path the server refuses to grant leaves a login with no grant,
+            # which GR1 measured; PA1 is not measured for it.
+            sets = ch.as_tool(service, set_by_tool) if granted == "ok" else "not measured"
+        try:
+            row = once(service, path, name, granted, sets)
+        finally:
+            if path == "public":
+                ch.sa(service, "REVOKE ALTER ANY SERVER ROLE FROM public")
         power = as_login(service, name, TOOL_SET, POWER)
-        if path == "public":
-            ch.sa(service, "REVOKE ALTER ANY SERVER ROLE FROM public")
-        # A principal_id differs between runs; the probe records that the
-        # reader saw an id and no name.
-        view, extra = re.sub(r"#\d+", "#id", view), re.sub(r"#\d+", "#id", extra)
+        granted, sets, view, extra, tried, viewer = row
         result = (granted, sets, view + extra, tried, power, viewer)
         print(
             f"{path}: grant {granted}; PA1 tool sets the password {sets}; "
@@ -431,6 +456,38 @@ def cases(service: str) -> None:
         )
         recorded = RECORDED_BY.get(major, {}).get(path, RECORDED.get(path))
         ch.check(path, result, recorded)
+
+
+def once(
+    service: str, path: str, name: str, granted: str, sets: str
+) -> tuple[str, str, str, str, str, str]:
+    """PA2, PA3's attempt and PA4 for one path, while its grant is in place."""
+    view = tool_view(service, name)
+    extra = ""
+    if path == "owner":
+        extra = " | owner " + role_row(service, OWNED)
+    if path in ("nested", "control_role"):
+        extra = f" | {CONTROL_ROLE} " + role_row(service, CONTROL_ROLE)
+    if path == "nested":
+        extra += f" | {NESTED} " + role_row(service, NESTED)
+    if path == "public":
+        extra = " | public " + tool_view(service, "public")
+    viewer = ""
+    if path in ("owner", "control_role", "nested"):
+        role = OWNED if path == "owner" else CONTROL_ROLE
+        viewer = f"{tool_view(service, name, VIEWER_READER)} | {role} " + role_row(
+            service, role, VIEWER_READER
+        )
+        if path == "nested":
+            viewer += f" | {NESTED} " + role_row(service, NESTED, VIEWER_READER)
+    if sets != "ok":
+        # The tool did not set it; sa does, so that the holder can try.
+        ch.sa(service, f"ALTER LOGIN [{name}] WITH PASSWORD = {ch.quote(TOOL_SET)}")
+    tried = attempt(service, path) if granted == "ok" else "not granted"
+    # A principal_id differs between runs; the probe records that the reader
+    # saw an id and no name.
+    view, extra = re.sub(r"#\d+", "#id", view), re.sub(r"#\d+", "#id", extra)
+    return granted, sets, view, extra, tried, viewer
 
 
 def main() -> int:

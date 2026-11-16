@@ -324,14 +324,17 @@ a new exception to invariant 9.
 not that a password matches it. A `0x0100` value of 26 bytes, or a `0x0300`
 value of zeros, is accepted, and the former password stops logging in (CH3).
 The login of step 3 is what catches a bug in the driver's value. Step 3 runs
-while the policy is off, so a failure there counts toward no lockout. That is
-from Microsoft's documentation and not measured (unverified: mssql-policy-off).
+while the policy is off, so a failure there counts toward no lockout: on
+SQL Server 2022 on Windows, under a local policy, seven wrong passwords past a
+threshold of 5 left `BadPasswordCount` at 0 (`09_windows_policy_probe.py`,
+WP5). A domain's policy is not measured.
 
 **Turning the policy off has side effects.** It sets `BadPasswordCount` back
-to 0 (LK3). By Microsoft's documentation it also turns `CHECK_EXPIRATION` off,
-clears the password history, and ends a lockout, so a locked login is
-unlocked by the change that also sets its new password. Step 4 sets the flags
-back. The history stays cleared (unverified: mssql-policy-off).
+to 0 (LK3). It also turns `CHECK_EXPIRATION` off, sets `HistoryLength` to 0,
+and ends a lockout, so a locked login is unlocked by the change that also sets
+its new password (WP4, WP6, WP7). Turning the policy on again leaves
+`CHECK_EXPIRATION` off, which is why step 4 sets both flags back. The history
+stays cleared.
 
 **The server's password policy does not apply.** A value is accepted for a
 password the policy would refuse (CH4). The config's policy checks what `creds
@@ -428,7 +431,11 @@ passwords in a row leave `IsLocked` 0, and the right password then logs in.
 1 (LK2). So a login check on Linux cannot lock the login.
 
 **On Windows the check is refused at plan time.** There `CHECK_POLICY`
-applies the host's or the domain's account policy, which may lock the login.
-The lockout threshold, and what `BadPasswordCount` and `IsLocked` read on the
-way, are not measured (unverified: mssql-windows-policy). The driver reads
-the host's operating system as a capability (open: #1550).
+applies the host's or the domain's account policy, which locks the login at
+its threshold, and `LOGINPROPERTY` gives no threshold, so the tool cannot
+compute a lockout margin (`09_windows_policy_probe.py`, WP1 and WP2). **A
+locked login answers its right password `18456`**, as a wrong one (WP3), so
+any login the driver makes reads `IsLocked` first, and reports a locked
+login as `unavailable` without logging in. The tool login reads the host's
+platform from `sys.dm_os_host_info` (WP0); the driver reads it as a
+capability (open: #1550).

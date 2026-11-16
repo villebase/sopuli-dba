@@ -5992,9 +5992,11 @@ the register.
      login's policy back on as it was. The password never reaches the server.
      UC-2 sends the password in clear only where it needs `MUST_CHANGE`,
      which `HASHED` refuses. That statement is sent as a batch of its own,
-     never inside `EXEC`, and always parses. The UC-2 driver PR adds this
-     exception to invariant 15. The tool sends `0x0300` where the server
-     takes it, and decides that from a capability, not from the release.
+     never inside `EXEC`, and always parses. The first driver PR that
+     changes a password adds SQL Server to invariant 15, with this
+     exception. The tool sends `0x0300` where the server takes it, and
+     decides that from a capability, not from the release. How to read that
+     capability is not known yet (unverified: mssql-hash-version).
   3. `creds check` logs in. Where the host has a lockout the tool cannot
      read, on Windows until `mssql-windows-policy` is measured, the check is
      refused. The tool never reads `password_hash`.
@@ -6005,8 +6007,11 @@ the register.
   5. A guardrail no flag waives refuses a managed login that is in
      `sysadmin` or `securityadmin`, or in a server role that holds one of the
      permissions below, or that holds one of them itself: `CONTROL SERVER`,
-     `ALTER ANY LOGIN`, `IMPERSONATE ANY LOGIN`, `ALTER ANY SERVER ROLE`, and
-     `CONTROL`, `ALTER` or `IMPERSONATE` on one login.
+     `ALTER ANY LOGIN`, `IMPERSONATE ANY LOGIN`, `ALTER ANY SERVER ROLE`;
+     `CONTROL`, `ALTER`, `IMPERSONATE` or `TAKE OWNERSHIP` on one login; and
+     `CONTROL`, `ALTER` or `TAKE OWNERSHIP` on a server role this list
+     refuses, or ownership of one. Membership is followed through nested
+     server roles.
   6. The client is pyodbc with Microsoft ODBC Driver 18, in an `mssql` extra.
   7. Supported releases are 2019 and later. Azure SQL Managed Instance is
      not tested; capabilities decide what runs on it.
@@ -6039,8 +6044,11 @@ the register.
   5. The server already refuses `ALTER ANY LOGIN` for the first set, `15151`.
      The guardrail refuses them at plan time instead (invariant 4). A login
      with `ALTER ANY SERVER ROLE` can add itself to a role that holds
-     `CONTROL SERVER`, and the tool can set its password. A grant on one
-     login is a server permission the tool account reads in the same view.
+     `CONTROL SERVER`, and the tool can set its password. A login that may
+     alter, control, take or own one such role, or one privileged login, has
+     the same path through one object. Each of these is a server permission
+     or an owner the tool account reads in the server-level views; only
+     `ALTER ANY SERVER ROLE` is measured.
   6. Only pyodbc with ODBC Driver 18 gives the server's number for a wrong
      password, a disabled login and a login that must change its password,
      `18456`, `18470` and `18488`. Errors carry the vendor code.

@@ -827,7 +827,8 @@ in `sql/mariadb/`, and the matrix of 10.11, 11.4, 11.8 and 12.3 is the
 
 ### SQL Server
 
-These entries are measured before a SQL Server driver is designed (#1538).
+These entries were measured to design the SQL Server driver, whose decisions
+are in [#1538](decisions/log.md#1538).
 The probes are in `sql/mssql/`, and the matrix of 2019, 2022 and 2025 is the
 `mssql-matrix` profile of `test/compose.yaml`.
 [measurements.md](measurements.md) names each release in full.
@@ -861,6 +862,13 @@ The probes are in `sql/mssql/`, and the matrix of 2019, 2022 and 2025 is the
   afterwards. The policy's checks are not applied to the password. `HASHED`
   cannot be sent with `MUST_CHANGE`. The tool login reads `NULL` for another
   login's hash. `sql/mssql/02_client_hash_probe.py` measures it.
+- `unverified` `mssql-hash-version` (#1538) — **How can the tool tell, before
+  it changes a password, whether the server takes a `0x0300` value?**
+  2019 refuses `0x0300`, `15021`; 2022 and 2025 take it. The tool reads `NULL`
+  for every login's hash, so it cannot copy the version a server stores, and
+  a refused `HASHED` statement changes nothing but costs a statement. No
+  property or catalog row that names the accepted versions is measured.
+  Every release measured takes `0x0200`.
 - `verified` `mssql-lock-expiry` (#1538) — **What can a login with only
   `ALTER ANY LOGIN` do to another login's state, read back, and expect at
   its login, on the Linux images?**

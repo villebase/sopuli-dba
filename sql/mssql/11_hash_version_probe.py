@@ -23,12 +23,17 @@ login that holds only ALTER ANY LOGIN:
   HV6  the same CREATE LOGIN inside BEGIN TRANSACTION ... ROLLBACK, with a
        0x0300 value and with a 0x0200 one: the answer, and whether the login
        exists afterwards. A check that touches no managed login
+  HV7  HV6 with a malformed 0x0300 value: one byte short, and all zeros. So
+       whether 15021 says only that the server refuses the version
+  HV8  HV6 with the name of a login that exists, with each version. So what
+       the check answers when its name is taken
 
 STATUS: run on 15.0.4510.2, 16.0.4325.4 and 17.0.5065.9, the
 mcr.microsoft.com/mssql/server 2019-latest, 2022-latest and 2025-latest images
 of test/compose.yaml profile mssql-matrix, as pulled on 2026-11-15, with
-Python 3.13.12 on Windows 11 AMD64, on 2026-11-16 (#1550). Four times, the
-last two exit 0 against this header, and the same result every time.
+Python 3.13.12 on Windows 11 AMD64, on 2026-11-16 (#1550). Six times; HV7 and
+HV8 three times. The last two runs exit 0 against this header, and every run
+gave the same result.
 
 RESULTS -- the same on every release, except where noted
 
@@ -45,9 +50,10 @@ RESULTS -- the same on every release, except where noted
        one is refused, 18456. On 16.0.4325.4 and 17.0.5065.9 it is accepted:
        both flags are off, and the new password logs in
   HV4  inside a transaction that is rolled back, the same statement answers
-       as in HV3, and then nothing is changed on any release: both flags on,
-       the stored value the same, the former password logs in. ALTER LOGIN
-       is rolled back with the transaction
+       as in HV3. On 16.0.4325.4 and 17.0.5065.9, where it is accepted, it is
+       then rolled back: both flags on, the stored value the same, the former
+       password logs in. On 15.0.4510.2 it is refused, so nothing is rolled
+       back
   HV5  CREATE LOGIN with a 0x0300 value is refused on 15.0.4510.2, 15021, and
        no login is left. It is accepted on 16.0.4325.4 and 17.0.5065.9
   HV6  **a check that touches no managed login:** CREATE LOGIN with a 0x0300
@@ -55,6 +61,15 @@ RESULTS -- the same on every release, except where noted
        15.0.4510.2 and ok on 16.0.4325.4 and 17.0.5065.9, and leaves no
        login on any release. With a 0x0200 value it answers ok on every
        release, and leaves no login
+  HV7  **15021 is not only the version's refusal.** A 0x0300 value one byte
+       short is refused 15021 on every release. One of zeros is accepted on
+       16.0.4325.4 and 17.0.5065.9, and refused 15021 on 15.0.4510.2. So
+       HV6's answer means what it says only for a value of the right length
+  HV8  with the name of a login that exists: on 15.0.4510.2 a 0x0300 value
+       answers 15021, and a 0x0200 one 15025, "The server principal ...
+       already exists". On 16.0.4325.4 and 17.0.5065.9 both answer 15025.
+       2019 checks the value's version before the name; the others check
+       the name first
 
 HOW TO RUN, against the matrix (test/README.md), from the repo root:
 
@@ -98,6 +113,10 @@ _TAKES: dict[str, object] = {
     "HV5": ("ok", "1"),
     "HV6 0x0300": ("ok", "0"),
     "HV6 0x0200": ("ok", "0"),
+    "HV7 0x0300 of 69 bytes": ("15021", "0"),
+    "HV7 0x0300 of zeros": ("ok", "0"),
+    "HV8 0x0300, an existing name": ("15025", "0"),
+    "HV8 0x0200, an existing name": ("15025", "0"),
 }
 
 #: Each recorded result, by the server's major release.
@@ -111,6 +130,10 @@ RECORDED: dict[str, dict[str, object]] = {
         "HV5": ("15021", "0"),
         "HV6 0x0300": ("15021", "0"),
         "HV6 0x0200": ("ok", "0"),
+        "HV7 0x0300 of 69 bytes": ("15021", "0"),
+        "HV7 0x0300 of zeros": ("15021", "0"),
+        "HV8 0x0300, an existing name": ("15021", "0"),
+        "HV8 0x0200, an existing name": ("15025", "0"),
     },
     "16": {"HV1": ["16", "3"], **_TAKES},
     "17": {"HV1": ["17", "3"], **_TAKES},
@@ -123,23 +146,33 @@ def tool(service: str, script: str) -> str:
     return ch.code(errors) if errors else (out or "ok")
 
 
-def messages(service: str, script: str) -> str:
-    """The refusal's numbers and the server's text, for the header."""
+def answer(service: str, script: str) -> tuple[str, str]:
+    """One run of `script` as the tool: the code that is checked, as
+    `ch.code` gives it, and the server's text, which is printed."""
     _, errors = ch.client(service, ch.TOOL, ch.TOOL_PASSWORD, script)
-    return "; ".join(f"{number}: {text}" for number, text in errors) or "ok"
+    text = "; ".join(f"{number}: {message}" for number, message in errors) or "ok"
+    return ch.code(errors), text
 
 
-def flags(service: str, account: str = ch.ACCOUNT) -> str:
+def flags(service: str) -> str:
     return ch.sa(
         service,
         "SELECT CAST(is_policy_checked AS varchar(1)) + ',' "
         "+ CAST(is_expiration_checked AS varchar(1)) "
-        f"FROM sys.sql_logins WHERE name = '{account}'",
+        f"FROM sys.sql_logins WHERE name = {ch.quote(ch.ACCOUNT)}",
     )
 
 
 def exists(service: str, name: str) -> str:
-    return ch.sa(service, f"SELECT CASE WHEN SUSER_ID('{name}') IS NULL THEN 0 ELSE 1 END")
+    return ch.sa(service, f"SELECT CASE WHEN SUSER_ID({ch.quote(name)}) IS NULL THEN 0 ELSE 1 END")
+
+
+def rolled_back_create(name: str, value: bytes) -> str:
+    return (
+        "BEGIN TRANSACTION;\n"
+        f"CREATE LOGIN [{name}] WITH PASSWORD = 0x{value.hex()} HASHED, CHECK_POLICY = OFF;\n"
+        "ROLLBACK TRANSACTION"
+    )
 
 
 def drop_extra(service: str) -> None:
@@ -168,10 +201,9 @@ def cases(service: str) -> None:
     value3 = ch.password_hash(NEW, ch.draw_salt(), 3)
     value2 = ch.password_hash(NEW, ch.draw_salt(), 2)
     for label, value in (("0x0300", value3), ("0x0200", value2)):
-        statement = ch.hashed(ABSENT, value, ", CHECK_POLICY = OFF")
-        answer = messages(service, statement)
-        print(f"HV2 {label} to a login that does not exist: {answer}")
-        ch.check(f"HV2 {label}", ch.as_tool(service, statement), recorded.get(f"HV2 {label}"))
+        code, text = answer(service, ch.hashed(ABSENT, value, ", CHECK_POLICY = OFF"))
+        print(f"HV2 {label} to a login that does not exist: {text}")
+        ch.check(f"HV2 {label}", code, recorded.get(f"HV2 {label}"))
 
     for label, wrap in (
         ("HV3", lambda s: s),
@@ -181,7 +213,7 @@ def cases(service: str) -> None:
         stored = ch.stored(service)
         statement = wrap(ch.hashed(ch.ACCOUNT, ch.password_hash(NEW, ch.draw_salt(), 3),
                                    ", CHECK_POLICY = OFF"))  # fmt: skip
-        answer = messages(service, statement)
+        code, text = answer(service, statement)
         after = (
             flags(service),
             ch.stored(service) == stored,
@@ -190,32 +222,32 @@ def cases(service: str) -> None:
         )
         print(
             f"{label} 0x0300 with CHECK_POLICY = OFF to a login with the policy and expiration "
-            f"on: {answer}; then flags {after[0]}, stored value unchanged {after[1]}, "
+            f"on: {text}; then flags {after[0]}, stored value unchanged {after[1]}, "
             f"former password {after[2]}, new password {after[3]}"
         )
-        ch.check(label, (answer.split(":")[0], *after), recorded.get(label))
+        ch.check(label, (code, *after), recorded.get(label))
 
     create = f"CREATE LOGIN [{CREATED}] WITH PASSWORD = 0x{value3.hex()} HASHED, CHECK_POLICY = OFF"
-    answer = messages(service, create)
+    code, text = answer(service, create)
     left = exists(service, CREATED)
-    print(f"HV5 CREATE LOGIN with a 0x0300 value: {answer}; the login exists afterwards: {left}")
-    ch.check("HV5", (answer.split(":")[0], left), recorded.get("HV5"))
+    print(f"HV5 CREATE LOGIN with a 0x0300 value: {text}; the login exists afterwards: {left}")
+    ch.check("HV5", (code, left), recorded.get("HV5"))
 
     drop_extra(service)
-    for label, value in (("0x0300", value3), ("0x0200", value2)):
-        rolled = (
-            "BEGIN TRANSACTION;\n"
-            f"CREATE LOGIN [{CREATED}] WITH PASSWORD = 0x{value.hex()} HASHED, "
-            "CHECK_POLICY = OFF;\n"
-            "ROLLBACK TRANSACTION"
-        )
-        answer = messages(service, rolled)
+    for label, name, value in (
+        ("HV6 0x0300", CREATED, value3),
+        ("HV6 0x0200", CREATED, value2),
+        # A malformed 0x0300 value: one byte short, and all zeros (02, CH3).
+        ("HV7 0x0300 of 69 bytes", CREATED, value3[:-1]),
+        ("HV7 0x0300 of zeros", CREATED, b"\x03\x00" + bytes(68)),
+        # The name of a login that exists.
+        ("HV8 0x0300, an existing name", ch.ACCOUNT, value3),
+        ("HV8 0x0200, an existing name", ch.ACCOUNT, value2),
+    ):
+        code, text = answer(service, rolled_back_create(name, value))
         left = exists(service, CREATED)
-        print(
-            f"HV6 CREATE LOGIN with a {label} value, rolled back: {answer}; the login exists "
-            f"afterwards: {left}"
-        )
-        ch.check(f"HV6 {label}", (answer.split(":")[0], left), recorded.get(f"HV6 {label}"))
+        print(f"{label}: CREATE LOGIN, rolled back: {text}; {CREATED} exists afterwards: {left}")
+        ch.check(label, (code, left), recorded.get(label))
         drop_extra(service)
 
 

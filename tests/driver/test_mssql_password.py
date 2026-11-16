@@ -1,6 +1,7 @@
 """The client-side SQL Server password value (#1551). Tier 0.
 
-The vectors were computed by ``sql/mssql/02_client_hash_probe.py``'s
+SERVER_VALUES are values two servers stored themselves, one of each version.
+The other vectors were computed by ``sql/mssql/02_client_hash_probe.py``'s
 ``password_hash``, whose values agreed with the server's own on 15.0.4510.2,
 16.0.4325.4 and 17.0.5065.9 (CH1). They are written out here so that a change
 to this module cannot change them with it.
@@ -54,6 +55,32 @@ VECTORS = [
         "B7A32E1867257AA331A3C837569DDDFAEAC105B5004B5AC745232DE105",
     ),
 ]
+
+
+#: The values two servers stored for 'Acme-Vector-pw1', set by sa with
+#: CHECK_POLICY = OFF and read back with LOGINPROPERTY(..., 'PasswordHash'), on
+#: the mssql-matrix images pulled 2026-11-15, read on 2026-11-16. Each server
+#: drew its own salt, bytes 2 to 5.
+SERVER_VALUES = {
+    "15.0.4510.2": (
+        "0200E4FC8C58076062368687A03977E9DD821748CAC6A54A34AD3C281FAFA58641EEECF27B5131"
+        "7986D6AA0D45C11A145FDADFBA92187408F2C19021C7739AC3DB7CFF368D84"
+    ),
+    "17.0.5065.9": (
+        "0300882F4E44AD9B9CAB99C7E70568057EED9731AEDC7773BE484516C94B83BE45F9E29B627E08"
+        "2AE11388C6365CB32DD5B539D5479AC72970AC49188D41019CF2E78B042C00"
+    ),
+}
+
+
+@pytest.mark.parametrize("release", sorted(SERVER_VALUES))
+def test_the_value_agrees_with_the_servers_own(release: str) -> None:
+    stored = bytes.fromhex(SERVER_VALUES[release])
+    version = int.from_bytes(stored[:2], "big")
+
+    value = password_value(Secret("Acme-Vector-pw1"), version, salt=stored[2:6])
+
+    assert value == stored
 
 
 @pytest.mark.parametrize(("password", "version", "expected"), VECTORS)

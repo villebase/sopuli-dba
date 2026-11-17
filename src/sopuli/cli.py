@@ -6916,7 +6916,10 @@ def creds_check(
     Without that grant the guard is unavailable: the row says so, and the
     check goes ahead. The same applies to a common account on a target that is
     not `CDB$ROOT`, because the root counts its failed logins. PostgreSQL has
-    no failed-login lockout.
+    no failed-login lockout. On SQL Server the command logs in only where the
+    host runs Linux, which locks no login. On a Windows host the lockout
+    threshold cannot be read, so the run is refused with exit 5 before it
+    checks anything, naming `lockout_threshold`.
 
     The command reads each account's status separately, so a locked account,
     an expired password and a missing account each get their own state. A
@@ -6966,6 +6969,8 @@ def creds_check(
 
     if method != VERIFY_LOGIN:
         _refuse_uncomparable(by_target, config, run, stores=stores, previous=include_previous)
+    if method != VERIFY_HASH:
+        _refuse_unsafe_logins(by_target, config, run)
 
     rows: list[tuple[Binding, check_states.Outcome]] = []
     results: list[dict[str, Any]] = []
@@ -7008,6 +7013,45 @@ def creds_check(
     states = [outcome.state for _, outcome in rows]
     document.finish(check_states.exit_code_for(states), summarise(states))
     return "\n".join([render_plan(plan, noun="check"), "", render_check(rows, notices=notices)])
+
+
+def _refuse_unsafe_logins(
+    by_target: Mapping[str, ExpandedTarget], config: Config, run: Invocation
+) -> None:
+    """Refuse a login check on a target that cannot make one safely, before
+    anything is checked (invariant 4).
+
+    Only a product whose registry entry sets ``login_check_preflight`` is
+    asked, with one more connection per target: SQL Server, where on a
+    Windows host a wrong password counts toward a lockout threshold the tool
+    cannot read (#1552). Asked only when the method makes a login. The first
+    target that refuses ends the run with exit 5, naming the capability. A
+    target that cannot be opened is passed over, as
+    :func:`_refuse_uncomparable` passes it: the run reports it per target.
+
+    The registry's flag is the one gate: a flagged product's session has the
+    method, which a registry test holds, so a session without it raises
+    rather than being checked unasked.
+    """
+    for target_name in _grouped(config.bindings):
+        target = by_target[target_name]
+        if not DRIVERS[target.target.type].login_check_preflight:
+            continue
+        try:
+            session = _open_session(target, run, config)
+        except Exception:  # noqa: BLE001 -- the run reports it, per target
+            continue
+        try:
+            session.require_login_check()  # type: ignore[attr-defined]
+        except UnsupportedCapabilityError:
+            raise
+        except DriverError:
+            # The host could not be read, such as a dropped connection: the
+            # run reports the target, as it does one it cannot open.
+            continue
+        finally:
+            with suppress(Exception):
+                session.close()
 
 
 def _refuse_uncomparable(

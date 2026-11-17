@@ -13,6 +13,7 @@
 #   docker compose --profile mysql-matrix up -d    # MySQL 8.0, 8.4, 9, on 3380, 3384, 3390
 #   docker compose --profile mariadb-matrix up -d  # MariaDB 10.11, 11.4, 11.8, 12.3, on 3311, 3314, 3318, 3323
 #   docker compose --profile mssql-matrix up -d    # SQL Server 2019, 2022, 2025, on 14319, 14322, 14325
+#   docker compose --profile mssql up -d           # SQL Server 2022 alone, the driver's tier-1 server, on 14322
 #   docker compose --profile tier0 --profile pgbouncer up -d # + PgBouncer, on 6432 and 6433
 #   docker compose --profile tier0 --profile supabase up -d  # + Supabase's database, on 5440
 #   docker compose --profile oracle19c up -d # 19.3 EE, maintainer-only; see the service
@@ -447,8 +448,13 @@ services:
       - "127.0.0.1:${SOPULI_TEST_MSSQL2019_PORT:-14319}:1433"
       - "[::1]:${SOPULI_TEST_MSSQL2019_PORT:-14319}:1433"
 
+  # Also the SQL Server driver's tier-1 server (#1549), in the `mssql` profile,
+  # which starts it alone. Not in tier1: the image is amd64 only and about
+  # 2 GB, so CI runs it in a lane of its own. The live fixture creates the tool
+  # login with 02-mssql-privileges.md §2.1's grant.
   mssql-2022:
     <<: *mssql-matrix
+    profiles: [mssql-matrix, mssql]
     image: mcr.microsoft.com/mssql/server:2022-latest
     ports:
       - "127.0.0.1:${SOPULI_TEST_MSSQL2022_PORT:-14322}:1433"

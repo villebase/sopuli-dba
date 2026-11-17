@@ -74,6 +74,11 @@ What each environment is, and what to know before using it:
   others, where `-C` trusts the server's own certificate. The images are for
   amd64 only. Each server used between 550 and 950 MiB of memory idle
   (measured 2026-11-15), so do not start the profile beside tier 1.
+- **mssql** (`mssql-2022`, port 14322) starts the 2022 server of
+  `mssql-matrix` alone. It is the SQL Server driver's tier-1 server, and the
+  live fixture creates the tool login with only `ALTER ANY LOGIN`. It is not
+  in `tier1`, because the image is amd64 only and about 2 GB. CI starts it in
+  a lane of its own.
 - **pgbouncer** (`pgbouncer` and `pgbouncer-ignore`, ports 6432 and 6433) is
   PgBouncer 1.26.0 in front of tier 0's `postgres`, for
   `sql/postgres/08_pgbouncer_probe.py`. Start it with tier 0:
@@ -94,9 +99,10 @@ What each environment is, and what to know before using it:
   profile does not include it, and a local tier-1 stack does not pull it. CI's
   tier-1 lane starts both profiles.
 
-CI starts tier 1 and the `supabase` profile for each pull request, except one
-that changes only files in the prose list of `.github/workflows/ci.yml`'s
-`changes` job. Every other profile is started by hand.
+CI starts tier 1 and the `supabase` profile for each pull request, and the
+`mssql` profile in a job of its own, except for a pull request that changes
+only files in the prose list of `.github/workflows/ci.yml`'s `changes` job.
+Every other profile is started by hand.
 
 The releases each environment was measured on are in
 [`../docs/measurements.md`](../docs/measurements.md).
@@ -115,6 +121,7 @@ docker compose --profile postgres-matrix up -d  # PostgreSQL 13 to 18, on 5413 t
 docker compose --profile mysql-matrix up -d     # MySQL 8.0, 8.4, 9, on 3380, 3384, 3390
 docker compose --profile mariadb-matrix up -d   # MariaDB 10.11, 11.4, 11.8, 12.3, on 3311, 3314, 3318, 3323
 docker compose --profile mssql-matrix up -d     # SQL Server 2019, 2022, 2025, on 14319, 14322, 14325
+docker compose --profile mssql up -d            # SQL Server 2022 alone, the driver's tier-1 server, on 14322
 docker compose --profile tier0 --profile pgbouncer up -d  # + PgBouncer, on 6432 and 6433
 docker compose --profile tier0 --profile supabase up -d  # + Supabase's database, on 5440
 docker compose --profile oracle19c up -d  # 19.3 EE, maintainer-only, 15-25 min the first time

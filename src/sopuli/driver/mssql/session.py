@@ -14,7 +14,9 @@ SQL login, and names the instance by ``SERVERPROPERTY('ServerName')``
 (:meth:`MssqlSession.cluster_identity`). Every other method refuses with
 ``SOPULI-20006``, and the registry lists no command but `doctor`: the first
 verbs come with the password change (#1551) and the login check (#1552).
-The capabilities are #1550.
+It reads the host's platform and the password value's version as
+capabilities (:mod:`~sopuli.driver.mssql.capabilities`, #1550); the
+Availability Group reads are #1550's next part.
 
 **pyodbc's pooling is off for the process.** A pooled connection is kept open
 after ``close()``, and the next ``connect()`` with the same string reuses it
@@ -35,11 +37,11 @@ import pyodbc
 
 from sopuli.config.model import ExpandedTarget, Runtime
 from sopuli.config.targets import MSSQL_STRICT
-from sopuli.driver.mssql import accounts
+from sopuli.driver.mssql import accounts, capabilities
 from sopuli.driver.mssql.admin import Assessment, Catalog, assess, read_catalog
 from sopuli.driver.mssql.client import client_lines
 from sopuli.driver.mssql.connection import connection_string
-from sopuli.driver.mssql.errors import from_error
+from sopuli.driver.mssql.errors import from_error, records
 from sopuli.driver.mssql.scope import observe
 from sopuli.driver.protocol import (
     ClosesConnection,
@@ -50,6 +52,7 @@ from sopuli.driver.protocol import (
     Scope,
     Timeouts,
     UserState,
+    require_read_write,
 )
 from sopuli.driver.registry import NotWrittenError
 from sopuli.output.debug import logger
@@ -84,6 +87,9 @@ class MssqlSession(ClosesConnection):
     identity_caveat: str | None = field(default=None, init=False, repr=False)
     #: Guardrail 9's catalog, read on first use (:meth:`admin_assessment`).
     _catalog: Catalog | None = field(default=None, init=False, repr=False)
+    #: The capabilities of #1550, read on first use.
+    _host_platform: str | None = field(default=None, init=False, repr=False)
+    _hash_version: int | None = field(default=None, init=False, repr=False)
 
     def scope(self) -> Scope:
         """What this session is: a server, read-write or not, and its
@@ -117,6 +123,70 @@ class MssqlSession(ClosesConnection):
                 self._catalog.unread or "complete",
             )
         return assess(principal_id, self._catalog)
+
+    def host_platform(self) -> str:
+        """``Linux`` or ``Windows``: the host's platform, read once and
+        cached (:mod:`~sopuli.driver.mssql.capabilities`)."""
+        if self._host_platform is None:
+            self._host_platform = self._read(capabilities.host_platform)
+            LOG.debug("%s runs on %s", self.target.name, self._host_platform or "an unnamed host")
+        return self._host_platform
+
+    def hash_version(self) -> int:
+        """The password value's version this server takes: ``0x0300`` or
+        ``0x0200``, read once with the rolled-back check and cached (#1564).
+
+        Only a session that will set a password calls it, the `--dry-run` of
+        one included, so that the plan names the value it would send; the
+        command never calls it for a target that is ``readonly``. A session
+        that found ``master`` read-only refuses it, as it refuses a write.
+        Any answer but ``ok`` or ``15021`` refuses the target as lacking
+        ``password_value``, and is not cached: the next call asks again.
+        """
+        if self._hash_version is None:
+            require_read_write(
+                self.scope(),
+                target=self.target.name,
+                hint="the check for the password value's version is a write, rolled back",
+            )
+            answer = self._check_answer(capabilities.check_statement(capabilities.check_name()))
+            self._hash_version = capabilities.version_from(answer, target=self.target.name)
+            LOG.debug(
+                "%s takes a 0x%04X password value (check answered %s)",
+                self.target.name,
+                self._hash_version,
+                answer,
+            )
+        return self._hash_version
+
+    def _check_answer(self, statement: str) -> str:
+        """``ok``, or the number of the first server error, for the check's
+        batch. A failure with no server record is the connection's, and is
+        raised as :meth:`_read` raises it."""
+        if self.connection is None:
+            raise DriverError(
+                f'the session to target "{self.target.name}" is closed',
+                hint="this is a fault in sopuli: a closed session was used again",
+            )
+        cursor = self.connection.cursor()
+        try:
+            try:
+                cursor.execute(statement)
+                # An error in a later statement of the batch is raised when
+                # its result is reached.
+                while cursor.nextset():
+                    pass
+            except pyodbc.Error as error:
+                args: tuple[Any, ...] = getattr(error, "args", ())
+                found = records(str(args[1]) if len(args) > 1 else str(error))
+                server = next((record for record in found if record.server), None)
+                if server is None:
+                    raise from_error(error).as_error() from error
+                cursor.execute(capabilities.END_TRANSACTION)
+                return str(server.number)
+            return capabilities.TAKES_IT
+        finally:
+            cursor.close()
 
     def _not_written(self, what: str) -> NoReturn:
         raise NotWrittenError(

@@ -393,7 +393,7 @@ and 2025 answer `15025` first. A refused `0x0300` change changes nothing
 
 **The driver reads it once per session, before a change, with the
 rolled-back `CREATE LOGIN`, under a random name, and caches the answer as a
-capability** ([#1564](../decisions/log.md#1564), open: #1550). `ok` means the
+capability** ([#1564](../decisions/log.md#1564)). `ok` means the
 server takes `0x0300`, and `15021` that it does not. Any other answer fails
 the check at plan time, `15025` among them: the tool cannot see every name
 a login would clash with, such as a user-defined role's, and an answer to a
@@ -600,5 +600,5 @@ compute a lockout margin (`09_windows_policy_probe.py`, WP1 and WP2). **A
 locked login answers its right password `18456`**, as a wrong one (WP3), so
 any login the driver makes reads `IsLocked` first, and reports a locked
 login as `unavailable` without logging in. The tool login reads the host's
-platform from `sys.dm_os_host_info` (WP0); the driver reads it as a
-capability (open: #1550).
+platform from `sys.dm_os_host_info` (WP0); the driver reads it once per
+session, and caches it as a capability.

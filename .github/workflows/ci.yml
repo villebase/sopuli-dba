@@ -687,7 +687,8 @@ jobs:
       - run: pip install -e ".[dev,mssql]"
 
       # The release sql/mssql/06_client_library.Dockerfile measured, from
-      # Microsoft's repository for this Ubuntu. The runner image may carry that
+      # Microsoft's repository for the runner's own Ubuntu release, read from
+      # /etc/os-release: `ubuntu-latest` moves. The runner image may carry that
       # repository already, so the list and key are written under the names
       # Microsoft's own prod.list uses, and a second definition cannot conflict.
       # unixODBC comes from Ubuntu's archive. A failed `update` is carried
@@ -696,7 +697,8 @@ jobs:
         run: |
           curl -fsSL https://packages.microsoft.com/keys/microsoft.asc \
             | sudo gpg --batch --yes --dearmor -o /usr/share/keyrings/microsoft-prod.gpg
-          curl -fsSL https://packages.microsoft.com/config/ubuntu/24.04/prod.list \
+          release=$(. /etc/os-release && echo "$VERSION_ID")
+          curl -fsSL "https://packages.microsoft.com/config/ubuntu/$release/prod.list" \
             | sudo tee /etc/apt/sources.list.d/microsoft-prod.list > /dev/null
           sudo apt-get update -qq \
             || echo "::warning::apt-get update reported errors; the install below is the gate"
@@ -708,10 +710,13 @@ jobs:
         working-directory: test
         run: docker compose --profile mssql up -d --wait mssql-2022
 
+      # The files by name: `-k` would still collect every module in
+      # tests/driver, and the MySQL family's import PyMySQL, which this lane
+      # does not install.
       - name: pytest
         env:
           SOPULI_TEST_MSSQL: required
-        run: pytest tests/driver -k mssql
+        run: pytest tests/driver/test_mssql_*.py
 
       - name: container logs
         if: always()

@@ -8,10 +8,13 @@ rule 1). The modules beside it are tier 0.
 **What this build does** (#1549). It connects through ODBC Driver 18 with the
 target's ``mssql:`` settings (:mod:`~sopuli.driver.mssql.connection`), labels
 the session with the run's correlation id, and reports the scope: ``server``,
-whether ``master`` takes writes, and its encryption. Every other method
-refuses with ``SOPULI-20006``, and the registry lists no command but
-`doctor`. Reading logins, the refusals of decision 1 and the server's
-identity are #1549's next part; the capabilities are #1550.
+whether ``master`` takes writes, and its encryption. It reads a declared
+login (:meth:`MssqlSession.describe_user`), refusing every principal but a
+SQL login, and names the instance by ``@@SERVERNAME``
+(:meth:`MssqlSession.cluster_identity`). Every other method refuses with
+``SOPULI-20006``, and the registry lists no command but `doctor`: the first
+verbs come with the password change (#1551) and the login check (#1552).
+The capabilities are #1550.
 
 **pyodbc's pooling is off for the process.** A pooled connection is kept open
 after ``close()``, and the next ``connect()`` with the same string reuses it
@@ -25,12 +28,14 @@ import logging
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any, NoReturn, TypeVar
 
 import pyodbc
 
 from sopuli.config.model import ExpandedTarget, Runtime
 from sopuli.config.targets import MSSQL_STRICT
+from sopuli.driver.mssql import accounts
 from sopuli.driver.mssql.client import client_lines
 from sopuli.driver.mssql.connection import connection_string
 from sopuli.driver.mssql.errors import from_error
@@ -38,10 +43,12 @@ from sopuli.driver.mssql.scope import observe
 from sopuli.driver.protocol import (
     ClosesConnection,
     Credential,
+    Cursor,
     DriverContext,
     DriverError,
     Scope,
     Timeouts,
+    UserState,
 )
 from sopuli.driver.registry import NotWrittenError
 from sopuli.output.debug import logger
@@ -52,17 +59,33 @@ pyodbc.pooling = False
 
 T = TypeVar("T")
 
+#: ``UserState.admin_unread`` until guardrail 9's read is written (#1553).
+GUARDRAIL_NOT_READ = (
+    "this build does not read the paths from a SQL Server login to an administrative "
+    "grant yet (#1553)"
+)
+
+
+def _server_name(cursor: Cursor) -> str | None:
+    """``@@SERVERNAME``, or ``None`` where the server gives none."""
+    cursor.execute("SELECT @@SERVERNAME")
+    row = cursor.fetchone()
+    return str(row[0]) if row and row[0] is not None else None
+
 
 @dataclass
 class MssqlSession(ClosesConnection):
     """One open connection to a SQL Server instance. Implements the
-    :class:`~sopuli.driver.protocol.Session` methods `doctor` uses; every other
-    one refuses with ``SOPULI-20006``."""
+    :class:`~sopuli.driver.protocol.Session` methods `doctor` uses and
+    :meth:`describe_user`; every other one refuses with ``SOPULI-20006``."""
 
     connection: Any
     target: ExpandedTarget
     #: Invariant 3's cache, probed on first use.
     _scope: Scope | None = field(default=None, init=False, repr=False)
+    #: :class:`~sopuli.driver.clusters.ClusterIdentity`'s: nothing is claimed
+    #: less than it could be, so always ``None``.
+    identity_caveat: str | None = field(default=None, init=False, repr=False)
 
     def scope(self) -> Scope:
         """What this session is: a server, read-write or not, and its
@@ -96,8 +119,44 @@ class MssqlSession(ClosesConnection):
     def privileges(self, *args: Any, **kwargs: Any) -> NoReturn:
         self._not_written("audit the tool login's grants")
 
-    def describe_user(self, account: str) -> NoReturn:
-        self._not_written("describe a login")
+    def describe_user(self, account: str) -> UserState | None:
+        """The login's state, ``None`` where no login has the name
+        (:mod:`~sopuli.driver.mssql.accounts`). Any principal but a SQL login
+        is refused with
+        :class:`~sopuli.driver.mssql.accounts.NotAPasswordLoginError`.
+
+        A contained database user is not a login, and the tool login does not
+        see one, so its name reads as ``None`` (``02-mssql-privileges.md``
+        §4).
+        """
+        login = self._read(
+            lambda cursor: accounts.read_one(cursor, account, target=self.target.name)
+        )
+        if login is None:
+            return None
+        # Guardrail 9's paths (#1553): `admin_assessment(login.principal_id)`
+        # gives `global_privileges` and `admin_unread` when it is written.
+        # Until then the paths are unread, so check 9 refuses the login rather
+        # than read an empty set as "none held".
+        return accounts.state_of(login, now=datetime.now(UTC), admin_unread=GUARDRAIL_NOT_READ)
+
+    #: The words for two targets that are one instance
+    #: (:class:`~sopuli.driver.clusters.ClusterIdentity`). Not fields.
+    identity_kind = "SQL Server instance"
+    identity_key = "@@SERVERNAME"
+    identity_hint = (
+        "declare each instance once: two targets on one instance would change its "
+        "logins under two names"
+    )
+
+    def cluster_identity(self) -> str | None:
+        """The instance's ``@@SERVERNAME``, which the CLI uses to refuse two
+        targets that are one instance. It is the host's name, with the
+        instance's for a named instance. Nothing else measured tells two
+        instances apart: ``master``'s ``service_broker_guid`` is all zeros, and
+        ``msdb``'s comes with the image (``05_identity_probe.py``, ID2, ID5).
+        So two instances on hosts of one name are refused as one."""
+        return self._read(_server_name)
 
     def byte_limit(self) -> NoReturn:
         self._not_written("say how long a password may be")

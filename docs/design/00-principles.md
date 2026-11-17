@@ -283,8 +283,9 @@ UC-5's three `report` commands (#1460, #1462, #1483): every command that connect
 a target. The config accepts `type: mssql`, and pyodbc comes with
 `sopuli-dba[mssql]`, beside Microsoft's ODBC Driver 18, a system package
 ([#1538](../decisions/log.md#1538), decision 6). `doctor` connects to a SQL
-Server instance and reports the scope, `server`. Its entry lists no command
-yet, so every other command refuses a SQL Server target (open: #1549). What
+Server instance and reports the scope, `server`, and the driver reads a
+declared login. Its entry lists no command yet, so every other command
+refuses a SQL Server target (open: #1551, #1552). What
 PostgreSQL lacks, such as a rollover window, a profile, or a forced password
 change at next login, is refused at plan time by capability, not by product. A libpq older than 16 is a property of the client,
 not of the target, and is refused per account during the run: the one accepted

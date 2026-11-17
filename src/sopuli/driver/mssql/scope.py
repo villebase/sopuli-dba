@@ -43,9 +43,11 @@ SCOPE = (
     "CAST(DATABASEPROPERTYEX('master', 'Updateability') AS nvarchar(60))"
 )
 
-#: ``SERVERPROPERTY('EngineEdition')`` for Azure SQL Database, by Microsoft's
-#: documentation. Not measured: no image of it exists.
-AZURE_SQL_DATABASE = 5
+#: ``SERVERPROPERTY('EngineEdition')`` of the Azure services that are a
+#: logical server rather than an instance, by Microsoft's documentation: Azure
+#: SQL Database, and Azure Synapse's dedicated and serverless pools. Not
+#: measured: no image of any exists.
+LOGICAL_SERVERS = {5: "Azure SQL Database", 6: "Azure Synapse", 11: "Azure Synapse serverless"}
 
 UNENCRYPTED_HINT = (
     "`mssql.encrypt: optional` lets the connection go unencrypted, and the tool login "
@@ -55,9 +57,9 @@ UNENCRYPTED_HINT = (
 
 
 class NotAnInstanceError(DriverError):
-    """A ``type: mssql`` target reached Azure SQL Database.
+    """A ``type: mssql`` target reached Azure SQL Database or Azure Synapse.
 
-    It is not an instance whose ``master`` holds logins the tool can manage
+    Neither is an instance whose ``master`` holds logins the tool can manage
     (#1538, decision 1). ``config``, exit 9: nothing in the run fixes it.
     """
 
@@ -74,17 +76,17 @@ def encryption(settings: TargetMssql) -> Encryption:
 
 def observe(cursor: Cursor, *, target: str, settings: TargetMssql) -> Scope:
     """This session's scope: a server, whether ``master`` takes writes, and
-    its encryption. Azure SQL Database is refused before anything else is
-    reported (:class:`NotAnInstanceError`)."""
+    its encryption. A logical server, such as Azure SQL Database, is refused
+    before anything else is reported (:class:`NotAnInstanceError`)."""
     cursor.execute(SCOPE)
     version, edition, updateability = cursor.fetchone()
-    if edition == AZURE_SQL_DATABASE:
+    if edition in LOGICAL_SERVERS:
         raise NotAnInstanceError(
-            f'target "{target}" is Azure SQL Database, which the SQL Server driver does not manage',
+            f'target "{target}" is {LOGICAL_SERVERS[edition]}, which the SQL Server driver '
+            "does not manage",
             hint=(
-                "Azure SQL Database keeps its logins in a logical server's master, which "
-                "the tool cannot manage. Declare a SQL Server instance or an Azure SQL "
-                "Managed Instance"
+                "it keeps its logins in a logical server's master, which the tool cannot "
+                "manage. Declare a SQL Server instance or an Azure SQL Managed Instance"
             ),
         )
     can_write = str(updateability).upper() == "READ_WRITE"

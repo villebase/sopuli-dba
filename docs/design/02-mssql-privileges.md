@@ -17,8 +17,9 @@ Database is refused (decision 1): it is not an instance with logins in its
 own `master` that the tool can manage. The driver reads the edition from
 `SERVERPROPERTY('EngineEdition')`, where Azure SQL Database answers 5 by
 Microsoft's documentation, and refuses the target when it first connects,
-before any change. No image of Azure SQL Database exists, so the refusal is
-not measured.
+before any change. It refuses Azure Synapse's pools, 6 and 11, for the same
+reason: each is a logical server, not an instance. No image of these exists,
+so the refusal is not measured.
 
 A SQL Server target is one instance, `type: mssql`, with the connection
 settings of [`01-configuration.md`](01-configuration.md) §*`mssql:` on a

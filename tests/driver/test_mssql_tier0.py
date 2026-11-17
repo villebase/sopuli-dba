@@ -233,6 +233,18 @@ def test_a_missing_odbc_driver_is_a_config_error() -> None:
     )
 
 
+def test_unixodbc_without_the_driver_library_is_a_config_error() -> None:
+    """unixODBC's wording where the driver is registered and its library is
+    missing. Not measured: unixODBC's own text."""
+    raised = Raised(
+        "01000",
+        "[01000] [unixODBC][Driver Manager]Can't open lib 'ODBC Driver 18 for SQL Server' : "
+        "file not found (0) (SQLDriverConnect)",
+    )
+    diagnosis = from_error(raised, connecting=True)
+    assert (diagnosis.code, diagnosis.category, diagnosis.hint) == ("01000", "config", DRIVER_HINT)
+
+
 def test_the_scrub_runs_before_the_message_is_kept() -> None:
     diagnosis = from_error(WRONG_PASSWORD, scrub=lambda text: text.replace("sopuli_admin", "*"))
     assert diagnosis.message == "Login failed for user '*'."
@@ -295,6 +307,15 @@ def test_azure_sql_database_is_refused() -> None:
         observe(FakeCursor(("12.0.2000.8", 5, "READ_WRITE")), target="az", settings=TargetMssql())
     assert caught.value.exit_code == ExitCode.CONFIG_INVALID
     assert 'target "az" is Azure SQL Database' in str(caught.value)
+
+
+@pytest.mark.parametrize("edition", [6, 11])
+def test_azure_synapse_is_refused(edition: int) -> None:
+    with pytest.raises(NotAnInstanceError) as caught:
+        observe(
+            FakeCursor(("12.0.2000.8", edition, "READ_WRITE")), target="az", settings=TargetMssql()
+        )
+    assert 'target "az" is Azure Synapse' in str(caught.value)
 
 
 # ------------------------------------------------------------------ client ---

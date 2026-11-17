@@ -69,8 +69,14 @@ SERVER_PERMISSION_DENIED = 300
 #: (``10_client_tls_probe.py``, TL3).
 CONNECTION_RESET = 10054
 
-#: The SQLSTATE of an ODBC driver the driver manager cannot find.
+#: The SQLSTATE of an ODBC driver the driver manager cannot find: Windows's
+#: driver manager answers ``IM002``.
 DRIVER_NOT_FOUND = "IM002"
+
+#: unixODBC's answer where the driver is registered and its library is not
+#: there: ``01000``, "Can't open lib 'ODBC Driver 18 for SQL Server' : file not
+#: found". Not measured: unixODBC's own wording.
+_CANNOT_OPEN_LIB = re.compile(r"Can't open lib", re.IGNORECASE)
 
 #: One diagnostic record: its SQLSTATE, its components, its text and number.
 _RECORD = re.compile(
@@ -165,9 +171,10 @@ CERTIFICATE_HINT = (
 )
 
 STRICT_HINT = (
-    "the server reset a connection under `mssql.encrypt: strict`. SQL Server 2019 and "
-    "2022 reset every strict connection in the measurements, and only 2025 took one: "
-    "use `encrypt: mandatory` for this server"
+    "the connection was reset under `mssql.encrypt: strict`. SQL Server 2019 and 2022 "
+    "reset every strict connection in the measurements, and only 2025 took one. If "
+    "this server is 2019 or 2022, it does not take `strict`: set `encrypt: mandatory`. "
+    "If it is 2025, something on the network reset the connection"
 )
 
 DRIVER_HINT = (
@@ -259,7 +266,7 @@ def from_error(
         )
 
     code = found[0].sqlstate if found else sqlstate or "HY000"
-    if code == DRIVER_NOT_FOUND:
+    if code == DRIVER_NOT_FOUND or any(_CANNOT_OPEN_LIB.search(one.text) for one in found):
         return Diagnosis(
             code=code,
             category="config",

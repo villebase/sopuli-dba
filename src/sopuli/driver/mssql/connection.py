@@ -46,7 +46,10 @@ def connection_string(
 
     ``Database=master``: every login the tool makes names ``master``, so a
     contained user of the login's name in its default database does not
-    answer it (``02-mssql-privileges.md`` §7). ``APP`` carries the run's
+    answer it (``02-mssql-privileges.md`` §7). An IPv6 address is written
+    without its brackets, as :func:`~sopuli.driver.address.host_and_port`
+    gives it; whether ODBC Driver 18 takes that form is not measured. ``APP``
+    carries the run's
     correlation id, which the server shows as ``APP_NAME()``. A credential
     with no username or no password is refused
     (:func:`~sopuli.driver.login.require_login`).

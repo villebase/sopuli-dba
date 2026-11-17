@@ -329,14 +329,17 @@ def test_two_spellings_of_one_login_are_refused() -> None:
 # ------------------------------------------------------------- the driver ---
 
 
-def test_only_uc1_and_uc5_are_written() -> None:
-    """Every command but `doctor`, UC-1's change and check, and UC-5's three
-    reports is refused before anything connects (#1549, #1551, #1552,
-    #1555)."""
+def test_the_written_commands() -> None:
+    """Every command but `doctor`, UC-1's, UC-5's three reports and UC-2's
+    list, suspend and expire-password is refused before anything connects
+    (#1549, #1551, #1552, #1554, #1555)."""
     target = loaded(targets=[SERVER]).expanded_targets[0].target
 
     assert DRIVERS["mssql"].commands == frozenset(
         {
+            "account.list",
+            "account.suspend",
+            "account.expire-password",
             "creds.check",
             "creds.apply",
             "creds.rotate",
@@ -361,6 +364,7 @@ def test_only_uc1_and_uc5_are_written() -> None:
     require_command(target, "doctor")
     require_command(target, "report.history")
     require_command(target, "creds.check")
+    require_command(target, "account.suspend")
     with pytest.raises(DriverNotImplementedError) as caught:
-        require_command(target, "account.list")
+        require_command(target, "account.reset-password")
     assert caught.value.code == DRIVER_NOT_IMPLEMENTED

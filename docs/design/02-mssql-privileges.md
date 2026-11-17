@@ -188,18 +188,27 @@ name. Under the default collation, `SQL_Latin1_General_CP1_CI_AS`, names
 compare without case: `CREATE LOGIN` of `ACME_APP` beside `acme_app` is
 refused, `15025`, and `ALTER LOGIN [ACME_APP]` reaches `acme_app`
 (`05_identity_probe.py`, ID1). The config's own duplicate check compares names
-by `upper()` (invariant 5). The account's name in a report is the server's
-spelling (open: #1549).
+by `upper()` (invariant 5). The driver sends the name as a parameter, and
+from then on uses the server's spelling, as it reports it.
 
 The tool refuses, at plan time, an account that is not a login with a
-password (decision 1, open: #1549):
+password (decision 1):
 
-| Account | Why it is refused |
-|---|---|
-| a Windows login or group, or an Entra login | it has no password on the server |
-| a login mapped to a certificate or an asymmetric key | it has no password |
-| a contained user | `ALTER ANY LOGIN` cannot open its database, `18456`, and it has no `HASHED` form, `102` (ID3) |
-| a login in a contained Availability Group's own `master` | the group copies it to every replica, so two declared replicas would be one account (below) |
+| Account | Why it is refused | How |
+|---|---|---|
+| a Windows login or group, or an Entra login or group | it has no password on the server | by its `type` in `sys.server_principals` |
+| a login mapped to a certificate or an asymmetric key | it has no password | by its `type` |
+| a contained user | `ALTER ANY LOGIN` cannot open its database, `18456`, and it has no `HASHED` form, `102` (ID3) | the tool login does not see it, so the name reads as no login |
+| a login in a contained Availability Group's own `master` | the group copies it to every replica, so two declared replicas would be one account (below) | not built (open: #1550) |
+
+A login's state comes from one read (`accounts.py`). `is_disabled` is a lock
+a person set, `ALTER LOGIN … DISABLE`, and `LOGINPROPERTY`'s `IsLocked` a
+lockout after failed logins, which ends by itself
+([#1554](../decisions/log.md#1554)). `IsExpired` and `IsMustChange` each
+mean the password has stopped working. `DaysUntilExpiration` is in whole
+days, so the expiry date is the latest it can be: that many days and one more
+from the read. The failed-login count is unknown:
+it does not count past 1 on Linux (LK2), and no threshold is readable.
 
 **A contained user may have a login's name.** In its database the user's
 password logs in, and the login's is refused, `18456` (ID4). The tool changes
@@ -212,8 +221,15 @@ it (§7).
 `SERVERPROPERTY('MachineName')` and `SERVERPROPERTY('ServerName')` are each
 the host's name. `master`'s `service_broker_guid` is all zeros, and `msdb`'s
 comes with the image: a second container of one image reads the same value
-(ID2, ID5). So two instances on hosts of one name cannot be told apart
-(open: #1549).
+(ID2, ID5). So the driver names an instance by `SERVERPROPERTY('ServerName')`,
+and two targets that give one name are refused as one instance, as two
+targets on one MySQL server are. Two instances on hosts of one name are
+refused too, wrongly: nothing measured tells them apart. Such a pair can't
+be declared in one config; each needs a config of its own. The driver does
+not use `@@SERVERNAME`: by Microsoft's documentation it keeps the name of the
+host the instance was installed on, so hosts cloned from one image would
+read one name, where `ServerName` follows each host's own name. That
+difference is not measured.
 
 **Each replica of an Availability Group is a target of its own**
 (decision 4). On 15.0.4510.2 and 17.0.5065.9, a login and its password are

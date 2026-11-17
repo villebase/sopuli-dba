@@ -7,14 +7,17 @@ names, so the second is refused, as a name declared twice is
 
 A MySQL server is one set of accounts too, known by its ``server_uuid``, and
 so is a MariaDB server, known by its ``@@server_uid`` (#1286), and a Galera
-cluster, known by its ``wsrep_cluster_state_uuid`` (#1346).
+cluster, known by its ``wsrep_cluster_state_uuid`` (#1346). A SQL Server
+instance is known by its ``SERVERPROPERTY('ServerName')``, the host's name and
+the only identity measured, so two
+instances on hosts of one name are refused as one (#1549).
 
 A session that can say which cluster it reached has ``cluster_identity()``,
 ``identity_caveat`` and the words for its refusal (:class:`ClusterIdentity`).
-The PostgreSQL, MySQL and MariaDB sessions do, so the check asks for them by
-name rather than through :class:`~sopuli.driver.protocol.Session`, which every
-driver and test fake implements. ``tests/test_cli_one_cluster.py`` checks
-that the three sessions still have them. The MariaDB session also has
+The PostgreSQL, MySQL, MariaDB and SQL Server sessions do, so the check asks
+for them by name rather than through :class:`~sopuli.driver.protocol.Session`,
+which every driver and test fake implements. ``tests/test_cli_one_cluster.py``
+checks that the four sessions still have them. The MariaDB session also has
 ``shared_identity()`` (:class:`SharedIdentity`), for a Galera node's cluster,
 which is claimed beside its server.
 """

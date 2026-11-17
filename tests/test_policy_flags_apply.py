@@ -17,6 +17,13 @@ keep: Any = cli._keep_flags
 restore: Any = cli._restore_flags
 refuse: Any = cli._refuse_flags_in_metadata
 
+
+@pytest.fixture(autouse=True)
+def lock_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The fake binding is its own lock key."""
+    monkeypatch.setattr(cli, "_lock_key", lambda binding: binding)
+
+
 ON = PolicyFlags(check_policy=True, check_expiration=True)
 OFF = PolicyFlags(check_policy=False, check_expiration=False)
 
@@ -33,6 +40,11 @@ class Marks:
         self.recorded = recorded
         self.fail = fail
         self.writes: list[str] = []
+        self.manager = self
+
+    def check(self, key: Any) -> None:
+        """The fence, which a restore is behind."""
+        self.writes.append("fence")
 
     def flags_recorded(self, binding: Any) -> PolicyFlags | None:
         return self.recorded
@@ -98,7 +110,7 @@ def test_no_vault_to_write_to_stops_the_change() -> None:
 def test_step_4_sets_the_recorded_flags_back_and_removes_the_record() -> None:
     marks, session = Marks(recorded=ON), Session(OFF)
     assert restore(Binding(), session, "acme_app", marks)
-    assert (session.restored, marks.writes, marks.recorded) == ([ON], ["remove"], None)
+    assert (session.restored, marks.writes, marks.recorded) == ([ON], ["fence", "remove"], None)
 
 
 def test_step_4_without_a_record_does_nothing() -> None:
@@ -142,3 +154,20 @@ def test_a_sql_server_credential_staged_natively_is_refused_at_plan_time(
         refuse(bindings, {}, None)
     assert caught.value.capability == cli.POLICY_FLAGS_IN_METADATA
     assert "#1584" in (caught.value.hint or "")
+
+
+def test_a_session_that_keeps_flags_is_refused_under_native_staging() -> None:
+    """The session's attribute drives the change, and the command's set drives
+    the plan-time refusal, which runs before anything connects. A driver
+    that keeps flags must be in the set, or it would skip that refusal."""
+    pytest.importorskip("pyodbc")
+    from sopuli.driver.mssql.session import MssqlSession
+    from sopuli.driver.registry import DRIVERS
+
+    keepers = {
+        kind
+        for kind, entry in DRIVERS.items()
+        if entry.module == MssqlSession.__module__ and MssqlSession.keeps_policy_flags
+    }
+    assert keepers <= cli.KEEPS_POLICY_FLAGS
+    assert "mssql" in keepers

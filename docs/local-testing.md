@@ -1197,8 +1197,9 @@ CREATE LOGIN [sopuli_admin] WITH PASSWORD = N'Sopuli-test-admin1', CHECK_POLICY 
 GRANT ALTER ANY LOGIN TO [sopuli_admin];
 ```
 
-To change a password, it also needs the grant §2.1 names for guardrail 9;
-without it, every login is refused:
+To change a password, it also needs the grant that
+[`design/02-mssql-privileges.md`](design/02-mssql-privileges.md) §2.1 names
+for guardrail 9. Without it, every login is refused:
 
 ```sql
 GRANT VIEW ANY DEFINITION TO [sopuli_admin];

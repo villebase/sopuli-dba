@@ -370,6 +370,13 @@ class MssqlSession(ClosesConnection):
         policy does not apply to a value (§6.2). Not on the protocol: ``creds
         generate`` asks it of a driver that has it."""
 
+    def require_host(self) -> None:
+        """Refuse, when the command opens the session, a host this build
+        changes no password on: every command but `doctor` asks, so a Windows
+        host is refused before a pre-flight passes it or `creds rotate`
+        stages a password there (invariant 4)."""
+        self._require_linux("run this command")
+
     def _require_linux(self, what: str) -> None:
         """Refuse ``what`` on a host that is not Linux, before anything is
         sent. A Windows host locks a login, so `apply` there must not log in
@@ -397,7 +404,10 @@ class MssqlSession(ClosesConnection):
             lambda cursor: accounts.read_one(cursor, account, target=self.target.name)
         )
         if login is None:
-            raise DriverError(f'there is no login "{account}" on target "{self.target.name}"')
+            raise DriverError(
+                f'there is no login "{account}" on target "{self.target.name}"',
+                hint="create the login, or check the account's name in the config",
+            )
         if login.must_change:
             raise MustChangeError(login.name, target=self.target.name)
         return PolicyFlags(
@@ -445,6 +455,11 @@ class MssqlSession(ClosesConnection):
         step 2 changed neither, and nothing is sent."""
         if not flags.check_policy and not flags.check_expiration:
             return False
+        require_read_write(
+            self.scope(),
+            target=self.target.name,
+            hint="setting the flags back is a write to master",
+        )
         statement = statements.restore_policy(
             account, policy=flags.check_policy, expiration=flags.check_expiration
         )

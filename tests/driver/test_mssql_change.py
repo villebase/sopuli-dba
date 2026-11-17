@@ -220,3 +220,11 @@ def test_a_locked_login_is_not_tried(monkeypatch: pytest.MonkeyPatch) -> None:
     verified = one.verify_password("acme_app", Secret(PASSWORD))
     assert verified.result == UNAVAILABLE
     assert "no login was attempted" in (verified.detail or "")
+
+
+def test_the_command_refuses_a_windows_host_when_it_opens_the_session() -> None:
+    """So `creds rotate` refuses before it stages, and a pre-flight before it
+    passes the target (invariant 4)."""
+    with pytest.raises(NotWrittenError, match="on a Windows host"):
+        opened(platform="Windows").require_host()
+    opened().require_host()

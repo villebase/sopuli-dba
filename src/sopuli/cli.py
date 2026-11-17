@@ -9106,7 +9106,7 @@ def creds_apply(
                 # Only after a full survey, which read every account the pass
                 # asks about. `--strategy` alone reads none.
                 surveyed=surveyed if preflight_all else None,
-                spend_reach=_reach_marker(documents, stores, manager=manager, run=run),
+                spend_reach=_vault_marks(documents, stores, manager=manager, run=run),
             )
             if stolen is None:
                 # §6.4's redraw, between the estate pass and the promotion. After,
@@ -9752,7 +9752,7 @@ class _VaultMarks:
         return None
 
 
-def _reach_marker(
+def _vault_marks(
     documents: dict[LockKey, Any],
     stores: Mapping[str, SecretStore],
     *,
@@ -9792,7 +9792,7 @@ def _apply_estate(
 
     ``rotating`` is set by `creds rotate` for the round that sets the
     ``pending`` it staged (:func:`_apply_one`). `creds apply` leaves it unset,
-    its redraw rounds included. ``spend_reach`` is :func:`_reach_marker`'s,
+    its redraw rounds included. ``spend_reach`` is :func:`_vault_marks`'s,
     over the documents this run read.
 
     ``decided`` is a guardrail decision the caller already made from the
@@ -10687,25 +10687,33 @@ def _keep_flags(binding: Binding, session: Any, account: str, marks: _VaultMarks
     unwritten = marks.record_flags(binding, flags)
     if unwritten is not None:
         raise DriverError(
-            f"the vault did not record the login's policy flags, so no change was sent: {unwritten}"
+            "the vault did not record the login's policy flags, so no change was sent: "
+            f"{unwritten}",
+            hint="fix what stopped the vault write, then run again: nothing on the login changed",
         )
 
 
 def _restore_flags(binding: Binding, session: Any, account: str, marks: _VaultMarks) -> bool:
     """Step 4 of a SQL Server change: the recorded flags set back on the
-    login, and the record removed. Also run where the login already holds the
-    password, so a run that stopped after the change finishes it. Says
-    whether there was a record. Raises where the flags could not be set back,
-    or the record not removed, so the row says so and the record stays."""
+    login, behind the fence, and the record removed. Also run as soon as the
+    login is read, so that a run that stopped part way is finished whatever
+    this run then does with the login. Says whether there was a record.
+    Raises where the flags could not be set back, or the record not removed,
+    so the row says so and the record stays."""
     recorded = marks.flags_recorded(binding)
     if recorded is None:
         return False
+    marks.manager.check(_lock_key(binding))
     session.restore_policy(account, recorded)
     unremoved = marks.remove_flags(binding)
     if unremoved is not None:
         raise DriverError(
             "the login's policy flags were set back, and the vault did not remove its "
-            f"record of them; the next run sets them again: {unremoved}"
+            f"record of them: {unremoved}",
+            hint=(
+                "the next run sets the same flags again and removes the record; fix what "
+                "stopped the vault write first"
+            ),
         )
     return True
 
@@ -10716,6 +10724,15 @@ FLAGS_RESTORED = (
     "the login's CHECK_POLICY and CHECK_EXPIRATION were set back from the vault's "
     "record, which an earlier run left when it stopped before setting them back"
 )
+
+
+def _with_leftover(outcome: check_states.Outcome, leftover: str | None) -> check_states.Outcome:
+    """``outcome`` with :data:`FLAGS_RESTORED` added where this run set back a
+    leftover record's flags."""
+    if leftover is None:
+        return outcome
+    before = f"{outcome.detail}; " if outcome.detail else ""
+    return replace(outcome, detail=f"{before}{leftover}")
 
 
 def _verify_before_change(
@@ -10762,7 +10779,7 @@ def _apply_one(
     """One account in one target: ask, change if needed, ask again.
 
     ``spend_reach`` records a result in the vault mark of a staged ``pending``'s
-    reaching login on this binding's target (#1316, :func:`_reach_marker`), and
+    reaching login on this binding's target (#1316, :func:`_vault_marks`), and
     returns ``None``, or why it could not. Without it no login reaches further
     (:func:`_reach_after_change`). It also keeps a SQL Server login's policy
     flags (:func:`_keep_flags`, :func:`_restore_flags`); without it such a
@@ -10873,6 +10890,18 @@ def _apply_one(
 
     try:
         user = session.describe_user(binding.account)
+        # SQL Server (#1551): flags an earlier run recorded and did not set back
+        # are set back first, so that no path below can leave the policy off.
+        # A change below records them again before it turns the policy off.
+        leftover = None
+        if (
+            user is not None
+            and spend_reach is not None
+            and getattr(session, "keeps_policy_flags", False)
+            and _restore_flags(binding, session, user.name, spend_reach)
+        ):
+            leftover = FLAGS_RESTORED
+            user = session.describe_user(binding.account) or user
         # Whether the advice for a locked account may be to declare the unlock:
         # a target without the capability refuses that at plan time. Read only
         # for a locked account, so a failed scope read cannot turn a missing or
@@ -10910,6 +10939,7 @@ def _apply_one(
             expiry_cleared=expiry_cleared,
         )
         if settled is not None:
+            settled = _with_leftover(settled, leftover)
             _left_alone(binding.account, binding.target, settled.state, settled.detail)
             return _Applied(binding, source, settled, changed=False, duration_ms=_elapsed(started))
         if user is None or source is None:
@@ -11062,18 +11092,8 @@ def _apply_one(
             done = check_states.Outcome(apply_states.SKIPPED, NOT_CHECKED_WITHOUT_LOGIN)
         else:
             done = None
-        if (
-            done is not None
-            and spend_reach is not None
-            and getattr(session, "keeps_policy_flags", False)
-            and apply_states.is_confirmed(done.state)
-            and _restore_flags(binding, session, user.name, spend_reach)
-        ):
-            # SQL Server (#1551): an earlier run set this password and stopped
-            # before it set the login's flags back.
-            before_detail = f"{done.detail}; " if done.detail else ""
-            done = replace(done, detail=f"{before_detail}{FLAGS_RESTORED}")
         if done is not None:
+            done = _with_leftover(done, leftover)
             _left_alone(binding.account, binding.target, done.state, done.detail)
             return _Applied(
                 binding,
@@ -11134,30 +11154,39 @@ def _apply_one(
         # `EXPIRED` clears when a password is set, a rollover window opens, and a
         # lock may have arrived in between. The state reported has to be the one
         # that is true now.
-        after_user = session.describe_user(binding.account) or user
-        after = session.verify_password(
-            after_user.name, source.value, method=VERIFY_LOGIN, lockout_margin=margin, attempts=2
-        )
-        reaching = getattr(session, "verify_reaching", None)
-        unrecorded = None
-        if not after.attempted and reaching is not None and spend_reach is not None:
-            after, unrecorded = _reach_after_change(
-                binding, after_user.name, source, after, reaching=reaching, record=spend_reach
+        after_user = user
+        try:
+            after_user = session.describe_user(binding.account) or user
+            after = session.verify_password(
+                after_user.name,
+                source.value,
+                method=VERIFY_LOGIN,
+                lockout_margin=margin,
+                attempts=2,
             )
-        if after.result == UNAVAILABLE:
-            # MySQL, for an account no login can reach (#1223): the server's
-            # record of the change stands in for the login, as `stored`. A
-            # driver without the method has nothing weaker to offer.
-            confirm = getattr(session, "confirm_change", None)
-            stored = confirm(after_user.name) if confirm is not None else None
-            if isinstance(stored, VerifyResult):
-                after = stored
-        if keeps_flags and spend_reach is not None:
-            # Step 4, after the login, which ran while the policy was off so
-            # that a failure counted toward no lockout (§6.2).
-            _restore_flags(binding, session, after_user.name, spend_reach)
+            reaching = getattr(session, "verify_reaching", None)
+            unrecorded = None
+            if not after.attempted and reaching is not None and spend_reach is not None:
+                after, unrecorded = _reach_after_change(
+                    binding, after_user.name, source, after, reaching=reaching, record=spend_reach
+                )
+            if after.result == UNAVAILABLE:
+                # MySQL, for an account no login can reach (#1223): the server's
+                # record of the change stands in for the login, as `stored`. A
+                # driver without the method has nothing weaker to offer.
+                confirm = getattr(session, "confirm_change", None)
+                stored = confirm(after_user.name) if confirm is not None else None
+                if isinstance(stored, VerifyResult):
+                    after = stored
+        finally:
+            if keeps_flags and spend_reach is not None:
+                # Step 4, after the login, which ran while the policy was off
+                # so that a failure counted toward no lockout (§6.2). Also
+                # where the login raised, so the policy is not left off.
+                _restore_flags(binding, session, after_user.name, spend_reach)
+        if keeps_flags:
             after_user = session.describe_user(binding.account) or after_user
-        outcome = apply_states.after_change(after_user, after)
+        outcome = _with_leftover(apply_states.after_change(after_user, after), leftover)
         if unrecorded is not None:
             outcome = replace(outcome, detail=f"{outcome.detail}; {unrecorded}")
         if retained:
@@ -11589,6 +11618,16 @@ def _open_session(
     driver = driver_for(target.target, _driver_context(run, config))
     credential = _admin_credential(target, run, config)
     session = driver.connect(target, credential.credential)
+    host_check = getattr(session, "require_host", None)
+    if not scope_only and host_check is not None:
+        # SQL Server (#1551): a host this build changes no password on is
+        # refused here, before a pre-flight passes it or `rotate` stages.
+        try:
+            host_check()
+        except BaseException:
+            with suppress(Exception):
+                session.close()
+            raise
     if scope_only or not isinstance(session, ClusterIdentity):
         return session
     try:
@@ -12511,7 +12550,7 @@ def _redraw_estate(
             # would leave a password the vault no longer stores anywhere.
             ask_first=False,
             # The restage staged a new `pending`, which cleared the mark.
-            spend_reach=_reach_marker(documents, stores, manager=manager, run=run),
+            spend_reach=_vault_marks(documents, stores, manager=manager, run=run),
         )
         applied = _splice(applied, again)
         if stolen is not None:
@@ -13303,7 +13342,7 @@ def _write_promotion(
 
     ``cas`` is the version read at the start of this run, under the lock this run
     holds, or the one this run's own reaching-login mark left (#1316,
-    :func:`_reach_marker`). A conflict therefore means a writer outside this
+    :func:`_vault_marks`). A conflict therefore means a writer outside this
     tool, and it is never
     retried: re-reading to merge over them would rewrite fields belonging to
     accounts nobody selected.
@@ -14655,7 +14694,7 @@ def _rotate_estate(
         surveyed=surveyed,
         decided=skipped,
         rotating=True,
-        spend_reach=_reach_marker(documents, stores, manager=manager, run=run),
+        spend_reach=_vault_marks(documents, stores, manager=manager, run=run),
     )
     if into.stolen is not None:
         return None

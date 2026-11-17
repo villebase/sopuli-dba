@@ -14,7 +14,9 @@ SQL login, and names the instance by ``SERVERPROPERTY('ServerName')``
 (:meth:`MssqlSession.cluster_identity`). Every other method refuses with
 ``SOPULI-20006``, and the registry lists no command but `doctor`: the first
 verbs come with the password change (#1551) and the login check (#1552).
-The capabilities are #1550.
+It reads the host's platform and the password value's version as
+capabilities (:mod:`~sopuli.driver.mssql.capabilities`, #1550); the
+Availability Group reads are #1550's next part.
 
 **pyodbc's pooling is off for the process.** A pooled connection is kept open
 after ``close()``, and the next ``connect()`` with the same string reuses it
@@ -26,7 +28,8 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, NoReturn, TypeVar
@@ -35,7 +38,7 @@ import pyodbc
 
 from sopuli.config.model import ExpandedTarget, Runtime
 from sopuli.config.targets import MSSQL_STRICT
-from sopuli.driver.mssql import accounts
+from sopuli.driver.mssql import accounts, capabilities
 from sopuli.driver.mssql.admin import Assessment, Catalog, assess, read_catalog
 from sopuli.driver.mssql.client import client_lines
 from sopuli.driver.mssql.connection import connection_string
@@ -44,6 +47,9 @@ from sopuli.driver.mssql.errors import (
     STRICT_ENCRYPTION,
     STRICT_REMEDY,
     from_error,
+    raw_message,
+    records,
+    server_error,
 )
 from sopuli.driver.mssql.scope import observe
 from sopuli.driver.protocol import (
@@ -56,6 +62,7 @@ from sopuli.driver.protocol import (
     Timeouts,
     UnsupportedCapabilityError,
     UserState,
+    require_read_write,
 )
 from sopuli.driver.registry import NotWrittenError
 from sopuli.output.debug import logger
@@ -90,6 +97,10 @@ class MssqlSession(ClosesConnection):
     identity_caveat: str | None = field(default=None, init=False, repr=False)
     #: Guardrail 9's catalog, read on first use (:meth:`admin_assessment`).
     _catalog: Catalog | None = field(default=None, init=False, repr=False)
+    #: The capabilities of #1550, read on first use.
+    _host_platform: str | None = field(default=None, init=False, repr=False)
+    _host_read: bool = field(default=False, init=False, repr=False)
+    _hash_version: int | None = field(default=None, init=False, repr=False)
 
     def scope(self) -> Scope:
         """What this session is: a server, read-write or not, and its
@@ -123,6 +134,89 @@ class MssqlSession(ClosesConnection):
                 self._catalog.unread or "complete",
             )
         return assess(principal_id, self._catalog)
+
+    def host_platform(self) -> str | None:
+        """``Linux`` or ``Windows``: the host's platform, read once and
+        cached (:mod:`~sopuli.driver.mssql.capabilities`). ``None`` where the
+        server named none, which a caller treats as Windows: the side whose
+        lockout the tool cannot see."""
+        if not self._host_read:
+            self._host_platform = self._read(capabilities.host_platform)
+            self._host_read = True
+            LOG.debug("%s runs on %s", self.target.name, self._host_platform or "an unnamed host")
+        return self._host_platform
+
+    def hash_version(self) -> int:
+        """The password value's version this server takes: ``0x0300`` or
+        ``0x0200``, read once with the rolled-back check and cached (#1564).
+
+        Only a session that will set a password calls it, the `--dry-run` of
+        one included, so that the plan names the value it would send; the
+        command never calls it for a target that is ``readonly``. A session
+        that found ``master`` read-only refuses it, as it refuses a write.
+        Any other answer refuses the target as lacking ``password_value``, with
+        the server's own words, and is not cached: the next call asks again.
+        A refusal the driver's error rules call ``authorization``, a missing
+        permission, is raised as that instead: it names the grant to add.
+        """
+        if self._hash_version is None:
+            require_read_write(
+                self.scope(),
+                target=self.target.name,
+                hint="the check for the password value's version is a write, rolled back",
+            )
+            answer, message = self._check_answer(
+                capabilities.check_statement(capabilities.check_name())
+            )
+            self._hash_version = capabilities.version_from(
+                answer, target=self.target.name, message=message
+            )
+            LOG.debug(
+                "%s takes a 0x%04X password value (check answered %s)",
+                self.target.name,
+                self._hash_version,
+                answer,
+            )
+        return self._hash_version
+
+    def _check_answer(self, statement: str) -> tuple[str, str | None]:
+        """``ok``, or the number and text of the first server error, for the
+        check's batch. An informational record, SQLSTATE ``01…``, such as a
+        trigger's ``PRINT``, is not an answer.
+
+        Whatever the failure, the transaction the batch opened is ended
+        before anything is raised: a client timeout leaves it open on the
+        server. A failure with no server error is the connection's, and a
+        missing permission is the tool login's; each is raised as
+        :meth:`_read` raises it."""
+        with self._cursor() as cursor:
+            try:
+                cursor.execute(statement)
+                # An error in a later statement of the batch is raised when
+                # its result is reached.
+                while cursor.nextset():
+                    pass
+            except pyodbc.Error as error:
+                self._end_transaction(cursor)
+                diagnosis = from_error(error)
+                server = server_error(records(raw_message(error)))
+                if server is None or diagnosis.category == "authorization":
+                    raise diagnosis.as_error() from error
+                return str(server.number), server.text
+            return capabilities.TAKES_IT, None
+
+    def _end_transaction(self, cursor: Any) -> None:
+        """End the check's transaction if one is open. A connection that
+        cannot take it has no transaction to keep: the server ends it with
+        the session. So a failure here is left to the error being raised."""
+        try:
+            cursor.execute(capabilities.END_TRANSACTION)
+        except pyodbc.Error as error:
+            LOG.debug(
+                "%s: ending the check's transaction failed: %s",
+                self.target.name,
+                from_error(error).code,
+            )
 
     def _not_written(self, what: str) -> NoReturn:
         raise NotWrittenError(
@@ -231,6 +325,16 @@ class MssqlSession(ClosesConnection):
         """Run ``reader`` on a cursor of this session. A closed session is a
         fault in sopuli, and a pyodbc error is classified by
         :mod:`~sopuli.driver.mssql.errors`."""
+        with self._cursor() as cursor:
+            try:
+                return reader(cursor)
+            except pyodbc.Error as error:
+                raise from_error(error).as_error() from error
+
+    @contextmanager
+    def _cursor(self) -> Iterator[Any]:
+        """A cursor of this session, closed after. A closed session is a
+        fault in sopuli."""
         if self.connection is None:
             raise DriverError(
                 f'the session to target "{self.target.name}" is closed',
@@ -238,9 +342,7 @@ class MssqlSession(ClosesConnection):
             )
         cursor = self.connection.cursor()
         try:
-            return reader(cursor)
-        except pyodbc.Error as error:
-            raise from_error(error).as_error() from error
+            yield cursor
         finally:
             cursor.close()
 

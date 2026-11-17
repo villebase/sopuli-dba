@@ -601,4 +601,6 @@ locked login answers its right password `18456`**, as a wrong one (WP3), so
 any login the driver makes reads `IsLocked` first, and reports a locked
 login as `unavailable` without logging in. The tool login reads the host's
 platform from `sys.dm_os_host_info` (WP0); the driver reads it once per
-session, and caches it as a capability.
+session, and caches it as a capability. `creds check` refuses a Windows
+host by it, and treats a host that names no platform as Windows
+(open: #1552).

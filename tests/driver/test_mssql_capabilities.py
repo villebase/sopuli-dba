@@ -14,6 +14,7 @@ import pytest
 
 from sopuli.config.model import ExpandedTarget, Target, TargetMssql
 from sopuli.driver.mssql import capabilities
+from sopuli.driver.mssql.errors import from_error
 from sopuli.driver.mssql.password import PBKDF2_SHA512, SHA512, VALUE_LENGTH
 from sopuli.driver.protocol import (
     PASSWORD_VALUE,
@@ -219,6 +220,25 @@ def test_a_missing_permission_is_the_tool_logins_not_the_targets() -> None:
 def test_an_informational_record_is_not_the_answer() -> None:
     """A trigger's PRINT comes first; the 15021 after it is the answer."""
     assert _session(PRINTED_FIRST).hash_version() == SHA512
+
+
+def test_an_informational_record_does_not_hide_a_missing_permission() -> None:
+    """from_error passes over the PRINT too, so the refusal raised is the
+    tool login's 15247, with its hint, not a `database` error numbered 0."""
+    printed = pyodbc.ProgrammingError(
+        "42000",
+        "[01000] [Microsoft][ODBC Driver 18 for SQL Server][SQL Server]a trigger ran (0) "
+        "(SQLExecDirectW); [42000] [Microsoft][ODBC Driver 18 for SQL Server][SQL Server]"
+        "User does not have permission to perform this action. (15247) (SQLExecDirectW)",
+    )
+    with pytest.raises(DriverError) as caught:
+        _session(printed).hash_version()
+    assert caught.value.code == "15247"
+    assert caught.value.category == "authorization"
+
+
+def test_from_error_passes_over_an_informational_record() -> None:
+    assert from_error(PRINTED_FIRST).code == "15021"
 
 
 def test_the_refusal_keeps_the_servers_words() -> None:

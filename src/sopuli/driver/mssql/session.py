@@ -28,7 +28,8 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, NoReturn, TypeVar
@@ -41,7 +42,7 @@ from sopuli.driver.mssql import accounts, capabilities
 from sopuli.driver.mssql.admin import Assessment, Catalog, assess, read_catalog
 from sopuli.driver.mssql.client import client_lines
 from sopuli.driver.mssql.connection import connection_string
-from sopuli.driver.mssql.errors import RULES, from_error, records
+from sopuli.driver.mssql.errors import from_error, raw_message, records, server_error
 from sopuli.driver.mssql.scope import observe
 from sopuli.driver.protocol import (
     ClosesConnection,
@@ -179,13 +180,7 @@ class MssqlSession(ClosesConnection):
         server. A failure with no server error is the connection's, and a
         missing permission is the tool login's; each is raised as
         :meth:`_read` raises it."""
-        if self.connection is None:
-            raise DriverError(
-                f'the session to target "{self.target.name}" is closed',
-                hint="this is a fault in sopuli: a closed session was used again",
-            )
-        cursor = self.connection.cursor()
-        try:
+        with self._cursor() as cursor:
             try:
                 cursor.execute(statement)
                 # An error in a later statement of the batch is raised when
@@ -195,18 +190,11 @@ class MssqlSession(ClosesConnection):
             except pyodbc.Error as error:
                 self._end_transaction(cursor)
                 diagnosis = from_error(error)
-                args: tuple[Any, ...] = getattr(error, "args", ())
-                found = records(str(args[1]) if len(args) > 1 else str(error))
-                server = next(
-                    (r for r in found if r.server and not r.sqlstate.startswith("01")), None
-                )
-                rule = RULES.get(server.number) if server is not None else None
-                if server is None or (rule is not None and rule.category == "authorization"):
+                server = server_error(records(raw_message(error)))
+                if server is None or diagnosis.category == "authorization":
                     raise diagnosis.as_error() from error
                 return str(server.number), server.text
             return capabilities.TAKES_IT, None
-        finally:
-            cursor.close()
 
     def _end_transaction(self, cursor: Any) -> None:
         """End the check's transaction if one is open. A connection that
@@ -328,6 +316,16 @@ class MssqlSession(ClosesConnection):
         """Run ``reader`` on a cursor of this session. A closed session is a
         fault in sopuli, and a pyodbc error is classified by
         :mod:`~sopuli.driver.mssql.errors`."""
+        with self._cursor() as cursor:
+            try:
+                return reader(cursor)
+            except pyodbc.Error as error:
+                raise from_error(error).as_error() from error
+
+    @contextmanager
+    def _cursor(self) -> Iterator[Any]:
+        """A cursor of this session, closed after. A closed session is a
+        fault in sopuli."""
         if self.connection is None:
             raise DriverError(
                 f'the session to target "{self.target.name}" is closed',
@@ -335,9 +333,7 @@ class MssqlSession(ClosesConnection):
             )
         cursor = self.connection.cursor()
         try:
-            return reader(cursor)
-        except pyodbc.Error as error:
-            raise from_error(error).as_error() from error
+            yield cursor
         finally:
             cursor.close()
 

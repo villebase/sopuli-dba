@@ -131,7 +131,7 @@ class MssqlSession(ClosesConnection):
             what=what,
             hint=(
                 "the SQL Server driver connects and reports the instance for `doctor`, "
-                "and the rest of it is not written yet (#1549 to #1555)"
+                "and the rest of it is not written yet (#1550 to #1555)"
             ),
         )
 

@@ -320,6 +320,10 @@ class Invocation:
     #: target with the same identity. Only the targets the run connects to are
     #: in it, so a selector that leaves a target out opens no connection to it.
     clusters: dict[str, str] = field(default_factory=dict)
+    #: The replicas each SQL Server target's Availability Groups name, by
+    #: target, as `doctor` read them, for `SOPULI-W076` (#1550). Empty for a
+    #: target in no group, and absent for a target `doctor` did not read.
+    replicas: dict[str, tuple[str, ...]] = field(default_factory=dict)
     #: The configuration, read by the boundary before the verb ran.
     #:
     #: ``None`` only where no file has been read: an :class:`Invocation` built

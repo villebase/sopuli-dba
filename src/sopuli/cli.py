@@ -179,6 +179,7 @@ from sopuli.diagnostics import (
     promotion_unconfirmed,
     promotion_withheld,
     refusing_targets,
+    replicas_undeclared,
     reset_journal_unread,
     reset_record_unwritten,
     role_not_resolved,
@@ -1042,6 +1043,8 @@ def doctor(
         for target in config.expanded_targets
     ]
     entries = [entry for entry, _ in examined]
+    for warning in _replicas_undeclared(run):
+        run.document.warn_in_text(warning)
 
     document.targets = entries
     refused = sum(1 for _, was_refused in examined if was_refused)
@@ -1067,6 +1070,26 @@ def doctor(
     return "\n".join(
         [*sections, render_doctor(entries, client=client), *render_notices(_admin_notices(run))]
     )
+
+
+def _replicas_undeclared(run: Invocation) -> list[Diagnostic]:
+    """`SOPULI-W076` for each SQL Server target that is a replica of an
+    Availability Group with a replica no target of this run reached (#1538,
+    decision 4; #1550).
+
+    A replica's name, from ``sys.availability_replicas``, is the server's
+    name, and :func:`~sopuli.driver.clusters.claim` keeps each reached
+    target's ``SERVERPROPERTY('ServerName')`` in ``run.clusters``. The two are
+    compared without case, as SQL Server compares server names. The target's
+    own name is among its replicas and among the claimed names, so it never
+    counts as missing."""
+    reached = {name.lower() for name in run.clusters}
+    found: list[Diagnostic] = []
+    for target, names in run.replicas.items():
+        missing = [name for name in names if name.lower() not in reached]
+        if missing:
+            found.append(replicas_undeclared(target, missing))
+    return found
 
 
 def _vault_error(report: VaultReport) -> Error | None:
@@ -1297,6 +1320,11 @@ def _examine(
             scope, caveats = _claim(session, target.name, run, in_text=False)
             found = scope
             warnings += caveats
+            # A SQL Server target's Availability Group replicas, for
+            # SOPULI-W076 once every target is read (#1550).
+            read_replicas = getattr(session, "availability_replicas", None)
+            if callable(read_replicas):
+                run.replicas[target.name] = tuple(read_replicas())
             if privileges:
                 audit = session.privileges(accounts=_declared_on(config.bindings, target.name))
                 # Folded into the scope the entry already carries rather than

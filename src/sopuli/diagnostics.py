@@ -625,6 +625,11 @@ FILE_STORE_IN_USE = "SOPULI-W070"
 #: directory (#1430).
 FILE_STORE_LEFTOVER = "SOPULI-W071"
 
+#: `doctor` found a SQL Server target that is a replica of an Availability
+#: Group, and a replica of the group that no target of the run reached (#1538,
+#: decision 4; #1550).
+REPLICAS_UNDECLARED = "SOPULI-W076"
+
 #: The config layer's codes, such as ``SOPULI-W004`` and ``SOPULI-W072`` --
 #: imported above rather than defined here. They are raised in the config
 #: layer, which cannot import this module, so they are defined in
@@ -908,6 +913,13 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "directory, older than ten minutes. It is encrypted to the store's keys, and "
             "may hold a password version the store has pruned since. Nothing removes it: "
             "remove it when no run is writing the store. One entry per file."
+        ),
+        REPLICAS_UNDECLARED: (
+            "A SQL Server target is a replica of an Availability Group, and the group has a "
+            "replica that no target of the run reached. A login and its password are each "
+            "replica's own, so a password set on one replica is not set on another: declare "
+            "each replica as a target. One per target, from `doctor`, naming each replica "
+            "not reached. A warning and not a refusal."
         ),
         CONSTRAINTS_UNREAD: (
             "`creds generate` could not read a target's password constraints, so the "
@@ -1583,6 +1595,32 @@ def file_store_in_use(name: str) -> Diagnostic:
         message=(
             f'vault "{name}" is a file store, for local development and CI: it is not '
             "for production"
+        ),
+    )
+
+
+def replicas_undeclared(target: str, missing: Sequence[str]) -> Diagnostic:
+    """`SOPULI-W076`, once per SQL Server target that is a replica of an
+    Availability Group with a replica that no target of the `doctor` run
+    reached (#1538, decision 4; #1550).
+
+    A login and its password are each replica's own (`02-mssql-privileges.md`
+    §4), so a password set on this target is not set on the others. The
+    names are the server's own, from ``sys.availability_replicas``, compared
+    with each reached target's ``SERVERPROPERTY('ServerName')``. A declared
+    target the run could not reach is not known by its name, so it is named
+    here too: the message says the run did not reach it, not that the config
+    does not declare it."""
+    names = ", ".join(missing)
+    return Diagnostic(
+        level="warning",
+        code=REPLICAS_UNDECLARED,
+        target=target,
+        message=(
+            f"{target}: this instance is a replica of an Availability Group, and no "
+            f"target this run reached is its replica {names}. A login and its password "
+            "are each replica's own, so a password set here is not set there: declare "
+            "each replica as a target (02-mssql-privileges.md §4)"
         ),
     )
 

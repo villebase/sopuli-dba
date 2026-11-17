@@ -7497,6 +7497,8 @@ def creds_generate(
         _stores_for({key.store for key in keys}, config, run=run),
         run,
     )
+    # Before anything is staged that no `apply` could set (#1551).
+    _refuse_flags_in_metadata(bindings, stores, config)
     found, unread = _plan_documents(keys, stores)
     # One write per document: a stage, or a new current, which native staging
     # stages and then promotes.
@@ -10662,16 +10664,18 @@ def _refuse_flags_in_metadata(
             )
 
 
-def _keep_flags(binding: Binding, session: Any, account: str, marks: _VaultMarks | None) -> None:
+def _keep_flags(binding: Binding, session: Any, account: str, marks: _VaultMarks | None) -> bool:
     """Step 1 of a SQL Server change (``02-mssql-privileges.md`` §6.2): the
     login's policy flags, recorded in the vault before the policy goes off.
+    Says whether this call wrote the record.
 
     A record already there is kept and not read again: it holds the flags from
     before an earlier run turned the policy off. Flags that are both off need
     no record, because the change leaves nothing to set back. Raises where the
     flags cannot be kept, so the change is not sent: the session's own
-    refusals (a Windows host, a pending ``MUST_CHANGE``), a record the tool
-    cannot read, and a vault write that failed.
+    refusals (a Windows host, a pending ``MUST_CHANGE``, a value version it
+    cannot read), a record the tool cannot read, and a vault write that
+    failed.
     """
     flags = session.policy_flags(account)
     if marks is None or binding.secret is None:
@@ -10681,9 +10685,9 @@ def _keep_flags(binding: Binding, session: Any, account: str, marks: _VaultMarks
             hint="this is a fault in sopuli: the run gave the change no vault to write to",
         )
     if marks.flags_recorded(binding) is not None:
-        return
+        return False
     if not flags.check_policy and not flags.check_expiration:
-        return
+        return False
     unwritten = marks.record_flags(binding, flags)
     if unwritten is not None:
         raise DriverError(
@@ -10691,6 +10695,7 @@ def _keep_flags(binding: Binding, session: Any, account: str, marks: _VaultMarks
             f"{unwritten}",
             hint="fix what stopped the vault write, then run again: nothing on the login changed",
         )
+    return True
 
 
 def _restore_flags(binding: Binding, session: Any, account: str, marks: _VaultMarks) -> bool:
@@ -11123,10 +11128,9 @@ def _apply_one(
             reuse = user
         manager.check(_lock_key(binding))
         keeps_flags = getattr(session, "keeps_policy_flags", False)
-        if keeps_flags:
-            # SQL Server (#1551): the flags go in the vault before the change
-            # turns the policy off, and nothing is sent if they cannot.
-            _keep_flags(binding, session, user.name, spend_reach)
+        # SQL Server (#1551): the flags go in the vault before the change
+        # turns the policy off, and nothing is sent if they cannot.
+        recorded_now = keeps_flags and _keep_flags(binding, session, user.name, spend_reach)
         # Read before the call, and kept on a failure only where the statement
         # went out (`_carried`): a statement the server refuses has still
         # carried the password across the network, and one the driver refused
@@ -11138,12 +11142,22 @@ def _apply_one(
         # The vault's `current`, for a driver that keeps an old password only by
         # being sent it again (MariaDB, #1271). Passed only when one is kept.
         keeping = old_password in (OLD_RETAIN, OLD_KEEP)
-        set_result = session.set_password(
-            user.name,
-            source.value,
-            old_password=old_password,
-            previous=source.replaces if keeping else None,
-        )
+        try:
+            set_result = session.set_password(
+                user.name,
+                source.value,
+                old_password=old_password,
+                previous=source.replaces if keeping else None,
+            )
+        except Exception as refused_first:
+            if recorded_now and spend_reach is not None and not _carried(refused_first):
+                # The statement never left: the policy is as step 1 read it, so
+                # the record this run wrote is taken back, and a later change of
+                # the flags by hand is not undone by a stale one. Where it may
+                # have left, the record stays for the next run (§6.2).
+                with suppress(Exception):
+                    spend_reach.remove_flags(binding)
+            raise
         retained, discarded = set_result.retained, set_result.discarded
         # From here on the database holds the new password whatever else fails, and
         # the row has to say so: an error in the re-read or the verification below
@@ -11178,13 +11192,19 @@ def _apply_one(
                 stored = confirm(after_user.name) if confirm is not None else None
                 if isinstance(stored, VerifyResult):
                     after = stored
-        finally:
+        except Exception:
             if keeps_flags and spend_reach is not None:
-                # Step 4, after the login, which ran while the policy was off
-                # so that a failure counted toward no lockout (§6.2). Also
-                # where the login raised, so the policy is not left off.
-                _restore_flags(binding, session, after_user.name, spend_reach)
-        if keeps_flags:
+                # Where the login raised, the flags are set back too, so the
+                # policy is not left off. The login's error is the one the row
+                # reports: a failed restore here leaves the record, which the
+                # next run sets back.
+                with suppress(Exception):
+                    _restore_flags(binding, session, after_user.name, spend_reach)
+            raise
+        if keeps_flags and spend_reach is not None:
+            # Step 4, after the login, which ran while the policy was off so
+            # that a failure counted toward no lockout (§6.2).
+            _restore_flags(binding, session, after_user.name, spend_reach)
             after_user = session.describe_user(binding.account) or after_user
         outcome = _with_leftover(apply_states.after_change(after_user, after), leftover)
         if unrecorded is not None:
@@ -11618,20 +11638,17 @@ def _open_session(
     driver = driver_for(target.target, _driver_context(run, config))
     credential = _admin_credential(target, run, config)
     session = driver.connect(target, credential.credential)
-    host_check = getattr(session, "require_host", None)
-    if not scope_only and host_check is not None:
-        # SQL Server (#1551): a host this build changes no password on is
-        # refused here, before a pre-flight passes it or `rotate` stages.
-        try:
-            host_check()
-        except BaseException:
-            with suppress(Exception):
-                session.close()
-            raise
-    if scope_only or not isinstance(session, ClusterIdentity):
+    if scope_only:
         return session
+    host_check = getattr(session, "require_host", None)
     try:
-        _claim(session, target.name, run, in_text=True)
+        if isinstance(session, ClusterIdentity):
+            _claim(session, target.name, run, in_text=True)
+        if host_check is not None:
+            # SQL Server (#1551): after the scope and the claim, a host this
+            # build changes no password on is refused, before a pre-flight
+            # passes it or `rotate` stages.
+            host_check()
     except BaseException:
         with suppress(Exception):
             session.close()

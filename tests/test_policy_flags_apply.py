@@ -171,3 +171,10 @@ def test_a_session_that_keeps_flags_is_refused_under_native_staging() -> None:
     }
     assert keepers <= cli.KEEPS_POLICY_FLAGS
     assert "mssql" in keepers
+
+
+def test_keep_flags_says_whether_it_wrote_the_record() -> None:
+    """So a change whose statement never left can take its record back."""
+    assert keep(Binding(), Session(ON), "acme_app", Marks()) is True
+    assert keep(Binding(), Session(ON), "acme_app", Marks(recorded=ON)) is False
+    assert keep(Binding(), Session(OFF), "acme_app", Marks()) is False

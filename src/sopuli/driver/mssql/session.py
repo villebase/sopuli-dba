@@ -396,8 +396,9 @@ class MssqlSession(ClosesConnection):
         they are now, which the command records in the vault before
         :meth:`set_password` turns the policy off.
 
-        Refuses, before anything is written or sent, a Windows host and a
-        login whose ``MUST_CHANGE`` is pending (:class:`MustChangeError`).
+        Refuses, before anything is written or sent, a Windows host, a login
+        whose ``MUST_CHANGE`` is pending (:class:`MustChangeError`), and a
+        server whose value version cannot be read (:meth:`hash_version`).
         """
         self._require_linux("set a password")
         login = self._read(
@@ -410,6 +411,10 @@ class MssqlSession(ClosesConnection):
             )
         if login.must_change:
             raise MustChangeError(login.name, target=self.target.name)
+        # The value's version, asked here so that a server that takes neither,
+        # or a tool login the check refuses, stops the change before the
+        # command writes the record (#1564).
+        self.hash_version()
         return PolicyFlags(
             check_policy=login.policy_checked, check_expiration=login.expiration_checked
         )

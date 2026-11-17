@@ -433,8 +433,11 @@ one.
 **A login whose `MUST_CHANGE` is pending cannot take a value.** While
 `IsMustChange` reads 1, the server refuses to turn `CHECK_POLICY` off,
 `15128` (`03_lock_expiry_probe.py`, the note beside LK5), so step 2 cannot
-run. The driver reads `IsMustChange` and refuses such a login before
-anything is written or sent, naming it.
+run. The driver reads `IsMustChange` and refuses such a login at plan time,
+naming it (invariant 4). This build leaves it alone before anything is
+written or sent: `apply` reports it `EXPIRED` and changes nothing, and the
+driver refuses to record its flags. Refusing it in the pre-flight, before
+`creds rotate` stages a password, is not built (open: #1551).
 
 **How `creds apply` tells that a target already holds the password depends
 on the host** ([#1551](../decisions/log.md#1551)). The tool login

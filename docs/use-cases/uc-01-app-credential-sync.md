@@ -765,7 +765,9 @@ These rules decide what `apply` does with each account:
   [`02-mssql-privileges.md`](../design/02-mssql-privileges.md) §6.2). The
   login's `CHECK_POLICY` and `CHECK_EXPIRATION` go in the vault's
   `policy_flags` (§3) first. The driver sends the value it computed with the
-  policy off, logs in as the login, and sets the flags back. A run that
+  policy off, logs in as the login, and sets the flags back. The value is
+  computed on the client and sent with `HASHED`, so the password never
+  reaches the server (invariant 15). A run that
   stopped part way leaves the policy off, and the next `apply` sets the
   recorded flags back. On a Linux host, where no login locks, `apply` logs in
   before a change, as on Oracle. On a Windows host, and one that names no

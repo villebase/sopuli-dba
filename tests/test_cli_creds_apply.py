@@ -1213,6 +1213,28 @@ def test_a_dry_run_warns_of_the_lockout_it_would_end(
     assert all(session.changed == [] for session in harness["sessions"])
 
 
+def test_a_preview_that_cannot_read_whether_a_change_ends_a_lockout_refuses(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A forecast with that read missing could say the opposite of what the
+    run does, so it is a blocking finding."""
+
+    def unread(self: FakeSession) -> bool:
+        raise DriverError("the host's platform could not be read")
+
+    monkeypatch.setattr(FakeSession, "change_ends_lockout", property(unread), raising=False)
+    estate(users={"ACME_WEB_USER": LOCKED_OUT})
+    result = run(
+        runner, write_config(CONFIG), "--select", "tenant=alpha", "--preflight", "--dry-run"
+    )
+
+    assert result.exit_code == ExitCode.FAILURE, result.output
+    assert "could not read whether a change ends a lockout here" in result.output
+
+
 @pytest.mark.parametrize("sent", [True, False], ids=["sent", "not-sent"])
 def test_a_change_that_failed_once_sent_may_have_ended_the_lockout(
     runner: CliRunner,

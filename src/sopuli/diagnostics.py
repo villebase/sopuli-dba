@@ -1592,6 +1592,13 @@ def lockout_ended(target: str, account: str, status: str, *, ended: str = "ended
     "may have ended" for a change that failed after it was sent, or "would
     end" in a dry run. ``status`` is the login's, such as
     ``LOCKED(TIMED)``."""
+    after = (
+        "Find out who tried the wrong passwords before the run: after the change the "
+        "server's count no longer shows them"
+        if ended == "would end"
+        else "The server's count no longer shows the wrong passwords: look for the failed "
+        "logins in the server's error log or audit"
+    )
     return Diagnostic(
         level="warning",
         code=LOCKOUT_ENDED,
@@ -1600,8 +1607,7 @@ def lockout_ended(target: str, account: str, status: str, *, ended: str = "ended
         message=(
             f"{target}: {account}: the login is locked out after failed logins (status "
             f"{status}), and the change {ended} the lockout and its failed-login count. "
-            "Find out who tried the wrong passwords first: the server keeps no record of "
-            "it after the change"
+            f"{after}"
         ),
     )
 

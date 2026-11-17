@@ -33,6 +33,7 @@ from sopuli.diagnostics import (
     GUARDRAIL_PASS_AHEAD,
     GUARDRAIL_REFUSES_AHEAD,
     GUARDRAIL_UNCHECKED,
+    LOCKOUT_ENDED,
     PROMOTION_SKIPPED,
     ROTATION_UNCONFIRMED,
     WARNINGS,
@@ -812,6 +813,31 @@ def test_a_refusal_on_an_account_s_only_target_is_forecast_per_account(
     )
     assert document(result)["summary"]["failed"] == 0
     assert changed(harness) == []
+
+
+def test_a_locked_out_account_the_guardrails_skip_is_forecast_as_skipped(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#1551, SQL Server not on Linux: the run lets a locked-out login past
+    the lock, so its review refuses it there, and the dry run says
+    `SOPULI-W060`. The run then changes nothing, so no `SOPULI-W077`."""
+    monkeypatch.setattr(FakeSession, "change_ends_lockout", True, raising=False)
+    estate(
+        {
+            "ACME_WEB_USER": account(
+                "ACME_WEB_USER", vendor_maintained=True, status="LOCKED(TIMED)", locked=True
+            ),
+            "ACME_BATCH_USER": ordinary("ACME_BATCH_USER"),
+        }
+    )
+    result = run(runner, write_config(CONFIG), "--dry-run", "--preflight", "--output", "json")
+
+    (found,) = refused_ahead(result)
+    assert found["account"] == "acme_web_user"
+    assert not [one for one in diagnostics(result) if one.get("code") == LOCKOUT_ENDED]
 
 
 def test_the_forecast_and_the_run_agree_on_one_target(

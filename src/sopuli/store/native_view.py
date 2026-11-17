@@ -26,7 +26,8 @@ Decision 3 splits the stamps by when they become true: a version's content
 holds the password, ``origin``, ``generated_at`` and ``generated_by``, which
 were true when the password was made and never change; ``rotated_at``,
 ``rotated_by``, ``policy`` and ``targets`` become true at promotion and go in
-the attributes, with ``pending_version``.
+the attributes, with ``pending_version``. A SQL Server login's policy flags
+(#1551) go in the attributes too, and every write keeps them.
 """
 
 from __future__ import annotations
@@ -46,6 +47,7 @@ from sopuli.payload import (
     GENERATED_BY,
     ORIGIN,
     PENDING,
+    POLICY_FLAGS,
     PREVIOUS,
     REACHED,
     ROLLOVER,
@@ -91,8 +93,14 @@ OWN_KEYS = frozenset({ORIGIN, ROLLOVER, GENERATED_AT, GENERATED_BY})
 #: content cannot change, so neither can live there. The mark describes the
 #: live pending, so only a write that keeps that pending keeps it
 #: (:meth:`NativeStagedStore._promote` with ``pending``); every other write
-#: drops it, whatever the document asked.
-ATTRIBUTE_KEYS = (*STAMPS, REACHED)
+#: drops it, whatever the document asked. A SQL Server login's policy flags
+#: (#1551) live there too, and every write keeps them (:data:`KEPT_KEYS`).
+ATTRIBUTE_KEYS = (*STAMPS, REACHED, POLICY_FLAGS)
+
+#: The attributes every write carries from the document it was asked for:
+#: the stamps, and the policy flags, which describe the login, not a pending,
+#: so a new pending or a promotion keeps them (UC-1 §3, ``policy_flags``).
+KEPT_KEYS = (*STAMPS, POLICY_FLAGS)
 
 
 class StagingStore(SecretStore, NativeStaging, Protocol):
@@ -172,6 +180,8 @@ class _View:
             found[stamp] = self.attributes.get(stamp)
         # Only beside a live pending, which is all it describes.
         found[REACHED] = None if self.pending is None else self.attributes.get(REACHED)
+        # With or without a pending: it describes the login.
+        found[POLICY_FLAGS] = self.attributes.get(POLICY_FLAGS)
         return found
 
     def numbers(self) -> Mapping[str, Any]:
@@ -663,7 +673,12 @@ def _without(attributes: Mapping[str, Any], key: str) -> Mapping[str, Any]:
 
 
 def _stamps(keys: Mapping[str, Any]) -> dict[str, Any]:
-    return {stamp: keys[stamp] for stamp in STAMPS if keys.get(stamp) is not None}
+    """The :data:`KEPT_KEYS` ``keys`` holds. An emptied policy-flags record,
+    the last target's entry removed, is left out rather than kept as ``{}``."""
+    kept = {key: keys[key] for key in KEPT_KEYS if keys.get(key) is not None}
+    if kept.get(POLICY_FLAGS) == {}:
+        del kept[POLICY_FLAGS]
+    return kept
 
 
 def _get(data: Any, key: str) -> Any:

@@ -20,6 +20,7 @@ from sopuli.payload import (
     CURRENT,
     ORIGIN,
     PENDING,
+    POLICY_FLAGS,
     PREVIOUS,
     REACHED,
     REMOVE,
@@ -213,6 +214,60 @@ def test_every_write_that_ends_the_pending_drops_the_mark(
     stored = inner.read(PATH)
     assert stored is not None
     assert "reached" not in stored.attributes, "no orphan mark is left in the metadata"
+
+
+FLAGS = {"mssql-dev": {"check_policy": True, "check_expiration": False}}
+
+
+@pytest.mark.parametrize(
+    "next_write",
+    ["stage", "restage", "promote", "clear", "new current", "rollback"],
+)
+def test_the_policy_flags_survive_every_write(
+    view: NativeStagedStore, inner: MemoryStore, next_write: str
+) -> None:
+    """#1551: the record describes the login, not a pending, so unlike
+    `reached` every write keeps it, also one whose patch does not name it."""
+    seeded(view)
+    apply_patch(view, PATH, stage_patch("b"), cas=token(view))
+    apply_patch(view, PATH, promotion("b", "a"), cas=token(view))
+    apply_patch(view, PATH, LAYOUT.patch(POLICY_FLAGS, FLAGS), cas=token(view))
+    if next_write in ("restage", "promote", "clear"):
+        apply_patch(view, PATH, stage_patch("c"), cas=token(view))
+
+    patch = {
+        "stage": stage_patch("c"),
+        "restage": stage_patch("d"),
+        "promote": promotion("c", "b"),
+        "clear": merge(LAYOUT.patch(PENDING, REMOVE), LAYOUT.patch(ORIGIN, REMOVE)),
+        "new current": merge(LAYOUT.patch(CURRENT, "z"), LAYOUT.patch(PREVIOUS, "b")),
+        "rollback": merge(LAYOUT.patch(CURRENT, "a"), LAYOUT.patch(PREVIOUS, "b")),
+    }[next_write]
+    apply_patch(view, PATH, patch, cas=token(view))
+
+    after = view.read(PATH)
+    assert after is not None
+    assert after.data[POLICY_FLAGS] == FLAGS
+    stored = inner.read(PATH)
+    assert stored is not None
+    assert stored.attributes[POLICY_FLAGS] == FLAGS
+    pending = inner.read_stage(PATH, "pending")
+    assert pending is None or POLICY_FLAGS not in pending.data, "never in a version's content"
+
+
+def test_removing_the_last_target_leaves_no_policy_flags(
+    view: NativeStagedStore, inner: MemoryStore
+) -> None:
+    seeded(view)
+    apply_patch(view, PATH, LAYOUT.patch(POLICY_FLAGS, FLAGS), cas=token(view))
+    apply_patch(view, PATH, LAYOUT.patch(POLICY_FLAGS, {"mssql-dev": REMOVE}), cas=token(view))
+
+    after = view.read(PATH)
+    assert after is not None
+    assert POLICY_FLAGS not in after.data
+    stored = inner.read(PATH)
+    assert stored is not None
+    assert POLICY_FLAGS not in stored.attributes
 
 
 def test_a_mark_in_the_content_is_not_carried_into_a_new_version(

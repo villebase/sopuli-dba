@@ -421,9 +421,11 @@ change runs in this order, on every host:
 4. Set `CHECK_POLICY` and `CHECK_EXPIRATION` back to the values of step 1.
 
 A run that stops between the steps leaves the policy off. The next run reads
-the recorded values from the vault and sets them back. The record stays
-until step 4 has run, also when a new `pending` replaces the old one
-(open: #1551).
+the recorded values from the vault and sets them back (open: #1551). The
+record is `policy_flags`
+([UC-1 §3](../use-cases/uc-01-app-credential-sync.md#policy_flags-a-sql-server-logins-settings-while-its-policy-is-off)),
+and it stays until step 4 has run, also when a new `pending` replaces the old
+one.
 
 **A login whose `MUST_CHANGE` is pending cannot take a value.** While
 `IsMustChange` reads 1, the server refuses to turn `CHECK_POLICY` off,

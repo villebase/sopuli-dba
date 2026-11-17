@@ -59,6 +59,7 @@ from sopuli.driver.protocol import (
     Encryption,
     PrivilegeAudit,
     Scope,
+    UnsupportedCapabilityError,
     UserState,
     VerifyResult,
 )
@@ -1590,6 +1591,44 @@ def test_a_target_that_refuses_the_value_is_refused_at_plan_time(
 
     assert getattr(result.exception, "exit_code", None) == ExitCode.UNSUPPORTED_CAPABILITY
     assert changed(harness) == []
+
+
+@pytest.mark.parametrize("dry_run", [True, False])
+def test_a_connection_refused_as_a_capability_refuses_before_any_target_changes(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+    dry_run: bool,
+) -> None:
+    """#1551: one target whose connection is SQL Server's reset under
+    `encrypt: strict` stops the run before the other target changes, exit 5.
+    The fake is Oracle-shaped, so Oracle is made such a product here."""
+    monkeypatch.setattr("sopuli.cli.CONNECT_CHECK_TYPES", frozenset({"oracle"}))
+    refused = UnsupportedCapabilityError("strict_encryption", target="appdb-beta")
+    harness = estate(connect_errors={"appdb-beta": refused})
+    flags = ["--dry-run"] if dry_run else []
+    result = run(runner, write_config(CONFIG), *flags)
+
+    assert getattr(result.exception, "exit_code", None) == ExitCode.UNSUPPORTED_CAPABILITY
+    assert changed(harness) == []
+
+
+def test_the_dry_run_names_the_password_value(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#1564: for each target due."""
+    monkeypatch.setattr("sopuli.cli.CONNECT_CHECK_TYPES", frozenset({"oracle"}))
+    monkeypatch.setattr(FakeSession, "hash_version", lambda self: 0x0200, raising=False)
+    estate()
+    result = run(runner, write_config(CONFIG), "--dry-run")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    for name in ("appdb-alpha", "appdb-beta"):
+        assert f'target "{name}" takes a 0x0200 password value (SHA-512)' in result.output
 
 
 @pytest.mark.parametrize(("strategy", "mark"), [("rollover", "retaining"), ("staged", None)])

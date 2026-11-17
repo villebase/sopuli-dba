@@ -72,7 +72,7 @@ from contextlib import nullcontext, suppress
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from types import ModuleType
-from typing import Any, TypeVar
+from typing import Any, Protocol, TypeVar, runtime_checkable
 
 import click
 
@@ -8990,15 +8990,14 @@ def creds_apply(
     bindings = [binding for binding in config.bindings if binding.secret is not None]
     # A dry run connects only for the pre-flight, for `require_encryption`'s
     # read (#857), for the attribute capability read (#1072), or for a SQL
-    # Server target's value check (#1551); without any of them it reads the
-    # vault.
+    # Server target (#1551); without any of them it reads the vault.
     connects = (
         not run.dry_run
         or strategy is not None
         or preflight_all
         or any(
             encryption_required_at(target, config, run.resolved) is not None
-            or target.target.type in VALUE_CHECK_TYPES
+            or target.target.type in CONNECT_CHECK_TYPES
             for target in _targets_of(config, bindings)
         )
         or bool(_attribute_needs(config, bindings))
@@ -9069,14 +9068,12 @@ def creds_apply(
     # Before the preview and before the lock (#857), so a refusal is the same for
     # both and holds no lock. Every target the plan names: one whose accounts have
     # nothing staged is checked too, which can only refuse more. The checks
-    # share one login per target. The value check comes first: it opens its
-    # own login on a SQL Server target, and refuses one that resets a
-    # `strict` connection, which a later check would leave to the run.
+    # share one login per target.
     scopes: dict[str, Scope | None] = {}
-    versions = _require_value_check(_targets_of(config, bindings), run, config, scopes=scopes)
     _require_encryption(_targets_of(config, bindings), run, config, scopes=scopes)
     _require_attribute_capabilities(bindings, run, config, scopes=scopes)
     _require_password_value(_targets_of(config, bindings), run, config, scopes=scopes)
+    _require_connection(_targets_of(config, bindings), run, config, scopes=scopes)
 
     # `--confirm` already means "proceed without asking" here -- it is what
     # `--source previous` requires -- so the flag answers both gates. Two flags
@@ -9101,7 +9098,8 @@ def creds_apply(
         withheld = _withheld(_left_out(bindings, _owing(sources), previewed, estate))
         document.diagnostics.extend(withheld)
         repair_notes.extend(one.message for one in withheld)
-        # The value each SQL Server target would be sent (#1564).
+        # The value each SQL Server target with work would be sent (#1564).
+        versions = _value_versions(_targets_of(config, _surveyable(sources)), run, config)
         document.diagnostics.extend(versions)
         repair_notes.extend(one.message for one in versions)
         # The pre-flight runs here too, and it is the combination worth having:
@@ -11834,13 +11832,17 @@ def _plan_scope(
 
     ``None`` where the target could not be reached or its scope not read: the
     run reports that on its rows, and each check makes its own second check
-    when it sends.
+    when it sends. A connection the driver refuses as a missing capability,
+    such as SQL Server's reset under ``encrypt: strict``, refuses the run
+    here instead, exit 5 (invariant 4, #1551).
     """
     if expanded.name in scopes:
         return scopes[expanded.name]
     found: Scope | None = None
     try:
         session = _open_session(expanded, run, config)
+    except UnsupportedCapabilityError:
+        raise
     except Exception:  # noqa: BLE001 -- the run reports it on each row
         scopes[expanded.name] = None
         return None
@@ -11915,53 +11917,71 @@ def _require_encryption(
 #: value it computes (:data:`~sopuli.driver.protocol.PASSWORD_VALUE`, #1310).
 PASSWORD_VALUE_TYPES = frozenset({MARIADB})
 
-#: The products whose session asks the server, before a change, which version
-#: of the password value it takes (``hash_version``, #1564).
-VALUE_CHECK_TYPES = frozenset({MSSQL})
-
-#: What each SQL Server value version is, for the plan's note.
-_VALUE_VERSIONS = {0x0300: "PBKDF2-HMAC-SHA512", 0x0200: "SHA-512"}
+#: The products a connection can refuse as a missing capability, so that a
+#: run that changes passwords opens each of their targets at plan time:
+#: SQL Server under ``encrypt: strict`` (#1549, #1551).
+CONNECT_CHECK_TYPES = frozenset({MSSQL})
 
 
-def _require_value_check(
+def _require_connection(
     targets: Iterable[ExpandedTarget],
     run: Invocation,
     config: Config,
     *,
     scopes: dict[str, Scope | None],
+) -> None:
+    """Refuse, at plan time, a target whose connection the driver refuses as
+    a missing capability (#1551).
+
+    Invariant 4: a SQL Server target whose connection under ``encrypt:
+    strict`` the server resets is refused as lacking ``strict_encryption``,
+    exit 5, naming the target, before any password is drawn or any target
+    changed. :func:`_plan_scope` raises it. One login per such target, shared
+    through ``scopes`` with the checks before it, and none for another
+    product. A target this cannot reach is left to the run.
+    """
+    for expanded in targets:
+        if expanded.target.type in CONNECT_CHECK_TYPES:
+            _plan_scope(expanded, run, config, scopes)
+
+
+@runtime_checkable
+class _ValueChecked(Protocol):
+    """A session that asks the server which password value it takes."""
+
+    def hash_version(self) -> int: ...
+
+
+#: What each SQL Server value version is, for the plan's note.
+_VALUE_VERSIONS = {0x0300: "PBKDF2-HMAC-SHA512", 0x0200: "SHA-512"}
+
+
+def _value_versions(
+    targets: Iterable[ExpandedTarget], run: Invocation, config: Config
 ) -> list[Diagnostic]:
-    """Refuse, at plan time, a SQL Server target a change cannot reach, and
-    say which value each other one takes (#1551).
+    """`--dry-run`: the password value each SQL Server target would be sent,
+    as an ``info`` diagnostic per target (#1564).
 
-    Invariant 4, before any password is drawn or any target changed: a
-    target whose connection under ``encrypt: strict`` the server resets is
-    refused as lacking ``strict_encryption`` (#1549), and one whose answer to
-    the value check is neither ``ok`` nor ``15021`` as lacking
-    ``password_value`` (#1564). Exit 5, naming the capability and the target.
-    One login per SQL Server target, whose scope goes in ``scopes`` for the
-    checks after it, and none for another product. A target this cannot
-    reach, or whose check fails another way, such as for a missing grant, is
-    left to the run, which reports it on its rows.
-
-    The session that changes the password asks the check again: a run makes
-    it twice per target. Returns an ``info`` diagnostic per target that
-    answered, naming the value, which `--dry-run` prints.
+    The caller passes the targets with something to send. Each gets one
+    login and the rolled-back value check, which refuses a target whose
+    answer is neither ``ok`` nor ``15021``, exit 5, as the run would. A
+    target this cannot reach, or whose check fails another way, such as for
+    a missing grant, gets no note: the run reports it on the target's rows.
     """
     named: list[Diagnostic] = []
     for expanded in targets:
-        if expanded.target.type not in VALUE_CHECK_TYPES:
+        if expanded.target.type not in CONNECT_CHECK_TYPES:
             continue
         try:
             session = _open_session(expanded, run, config)
         except UnsupportedCapabilityError:
             raise
         except Exception:  # noqa: BLE001 -- the run reports it on each row
-            scopes.setdefault(expanded.name, None)
             continue
         try:
-            scopes[expanded.name] = session.scope()
-            # SQL Server's own method, read as `keeps_policy_flags` is.
-            version: int = getattr(session, "hash_version")()  # noqa: B009
+            if not isinstance(session, _ValueChecked):
+                continue
+            version = session.hash_version()
         except UnsupportedCapabilityError:
             raise
         except Exception:  # noqa: BLE001 -- likewise
@@ -11975,7 +11995,7 @@ def _require_value_check(
                 target=expanded.name,
                 message=(
                     f'target "{expanded.name}" takes a 0x{version:04X} password value '
-                    f"({_VALUE_VERSIONS.get(version, 'unknown')}), which a change sends"
+                    f"({_VALUE_VERSIONS[version]}), which a change sends"
                 ),
             )
         )
@@ -14460,12 +14480,12 @@ def creds_rotate(
     # Before the preview and before the lock (#857), so a refusal is the same for
     # both and holds no lock. Every target the plan names, due or not: a target
     # with nothing due is checked too, which can only refuse more. The checks
-    # share one login per target, and the value check comes first, as in `apply`.
+    # share one login per target.
     scopes: dict[str, Scope | None] = {}
-    versions = _require_value_check(_targets_of(config, bindings), run, config, scopes=scopes)
     _require_encryption(_targets_of(config, bindings), run, config, scopes=scopes)
     _require_attribute_capabilities(bindings, run, config, scopes=scopes)
     _require_password_value(_targets_of(config, bindings), run, config, scopes=scopes)
+    _require_connection(_targets_of(config, bindings), run, config, scopes=scopes)
 
     if run.dry_run:
         # Invariant 8: the plan, the survey, and nothing written anywhere. The
@@ -14484,7 +14504,6 @@ def creds_rotate(
             force=force,
             selection=selection,
             finish_windows=finish_windows,
-            versions=versions,
         )
 
     # Step 1, and it happens before the lock rather than under it: a prompt
@@ -15330,12 +15349,11 @@ def _preview_rotation(
     force: bool,
     selection: Selection,
     finish_windows: bool = False,
-    versions: Sequence[Diagnostic] = (),
 ) -> str:
     """`--dry-run`: the plan, what is due, and whether the estate would take it.
 
-    ``versions`` names the value each SQL Server target would be sent
-    (:func:`_require_value_check`), as a note.
+    It names the value each SQL Server target due would be sent
+    (:func:`_value_versions`), as a note.
 
     **The pre-flight runs**, which is what makes `--dry-run` worth typing here
     rather than only reading the plan. It writes nothing and takes no lock, and
@@ -15402,6 +15420,7 @@ def _preview_rotation(
         rotating, skipped, shared=shared, selection=selection
     )
     document.diagnostics.extend(refused_ahead)
+    versions = _value_versions(_targets_of(config, rotating), run, config)
     document.diagnostics.extend(versions)
 
     stopped = named + named_shared

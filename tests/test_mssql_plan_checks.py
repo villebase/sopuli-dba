@@ -1,6 +1,6 @@
 """The plan-time checks `creds apply` and `creds rotate` make on a SQL Server
-target before any password is drawn (#1551, invariant 4). Tier 0: the session
-is a fake, and the helper is the command's own."""
+target (#1551, invariant 4). Tier 0: the session is a fake, and the helpers
+are the command's own."""
 
 from __future__ import annotations
 
@@ -13,10 +13,13 @@ from sopuli.config.model import ExpandedTarget, Target, TargetMssql
 from sopuli.driver.protocol import DriverError, UnsupportedCapabilityError
 from sopuli.exit_codes import ExitCode
 
-#: The command's helper, typed loosely: the fakes below stand in for its types.
-check: Any = cli._require_value_check
+#: The command's helpers, typed loosely: the fakes below stand in for its types.
+connection: Any = cli._require_connection
+versions: Any = cli._value_versions
+plan_scope: Any = cli._plan_scope
 
 SCOPE = object()
+RESET = UnsupportedCapabilityError("strict_encryption", target="mssql-dev", hint="reset")
 
 
 def target(name: str = "mssql-dev", kind: str = "mssql") -> ExpandedTarget:
@@ -31,7 +34,7 @@ def target(name: str = "mssql-dev", kind: str = "mssql") -> ExpandedTarget:
 
 
 class Session:
-    def __init__(self, answer: int | Exception) -> None:
+    def __init__(self, answer: int | Exception = 0x0300) -> None:
         self.answer = answer
         self.closed = False
 
@@ -63,58 +66,67 @@ def opening(monkeypatch: pytest.MonkeyPatch, result: Session | Exception) -> lis
 
 def test_a_reset_strict_connection_refuses_the_run(monkeypatch: pytest.MonkeyPatch) -> None:
     """Invariant 4: before any target is changed, not on the target's rows."""
-    opening(
-        monkeypatch,
-        UnsupportedCapabilityError("strict_encryption", target="mssql-dev", hint="reset"),
-    )
+    opening(monkeypatch, RESET)
     with pytest.raises(UnsupportedCapabilityError) as caught:
-        check([target()], None, None, scopes={})
+        connection([target()], None, None, scopes={})
     assert caught.value.capability == "strict_encryption"
     assert caught.value.exit_code == ExitCode.UNSUPPORTED_CAPABILITY
 
 
-def test_a_value_the_check_refuses_refuses_the_run(monkeypatch: pytest.MonkeyPatch) -> None:
-    session = Session(UnsupportedCapabilityError("password_value", target="mssql-dev"))
-    opening(monkeypatch, session)
-    with pytest.raises(UnsupportedCapabilityError, match="password_value"):
-        check([target()], None, None, scopes={})
-    assert session.closed
+def test_every_plan_check_refuses_a_reset_whatever_its_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`_plan_scope` is what the other checks open a target with."""
+    opening(monkeypatch, RESET)
+    with pytest.raises(UnsupportedCapabilityError, match="strict_encryption"):
+        plan_scope(target(), None, None, {})
 
 
-def test_the_plan_names_the_value(monkeypatch: pytest.MonkeyPatch) -> None:
-    session = Session(0x0300)
-    opening(monkeypatch, session)
-    scopes: dict[str, Any] = {}
-    (named,) = check([target()], None, None, scopes=scopes)
-    assert named.level == "info"
-    assert named.target == "mssql-dev"
-    assert named.message == (
-        'target "mssql-dev" takes a 0x0300 password value (PBKDF2-HMAC-SHA512), '
-        "which a change sends"
-    )
-    # The checks after it share the login.
-    assert scopes == {"mssql-dev": SCOPE}
-    assert session.closed
+def test_the_connection_shares_the_login(monkeypatch: pytest.MonkeyPatch) -> None:
+    asked = opening(monkeypatch, Session())
+    scopes: dict[str, Any] = {"mssql-dev": SCOPE}
+    connection([target()], None, None, scopes=scopes)
+    assert asked == []
 
 
 def test_an_unreachable_target_is_left_to_the_run(monkeypatch: pytest.MonkeyPatch) -> None:
     opening(monkeypatch, DriverError("no listener"))
     scopes: dict[str, Any] = {}
-    assert check([target()], None, None, scopes=scopes) == []
+    connection([target()], None, None, scopes=scopes)
     assert scopes == {"mssql-dev": None}
-
-
-def test_a_check_that_fails_another_way_is_left_to_the_run(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Such as a missing grant: the run's row names it."""
-    session = Session(DriverError("permission denied"))
-    opening(monkeypatch, session)
-    assert check([target()], None, None, scopes={}) == []
-    assert session.closed
+    assert versions([target()], None, None) == []
 
 
 def test_another_product_is_not_opened(monkeypatch: pytest.MonkeyPatch) -> None:
-    asked = opening(monkeypatch, Session(0x0200))
-    assert check([target("pg-dev", "postgres")], None, None, scopes={}) == []
+    asked = opening(monkeypatch, Session())
+    pg = target("pg-dev", "postgres")
+    connection([pg], None, None, scopes={})
+    assert versions([pg], None, None) == []
     assert asked == []
+
+
+def test_the_dry_run_names_the_value(monkeypatch: pytest.MonkeyPatch) -> None:
+    session = Session(0x0200)
+    opening(monkeypatch, session)
+    (named,) = versions([target()], None, None)
+    assert (named.level, named.target) == ("info", "mssql-dev")
+    assert named.message == (
+        'target "mssql-dev" takes a 0x0200 password value (SHA-512), which a change sends'
+    )
+    assert session.closed
+
+
+def test_a_value_the_check_refuses_refuses_the_dry_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    session = Session(UnsupportedCapabilityError("password_value", target="mssql-dev"))
+    opening(monkeypatch, session)
+    with pytest.raises(UnsupportedCapabilityError, match="password_value"):
+        versions([target()], None, None)
+    assert session.closed
+
+
+def test_a_check_that_fails_another_way_gets_no_note(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Such as a missing grant: the run's row names it."""
+    session = Session(DriverError("permission denied"))
+    opening(monkeypatch, session)
+    assert versions([target()], None, None) == []
+    assert session.closed

@@ -11527,8 +11527,9 @@ def _require_encryption(
     its rows. That is not a way past the check: the run reads the connection it
     sends over again, and :func:`_unencrypted` refuses that row there.
 
-    **A PostgreSQL target under `sslmode: disable`, or a MySQL target under
-    `ssl_mode: DISABLED`, is refused before any connection** (#1058, #1221), in
+    **A PostgreSQL target under `sslmode: disable`, a MySQL or MariaDB target
+    under `ssl_mode: DISABLED`, or a SQL Server target under `encrypt:
+    optional`, is refused before any connection** (#1058, #1221, #1549), in
     a first pass over every target. That mode never negotiates TLS, so the
     config already answers what a connection would, and the run does not wait
     on another target's connection to say so. libpq's `allow` and `prefer`, and

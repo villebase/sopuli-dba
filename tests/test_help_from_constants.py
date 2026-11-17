@@ -17,6 +17,7 @@ from repo_files import requires_repo
 from sopuli.cli import cli, help_with
 from sopuli.config.delivery import IMPLEMENTED, MANUAL
 from sopuli.driver.mariadb import limits as mariadb_limits
+from sopuli.driver.mssql import limits as mssql_limits
 from sopuli.driver.mysql import limits as mysql_limits
 from sopuli.driver.oracle import limits
 from sopuli.driver.oracle.errors import INSTALL_SCRIPT
@@ -62,6 +63,14 @@ def test_the_registry_states_the_mariadb_limit() -> None:
     PyNaCl."""
     assert DRIVERS["mariadb"].password_limit == str(mariadb_limits.MAX_PASSWORD_BYTES)
     assert f"mariadb: {mariadb_limits.MAX_PASSWORD_BYTES}" in _help("policy", "sample")
+
+
+def test_the_registry_states_the_mssql_limit() -> None:
+    """Pinned for the same reason, in UTF-16 bytes, which is how the server
+    counts. `limits.py` imports no pyodbc."""
+    bytes_ = 2 * mssql_limits.MAX_PASSWORD_CHARACTERS
+    assert DRIVERS["mssql"].password_limit == f"{bytes_} as UTF-16"
+    assert f"mssql: {bytes_} as UTF-16" in _help("policy", "sample")
 
 
 def test_the_rule_in_words_follows_the_floor(monkeypatch: pytest.MonkeyPatch) -> None:

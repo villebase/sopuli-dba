@@ -69,7 +69,20 @@ def _mariadb() -> tuple[Callable[[Secret], None], dict[str, str]]:
     return admit, {ENCODING: "Abcdefgh1\ud800", BYTE_LENGTH: "A" * (MAX_PASSWORD_BYTES + 1)}
 
 
-ADMISSION = {"oracle": _oracle, "postgresql": _postgresql, "mysql": _mysql, "mariadb": _mariadb}
+def _mssql() -> tuple[Callable[[Secret], None], dict[str, str]]:
+    from sopuli.driver.mssql.limits import MAX_PASSWORD_CHARACTERS
+    from sopuli.driver.mssql.password import admit
+
+    return admit, {ENCODING: "Abcdefgh1\ud800", BYTE_LENGTH: "A" * (MAX_PASSWORD_CHARACTERS + 1)}
+
+
+ADMISSION = {
+    "oracle": _oracle,
+    "postgresql": _postgresql,
+    "mysql": _mysql,
+    "mariadb": _mariadb,
+    "mssql": _mssql,
+}
 
 #: Under :data:`POLICY`, each of these breaks its own rule (checked below), so a
 #: driver that started refusing one would be caught.

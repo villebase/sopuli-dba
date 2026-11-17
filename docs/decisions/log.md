@@ -6235,6 +6235,33 @@ the register.
   3. Never unlocking on SQL Server: a reset would leave its owner unable to
      log in, against H4.
 
+## #1549
+
+- **Decided:** 2026-11-16, #1549
+- **Question:** Which keys does a SQL Server target's `mssql:` block take for
+  TLS? ODBC Driver 18 checks a certificate against the operating system's
+  trust store, and `sql/mssql/10_client_tls_probe.py` measured what else it
+  accepts (`mssql-client-tls`).
+- **Decision:** the maintainer's, as proposed. `encrypt` is `optional`,
+  `mandatory` (the default) or `strict`. `trust_server_certificate` encrypts
+  without a check, only under `mandatory`, and warns on every run with
+  `SOPULI-W058`. `host_name_in_certificate` names the name to check, only
+  under `mandatory`, the one mode whose name check was measured (TL4), and
+  `server_certificate` pins the server's own certificate, only under
+  `strict`. There is no key for a CA file.
+- **Why:** `Encrypt=yes` checks the chain and the name (TL1, TL4), so
+  `mandatory` is a safe default. `ServerCertificate` naming a CA never
+  connected (TL6), and naming the server's own certificate connected only
+  under `strict` (TL5), so a CA-file key would do nothing. `strict` connected
+  only on 2025 (TL3), so it cannot be the default. A self-signed server, such
+  as the tier-1 container, can be reached encrypted only with the check off,
+  and the warning keeps that from passing unseen.
+- **Rejected:** No `trust_server_certificate` key: every encrypted connection
+  would be checked, but an estate with self-signed certificates would need a
+  CA installed in every client's store, or would run `optional`, with no
+  encryption at all, and the test stack would need a CA of its own on every
+  runner.
+
 ## #1564
 
 - **Decided:** 2026-11-17, #1564

@@ -255,8 +255,9 @@ secondary, `18456`, where the old one still logs in, also for a login made on
 both with one SID (`08_availability_group_probe.py`, AG1). `ALTER LOGIN`
 works on a secondary (AG4). The promotion gate waits for every declared
 replica (invariant 7). Each replica names the group, its own role and every
-replica, and gives the same `group_id` (AG3). `doctor` warns when a target is
-in a group whose other replicas the config does not declare (open: #1550).
+replica, and gives the same `group_id` (AG3). `doctor` warns, `SOPULI-W076`,
+when a target is in a group with a replica that no target of the run reached,
+by the replica's name and each reached target's `ServerName`.
 **No group formed on 16.0.4325.4 in the matrix, so none of this is measured
 on 2022** (unverified: mssql-ag-2022).
 
@@ -264,7 +265,7 @@ on 2022** (unverified: mssql-ag-2022).
 and not the group's row or its own role** (`14_availability_group_reads_probe.py`,
 AR1, on 15.0.4510.2 and 17.0.5065.9). `sys.availability_replicas` gives every
 replica of every group the instance is in, itself among them, and the driver
-reads their names, for `doctor`'s warning above (open: #1550).
+reads their names, for `doctor`'s warning above.
 `sys.availability_groups` gives a row only with `VIEW ANY
 DEFINITION`, and the replica's role, PRIMARY or SECONDARY, needs `VIEW SERVER
 STATE` or `VIEW SERVER PERFORMANCE STATE`, both of which show every session

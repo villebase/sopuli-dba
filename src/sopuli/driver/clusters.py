@@ -56,6 +56,17 @@ class ClusterIdentity(Protocol):
     def cluster_identity(self) -> str | None: ...
 
 
+@runtime_checkable
+class AvailabilityReplicas(Protocol):
+    """A session that can name the replicas of the Availability Groups its
+    instance is in: the SQL Server session (#1550). `doctor` asks for it by
+    name, as for :class:`ClusterIdentity`, and
+    ``tests/test_cli_replicas_unreached.py`` checks that the session still
+    has it."""
+
+    def availability_replicas(self) -> tuple[str, ...]: ...
+
+
 @dataclass(frozen=True)
 class Identity:
     """One identity a session claims, with the words for its refusal."""

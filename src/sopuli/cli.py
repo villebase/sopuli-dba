@@ -76,7 +76,16 @@ from typing import Any, TypeVar
 
 import click
 
-from sopuli import account_list, expire, os_keyring, preflight, reset, reset_record, suspend
+from sopuli import (
+    account_list,
+    expire,
+    os_keyring,
+    policy_flags,
+    preflight,
+    reset,
+    reset_record,
+    suspend,
+)
 from sopuli import apply as apply_states
 from sopuli import check as check_states
 from sopuli import constraints as constraint_source
@@ -399,6 +408,7 @@ from sopuli.payload import (
     stage_layout,
 )
 from sopuli.personal import declared_on, rules_for
+from sopuli.policy_flags import PolicyFlags
 from sopuli.preflight import Finding
 from sopuli.safety import (
     ENCRYPTED,
@@ -8909,6 +8919,7 @@ def creds_apply(
         _stores_for({key.store for key in keys}, config, run=run),
         run,
     )
+    _refuse_flags_in_metadata(bindings, stores, config)
     # Read once before a question, so a store that cannot be read refuses before
     # anybody is asked: with token auth, opening a store connects to nothing.
     # The run reads again under the lock, after the answer, and acts on that
@@ -9656,61 +9667,100 @@ def _stored_document(binding: Binding, documents: Mapping[LockKey, Any]) -> Any:
     return documents.get(_lock_key(binding))
 
 
-def _reach_marker(
-    documents: dict[LockKey, Any],
-    stores: Mapping[str, SecretStore],
-    *,
-    manager: LockManager,
-    run: Invocation,
-) -> Callable[[Binding, str], str | None]:
-    """What records a staged ``pending``'s reaching login on one target (#1316).
+@dataclass(frozen=True)
+class _VaultMarks:
+    """The writes a run makes to a credential's document between reading it
+    and promoting it, behind the fence. Each returns ``None``, or why it could
+    not write. A merge patch names only the binding's target, so the other
+    targets' entries stay. The run's copy of the document moves to the version
+    the write left, so the promotion compare-and-sets against it.
 
-    It sets the binding's target to ``result`` in the ``pending``'s
-    :data:`~sopuli.payload.REACHED` mark in the vault, behind the fence, and
-    returns ``None``, or why it could not. A merge patch names only this
-    target, so the other targets' results stay. The run's copy of the document
-    moves to the version the write left, so the promotion compare-and-sets
-    against it.
-
+    Called with a result, it records a staged ``pending``'s reaching login on
+    one target (#1316) in :data:`~sopuli.payload.REACHED`.
     :data:`~sopuli.payload.REACH_SPENT` goes in before the login. Where that
     fails, the caller makes no reaching login: a lost mark must never let a
     scheduled `apply` repeat one. :data:`~sopuli.payload.REACH_PASSED` goes in
     after a login that passed, so a later run of this ``pending`` counts the
     target as confirmed. A run that ends between the two has spent the reach
     with nothing to show, and the next ``pending`` brings a new one.
+
+    :meth:`flags_recorded`, :meth:`record_flags` and :meth:`remove_flags` keep
+    a SQL Server login's policy flags while its policy is off (#1551,
+    :mod:`sopuli.policy_flags`).
     """
 
-    def record(binding: Binding, result: str) -> str | None:
+    documents: dict[LockKey, Any]
+    stores: Mapping[str, SecretStore]
+    manager: LockManager
+    run: Invocation
+
+    def __call__(self, binding: Binding, result: str) -> str | None:
         assert binding.secret is not None
+        return self._write(
+            binding, stage_layout(binding.secret).patch(REACHED, {binding.target: result})
+        )
+
+    def flags_recorded(self, binding: Binding) -> PolicyFlags | None:
+        """The flags the run's copy of the document records for the binding's
+        target. Raises
+        :class:`~sopuli.policy_flags.PolicyFlagsUnreadableError` for a record
+        of the wrong shape, which is never written over."""
+        assert binding.secret is not None
+        stored = _stored_document(binding, self.documents)
+        data = stored.data if stored is not None else None
+        return policy_flags.recorded(data, stage_layout(binding.secret), binding.target)
+
+    def record_flags(self, binding: Binding, flags: PolicyFlags) -> str | None:
+        assert binding.secret is not None
+        layout = stage_layout(binding.secret)
+        return self._write(binding, policy_flags.record_patch(layout, binding.target, flags))
+
+    def remove_flags(self, binding: Binding) -> str | None:
+        assert binding.secret is not None
+        stored = _stored_document(binding, self.documents)
+        data = stored.data if stored is not None else None
+        layout = stage_layout(binding.secret)
+        return self._write(binding, policy_flags.remove_patch(data, layout, binding.target))
+
+    def _write(self, binding: Binding, patch: Mapping[str, Any]) -> str | None:
         key = _lock_key(binding)
-        stored = documents.get(key)
-        assert stored is not None, "a `pending` was read from this document"
-        patch = stage_layout(binding.secret).patch(REACHED, {binding.target: result})
-        manager.check(key)
+        stored = self.documents.get(key)
+        assert stored is not None, "the run read this document"
+        store = self.stores[key.store]
+        self.manager.check(key)
         try:
-            written = write_credential(stores[key.store], key.path, patch, cas=stored.version)
+            written = write_credential(store, key.path, patch, cas=stored.version)
         except Exception as error:  # noqa: BLE001 -- the caller says why in the row
             reported = _finding(error)
-            run.emitter().event(
-                run.document,
+            self.run.emitter().event(
+                self.run.document,
                 "vault.write",
                 data={**_vault_event(key, None), "error": reported.to_dict()},
             )
             return reported.message
         try:
-            documents[key] = stores[key.store].read(key.path)
+            self.documents[key] = store.read(key.path)
         except Exception:  # noqa: BLE001 -- the write landed, and its version is known
-            documents[key] = replace(
+            self.documents[key] = replace(
                 stored, version=written.version, data=merge(stored.data, patch)
             )
-        run.emitter().event(
-            run.document,
+        self.run.emitter().event(
+            self.run.document,
             "vault.write",
             data={"vault": key.store, "path": key.path, "version": written.reported},
         )
         return None
 
-    return record
+
+def _reach_marker(
+    documents: dict[LockKey, Any],
+    stores: Mapping[str, SecretStore],
+    *,
+    manager: LockManager,
+    run: Invocation,
+) -> _VaultMarks:
+    """The run's :class:`_VaultMarks`."""
+    return _VaultMarks(documents=documents, stores=stores, manager=manager, run=run)
 
 
 def _header(plan: Any, sources: Sequence[tuple[Binding, Source | None]]) -> str:
@@ -9736,7 +9786,7 @@ def _apply_estate(
     surveyed: Mapping[tuple[str, str], UserState] | None = None,
     decided: Mapping[Credential, Mapping[str, guardrails.Review]] | None = None,
     rotating: bool = False,
-    spend_reach: Callable[[Binding, str], str | None] | None = None,
+    spend_reach: _VaultMarks | None = None,
 ) -> tuple[list[_Applied], LockStolenError | None]:
     """Every account, target by target, one connection each.
 
@@ -10226,7 +10276,7 @@ def _apply_target(
     unreachable: BaseException | None = None,
     out: list[_Applied],
     rotating: bool = False,
-    spend_reach: Callable[[Binding, str], str | None] | None = None,
+    spend_reach: _VaultMarks | None = None,
 ) -> None:
     """One target's worth of accounts, over one connection.
 
@@ -10577,6 +10627,97 @@ def _reach_after_change(
     )
 
 
+#: The target types whose change keeps the login's policy flags in the vault
+#: (#1551, :mod:`sopuli.policy_flags`).
+KEEPS_POLICY_FLAGS = frozenset({"mssql"})
+
+#: The capability a SQL Server binding under native staging lacks until
+#: ``oci-metadata-booleans`` is measured (#1584).
+POLICY_FLAGS_IN_METADATA = "policy_flags_in_metadata"
+
+
+def _refuse_flags_in_metadata(
+    bindings: Sequence[Binding], stores: Mapping[str, SecretStore], config: Config
+) -> None:
+    """Refuse at plan time, before anything connects, a SQL Server binding
+    whose credential stages natively (UC-1 §3, ``policy_flags``). The record
+    is then in the secret's metadata, and whether OCI reads a ``true`` back
+    as a boolean is not measured (``oci-metadata-booleans``): a value read
+    back as anything else could never be set back on the login."""
+    for binding in bindings:
+        if binding.secret is None or binding.vault is None:
+            continue
+        if _expanded(config, binding.target).target.type not in KEEPS_POLICY_FLAGS:
+            continue
+        if _is_native(stores, _lock_key(binding)):
+            raise UnsupportedCapabilityError(
+                POLICY_FLAGS_IN_METADATA,
+                target=binding.target,
+                hint=(
+                    f"vault {binding.vault!r} stages this credential natively, so the "
+                    "login's policy flags would be kept in the secret's metadata, and "
+                    "that OCI reads them back as true and false is not measured (#1584). "
+                    "Keep SQL Server credentials in a store that stages in the document"
+                ),
+            )
+
+
+def _keep_flags(binding: Binding, session: Any, account: str, marks: _VaultMarks | None) -> None:
+    """Step 1 of a SQL Server change (``02-mssql-privileges.md`` §6.2): the
+    login's policy flags, recorded in the vault before the policy goes off.
+
+    A record already there is kept and not read again: it holds the flags from
+    before an earlier run turned the policy off. Flags that are both off need
+    no record, because the change leaves nothing to set back. Raises where the
+    flags cannot be kept, so the change is not sent: the session's own
+    refusals (a Windows host, a pending ``MUST_CHANGE``), a record the tool
+    cannot read, and a vault write that failed.
+    """
+    flags = session.policy_flags(account)
+    if marks is None or binding.secret is None:
+        raise DriverError(
+            f'target "{binding.target}" needs the vault to keep the login\'s policy '
+            "flags while its policy is off, and this run cannot write them",
+            hint="this is a fault in sopuli: the run gave the change no vault to write to",
+        )
+    if marks.flags_recorded(binding) is not None:
+        return
+    if not flags.check_policy and not flags.check_expiration:
+        return
+    unwritten = marks.record_flags(binding, flags)
+    if unwritten is not None:
+        raise DriverError(
+            f"the vault did not record the login's policy flags, so no change was sent: {unwritten}"
+        )
+
+
+def _restore_flags(binding: Binding, session: Any, account: str, marks: _VaultMarks) -> bool:
+    """Step 4 of a SQL Server change: the recorded flags set back on the
+    login, and the record removed. Also run where the login already holds the
+    password, so a run that stopped after the change finishes it. Says
+    whether there was a record. Raises where the flags could not be set back,
+    or the record not removed, so the row says so and the record stays."""
+    recorded = marks.flags_recorded(binding)
+    if recorded is None:
+        return False
+    session.restore_policy(account, recorded)
+    unremoved = marks.remove_flags(binding)
+    if unremoved is not None:
+        raise DriverError(
+            "the login's policy flags were set back, and the vault did not remove its "
+            f"record of them; the next run sets them again: {unremoved}"
+        )
+    return True
+
+
+#: A row's clause where `apply` set back the flags of a change an earlier run
+#: did not finish (#1551).
+FLAGS_RESTORED = (
+    "the login's CHECK_POLICY and CHECK_EXPIRATION were set back from the vault's "
+    "record, which an earlier run left when it stopped before setting them back"
+)
+
+
 def _verify_before_change(
     session: Session, account: str, secret: Secret, margin: int, *, attempts: int
 ) -> VerifyResult | None:
@@ -10616,14 +10757,16 @@ def _apply_one(
     encryption_required: str | None = None,
     held: Mapping[str, guardrails.Review] | None = None,
     rotating: bool = False,
-    spend_reach: Callable[[Binding, str], str | None] | None = None,
+    spend_reach: _VaultMarks | None = None,
 ) -> _Applied:
     """One account in one target: ask, change if needed, ask again.
 
     ``spend_reach`` records a result in the vault mark of a staged ``pending``'s
     reaching login on this binding's target (#1316, :func:`_reach_marker`), and
     returns ``None``, or why it could not. Without it no login reaches further
-    (:func:`_reach_after_change`).
+    (:func:`_reach_after_change`). It also keeps a SQL Server login's policy
+    flags (:func:`_keep_flags`, :func:`_restore_flags`); without it such a
+    login is not changed.
 
     ``rotating`` is set by the `creds rotate` run that staged the ``pending``.
     Only that run opens a window the tool must open itself, on MySQL
@@ -10919,6 +11062,17 @@ def _apply_one(
             done = check_states.Outcome(apply_states.SKIPPED, NOT_CHECKED_WITHOUT_LOGIN)
         else:
             done = None
+        if (
+            done is not None
+            and spend_reach is not None
+            and getattr(session, "keeps_policy_flags", False)
+            and apply_states.is_confirmed(done.state)
+            and _restore_flags(binding, session, user.name, spend_reach)
+        ):
+            # SQL Server (#1551): an earlier run set this password and stopped
+            # before it set the login's flags back.
+            before_detail = f"{done.detail}; " if done.detail else ""
+            done = replace(done, detail=f"{before_detail}{FLAGS_RESTORED}")
         if done is not None:
             _left_alone(binding.account, binding.target, done.state, done.detail)
             return _Applied(
@@ -10948,6 +11102,11 @@ def _apply_one(
             # reuse history, and a warning about a statement nobody sent is noise.
             reuse = user
         manager.check(_lock_key(binding))
+        keeps_flags = getattr(session, "keeps_policy_flags", False)
+        if keeps_flags:
+            # SQL Server (#1551): the flags go in the vault before the change
+            # turns the policy off, and nothing is sent if they cannot.
+            _keep_flags(binding, session, user.name, spend_reach)
         # Read before the call, and kept on a failure only where the statement
         # went out (`_carried`): a statement the server refuses has still
         # carried the password across the network, and one the driver refused
@@ -10993,6 +11152,11 @@ def _apply_one(
             stored = confirm(after_user.name) if confirm is not None else None
             if isinstance(stored, VerifyResult):
                 after = stored
+        if keeps_flags and spend_reach is not None:
+            # Step 4, after the login, which ran while the policy was off so
+            # that a failure counted toward no lockout (§6.2).
+            _restore_flags(binding, session, after_user.name, spend_reach)
+            after_user = session.describe_user(binding.account) or after_user
         outcome = apply_states.after_change(after_user, after)
         if unrecorded is not None:
             outcome = replace(outcome, detail=f"{outcome.detail}; {unrecorded}")
@@ -14002,6 +14166,7 @@ def creds_rotate(
         _stores_for({key.store for key in keys}, config, run=run),
         run,
     )
+    _refuse_flags_in_metadata(bindings, stores, config)
     # `--max-age-days` leaves a document that is not due unwritten, so it is
     # not counted; telling which are due takes a read before the lock.
     due: set[LockKey] | None = None

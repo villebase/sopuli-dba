@@ -53,7 +53,8 @@ the SQL in `sql/oracle/` by hand. The PostgreSQL tool role is created by hand in
 `account expire-password` and the seen reset, because PostgreSQL cannot make a
 role change its password at its next login. A MySQL target and a MariaDB target
 each run `doctor`, the `creds` commands (§7) and the `account` commands (§9).
-A SQL Server target runs `doctor` only (§7).
+A SQL Server target on a Linux host runs `doctor`, `creds generate`, `creds
+apply`, `creds rotate` and `creds finish-rollover` (§7).
 
 ---
 
@@ -1175,8 +1176,9 @@ acme_app@%  mariadb-dev  IN_SYNC  any second password ended; the current passwor
 
 ### A SQL Server instance
 
-`doctor` connects to SQL Server and reports it. No other command runs against
-it yet. The client is pyodbc, from `pip install "sopuli-dba[mssql]"`, and
+`doctor` connects to SQL Server and reports it. On a Linux host, `creds
+generate`, `apply`, `rotate` and `finish-rollover` run against it too (§8.9
+has a sample). The client is pyodbc, from `pip install "sopuli-dba[mssql]"`, and
 Microsoft's ODBC Driver 18 for SQL Server, which you install from Microsoft as
 a system package.
 
@@ -1193,6 +1195,13 @@ grant that [`design/02-mssql-privileges.md`](design/02-mssql-privileges.md)
 ```sql
 CREATE LOGIN [sopuli_admin] WITH PASSWORD = N'Sopuli-test-admin1', CHECK_POLICY = ON;
 GRANT ALTER ANY LOGIN TO [sopuli_admin];
+```
+
+To change a password, it also needs the grant §2.1 names for guardrail 9;
+without it, every login is refused:
+
+```sql
+GRANT VIEW ANY DEFINITION TO [sopuli_admin];
 ```
 
 Save this as `mssql.yaml`, and export `SOPULI_DB_ADMIN_PASSWORD=Sopuli-test-admin1`:
@@ -1666,6 +1675,48 @@ The last warning is `SOPULI-W070`, and every run that opens a file store prints
 it. The store keeps the last 10 versions of each secret, or `max_versions` of
 them. The personal-account commands refuse a file store as the store for
 reset records or for a delivery.
+
+The same commands change a SQL Server login's password, on the instance of
+§7. Give `file.yaml` the target of §7's `mssql.yaml` in place of `pg-dev`,
+with `sopuli_admin` holding both grants there. Make the login in `sqlcmd`:
+
+```sql
+CREATE LOGIN [acme_app_user] WITH PASSWORD = N'Acme-start-pw-1', CHECK_POLICY = ON, CHECK_EXPIRATION = ON;
+```
+
+The samples leave out the warnings of §7 and above:
+
+```
+$ sopuli --config file.yaml creds generate
+...
+constraints: 256 bytes in UTF-16, from mssql-dev
+...
+ACCOUNT        SECRET                  RESULT
+acme_app_user  vault-file:acme/dev/db  staged v1
+
+1 staged; no database was changed -- run `sopuli creds apply` to use them
+
+$ sopuli --config file.yaml creds apply
+...
+ACCOUNT        TARGET     STATE    DETAIL
+acme_app_user  mssql-dev  IN_SYNC  changed and verified by login
+
+1 changed, 1 promoted to `current`
+
+$ sopuli --config file.yaml creds apply
+...
+ACCOUNT        TARGET     STATE    DETAIL
+acme_app_user  mssql-dev  IN_SYNC  the vault's password is already accepted; nothing to change
+
+nothing changed
+```
+
+The change turns the login's `CHECK_POLICY` off and sets it and
+`CHECK_EXPIRATION` back after the login, as
+[`design/02-mssql-privileges.md`](design/02-mssql-privileges.md) §6.2
+says. If a run stops in between, the next `apply` sets them back and its row
+ends with `the login's CHECK_POLICY and CHECK_EXPIRATION were set back from
+the vault's record`.
 
 ---
 

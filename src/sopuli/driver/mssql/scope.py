@@ -20,6 +20,7 @@ from __future__ import annotations
 
 from sopuli.config.model import TargetMssql
 from sopuli.config.targets import MSSQL_OPTIONAL
+from sopuli.driver.mssql import groups
 from sopuli.driver.protocol import (
     ENCRYPTION_TLS,
     SERVER,
@@ -35,12 +36,15 @@ from sopuli.exit_codes import ExitCode
 READ_WRITE = "READ WRITE"
 READ_ONLY = "READ ONLY"
 
-#: The release, the engine edition, and ``master``'s updateability, in one
-#: round trip.
+#: The release, the engine edition, ``master``'s updateability, and the
+#: physical name of the session's database
+#: (:func:`~sopuli.driver.mssql.groups.require_instance_master`), in one round
+#: trip.
 SCOPE = (
     "SELECT CAST(SERVERPROPERTY('ProductVersion') AS nvarchar(128)), "
     "CAST(SERVERPROPERTY('EngineEdition') AS int), "
-    "CAST(DATABASEPROPERTYEX('master', 'Updateability') AS nvarchar(60))"
+    "CAST(DATABASEPROPERTYEX('master', 'Updateability') AS nvarchar(60)), "
+    f"{groups.PHYSICAL_NAME}"
 )
 
 #: ``SERVERPROPERTY('EngineEdition')`` of the Azure services that are a
@@ -77,9 +81,11 @@ def encryption(settings: TargetMssql) -> Encryption:
 def observe(cursor: Cursor, *, target: str, settings: TargetMssql) -> Scope:
     """This session's scope: a server, whether ``master`` takes writes, and
     its encryption. A logical server, such as Azure SQL Database, is refused
-    before anything else is reported (:class:`NotAnInstanceError`)."""
+    before anything else is reported (:class:`NotAnInstanceError`), and then a
+    session whose database is not the instance's ``master``, as in a contained
+    Availability Group's (:func:`~sopuli.driver.mssql.groups.require_instance_master`)."""
     cursor.execute(SCOPE)
-    version, edition, updateability = cursor.fetchone()
+    version, edition, updateability, physical_name = cursor.fetchone()
     if edition in LOGICAL_SERVERS:
         raise NotAnInstanceError(
             f'target "{target}" is {LOGICAL_SERVERS[edition]}, which the SQL Server driver '
@@ -89,6 +95,7 @@ def observe(cursor: Cursor, *, target: str, settings: TargetMssql) -> Scope:
                 "manage. Declare a SQL Server instance or an Azure SQL Managed Instance"
             ),
         )
+    groups.require_instance_master(physical_name, target=target)
     can_write = str(updateability).upper() == "READ_WRITE"
     return Scope(
         type=SERVER,

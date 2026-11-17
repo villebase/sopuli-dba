@@ -5,15 +5,19 @@ It imports ``pyodbc`` at module scope, so a machine without the ``mssql``
 extra gets ``SOPULI-20002`` from the registry rather than a traceback (ADR-006
 rule 1). The modules beside it are tier 0.
 
-**What this build does** (#1549, #1551). It connects through ODBC Driver 18
-with the target's ``mssql:`` settings (:mod:`~sopuli.driver.mssql.connection`),
-labels the session with the run's correlation id, and reports the scope:
-``server``, whether ``master`` takes writes, and its encryption. It reads a
-declared login (:meth:`MssqlSession.describe_user`), refusing every principal
-but a SQL login, and names the instance by ``SERVERPROPERTY('ServerName')``
+**What this build does** (#1549, #1550, #1551). It connects through ODBC
+Driver 18 with the target's ``mssql:`` settings
+(:mod:`~sopuli.driver.mssql.connection`), labels the session with the run's
+correlation id, and reports the scope: ``server``, whether ``master`` takes
+writes, and its encryption. It reads a declared login
+(:meth:`MssqlSession.describe_user`), refusing every principal but a SQL
+login, and names the instance by ``SERVERPROPERTY('ServerName')``
 (:meth:`MssqlSession.cluster_identity`). It reads the host's platform and the
 password value's version as capabilities
-(:mod:`~sopuli.driver.mssql.capabilities`, #1550).
+(:mod:`~sopuli.driver.mssql.capabilities`), and what it can of the
+Availability Groups the instance is in (:mod:`~sopuli.driver.mssql.groups`):
+the replicas' names, for `doctor`'s ``SOPULI-W076``, and whether its database
+is a contained group's master, which the scope refuses.
 
 On a Linux host it changes a password for `creds apply` and `creds rotate`,
 in ``02-mssql-privileges.md`` §6.2's order: the command records the login's
@@ -44,7 +48,8 @@ import pyodbc
 
 from sopuli.config.model import ExpandedTarget, Runtime
 from sopuli.config.targets import MSSQL_STRICT
-from sopuli.driver.mssql import accounts, capabilities, statements
+from sopuli.driver.mssql import accounts, capabilities, groups, statements
+from sopuli.driver.mssql import privileges as tool_login
 from sopuli.driver.mssql.admin import Assessment, Catalog, assess, read_catalog
 from sopuli.driver.mssql.client import client_lines
 from sopuli.driver.mssql.connection import connection_string
@@ -77,6 +82,7 @@ from sopuli.driver.protocol import (
     Cursor,
     DriverContext,
     DriverError,
+    PrivilegeAudit,
     Scope,
     Timeouts,
     UnsupportedCapabilityError,
@@ -178,6 +184,12 @@ class MssqlSession(ClosesConnection):
     identity_caveat: str | None = field(default=None, init=False, repr=False)
     #: Guardrail 9's catalog, read on first use (:meth:`admin_assessment`).
     _catalog: Catalog | None = field(default=None, init=False, repr=False)
+    #: The Availability Group reads (:mod:`~sopuli.driver.mssql.groups`),
+    #: read on first use.
+    _replicas: tuple[str, ...] | None = field(default=None, init=False, repr=False)
+    #: Why :meth:`scope` refused this session, kept so that it is raised
+    #: again without another read.
+    _scope_refusal: DriverError | None = field(default=None, init=False, repr=False)
     #: The capabilities of #1550, read on first use.
     _host_platform: str | None = field(default=None, init=False, repr=False)
     _host_read: bool = field(default=False, init=False, repr=False)
@@ -185,12 +197,24 @@ class MssqlSession(ClosesConnection):
 
     def scope(self) -> Scope:
         """What this session is: a server, read-write or not, and its
-        encryption. Probed on the first call and cached (invariant 3)."""
+        encryption. Probed on the first call and cached (invariant 3).
+
+        A session in a contained Availability Group's own ``master`` is
+        refused here, before any login is read
+        (:class:`~sopuli.driver.mssql.groups.ContainedGroupMasterError`). A
+        refusal is kept as the scope is, and raised again on the next call
+        without another read."""
+        if self._scope_refusal is not None:
+            raise self._scope_refusal
         if self._scope is None:
             settings = self.target.target.mssql_settings
-            self._scope = self._read(
-                lambda cursor: observe(cursor, target=self.target.name, settings=settings)
-            )
+            try:
+                self._scope = self._read(
+                    lambda cursor: observe(cursor, target=self.target.name, settings=settings)
+                )
+            except (groups.ContainedGroupMasterError, groups.MasterUnreadError) as refused:
+                self._scope_refusal = refused
+                raise
             if LOG.isEnabledFor(logging.DEBUG):
                 LOG.debug(
                     "%s is a server, %s %s, encryption %s",
@@ -206,7 +230,9 @@ class MssqlSession(ClosesConnection):
         (`02-mssql-privileges.md` §5): the grants it reaches, or why they
         could not be read. The catalog is read on the first call and cached
         for the session, so every managed login on the target is assessed
-        against one read."""
+        against one read. The scope comes first, so a session in a contained
+        group's master is refused before any login is read."""
+        self.scope()
         if self._catalog is None:
             self._catalog = self._read(read_catalog)
             LOG.debug(
@@ -310,8 +336,23 @@ class MssqlSession(ClosesConnection):
             ),
         )
 
-    def privileges(self, *args: Any, **kwargs: Any) -> NoReturn:
-        self._not_written("audit the tool login's grants")
+    def privileges(self, *, accounts: tuple[str, ...] = ()) -> PrivilegeAudit:
+        """What the tool login holds, needs and should not hold
+        (:mod:`~sopuli.driver.mssql.privileges`). ``accounts`` is ignored:
+        ``ALTER ANY LOGIN`` reaches every login. Uncached: a run asks once.
+
+        The user in ``msdb`` is a read of its own: where ``msdb`` refuses the
+        tool login, the audit stands and says so."""
+        try:
+            msdb_user: bool | None = self._read(tool_login.read_msdb_user)
+        except DriverError as error:
+            # Only a refusal, 916 or 229, says msdb is closed to the tool
+            # login. A lost connection or a fault is raised as it is.
+            if error.category != "authorization":
+                raise
+            LOG.debug("%s: msdb could not be read: %s", self.target.name, error.code)
+            msdb_user = None
+        return self._read(lambda cursor: tool_login.audit(cursor, msdb_user=msdb_user))
 
     def describe_user(self, account: str) -> UserState | None:
         """The login's state, ``None`` where no login has the name
@@ -323,6 +364,8 @@ class MssqlSession(ClosesConnection):
         see one, so its name reads as ``None`` (``02-mssql-privileges.md``
         §4).
         """
+        # The scope refuses a contained group's master before a login is read.
+        self.scope()
         login = self._read(
             lambda cursor: accounts.read_one(cursor, account, target=self.target.name)
         )
@@ -335,6 +378,14 @@ class MssqlSession(ClosesConnection):
             admin_unread=assessment.unread,
             global_privileges=assessment.grants,
         )
+
+    def availability_replicas(self) -> tuple[str, ...]:
+        """The names of the replicas of every Availability Group the instance
+        is in, itself among them, or none (:mod:`~sopuli.driver.mssql.groups`).
+        Read once and cached."""
+        if self._replicas is None:
+            self._replicas = self._read(groups.replicas)
+        return self._replicas
 
     #: The words for two targets that are one instance
     #: (:class:`~sopuli.driver.clusters.ClusterIdentity`). Not fields.

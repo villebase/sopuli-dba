@@ -1240,6 +1240,18 @@ mssql-dev  yes        server  -          READ WRITE  0             tls
     hint: anything between this run and the server can present its own certificate and read the password a run sets. Use `trust_server_certificate: false` (the default), with the CA that issued the server's certificate in the operating system's trust store, which ODBC Driver 18 checks the server against
 ```
 
+`doctor --check-privileges` also audits the tool login. With the grant above
+alone, it says what the verbs that set a password need:
+
+```
+$ sopuli --config mssql.yaml doctor --check-privileges
+...
+TARGET     REACHABLE  SCOPE   CONTAINER  OPEN MODE   CAPABILITIES  ENCRYPTION
+mssql-dev  yes        server  -          READ WRITE  0             tls
+  mssql-dev: the tool login does not hold VIEW ANY DEFINITION, so guardrail 9 refuses every managed login on the verbs that set a password; GRANT VIEW ANY DEFINITION TO [sopuli_admin] to change passwords here (02-mssql-privileges.md §2.1)
+...
+```
+
 ---
 
 ## 8. Application credentials (UC-1)

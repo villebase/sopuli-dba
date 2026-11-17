@@ -58,6 +58,10 @@ class TargetReport:
     #: refused dictionary read. Still a target with no answer, but not one that
     #: could not be reached.
     read_failed: bool = False
+    #: The target refused the connection for a capability it lacks, such as
+    #: SQL Server's `strict_encryption`. Not checked, rather than unreachable
+    #: (UC-5 §3, #1555).
+    refused: bool = False
 
 
 class TargetAnswer(Protocol):
@@ -69,16 +73,33 @@ class TargetAnswer(Protocol):
     @property
     def unsupported(self) -> bool: ...
 
+    @property
+    def refused(self) -> bool: ...
 
-def target_counts(reports: Sequence[TargetAnswer]) -> tuple[int, int]:
-    """How many targets gave no answer, and how many of another product.
+    @property
+    def read_failed(self) -> bool: ...
 
-    The one place both are counted, for every report, so a report's exit code
-    and its summary agree, and the reports agree with each other.
+
+def target_counts(reports: Sequence[TargetAnswer]) -> tuple[int, int, int]:
+    """How many targets gave no answer, how many are of another product, and
+    how many refused for a capability they lack.
+
+    The one place all three are counted, for every report, so a report's exit
+    code and its summary agree, and the reports agree with each other.
     """
-    unsupported = sum(1 for report in reports if report.unsupported)
-    unanswered = sum(1 for report in reports if report.error is not None) - unsupported
-    return unanswered, unsupported
+    unsupported = sum(1 for report in reports if report.error is not None and report.unsupported)
+    refused = sum(1 for report in reports if report.error is not None and report.refused)
+    unanswered = sum(1 for report in reports if report.error is not None) - unsupported - refused
+    return unanswered, unsupported, refused
+
+
+def not_answered_word(answer: TargetAnswer) -> str:
+    """What a target with an error says before the error, in every report."""
+    if answer.unsupported:
+        return "not supported"
+    if answer.refused:
+        return "not checked"
+    return "could not read" if answer.read_failed else "could not connect"
 
 
 def render(reports: Sequence[TargetReport], *, show_all: bool) -> str:
@@ -91,12 +112,7 @@ def render(reports: Sequence[TargetReport], *, show_all: bool) -> str:
 
 def _section(report: TargetReport, *, show_all: bool) -> list[str]:
     if report.error is not None:
-        if report.unsupported:
-            what = "not supported"
-        elif report.read_failed:
-            what = "could not read"
-        else:
-            what = "could not connect"
+        what = not_answered_word(report)
         return [f"{paint(report.target, Role.HEADING)}  {what}: {report.error.message}"]
     lines = [f"{paint(report.target, Role.HEADING)}  ({_head(report)})"]
     lines.extend(
@@ -222,9 +238,10 @@ def build_results(reports: Sequence[TargetReport]) -> list[dict[str, Any]]:
                 {
                     "account": ABSENT,
                     "target": report.target,
-                    # Another product is not checked there (UC-5 §3), as the exit
-                    # code says; only an unreached target is an error.
-                    "state": NOT_CHECKED if report.unsupported else ERROR,
+                    # Another product, or a capability the target lacks, is not
+                    # checked there (UC-5 §3), as the exit code says; only an
+                    # unreached target is an error.
+                    "state": NOT_CHECKED if report.unsupported or report.refused else ERROR,
                     "changed": False,
                     "error": report.error.to_dict(),
                 }
@@ -273,7 +290,8 @@ def _result(row: AccountRow) -> dict[str, Any]:
 def summarise(reports: Sequence[TargetReport]) -> Summary:
     """The run's counts. ``failed`` counts unreachable targets and problems."""
     rows = [row for report in reports for row in report.rows]
-    unreachable, unsupported = target_counts(reports)
+    unreachable, unsupported, refused = target_counts(reports)
+    unsupported += refused
     missing = sum(len(report.missing) for report in reports)
     problems = sum(1 for row in rows if row.state in (REPORT_PROBLEM, ACCOUNT_MISSING)) + missing
     counts: dict[str, int] = {}

@@ -156,9 +156,12 @@ DEFINITION` it reads them all (RP4). Neither reads a hash.
 
 **No source measured gives a login's last good login.** No catalog view has a
 column for it. At the images' login auditing level, 2, the error log records
-failed logins only (RP7). `report history` therefore reports the last login
-as *not checked* (open: #1555). A server audit with `SUCCESSFUL_LOGIN_GROUP`
-is not measured.
+failed logins only (RP7). UC-5's reports show no last login on any product,
+so nothing is lost. A server audit with `SUCCESSFUL_LOGIN_GROUP` is not
+measured.
+
+`report history` reads each login's `PasswordLastSetTime` through the same
+read as `describe_user` (§4), with §2.1's grant alone.
 
 The error log is read by `sp_readerrorlog`, which needs `VIEW SERVER STATE`,
 `VIEW ANY ERROR LOG` (2022 and later) or `securityadmin`. `xp_readerrorlog` is

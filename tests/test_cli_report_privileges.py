@@ -549,6 +549,24 @@ def test_a_driver_without_a_privilege_survey_is_not_supported(
     assert "cannot survey its privileges" in result.output
 
 
+def test_a_capability_refused_at_connect_is_not_checked_exit_4(
+    write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Such as SQL Server's `strict_encryption`: *not checked*, never
+    unreachable, and exit 4 even where it is the only target (#1555)."""
+
+    def refuse(target: Any, run: Any, config: Any) -> Any:
+        raise UnsupportedCapabilityError("strict_encryption", target=target.name)
+
+    monkeypatch.setattr("sopuli.cli._open_session", refuse)
+    result = report(write_config)
+
+    assert result.exit_code == ExitCode.PARTIAL, result.output
+    assert "not checked: " in click.unstyle(result.output)
+    document = json_run(write_config)
+    assert {row["state"] for row in document["results"]} == {"NOT_CHECKED"}
+
+
 def test_the_oracle_session_is_a_privilege_survey() -> None:
     from sopuli.driver.grants import PrivilegeSurvey
     from sopuli.driver.oracle.session import OracleSession

@@ -21,13 +21,15 @@ from jsonschema import Draft202012Validator
 from conftest import WriteConfig
 from native_estate import OCI_VAULT, seed, staging_store
 from sopuli import cli as cli_module
+from sopuli import report_history as history_states
 from sopuli.admin import Resolved
 from sopuli.cli import cli
 from sopuli.config.model import Vault
 from sopuli.config.targets import EXTERNAL
+from sopuli.driver.mssql.accounts import NotAPasswordLoginError
 from sopuli.driver.mysql.accounts import OtherPluginError
 from sopuli.driver.mysql_family.accounts import BareAccountError
-from sopuli.driver.protocol import Credential, Scope, UserState
+from sopuli.driver.protocol import Credential, Scope, UnsupportedCapabilityError, UserState
 from sopuli.driver.registry import DRIVERS
 from sopuli.exit_codes import ExitCode
 from sopuli.output.document import SCHEMA_VERSION
@@ -643,3 +645,203 @@ def test_a_host_written_any_is_not_the_wildcard(
 
     assert "acme_app@% (application)" not in text
     assert "acme_app@any" in text
+
+
+# ------------------------------------------------------- SQL Server (#1555) ---
+
+MSSQL_CONFIG = """\
+version: 1
+vaults:
+  vault-dev:
+    type: hashicorp
+    addr: https://vault-dev.example.com:8200
+targets:
+  - name: mssql-dev
+    type: mssql
+    dsn: mssql-dev.example.com:1433
+    vault: vault-dev
+applications:
+  - name: acme
+    accounts: [acme_app]
+    secret_template: "apps/acme#DB_CREDENTIALS/{account}"
+"""
+
+
+class FakeMssqlSession(FakeSession):
+    """The server compares names without case under its default collation,
+    and refuses to describe a login with no password, as the SQL Server
+    driver does (`02-mssql-privileges.md` §4)."""
+
+    def scope(self) -> Scope:
+        return Scope(type="instance", db_version="16.0.4325.4", capabilities=frozenset())
+
+    def describe_user(self, account: str) -> UserState | None:
+        self.described.append(account)
+        if account.upper() == "ACME_OPS":
+            raise NotAPasswordLoginError(account, "a Windows login", target="mssql-dev")
+        return self.users.get(account.upper())
+
+
+@pytest.fixture
+def mssql_estate(monkeypatch: pytest.MonkeyPatch) -> MemoryStore:
+    store = MemoryStore()
+    store.write(
+        "apps/acme",
+        {
+            "DB_CREDENTIALS": {"acme_app": SECRET},
+            "rotated_at": {"acme_app": stamp(2)},
+            "rotated_by": {"acme_app": "ville"},
+        },
+        cas=0,
+    )
+    users = {
+        "ACME_APP": UserState(name="acme_app", status="OPEN", password_changed_at=CHANGED),
+    }
+
+    def fake_connect(
+        vault: Vault, *, env: Mapping[str, str], token_file: Path | None = None
+    ) -> SecretStore:
+        return store
+
+    class FakeDriver:
+        def __init__(self, context: Any) -> None:
+            pass
+
+        def connect(self, target: Any, credential: Any) -> FakeSession:
+            return FakeMssqlSession(users)
+
+    monkeypatch.setattr("sopuli.cli.connect", fake_connect)
+    monkeypatch.setattr("sopuli.cli.driver_for", lambda target, context: FakeDriver(context))
+    monkeypatch.setattr("sopuli.cli.admin_resolve", lambda target, **_: CREDENTIAL)
+    return store
+
+
+def test_a_sql_server_history_shows_password_last_set_time(
+    write_config: WriteConfig, mssql_estate: MemoryStore
+) -> None:
+    """The registry lets `report history` reach a SQL Server target, and the
+    login's `PasswordLastSetTime` is the database's date (#1555)."""
+    result = report(write_config, config=MSSQL_CONFIG)
+    text = flat(result)
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert "mssql-dev (16.0.4325.4" in text
+    app = text.split("acme_app (application)")[1]
+    assert "database changed: 2026-11-07T03:00:05Z" in app
+    assert "2026-11-02T03:00:00Z rotation v1 ville" in app
+
+
+def test_a_sql_server_login_with_no_password_keeps_the_target(
+    write_config: WriteConfig, mssql_estate: MemoryStore
+) -> None:
+    """A Windows login has no password date. The driver's refusal is that
+    login's reason, and the target is still read (#1555)."""
+    result = report(write_config, "--account", "acme_ops", config=MSSQL_CONFIG)
+    text = flat(result)
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert "acme_ops (undeclared)" in text
+    assert 'database changed: unknown, account "acme_ops" on target "mssql-dev" is a' in text
+
+
+def test_a_capability_refused_at_connect_is_not_checked_and_keeps_the_store_history(
+    write_config: WriteConfig, mssql_estate: MemoryStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Under `encrypt: strict`, 2019 and 2022 reset the connection, and the
+    driver refuses it as `strict_encryption` missing. The target is *not
+    checked*, exit 4, never unreachable, and the store's history is still
+    shown (UC-5 §3, #1555)."""
+
+    class RefusingDriver:
+        def __init__(self, context: Any) -> None:
+            pass
+
+        def connect(self, target: Any, credential: Any) -> FakeSession:
+            raise UnsupportedCapabilityError("strict_encryption", target="mssql-dev")
+
+    monkeypatch.setattr("sopuli.cli.driver_for", lambda target, context: RefusingDriver(context))
+    result = report(write_config, config=MSSQL_CONFIG)
+    text = flat(result)
+
+    assert result.exit_code == ExitCode.PARTIAL, result.output
+    assert 'not checked: target "mssql-dev" does not support strict_encryption' in text
+    assert "could not connect" not in text
+    assert "2026-11-02T03:00:00Z rotation v1 ville" in text
+
+    path = write_config(MSSQL_CONFIG)
+    document = json.loads(
+        CliRunner()
+        .invoke(cli, ["--config", str(path), "--output", "json", "report", "history"])
+        .output
+    )
+    Draft202012Validator(RUN_SCHEMA).validate(document)
+    states = {row["account"]: row["state"] for row in document["results"]}
+    assert states["acme_app"] == "REPORT_OK"
+    assert "ERROR" not in states.values()
+    assert "NOT_CHECKED" in states.values()
+
+    # An account the tool does not manage has only the database's date, which
+    # was not read: not checked, never REPORT_OK (#1586 review).
+    document = json.loads(
+        CliRunner()
+        .invoke(
+            cli,
+            [
+                "--config",
+                str(path),
+                "--output",
+                "json",
+                "report",
+                "history",
+                "--account",
+                "acme_ghost",
+            ],
+        )
+        .output
+    )
+    Draft202012Validator(RUN_SCHEMA).validate(document)
+    ghost = next(row for row in document["results"] if row["account"] == "acme_ghost")
+    assert ghost["state"] == "NOT_CHECKED"
+
+
+def test_a_personal_account_with_no_reset_records_is_not_checked_when_not_read(
+    write_config: WriteConfig, mssql_estate: MemoryStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With no `reset_records:` store, the database's date is all a personal
+    account has. Where it was not read, the account is not checked, never
+    REPORT_OK (#1586 second review)."""
+
+    class RefusingDriver:
+        def __init__(self, context: Any) -> None:
+            pass
+
+        def connect(self, target: Any, credential: Any) -> FakeSession:
+            raise UnsupportedCapabilityError("strict_encryption", target="mssql-dev")
+
+    monkeypatch.setattr("sopuli.cli.driver_for", lambda target, context: RefusingDriver(context))
+    path = write_config(MSSQL_CONFIG + "personal_accounts:\n  - accounts: [jdoe]\n")
+    result = CliRunner().invoke(
+        cli, ["--config", str(path), "--output", "json", "report", "history"]
+    )
+    document = json.loads(result.output)
+
+    Draft202012Validator(RUN_SCHEMA).validate(document)
+    states = {row["account"]: row["state"] for row in document["results"]}
+    assert states["jdoe"] == "NOT_CHECKED"
+    assert states["acme_app"] == "REPORT_OK"
+
+
+def test_a_date_read_before_the_target_failed_is_kept_with_no_reason() -> None:
+    """A read failure after the dates were read leaves them as read (#1586
+    second review)."""
+    read = history_states.AccountHistory(
+        "mssql-dev",
+        "acme_ops",
+        history_states.UNDECLARED,
+        note=history_states.NOT_MANAGED,
+        db_changed_at=CHANGED,
+    )
+    unread = replace(read, db_changed_at=None)
+
+    assert cli_module._database_not_read(read) == read
+    assert cli_module._database_not_read(unread).not_checked == (history_states.DATABASE_NOT_READ,)

@@ -220,16 +220,19 @@ def exit_code(
     unsupported: int,
     targets: int,
     unreadable: bool = False,
+    refused: int = 0,
 ) -> int:
     """5 if no target could run, 1 if one gave no answer, 4 if anything was not read.
 
     ``unreadable`` is any target's survey saying it could not read something,
     such as ``DBA_ROLES`` for the roles' authentication, even where every
-    account's four parts were read.
+    account's four parts were read. ``refused`` counts the targets that
+    refused for a capability they lack, each not checked (#1555).
     """
     return exit_code_for(
         unreachable=unreachable,
         unsupported=unsupported,
         targets=targets,
         incomplete=unreadable or any(not one.complete for one in reports),
+        refused=refused,
     )

@@ -5926,7 +5926,7 @@ def report_accounts_command(
     reached = config.expanded_targets
     reports = [_report_target(target, run, config) for target in reached]
     rows = [row for report in reports for row in report.rows]
-    unreachable, unsupported = report_view.target_counts(reports)
+    unreachable, unsupported, refused = report_view.target_counts(reports)
     document.results = report_view.build_results(reports)
     document.finish(
         report_states.exit_code(
@@ -5935,6 +5935,7 @@ def report_accounts_command(
             unsupported=unsupported,
             targets=len(reports),
             missing=[missing for report in reports for missing in report.missing],
+            refused=refused,
         ),
         report_view.summarise(reports),
     )
@@ -6014,6 +6015,43 @@ def _personal_role_members(session: Any, config: Config, target: ExpandedTarget)
     return _RoleMembers(tuple(members), tuple(unresolved))
 
 
+#: :attr:`_ReportSession.why` for a product the report is not written for.
+_UNSUPPORTED = "unsupported"
+#: :attr:`_ReportSession.why` for a target that refused the connection for a
+#: capability it lacks, such as SQL Server's `strict_encryption` (#1555).
+_REFUSED = "refused"
+
+
+@dataclass(frozen=True)
+class _ReportSession:
+    """A report's session on one target, or why there is none.
+
+    ``why`` is :data:`_UNSUPPORTED` or :data:`_REFUSED` for a target that is
+    *not checked* rather than unreachable (UC-5 §3), and ``None`` for a
+    session, or for a target that could not be reached."""
+
+    session: Session | None
+    error: Error | None = None
+    why: str | None = None
+
+
+def _open_report_session(target: ExpandedTarget, run: Invocation, config: Config) -> _ReportSession:
+    """:func:`_open_session` for a `report` command. The one place a failure
+    to open is sorted into another product, a capability the target lacks,
+    or a target that could not be reached, so the three reports cannot
+    disagree about it (#1586 review)."""
+    try:
+        return _ReportSession(_open_session(target, run, config))
+    except (DriverNotImplementedError, NotWrittenError) as error:
+        # Another product: refused before connecting.
+        return _ReportSession(None, _finding(error), _UNSUPPORTED)
+    except UnsupportedCapabilityError as error:
+        # Such as SQL Server's `strict_encryption` on 2019 and 2022.
+        return _ReportSession(None, _finding(error), _REFUSED)
+    except Exception as error:  # noqa: BLE001 -- a per-target finding
+        return _ReportSession(None, _finding(error))
+
+
 def _report_target(
     target: ExpandedTarget, run: Invocation, config: Config
 ) -> report_view.TargetReport:
@@ -6027,16 +6065,15 @@ def _report_target(
     """
     session = None
     try:
-        try:
-            session = _open_session(target, run, config)
-        except (DriverNotImplementedError, NotWrittenError) as error:
-            # Another product: refused before connecting. Not checked on this
-            # target, rather than unreachable (UC-5 §3).
+        opened = _open_report_session(target, run, config)
+        if opened.session is None:
             return report_view.TargetReport(
-                target=target.name, error=_finding(error), unsupported=True
+                target=target.name,
+                error=opened.error,
+                unsupported=opened.why == _UNSUPPORTED,
+                refused=opened.why == _REFUSED,
             )
-        except Exception as error:  # noqa: BLE001 -- a per-target finding
-            return report_view.TargetReport(target=target.name, error=_finding(error))
+        session = opened.session
         if not isinstance(session, AccountSurvey):
             # The registry lets a product reach this command only once its
             # session implements the survey. One that does not anyway is not
@@ -6123,7 +6160,7 @@ def report_privileges_command(
         for target in config.expanded_targets
     ]
     accounts = [one for report in reports for one in report.accounts]
-    unreachable, unsupported = privileges_view.target_counts(reports)
+    unreachable, unsupported, refused = privileges_view.target_counts(reports)
     document.results = privileges_view.build_results(reports)
     document.finish(
         privilege_states.exit_code(
@@ -6132,6 +6169,7 @@ def report_privileges_command(
             unsupported=unsupported,
             targets=len(reports),
             unreadable=any(report.unreadable for report in reports),
+            refused=refused,
         ),
         privileges_view.summarise(reports),
     )
@@ -6174,14 +6212,15 @@ def _privileges_target(
     """One target: survey its accounts, then their privileges, on one connection."""
     session = None
     try:
-        try:
-            session = _open_session(target, run, config)
-        except (DriverNotImplementedError, NotWrittenError) as error:
+        opened = _open_report_session(target, run, config)
+        if opened.session is None:
             return privileges_view.TargetPrivileges(
-                target=target.name, error=_finding(error), unsupported=True
+                target=target.name,
+                error=opened.error,
+                unsupported=opened.why == _UNSUPPORTED,
+                refused=opened.why == _REFUSED,
             )
-        except Exception as error:  # noqa: BLE001 -- a per-target finding
-            return privileges_view.TargetPrivileges(target=target.name, error=_finding(error))
+        session = opened.session
         if not isinstance(session, AccountSurvey) or not isinstance(session, PrivilegeSurvey):
             missing = DriverError(f"{target.name}: this driver cannot survey its privileges")
             return privileges_view.TargetPrivileges(
@@ -6262,10 +6301,10 @@ def report_history_command(
 
     Exit 0 when every history was read, 1 when a target or a store gave no
     answer, and 4 when a history has a gap or the store keeps no versions.
-    Oracle, PostgreSQL, MySQL and MariaDB can run it. The database's date comes
-    from Oracle and MySQL, and on MariaDB from the optional view
-    `sopuli.account_state`. PostgreSQL keeps none. Where there is no date, the
-    report says why it is unknown.
+    Oracle, PostgreSQL, MySQL, MariaDB and SQL Server can run it. The
+    database's date comes from Oracle, MySQL and SQL Server, and on MariaDB
+    from the optional view `sopuli.account_state`. PostgreSQL keeps none.
+    Where there is no date, the report says why it is unknown.
     """
     document = run.document
     selection = selected(selectors, targets, (), groups, ())
@@ -6284,7 +6323,7 @@ def report_history_command(
         for target in config.expanded_targets
     ]
     histories = [one for report in reports for one in report.accounts]
-    unreachable, unsupported = history_view.target_counts(reports)
+    unreachable, unsupported, refused = history_view.target_counts(reports)
     document.results = history_view.build_results(reports)
     document.finish(
         history_states.exit_code(
@@ -6293,6 +6332,7 @@ def report_history_command(
             unsupported=unsupported,
             targets=len(reports),
             unanswered=sum(len(report.failures) for report in reports),
+            refused=refused,
         ),
         history_view.summarise(reports),
     )
@@ -6496,17 +6536,18 @@ def _history_target(
 
     session = None
     error: Error | None = None
-    read_failed = False
+    read_failed = refused_capability = False
     try:
         if found:
-            try:
-                session = _open_session(target, run, config)
-            except (DriverNotImplementedError, NotWrittenError) as refused:
+            opened = _open_report_session(target, run, config)
+            if opened.why == _UNSUPPORTED:
                 return history_view.TargetHistory(
-                    target=target.name, error=_finding(refused), unsupported=True
+                    target=target.name, error=opened.error, unsupported=True
                 )
-            except Exception as failed:  # noqa: BLE001 -- a per-target finding
-                error = _finding(failed)
+            # A refused target, such as SQL Server's under `strict_encryption`,
+            # is not checked, and its store histories are still shown (#1555).
+            session, error = opened.session, opened.error
+            refused_capability = opened.why == _REFUSED
 
         release = None
         if session is not None:
@@ -6516,6 +6557,8 @@ def _history_target(
                 _warn_if_view_broken(run, target, session)
             except Exception as failed:  # noqa: BLE001 -- a per-target finding
                 error, read_failed = _finding(failed), True
+        if error is not None:
+            found = [_database_not_read(one) for one in found]
         absent = None
         if any(_missing_unmanaged(one) for one in found):
             found, absent = [one for one in found if not _missing_unmanaged(one)], wanted
@@ -6526,6 +6569,7 @@ def _history_target(
             failures=tuple(failures),
             error=error,
             read_failed=read_failed,
+            refused=refused_capability,
             absent=absent,
         )
     finally:
@@ -6536,8 +6580,8 @@ def _history_target(
 
 def _account_key(account: str, product: str) -> object:
     """One value for every spelling of one account, as the config compares
-    names (:func:`~sopuli.config.products.account_key`): ``upper()`` on Oracle
-    and PostgreSQL, and on MySQL and MariaDB the user exactly and the host
+    names (:func:`~sopuli.config.products.account_key`): ``upper()`` on Oracle,
+    PostgreSQL and SQL Server, and on MySQL and MariaDB the user exactly and the host
     without case, because ``jdoe@%`` and ``JDOE@%`` are two accounts there."""
     return account_key(product)(account)
 
@@ -6589,6 +6633,20 @@ def _with_view_date(session: Any, user: UserState | None) -> UserState | None:
         return user
     when, why = session.report_changed_at(user)
     return replace(user, password_changed_at=when, password_changed_unknown=why)
+
+
+def _database_not_read(one: history_states.AccountHistory) -> history_states.AccountHistory:
+    """``one``, *not checked* where the database's date is all it could have
+    and that date was not read: never REPORT_OK (#1586 review).
+
+    That is an account the tool does not manage, and a personal account with
+    no `reset_records:` store, whose resets are not recorded. A row whose date
+    was read before the target failed keeps it, with no reason added."""
+    only_the_database = one.note in (history_states.NOT_MANAGED, history_states.NO_RESET_RECORDS)
+    read = one.db_changed_at is not None or one.db_unknown is not None
+    if not only_the_database or one.events or read:
+        return one
+    return replace(one, not_checked=(*one.not_checked, history_states.DATABASE_NOT_READ))
 
 
 def _missing_unmanaged(one: history_states.AccountHistory) -> bool:

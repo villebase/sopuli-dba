@@ -329,17 +329,24 @@ def test_two_spellings_of_one_login_are_refused() -> None:
 # ------------------------------------------------------------- the driver ---
 
 
-def test_only_uc1_s_change_is_written() -> None:
-    """Every command but `doctor` and UC-1's change is refused before
-    anything connects (#1549, #1551)."""
+def test_only_uc1_s_change_and_report_history_are_written() -> None:
+    """Every command but `doctor`, UC-1's change and `report history` is
+    refused before anything connects (#1549, #1551, #1555)."""
     target = loaded(targets=[SERVER]).expanded_targets[0].target
 
     assert DRIVERS["mssql"].commands == frozenset(
-        {"creds.apply", "creds.rotate", "creds.generate", "creds.finish-rollover"}
+        {
+            "creds.apply",
+            "creds.rotate",
+            "creds.generate",
+            "creds.finish-rollover",
+            "report.history",
+        }
     )
     assert DRIVERS["mssql"].extra == "mssql"
     assert DRIVERS["mssql"].provides == frozenset({"pyodbc"})
     require_command(target, "doctor")
+    require_command(target, "report.history")
     with pytest.raises(DriverNotImplementedError) as caught:
         require_command(target, "creds.check")
     assert caught.value.code == DRIVER_NOT_IMPLEMENTED

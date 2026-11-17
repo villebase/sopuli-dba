@@ -40,7 +40,11 @@ class TargetHistory:
     ``error`` with ``unsupported`` is a target of another product: nothing is
     read for it. ``error`` alone is a target that could not be reached: its
     accounts' histories come from the store and are still shown, with no
-    database date.
+    database date. ``error`` with ``refused`` is a target that refused the
+    connection for a capability it lacks, such as SQL Server's
+    ``strict_encryption`` (#1555): its histories are shown as for an
+    unreachable one, and the target is *not checked*, not unanswered (UC-5
+    §3).
     """
 
     target: str
@@ -50,6 +54,7 @@ class TargetHistory:
     error: Error | None = None
     unsupported: bool = False
     read_failed: bool = False
+    refused: bool = False
     #: The name ``--account`` gave, where nothing on this target has it.
     absent: str | None = None
 
@@ -74,7 +79,7 @@ def _section(report: TargetHistory) -> list[str]:
         f"{count} account{'' if count == 1 else 's'})"
     ]
     if report.error is not None:
-        what = "could not read" if report.read_failed else "could not connect"
+        what = report_view.not_answered_word(report)
         lines.append(f"  {what}: {report.error.message}; database dates not read")
     if report.absent is not None:
         lines.append(f"  no managed account {report.absent} on this target")
@@ -171,13 +176,14 @@ def build_results(reports: Sequence[TargetHistory]) -> list[dict[str, Any]]:
         )
         results.extend(_result(one) for one in report.accounts)
         if report.error is not None:
-            # Unreachable: the histories above are still shown, and the target's
-            # own failure is one more result, as in `report accounts`.
+            # Unreachable or refused: the histories above are still shown, and
+            # the target's own failure is one more result, as in `report
+            # accounts`.
             results.append(
                 {
                     "account": ABSENT,
                     "target": report.target,
-                    "state": ERROR,
+                    "state": NOT_CHECKED if report.refused else ERROR,
                     "changed": False,
                     "error": report.error.to_dict(),
                 }

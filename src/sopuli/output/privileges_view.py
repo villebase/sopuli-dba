@@ -38,6 +38,8 @@ class TargetPrivileges:
     error: Error | None = None
     unsupported: bool = False
     read_failed: bool = False
+    #: Refused the connection for a capability it lacks (#1555).
+    refused: bool = False
     #: The name ``--account`` gave, where this target has no such account.
     absent: str | None = None
     #: The target's ``type:``, for the words a privilege that is not active is
@@ -82,12 +84,7 @@ def render(reports: Sequence[TargetPrivileges], *, detail: bool) -> str:
 def _section(report: TargetPrivileges, *, detail: bool) -> list[str]:
     heading = paint(report.target, Role.HEADING)
     if report.error is not None:
-        if report.unsupported:
-            what = "not supported"
-        elif report.read_failed:
-            what = "could not read"
-        else:
-            what = "could not connect"
+        what = report_view.not_answered_word(report)
         return [f"{heading}  {what}: {report.error.message}"]
     # PUBLIC is not an account, so the head line does not count it.
     real = sum(1 for one in report.accounts if one.kind != PUBLIC_KIND)
@@ -277,7 +274,7 @@ def build_results(reports: Sequence[TargetPrivileges]) -> list[dict[str, Any]]:
                 {
                     "account": ABSENT,
                     "target": report.target,
-                    "state": NOT_CHECKED if report.unsupported else ERROR,
+                    "state": NOT_CHECKED if report.unsupported or report.refused else ERROR,
                     "changed": False,
                     "error": report.error.to_dict(),
                 }

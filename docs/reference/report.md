@@ -56,10 +56,10 @@ shown beside it and never compared. No password is read into the report.
 
 Exit 0 when every history was read, 1 when a target or a store gave no
 answer, and 4 when a history has a gap or the store keeps no versions.
-Oracle, PostgreSQL, MySQL and MariaDB can run it. The database's date comes
-from Oracle and MySQL, and on MariaDB from the optional view
-`sopuli.account_state`. PostgreSQL keeps none. Where there is no date, the
-report says why it is unknown.
+Oracle, PostgreSQL, MySQL, MariaDB and SQL Server can run it. The
+database's date comes from Oracle, MySQL and SQL Server, and on MariaDB
+from the optional view `sopuli.account_state`. PostgreSQL keeps none.
+Where there is no date, the report says why it is unknown.
 
 Options:
 

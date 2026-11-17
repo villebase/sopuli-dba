@@ -5,7 +5,8 @@ Depends on: `../design/00-principles.md`, `../design/01-configuration.md`,
 
 This document specifies `sopuli report accounts`, `sopuli report privileges`
 and `sopuli report history`. **All three are built, on Oracle, PostgreSQL,
-MySQL and MariaDB** (§4, §5, §6), with the `reports:` rules (§7). §8 says
+MySQL and MariaDB** (§4, §5, §6), with the `reports:` rules (§7), and `report
+history` on SQL Server (§6, #1555). §8 says
 what the service account needs to read on each product, and §3 how a check
 that cannot run is reported. §9 lists the decisions.
 
@@ -114,6 +115,13 @@ So a fleet of Autonomous Databases, which has no `SYS.USER$`, still gets its
 accounts report. That is an exception to
 invariant 4, recorded in [#1376](../decisions/log.md#1376): a report that
 refused the whole fleet for one old target would answer nothing.
+
+A target that refuses the connection for a capability it lacks is *not
+checked*, with the capability named, never unreachable. SQL Server 2019 and
+2022 do this under `mssql.encrypt: strict` (`strict_encryption`,
+`01-configuration.md`). A network fault that resets the connection reads the
+same, and the hint says so (#1555). `report history` still shows that
+target's histories from the store, without the database's dates.
 
 ---
 
@@ -435,17 +443,17 @@ active, so a role granted to it is active too.
 
 ## 6. Rotation history
 
-**Built, on Oracle, PostgreSQL, MySQL and MariaDB**
-([#1460](https://github.com/villebase/sopuli-dba/issues/1460)):
+**Built, on Oracle, PostgreSQL, MySQL, MariaDB and SQL Server**
+([#1460](https://github.com/villebase/sopuli-dba/issues/1460), #1555):
 `sopuli report history [--account NAME]`, with the usual target selectors.
 `docs/local-testing.md` §9a has a run. The history comes from what the tool
 wrote, and it reads no password. It judges nothing, so it never exits 3: 1
 where a target or a store gave no answer, and 4 where a history is not
 checked.
 
-Names are matched as the config compares them: by `upper()` on Oracle and
-PostgreSQL, and on MySQL and MariaDB the user exactly and the host without
-case. A bare `--account` where a target is MySQL or MariaDB is refused before
+Names are matched as the config compares them: by `upper()` on Oracle,
+PostgreSQL and SQL Server, and on MySQL and MariaDB the user exactly and the
+host without case. A bare `--account` where a target is MySQL or MariaDB is refused before
 anything connects, as in every other verb. Where the database refuses to
 describe one account, such as a MySQL account on a plugin the tool does not
 set passwords for, its date is `unknown` with the refusal as the reason, and
@@ -511,7 +519,12 @@ value, in `mysql.global_priv`, which the tool does not read. It reads the date
 from the optional view `sopuli.account_state` where a DBA has created it
 (#1491, §8). Without the view, and after `PASSWORD EXPIRE`, which clears the
 time, the date is `unknown`, with the reason. The history is complete without
-it.
+it. SQL Server reads it from `LOGINPROPERTY`'s `PasswordLastSetTime`, which
+the tool login reads with `ALTER ANY LOGIN` (`02-mssql-privileges.md` §2.1).
+The server gives its local time, which the driver moves to UTC by the server's
+offset at the read, so on a host whose zone keeps daylight saving a change in
+the other season is an hour off. A Windows login, or another login with no
+password, has no date, and the reason says so.
 
 A store version does not carry the run's correlation id, so a version is tied
 to its run only through its stamps ([#1374](https://github.com/villebase/sopuli-dba/issues/1374)).
@@ -639,6 +652,12 @@ applicable*, and the count is `unknown`: the server shows it only to the
 account itself. Measured on 8.0.46 to
 9.7.4 and on 10.11.19 to 12.3.3 (`02-mysql-privileges.md` §2.4,
 `02-mariadb-privileges.md` §2.4, #1448).
+
+On SQL Server (#1555), `report history` reads each login's
+`PasswordLastSetTime` with the tool login's one grant, `ALTER ANY LOGIN`
+(`02-mssql-privileges.md` §2.1). The other reports are not built there yet.
+`02-mssql-privileges.md` §2.2 says what they will read, and which grants are
+optional.
 
 ---
 

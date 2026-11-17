@@ -64,7 +64,7 @@ def test_a_replica_no_target_reached_is_named() -> None:
     (warning,) = _replicas_unreached(run)
     assert warning.code == REPLICAS_UNREACHED
     assert warning.target == "mssql-ag1"
-    assert "is its replica SQLAG2." in warning.message
+    assert "reached no target on its replica SQLAG2." in warning.message
 
 
 def test_names_are_compared_by_upper() -> None:
@@ -93,7 +93,7 @@ def test_several_replicas_are_named_once_in_the_plural() -> None:
     run = _run({"SQLAG1": "mssql-ag1"})
     _read(run, "mssql-ag1", ("SQLAG1", "SQLAG2", "SQLAG3"))
     (warning,) = _replicas_unreached(run)
-    assert "is its replicas SQLAG2, SQLAG3." in warning.message
+    assert "reached no target on its replicas SQLAG2, SQLAG3." in warning.message
 
 
 def test_a_target_whose_name_is_not_among_its_replicas_is_not_compared() -> None:
@@ -125,6 +125,6 @@ def test_the_message_asks_for_every_replica_reached() -> None:
     too, so the message asks for both."""
     message = replicas_unreached("mssql-ag1", ["SQLAG2"]).message
     assert message.startswith("mssql-ag1: this instance is a replica of an Availability Group")
-    assert "no target this run reached" in message
+    assert "this run reached no target on its replica SQLAG2" in message
     assert "--select" in message
     assert "02-mssql-privileges.md §4" in message

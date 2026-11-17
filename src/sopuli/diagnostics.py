@@ -1619,8 +1619,8 @@ def replicas_unreached(target: str, missing: Sequence[str]) -> Diagnostic:
         code=REPLICAS_UNREACHED,
         target=target,
         message=(
-            f"{target}: this instance is a replica of an Availability Group, and no "
-            f"target this run reached is {which}. A login and its password are each "
+            f"{target}: this instance is a replica of an Availability Group, and this "
+            f"run reached no target on {which}. A login and its password are each "
             "replica's own, so a password set here is not set there: declare each "
             "replica as a target, and run doctor on all of them, without a --select "
             "that leaves one out (02-mssql-privileges.md §4)"

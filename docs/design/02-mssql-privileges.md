@@ -261,7 +261,7 @@ measured (open: #1550).
 ## 5. Guardrail 9: a managed login with administrative grants
 
 The tool refuses to manage a login that, itself or through a server role
-(decision 5, [#1567](../decisions/log.md#1567), open: #1553):
+(decision 5, [#1567](../decisions/log.md#1567)):
 
 - is a member of `sysadmin`, `securityadmin` or `##MS_LoginManager##`;
 - holds `CONTROL SERVER`, `ALTER ANY LOGIN`, `IMPERSONATE ANY LOGIN` or `ALTER
@@ -341,8 +341,8 @@ names (PA4).
 
 **Where the tool login holds `VIEW ANY DEFINITION`, the guardrail follows
 every path. Where it does not, the guardrail refuses every managed login at
-plan time, and names the missing grant** ([#1567](../decisions/log.md#1567),
-open: #1553). Without the grant, a role the login owns is invisible, so no
+plan time, and names the missing grant** ([#1567](../decisions/log.md#1567)).
+Without the grant, a role the login owns is invisible, so no
 login can be shown to own none, and the guardrail never passes a path it
 could not read. `doctor` reports whether the tool login holds the grant
 (open: #1550).

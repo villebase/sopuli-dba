@@ -10708,6 +10708,24 @@ NOT_CHECKED_WITHOUT_LOGIN = (
     "and `creds rotate` changes the password"
 )
 
+#: The same, where `creds check` cannot compare them either: SQL Server on a
+#: host that is not Linux, where its login is refused too (#1551). Naming it
+#: would send the operator to a refusal.
+NOT_CHECKED_WITHOUT_LOGIN_OR_CHECK = (
+    "not changed: on this target the tool does not log in before a change, so "
+    "it cannot tell whether the account already has the vault's `current`, and it "
+    "sets a password only for a rotation in flight. `creds rotate` changes the "
+    "password"
+)
+
+
+def _skipped_without_login(session: Any) -> str:
+    """:data:`NOT_CHECKED_WITHOUT_LOGIN`, or its variant where the session
+    says `creds check` cannot compare either (``check_compares``)."""
+    if getattr(session, "check_compares", True):
+        return NOT_CHECKED_WITHOUT_LOGIN
+    return NOT_CHECKED_WITHOUT_LOGIN_OR_CHECK
+
 
 def _reach_after_change(
     binding: Binding,
@@ -11231,7 +11249,7 @@ def _apply_one(
             # run would reset the server's password expiry, fill its history and
             # empty its fast-auth cache (#1223). Only a rotation's `pending`, or a
             # rollback's `previous`, is set.
-            done = check_states.Outcome(apply_states.SKIPPED, NOT_CHECKED_WITHOUT_LOGIN)
+            done = check_states.Outcome(apply_states.SKIPPED, _skipped_without_login(session))
         else:
             done = None
         if done is not None:
@@ -12331,6 +12349,7 @@ def _preflight(
                         reuse=reuse,
                         states=states,
                         scopes=scopes,
+                        rotating=rotating,
                     )
                 )
         finally:
@@ -12349,8 +12368,13 @@ def _preflight_target(
     reuse: list[tuple[str, UserState]] | None = None,
     states: dict[tuple[str, str], UserState] | None = None,
     scopes: dict[str, Scope] | None = None,
+    rotating: bool = False,
 ) -> tuple[Finding, ...]:
     """One reachable target, against §8's remaining checks.
+
+    ``rotating`` is set by `creds rotate`, whose pre-flight also asks the
+    session whether each login can take a password before one is staged
+    (``require_changeable``, SQL Server's pending ``MUST_CHANGE``, #1551).
 
     Reading is here and deciding is in :mod:`sopuli.preflight`, which is the
     arrangement every other verb in this file has with its own decision module.
@@ -12429,13 +12453,18 @@ def _preflight_target(
             reserved.add(binding.account.upper())
             continue
         changeable = getattr(session, "require_changeable", None)
-        if changeable is not None:
+        if rotating and changeable is not None:
             # SQL Server (#1551): a login that can take no password, such as
-            # one whose `MUST_CHANGE` is pending, blocks the run here, before
-            # `creds rotate` stages one for it.
+            # one whose `MUST_CHANGE` is pending, blocks `creds rotate` here,
+            # before it stages one for it. `apply` reports such a login as
+            # one row and goes on, so its pre-flight does not ask. Only a
+            # refusal about the login is a finding about it: a fault in the
+            # session is raised, as the strategy's refusal is.
             try:
                 changeable(binding.account)
-            except Exception as error:  # noqa: BLE001 -- a finding about this account
+            except DriverError as error:
+                if not error.about_account:
+                    raise
                 reported = _finding(error)
                 unreadable.append(
                     Finding(

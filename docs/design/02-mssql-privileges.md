@@ -505,11 +505,11 @@ one.
 `15128` (`03_lock_expiry_probe.py`, the note beside LK5), so step 2 cannot
 run. A pending `MUST_CHANGE` is the login's state, as an expiry is, not a
 capability the target lacks. The driver reads `IsMustChange` and refuses
-such a login, naming it. The pre-flight, which `creds rotate` always runs
-and `creds apply --preflight` asks for, refuses the run for it, exit 1,
-before `rotate` stages a password. Without a pre-flight, `apply` leaves the
-login alone before anything is written or sent: it reports it `EXPIRED` and
-changes nothing, and the driver refuses to record its flags.
+such a login, naming it. `creds rotate`'s pre-flight refuses the run for
+it, exit 1, before it stages a password. `creds apply` leaves the login
+alone before anything is written or sent, with or without `--preflight`:
+it reports it `EXPIRED` and changes nothing, the driver refuses to record
+its flags, and the run goes on to the other logins.
 
 **How `creds apply` tells that a target already holds the password depends
 on the host** ([#1551](../decisions/log.md#1551)). The tool login

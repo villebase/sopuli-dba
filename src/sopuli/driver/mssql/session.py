@@ -242,6 +242,10 @@ class MssqlSession(ClosesConnection):
     _host_platform: str | None = field(default=None, init=False, repr=False)
     _host_read: bool = field(default=False, init=False, repr=False)
     _hash_version: int | None = field(default=None, init=False, repr=False)
+    #: The logins, upper-cased, whose policy :meth:`set_password` turned off
+    #: and :meth:`restore_policy` has not set back: the only ones
+    #: :meth:`verify_password` logs in as on a host that is not Linux.
+    _policy_off: set[str] = field(default_factory=set, init=False, repr=False)
 
     def scope(self) -> Scope:
         """What this session is: a server, read-write or not, and its
@@ -556,6 +560,12 @@ class MssqlSession(ClosesConnection):
         A host that names no platform is treated as Windows."""
         return self.host_platform() == LINUX
 
+    #: Whether `creds check` can compare the vault with a login where
+    #: `apply` makes none before a change. Read by the command for the
+    #: ``SKIPPED`` row's advice. Only a non-Linux host skips, and there a
+    #: check's login is refused (:meth:`verify_password`).
+    check_compares = False
+
     def require_changeable(self, account: str) -> None:
         """Refuse, in the pre-flight, a login whose ``MUST_CHANGE`` is pending
         (:class:`MustChangeError`), before `creds rotate` stages a password
@@ -632,12 +642,14 @@ class MssqlSession(ClosesConnection):
                 failure.password_sent = True
                 raise failure from None
         LOG.debug("%s: set the password value of %s", self.target.name, account)
+        self._policy_off.add(account.upper())
         return ChangeResult(changed=True)
 
     def restore_policy(self, account: str, flags: PolicyFlags) -> bool:
         """Step 4: set ``CHECK_POLICY`` and ``CHECK_EXPIRATION`` back to
         ``flags``, and say whether a statement was sent. Where both were off,
         step 2 changed neither, and nothing is sent."""
+        self._policy_off.discard(account.upper())
         if not flags.check_policy and not flags.check_expiration:
             return False
         require_read_write(
@@ -710,10 +722,12 @@ class MssqlSession(ClosesConnection):
 
         ``login`` only: the tool login reads no hash, so ``hash`` and ``both``
         are refused by capability. On Linux no login locks (LK2), so
-        ``lockout_margin`` and ``attempts`` have nothing to guard. On Windows
-        the only login is a change's step 3, made while the policy is off, so
-        it counts toward no lockout; a login for `creds check` there is
-        refused before it is made. The login's state is read first: a
+        ``lockout_margin`` and ``attempts`` have nothing to guard. On Windows,
+        and on a host that names no platform, only a login whose policy this
+        session turned off in :meth:`set_password` is tried: a change's step
+        3, which counts toward no lockout. Every other login there is refused
+        before it is made, `creds check`'s among them. The login's state is
+        read first: a
         login that is missing, disabled or locked out (``IsLocked``) is
         :data:`~sopuli.driver.protocol.UNAVAILABLE` with no login, because a
         locked login answers its right password as a wrong one (WP3).
@@ -726,10 +740,12 @@ class MssqlSession(ClosesConnection):
                 target=self.target.name,
                 hint="this driver verifies by `login` only",
             )
-        if for_check and self.host_platform() != LINUX:
-            # On Windows a wrong password counts toward a lockout, and only
-            # the login of a change runs with the policy off (§6.2).
-            self._not_written("check a password by login on a Windows host")
+        if self.host_platform() != LINUX and account.upper() not in self._policy_off:
+            # On Windows a wrong password counts toward a lockout (WP1). Only
+            # a login whose policy this session turned off may be tried: a
+            # change's step 3 (§6.2). Every other login is refused, so a new
+            # caller fails closed.
+            self._not_written("log in as a login whose policy is on, on a Windows host")
         login = self.describe_user(account)
         if login is None:
             return _not_tried(f'there is no login "{account}" on this target')

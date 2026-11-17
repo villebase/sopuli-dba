@@ -120,6 +120,15 @@ def test_apply_makes_no_login_before_a_change_on_windows(monkeypatch: pytest.Mon
     assert before(opened(platform="Windows"), "acme_app", Secret(PASSWORD), 2, attempts=2) is None
 
 
+def test_the_skipped_row_does_not_send_the_operator_to_creds_check() -> None:
+    """`creds check` cannot compare where `apply` skips: its login is refused."""
+    skipped: Any = cli._skipped_without_login
+    assert skipped(opened(platform="Windows")) == cli.NOT_CHECKED_WITHOUT_LOGIN_OR_CHECK
+    assert "creds check" not in cli.NOT_CHECKED_WITHOUT_LOGIN_OR_CHECK
+    # A driver that says nothing, such as MySQL's, keeps the advice.
+    assert skipped(object()) == cli.NOT_CHECKED_WITHOUT_LOGIN
+
+
 @pytest.mark.parametrize("platform", ["Windows", None], ids=["windows", "unnamed"])
 def test_a_host_that_is_not_linux_takes_the_change(
     monkeypatch: pytest.MonkeyPatch, platform: str | None
@@ -136,18 +145,23 @@ def test_a_host_that_is_not_linux_takes_the_change(
 def test_a_check_login_is_refused_on_a_host_that_is_not_linux(
     monkeypatch: pytest.MonkeyPatch, platform: str | None
 ) -> None:
-    """Only a change's own login, with the policy off, is made there."""
+    """Only a change's own login, with the policy off, is made there: any
+    other caller, whatever it passes, is refused before a login."""
 
     def connect(text: str, **kwargs: Any) -> None:
         raise AssertionError("no login is made")
 
     monkeypatch.setattr(pyodbc, "connect", connect)
-    with pytest.raises(NotWrittenError, match="on a Windows host"):
-        opened(platform=platform).verify_password("acme_app", Secret(PASSWORD), for_check=True)
+    one = opened(platform=platform)
+    for for_check in (True, False):
+        with pytest.raises(NotWrittenError, match="whose policy is on, on a Windows host"):
+            one.verify_password("acme_app", Secret(PASSWORD), for_check=for_check)
 
 
-def test_a_change_logs_in_on_windows(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Step 3, made while the policy is off."""
+def test_a_change_logs_in_on_windows_until_the_policy_is_back(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Step 3, made between step 2, which turns the policy off, and step 4."""
 
     class Opened:
         def close(self) -> None:
@@ -156,7 +170,11 @@ def test_a_change_logs_in_on_windows(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(pyodbc, "connect", lambda text, **kwargs: Opened())
     one = opened(platform="Windows")
     one.describe_user = lambda account: state()
-    assert one.verify_password("acme_app", Secret(PASSWORD)).result == PASS
+    one.set_password("acme_app", Secret(PASSWORD))
+    assert one.verify_password("ACME_APP", Secret(PASSWORD)).result == PASS
+    one.restore_policy("acme_app", PolicyFlags(check_policy=True, check_expiration=True))
+    with pytest.raises(NotWrittenError, match="whose policy is on"):
+        one.verify_password("acme_app", Secret(PASSWORD))
 
 
 def login(**changes: Any) -> Any:

@@ -6,7 +6,7 @@ Depends on: `../design/00-principles.md`, `../design/01-configuration.md`,
 This document specifies `sopuli report accounts`, `sopuli report privileges`
 and `sopuli report history`. **All three are built, on Oracle, PostgreSQL,
 MySQL and MariaDB** (§4, §5, §6), with the `reports:` rules (§7), and `report
-history` on SQL Server (§6, #1555). §8 says
+accounts` and `report history` on SQL Server (§4, §6, #1555). §8 says
 what the service account needs to read on each product, and §3 how a check
 that cannot run is reported. §9 lists the decisions.
 
@@ -283,6 +283,40 @@ count:
   `rolvaliduntil < now()`, as `creds status` compares it, and shown in UTC.
 - **A rule's `password_lifetime`, `failed_login_limit` and `oracle.profile` are
   *not applicable*.** The failed-login count is `unknown` on every role.
+
+**On SQL Server** ([#1555](../decisions/log.md#1555)), the survey is one
+read of `sys.server_principals`, `sys.sql_logins` and `LOGINPROPERTY`. The
+tool login reads it with its one grant, `ALTER ANY LOGIN`. The head line's
+release is `SERVERPROPERTY('ProductVersion')`.
+
+- **Every login is listed:** SQL logins, Windows and Entra logins and groups,
+  and logins mapped to a certificate or a key. A server role is not a login.
+  The `##MS_…##` logins that setup makes are left out unless a rule names
+  them, as Oracle's own accounts are. `sa` is listed.
+- **The lock:** `ALTER LOGIN … DISABLE` (`is_disabled`) is a lock somebody
+  set, `LOCKED`, and meets `login: refused`. A lockout after failed logins
+  (`IsLocked`) is `LOCKED(TIMED)`. A login whose password expired, or must
+  change, is `EXPIRED`.
+- **`password_lifetime`:**
+  - with `CHECK_EXPIRATION` off it is `unlimited`;
+  - with it on, the host's password policy sets the maximum age, which the
+    tool login cannot read, so the check is *not checked*.
+- **`failed_login_limit`:**
+  - with `CHECK_POLICY` off it is `unlimited`;
+  - on a Linux host it is `unlimited` too, because no login locks there;
+  - on Windows, or a host that names no platform, the threshold is the
+    host's policy, so the check is *not checked*.
+- **The failed-login count** is `BadPasswordCount` on Windows, and `unknown`
+  on Linux, where it does not count past 1.
+- **A login with no password**, such as a Windows login, has no lifetime,
+  limit or count: where a rule sets one of them, the check is *not checked*,
+  with that reason. A login mapped to a certificate or a key cannot connect,
+  so it meets `login: refused`, as a `NO AUTHENTICATION` account does on
+  Oracle.
+- **A rule's `oracle.profile` and `postgresql.valid_until` are *not
+  applicable*.**
+- **A personal rule's `role:` is not resolved** until UC-2 is built on SQL
+  Server (#1554): its members show as undeclared, and `SOPULI-W075` says so.
 
 ---
 
@@ -653,11 +687,12 @@ account itself. Measured on 8.0.46 to
 9.7.4 and on 10.11.19 to 12.3.3 (`02-mysql-privileges.md` §2.4,
 `02-mariadb-privileges.md` §2.4, #1448).
 
-On SQL Server (#1555), `report history` reads each login's
-`PasswordLastSetTime` with the tool login's one grant, `ALTER ANY LOGIN`
-(`02-mssql-privileges.md` §2.1). The other reports are not built there yet.
-`02-mssql-privileges.md` §2.2 says what they will read, and which grants are
-optional.
+On SQL Server (#1555), `report accounts` reads every login, its flags and
+its `LOGINPROPERTY` values (§4), and `report history` each login's
+`PasswordLastSetTime`. Both read with the tool login's one grant, `ALTER ANY
+LOGIN` (`02-mssql-privileges.md` §2.1). The privilege report is not built
+there yet. `02-mssql-privileges.md` §2.2 says what it will read, and which
+grants are optional.
 
 ---
 

@@ -5913,9 +5913,13 @@ def report_accounts_command(
     check found a problem or a profile a rule or policy expects is missing on a
     target, and 4 when something could not be checked. An account
     the config does not declare is listed as information and never changes the
-    exit code. It runs on Oracle, PostgreSQL, MySQL and MariaDB. On MariaDB the
-    lock and the lifetime come from the optional view `sopuli.account_state`,
-    and are not checked where the view is absent or cannot be used.
+    exit code. It runs on Oracle, PostgreSQL, MySQL, MariaDB and SQL Server. On
+    MariaDB the lock and the lifetime come from the optional view
+    `sopuli.account_state`, and are not checked where the view is absent or
+    cannot be used. On SQL Server a login's password lifetime is not checked
+    where `CHECK_EXPIRATION` is on, and on Windows its failed-login limit is
+    not checked where `CHECK_POLICY` is on, because the host's policy sets
+    both.
     """
     document = run.document
     selection = selected(selectors, targets, (), groups, ())
@@ -6060,8 +6064,8 @@ def _report_target(
     A target that cannot be reached is one unreachable section and not a failed
     run: the report still covers the others (UC-5 §3). A product whose driver
     does not list this command in the registry never gets here: ``_open_session``
-    refuses it first, and it is not checked. Oracle, PostgreSQL, MySQL and
-    MariaDB list it.
+    refuses it first, and it is not checked. Oracle, PostgreSQL, MySQL, MariaDB
+    and SQL Server list it.
     """
     session = None
     try:

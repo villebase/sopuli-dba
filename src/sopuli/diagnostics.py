@@ -1584,20 +1584,24 @@ def rollover_caveat(target: str, account: str, caveat: str) -> Diagnostic:
     )
 
 
-def lockout_ended(target: str, account: str, status: str) -> Diagnostic:
+def lockout_ended(target: str, account: str, status: str, *, ended: str = "ended") -> Diagnostic:
     """`SOPULI-W077`: this run's change ended a SQL Server login's lockout
     after failed logins (#1551). The change sends the value with
     ``CHECK_POLICY = OFF``, which unlocks the login and sets its failed-login
-    count to 0 (``02-mssql-privileges.md`` §6.2, WP4)."""
+    count to 0 (``02-mssql-privileges.md`` §6.2, WP4). ``ended`` is "ended",
+    "may have ended" for a change that failed after it was sent, or "would
+    end" in a dry run. ``status`` is the login's, such as
+    ``LOCKED(TIMED)``."""
     return Diagnostic(
         level="warning",
         code=LOCKOUT_ENDED,
         target=target,
         account=account,
         message=(
-            f"{target}: {account}: the login was {status} after failed logins, and the "
-            "change ended the lockout and set its failed-login count to 0. Find out who "
-            "tried the wrong passwords: the server no longer shows it"
+            f"{target}: {account}: the login is locked out after failed logins (status "
+            f"{status}), and the change {ended} the lockout and its failed-login count. "
+            "Find out who tried the wrong passwords first: the server keeps no record of "
+            "it after the change"
         ),
     )
 

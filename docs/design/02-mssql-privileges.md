@@ -536,7 +536,9 @@ capability (§7):
   `CHECK_POLICY = OFF` unlocks it and sets its count to 0, and step 4
   keeps it unlocked (WP4). The run warns `SOPULI-W077`, naming the lockout
   it ended, because the server then no longer shows that somebody tried
-  wrong passwords. A login a person disabled, `LOCKED`, is not changed.
+  wrong passwords, and a dry run warns before it. A login a person
+  disabled, `LOCKED`, is not changed, and neither is one with only
+  `current`, for which no change is sent: both are reported `LOCKED`.
   Under a domain's policy, whether a failed
   login while the policy is off counts is not measured (unverified:
   mssql-domain-policy).

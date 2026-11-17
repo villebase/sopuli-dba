@@ -1148,12 +1148,106 @@ def test_a_change_ends_a_lockout_and_says_so(
         assert [(one["target"], one["account"]) for one in warned] == [
             ("appdb-alpha", "acme_web_user")
         ]
-        assert "LOCKED(TIMED)" in warned[0]["message"]
-        assert "failed-login count to 0" in warned[0]["message"]
+        assert "(status LOCKED(TIMED)), and the change ended the lockout" in warned[0]["message"]
     else:
         assert changed == []
         assert row["state"] == check.LOCKED
         assert warned == []
+
+
+def test_a_lockout_is_reported_where_no_change_is_sent(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With only `current`, no change is sent there, so nothing ends the
+    lockout: the row says `LOCKED`, not `SKIPPED`, which would hide it."""
+    monkeypatch.setattr(FakeSession, "verifies_before_change", False, raising=False)
+    monkeypatch.setattr(FakeSession, "change_ends_lockout", True, raising=False)
+    harness = estate(
+        documents={"apps/acme/appdb-alpha": {"DB_CREDENTIALS": {"acme_web_user": LIVE}}},
+        users={"ACME_WEB_USER": LOCKED_OUT},
+    )
+    result = run(runner, write_config(CONFIG), "--select", "tenant=alpha", "--output", "json")
+
+    body = document(result)
+    assert [change for session in harness["sessions"] for change in session.changed] == []
+    assert body["results"][0]["state"] == check.LOCKED
+    assert not any(one.get("code") == LOCKOUT_ENDED for one in body.get("diagnostics", []))
+
+
+def test_a_dry_run_warns_of_the_lockout_it_would_end(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`--dry-run --preflight` forecasts `SOPULI-W077` (invariant 8)."""
+    monkeypatch.setattr(FakeSession, "verifies_before_change", False, raising=False)
+    monkeypatch.setattr(FakeSession, "change_ends_lockout", True, raising=False)
+    harness = estate(
+        documents={
+            "apps/acme/appdb-alpha": {
+                "DB_CREDENTIALS": {"acme_web_user": LIVE},
+                "pending": {"acme_web_user": STAGED},
+            }
+        },
+        users={"ACME_WEB_USER": LOCKED_OUT},
+    )
+    result = run(
+        runner,
+        write_config(CONFIG),
+        "--select",
+        "tenant=alpha",
+        "--preflight",
+        "--dry-run",
+        "--output",
+        "json",
+    )
+
+    body = document(result)
+    warned = [one for one in body.get("diagnostics", []) if one.get("code") == LOCKOUT_ENDED]
+    assert [(one["target"], one["account"]) for one in warned] == [("appdb-alpha", "acme_web_user")]
+    assert "the change would end the lockout" in warned[0]["message"]
+    assert all(session.changed == [] for session in harness["sessions"])
+
+
+@pytest.mark.parametrize("sent", [True, False], ids=["sent", "not-sent"])
+def test_a_change_that_failed_once_sent_may_have_ended_the_lockout(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+    sent: bool,
+) -> None:
+    """A statement that failed after it went out may have been applied, so
+    the warning says it may have ended the lockout; one that never left
+    ended nothing."""
+    monkeypatch.setattr(FakeSession, "verifies_before_change", False, raising=False)
+    monkeypatch.setattr(FakeSession, "change_ends_lockout", True, raising=False)
+    failure = DriverError("the connection dropped")
+    failure.password_sent = sent
+    estate(
+        documents={
+            "apps/acme/appdb-alpha": {
+                "DB_CREDENTIALS": {"acme_web_user": LIVE},
+                "pending": {"acme_web_user": STAGED},
+            }
+        },
+        users={"ACME_WEB_USER": LOCKED_OUT},
+        set_error=failure,
+    )
+    result = run(runner, write_config(CONFIG), "--select", "tenant=alpha", "--output", "json")
+
+    warned = [
+        one["message"]
+        for one in document(result).get("diagnostics", [])
+        if one.get("code") == LOCKOUT_ENDED
+    ]
+    assert len(warned) == (1 if sent else 0)
+    if sent:
+        assert "the change may have ended the lockout" in warned[0]
 
 
 def test_a_lockout_is_kept_where_the_change_would_not_end_it(

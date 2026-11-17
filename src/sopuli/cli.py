@@ -12358,6 +12358,28 @@ def _preflight(
     return findings
 
 
+def _account_finding(
+    target: str, account: str, error: Exception, *, unread: str | None = None
+) -> Finding:
+    """A blocking pre-flight finding about one account, from ``error``.
+
+    ``unread`` names what could not be read, where the error is a read that
+    failed rather than an answer about the account, so the message says so.
+    """
+    reported = _finding(error)
+    message = reported.message
+    if unread is not None:
+        message = f"could not read {unread}: {message}"
+    return Finding(
+        target=target,
+        check=preflight.ACCOUNT,
+        message=message,
+        hint=reported.hint,
+        account=account,
+        category=reported.category,
+    )
+
+
 def _preflight_target(
     session: Any,
     target: ExpandedTarget,
@@ -12430,17 +12452,7 @@ def _preflight_target(
             # is the input guardrail 4 refuses on, and treating an unreadable
             # answer as "holds no admin role" is the silent success
             # `RolesUnreadableError` was raised to prevent.
-            reported = _finding(error)
-            unreadable.append(
-                Finding(
-                    target=target.name,
-                    check=preflight.ACCOUNT,
-                    message=reported.message,
-                    hint=reported.hint,
-                    account=binding.account,
-                    category=reported.category,
-                )
-            )
+            unreadable.append(_account_finding(target.name, binding.account, error))
             continue
         if states is not None and state is not None:
             states[(target.name, binding.account)] = state
@@ -12457,23 +12469,20 @@ def _preflight_target(
             # SQL Server (#1551): a login that can take no password, such as
             # one whose `MUST_CHANGE` is pending, blocks `creds rotate` here,
             # before it stages one for it. `apply` reports such a login as
-            # one row and goes on, so its pre-flight does not ask. Only a
-            # refusal about the login is a finding about it: a fault in the
-            # session is raised, as the strategy's refusal is.
+            # one row and goes on, so its pre-flight does not ask. A read that
+            # failed is a blocking finding too, as `describe_user`'s is above,
+            # and says that it is a read that failed, so the survey goes on to
+            # the other logins and targets.
             try:
                 changeable(binding.account)
-            except DriverError as error:
-                if not error.about_account:
-                    raise
-                reported = _finding(error)
+            except Exception as error:  # noqa: BLE001 -- a finding, not a crash
+                about = isinstance(error, DriverError) and error.about_account
                 unreadable.append(
-                    Finding(
-                        target=target.name,
-                        check=preflight.ACCOUNT,
-                        message=reported.message,
-                        hint=reported.hint,
-                        account=binding.account,
-                        category=reported.category,
+                    _account_finding(
+                        target.name,
+                        binding.account,
+                        error,
+                        unread=None if about else "whether it can take a password",
                     )
                 )
                 continue

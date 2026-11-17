@@ -45,7 +45,7 @@ from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from functools import partial
-from typing import Any, NoReturn, TypeVar
+from typing import Any, ClassVar, NoReturn, TypeVar
 
 import pyodbc
 
@@ -242,9 +242,12 @@ class MssqlSession(ClosesConnection):
     _host_platform: str | None = field(default=None, init=False, repr=False)
     _host_read: bool = field(default=False, init=False, repr=False)
     _hash_version: int | None = field(default=None, init=False, repr=False)
-    #: The logins, upper-cased, whose policy :meth:`set_password` turned off
-    #: and :meth:`restore_policy` has not set back: the only ones
-    #: :meth:`verify_password` logs in as on a host that is not Linux.
+    #: The logins, upper-cased, that :meth:`set_password` sent a value to
+    #: with the policy off, until :meth:`restore_policy` sets it back: the
+    #: only ones :meth:`verify_password` logs in as on a host that is not
+    #: Linux. A login whose flags were both off stays here, because the
+    #: command has nothing to set back: its policy stays off, and a login as
+    #: it counts toward no lockout.
     _policy_off: set[str] = field(default_factory=set, init=False, repr=False)
 
     def scope(self) -> Scope:
@@ -564,18 +567,24 @@ class MssqlSession(ClosesConnection):
     #: `apply` makes none before a change. Read by the command for the
     #: ``SKIPPED`` row's advice. Only a non-Linux host skips, and there a
     #: check's login is refused (:meth:`verify_password`).
-    check_compares = False
+    check_compares: ClassVar[bool] = False
 
     def require_changeable(self, account: str) -> None:
         """Refuse, in the pre-flight, a login whose ``MUST_CHANGE`` is pending
         (:class:`MustChangeError`), before `creds rotate` stages a password
         for it (§6.2). A missing login is the pre-flight's own
         finding, so it passes here."""
+        self._changeable_login(account)
+
+    def _changeable_login(self, account: str) -> accounts.Login | None:
+        """The login's row, or ``None`` where there is none. Raises
+        :class:`MustChangeError` where its ``MUST_CHANGE`` is pending."""
         login = self._read(
             lambda cursor: accounts.read_one(cursor, account, target=self.target.name)
         )
         if login is not None and login.must_change:
             raise MustChangeError(login.name, target=self.target.name)
+        return login
 
     #: The command records the flags :meth:`policy_flags` reads, before
     #: :meth:`set_password`, and calls :meth:`restore_policy` after the login
@@ -592,16 +601,12 @@ class MssqlSession(ClosesConnection):
         ``MUST_CHANGE`` is pending (:class:`MustChangeError`), and a server
         whose value version cannot be read (:meth:`hash_version`).
         """
-        login = self._read(
-            lambda cursor: accounts.read_one(cursor, account, target=self.target.name)
-        )
+        login = self._changeable_login(account)
         if login is None:
             raise DriverError(
                 f'there is no login "{account}" on target "{self.target.name}"',
                 hint="create the login, or check the account's name in the config",
             )
-        if login.must_change:
-            raise MustChangeError(login.name, target=self.target.name)
         # The value's version, asked here so that a server that takes neither,
         # or a tool login the check refuses, stops the change before the
         # command writes the record (#1564).
@@ -740,12 +745,22 @@ class MssqlSession(ClosesConnection):
                 target=self.target.name,
                 hint="this driver verifies by `login` only",
             )
-        if self.host_platform() != LINUX and account.upper() not in self._policy_off:
+        platform = self.host_platform()
+        if platform != LINUX and account.upper() not in self._policy_off:
             # On Windows a wrong password counts toward a lockout (WP1). Only
             # a login whose policy this session turned off may be tried: a
             # change's step 3 (§6.2). Every other login is refused, so a new
-            # caller fails closed.
-            self._not_written("log in as a login whose policy is on, on a Windows host")
+            # caller fails closed. A guard, not unwritten work.
+            host = "a Windows host" if platform else "a host that names no platform"
+            raise DriverError(
+                f'the tool does not log in as "{account}" on target "{self.target.name}", '
+                f"{host}, while the login's password policy is on",
+                hint=(
+                    "there a wrong password counts toward a lockout threshold the tool "
+                    "cannot read (02-mssql-privileges.md §6.2); only a change logs in, "
+                    "with the policy off"
+                ),
+            )
         login = self.describe_user(account)
         if login is None:
             return _not_tried(f'there is no login "{account}" on this target')

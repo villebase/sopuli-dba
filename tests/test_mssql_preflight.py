@@ -74,10 +74,17 @@ def test_apply_does_not_ask() -> None:
     assert not [finding for finding in found if finding.blocking]
 
 
-def test_a_fault_in_the_session_is_not_a_finding_about_the_login() -> None:
+def test_a_read_that_failed_blocks_and_says_so() -> None:
+    """A finding, as `describe_user`'s is, so the survey goes on to the next
+    login; its message says the read failed, not that the login is wrong."""
     session = Session(DriverError("the connection was lost"))
-    with pytest.raises(DriverError, match="connection was lost"):
-        survey(session, TARGET, [binding("acme_app")], CONFIG, rotating=True)
+    bindings = [binding("acme_app"), binding("acme_rpt")]
+    found = survey(session, TARGET, bindings, CONFIG, rotating=True)
+    [blocking] = [finding for finding in found if finding.blocking]
+    assert blocking.message == (
+        "could not read whether it can take a password: the connection was lost"
+    )
+    assert session.asked == ["acme_app", "acme_rpt"]
 
 
 def test_must_change_is_a_refusal_about_the_login() -> None:

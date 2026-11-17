@@ -509,7 +509,11 @@ such a login, naming it. `creds rotate`'s pre-flight refuses the run for
 it, exit 1, before it stages a password. `creds apply` leaves the login
 alone before anything is written or sent, with or without `--preflight`:
 it reports it `EXPIRED` and changes nothing, the driver refuses to record
-its flags, and the run goes on to the other logins.
+its flags, and the run goes on to the other logins. `creds generate` stages
+a `pending` with no pre-flight, so it does not ask. A `pending` it stages
+for such a login is held until the owner clears `MUST_CHANGE`: each `apply`
+reports the login `EXPIRED`, and on Windows each run sets the `pending`
+again on the other targets that share it.
 
 **How `creds apply` tells that a target already holds the password depends
 on the host** ([#1551](../decisions/log.md#1551)). The tool login

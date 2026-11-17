@@ -153,9 +153,14 @@ def test_a_check_login_is_refused_on_a_host_that_is_not_linux(
 
     monkeypatch.setattr(pyodbc, "connect", connect)
     one = opened(platform=platform)
+    host = "a Windows host" if platform else "a host that names no platform"
     for for_check in (True, False):
-        with pytest.raises(NotWrittenError, match="whose policy is on, on a Windows host"):
+        with pytest.raises(DriverError) as caught:
             one.verify_password("acme_app", Secret(PASSWORD), for_check=for_check)
+        # A guard with its reason, not unwritten work (SOPULI-20006).
+        assert not isinstance(caught.value, NotWrittenError)
+        assert f"{host}, while the login's password policy is on" in str(caught.value)
+        assert "lockout threshold" in (caught.value.hint or "")
 
 
 def test_a_change_logs_in_on_windows_until_the_policy_is_back(
@@ -173,7 +178,7 @@ def test_a_change_logs_in_on_windows_until_the_policy_is_back(
     one.set_password("acme_app", Secret(PASSWORD))
     assert one.verify_password("ACME_APP", Secret(PASSWORD)).result == PASS
     one.restore_policy("acme_app", PolicyFlags(check_policy=True, check_expiration=True))
-    with pytest.raises(NotWrittenError, match="whose policy is on"):
+    with pytest.raises(DriverError, match="password policy is on"):
         one.verify_password("acme_app", Secret(PASSWORD))
 
 

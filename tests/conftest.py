@@ -696,14 +696,17 @@ def live_mssql() -> MssqlStack:
         port=int(os.environ.get("SOPULI_TEST_MSSQL2022_PORT", "14322")),
         password="Sopuli-test-1",
     )
+    # A plain skip, not `_missing_environment`: the tier-1 lane starts no SQL
+    # Server, and has no ODBC Driver 18, until #1549's stack PR adds both. That
+    # PR makes these `_missing_environment`, as the other services' are.
     try:
         import pyodbc
     except ImportError:  # pragma: no cover -- reached only in a base install
-        _missing_environment("pyodbc is not installed; `pip install -e '.[mssql]'`")
+        pytest.skip("pyodbc is not installed; `pip install -e '.[mssql]'`")
     try:
         stack.connect(timeout=5).close()
     except pyodbc.Error as error:
-        _missing_environment(f"SQL Server not reachable at {stack.dsn}: {error}")
+        pytest.skip(f"SQL Server not reachable at {stack.dsn}: {error}")
     stack.tool_login()
     return stack
 

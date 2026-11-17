@@ -357,9 +357,8 @@ DRIVERS: dict[str, DatabaseDriver] = {
         password_limit=f"{MSSQL_LIMIT.max_bytes} as UTF-16",
         refuses=frozenset({CONTROL, ENCODING, BYTE_LENGTH}),
         fixed_limit=MSSQL_LIMIT,
-        # UC-1's change on a Linux host (#1551), `creds check` by login on a
-        # Linux host (#1552), and UC-5's reports (#1555). The `account` verbs
-        # are #1554.
+        # UC-1's change (#1551), `creds check` by login on a Linux host
+        # (#1552), and UC-5's reports (#1555). The `account` verbs are #1554.
         commands=frozenset(
             {
                 "creds.check",

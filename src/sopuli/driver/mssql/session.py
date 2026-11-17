@@ -19,13 +19,15 @@ Availability Groups the instance is in (:mod:`~sopuli.driver.mssql.groups`):
 the replicas' names, for `doctor`'s ``SOPULI-W076``, and whether its database
 is a contained group's master, which the scope refuses.
 
-On a Linux host it changes a password for `creds apply` and `creds rotate`,
-in ``02-mssql-privileges.md`` §6.2's order: the command records the login's
+It changes a password for `creds apply` and `creds rotate`, in
+``02-mssql-privileges.md`` §6.2's order: the command records the login's
 flags (:meth:`MssqlSession.policy_flags`), :meth:`MssqlSession.set_password`
 sends the value with the policy off, :meth:`MssqlSession.verify_password`
 logs in as the login, and :meth:`MssqlSession.restore_policy` sets the flags
-back. A Windows host is refused with ``SOPULI-20006`` before anything is sent
-(#1551's next part), and so is every method not written yet.
+back. On Linux `apply` logs in before a change; on Windows, and on a host
+that names no platform, it does not
+(:attr:`MssqlSession.verifies_before_change`). Every method not written yet
+refuses with ``SOPULI-20006``.
 
 **pyodbc's pooling is off for the process.** A pooled connection is kept open
 after ``close()``, and the next ``connect()`` with the same string reuses it
@@ -43,7 +45,7 @@ from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from functools import partial
-from typing import Any, NoReturn, TypeVar
+from typing import Any, ClassVar, NoReturn, TypeVar
 
 import pyodbc
 
@@ -249,6 +251,13 @@ class MssqlSession(ClosesConnection):
     _host_platform: str | None = field(default=None, init=False, repr=False)
     _host_read: bool = field(default=False, init=False, repr=False)
     _hash_version: int | None = field(default=None, init=False, repr=False)
+    #: The logins, upper-cased, that :meth:`set_password` sent a value to
+    #: with the policy off, until :meth:`restore_policy` sets it back: the
+    #: only ones :meth:`verify_password` logs in as on a host that is not
+    #: Linux. A login whose flags were both off stays here, because the
+    #: command has nothing to set back: its policy stays off, and a login as
+    #: it counts toward no lockout.
+    _policy_off: set[str] = field(default_factory=set, init=False, repr=False)
 
     def scope(self) -> Scope:
         """What this session is: a server, read-write or not, and its
@@ -553,20 +562,38 @@ class MssqlSession(ClosesConnection):
         policy does not apply to a value (§6.2). Not on the protocol: ``creds
         generate`` asks it of a driver that has it."""
 
-    def require_host(self) -> None:
-        """Refuse, when the command opens the session, a host this build
-        changes no password on: every command but `doctor` asks, so a Windows
-        host is refused before a pre-flight passes it or `creds rotate`
-        stages a password there (invariant 4)."""
-        self._require_linux("run this command")
+    @property
+    def verifies_before_change(self) -> bool:
+        """Whether `creds apply` logs in before a change to see whether one is
+        needed (``02-mssql-privileges.md`` §6.2, #1551). On Linux, where no
+        login locks (LK2), it does. On Windows a wrong password counts toward
+        a threshold the tool cannot read (WP1), so it does not, as on MySQL
+        and MariaDB: a password is set only from `pending`, or for a rollback.
+        A host that names no platform is treated as Windows."""
+        return self.host_platform() == LINUX
 
-    def _require_linux(self, what: str) -> None:
-        """Refuse ``what`` on a host that is not Linux, before anything is
-        sent. A Windows host locks a login, so `apply` there must not log in
-        before a change, which is #1551's next part. A host that names no
-        platform is treated as Windows."""
-        if self.host_platform() != LINUX:
-            self._not_written(f"{what} on a Windows host")
+    #: Whether `creds check` can compare the vault with a login where
+    #: `apply` makes none before a change. Read by the command for the
+    #: ``SKIPPED`` row's advice. Only a non-Linux host skips, and there a
+    #: check's login is refused (:meth:`verify_password`).
+    check_compares: ClassVar[bool] = False
+
+    def require_changeable(self, account: str) -> None:
+        """Refuse, in the pre-flight, a login whose ``MUST_CHANGE`` is pending
+        (:class:`MustChangeError`), before `creds rotate` stages a password
+        for it (§6.2). A missing login is the pre-flight's own
+        finding, so it passes here."""
+        self._changeable_login(account)
+
+    def _changeable_login(self, account: str) -> accounts.Login | None:
+        """The login's row, or ``None`` where there is none. Raises
+        :class:`MustChangeError` where its ``MUST_CHANGE`` is pending."""
+        login = self._read(
+            lambda cursor: accounts.read_one(cursor, account, target=self.target.name)
+        )
+        if login is not None and login.must_change:
+            raise MustChangeError(login.name, target=self.target.name)
+        return login
 
     #: The command records the flags :meth:`policy_flags` reads, before
     #: :meth:`set_password`, and calls :meth:`restore_policy` after the login
@@ -579,21 +606,16 @@ class MssqlSession(ClosesConnection):
         they are now, which the command records in the vault before
         :meth:`set_password` turns the policy off.
 
-        Refuses, before anything is written or sent, a Windows host, a login
-        whose ``MUST_CHANGE`` is pending (:class:`MustChangeError`), and a
-        server whose value version cannot be read (:meth:`hash_version`).
+        Refuses, before anything is written or sent, a login whose
+        ``MUST_CHANGE`` is pending (:class:`MustChangeError`), and a server
+        whose value version cannot be read (:meth:`hash_version`).
         """
-        self._require_linux("set a password")
-        login = self._read(
-            lambda cursor: accounts.read_one(cursor, account, target=self.target.name)
-        )
+        login = self._changeable_login(account)
         if login is None:
             raise DriverError(
                 f'there is no login "{account}" on target "{self.target.name}"',
                 hint="create the login, or check the account's name in the config",
             )
-        if login.must_change:
-            raise MustChangeError(login.name, target=self.target.name)
         # The value's version, asked here so that a server that takes neither,
         # or a tool login the check refuses, stops the change before the
         # command writes the record (#1564).
@@ -620,7 +642,6 @@ class MssqlSession(ClosesConnection):
         """
         if old_password != OLD_DISCARD:
             self.require_rollover(account)
-        self._require_linux("set a password")
         require_read_write(
             self.scope(), target=self.target.name, hint="a password change is a write to master"
         )
@@ -635,12 +656,14 @@ class MssqlSession(ClosesConnection):
                 failure.password_sent = True
                 raise failure from None
         LOG.debug("%s: set the password value of %s", self.target.name, account)
+        self._policy_off.add(account.upper())
         return ChangeResult(changed=True)
 
     def restore_policy(self, account: str, flags: PolicyFlags) -> bool:
         """Step 4: set ``CHECK_POLICY`` and ``CHECK_EXPIRATION`` back to
         ``flags``, and say whether a statement was sent. Where both were off,
         step 2 changed neither, and nothing is sent."""
+        self._policy_off.discard(account.upper())
         if not flags.check_policy and not flags.check_expiration:
             return False
         require_read_write(
@@ -713,8 +736,12 @@ class MssqlSession(ClosesConnection):
 
         ``login`` only: the tool login reads no hash, so ``hash`` and ``both``
         are refused by capability. On Linux no login locks (LK2), so
-        ``lockout_margin`` and ``attempts`` have nothing to guard; a Windows
-        host is refused before any login. The login's state is read first: a
+        ``lockout_margin`` and ``attempts`` have nothing to guard. On Windows,
+        and on a host that names no platform, only a login whose policy this
+        session turned off in :meth:`set_password` is tried: a change's step
+        3, which counts toward no lockout. Every other login there is refused
+        before it is made, `creds check`'s among them. The login's state is
+        read first: a
         login that is missing, disabled or locked out (``IsLocked``) is
         :data:`~sopuli.driver.protocol.UNAVAILABLE` with no login, because a
         locked login answers its right password as a wrong one (WP3).
@@ -727,7 +754,22 @@ class MssqlSession(ClosesConnection):
                 target=self.target.name,
                 hint="this driver verifies by `login` only",
             )
-        self._require_linux("log in as a login")
+        platform = self.host_platform()
+        if platform != LINUX and account.upper() not in self._policy_off:
+            # On Windows a wrong password counts toward a lockout (WP1). Only
+            # a login whose policy this session turned off may be tried: a
+            # change's step 3 (§6.2). Every other login is refused, so a new
+            # caller fails closed. A guard, not unwritten work.
+            host = "a Windows host" if platform else "a host that names no platform"
+            raise DriverError(
+                f'the tool does not log in as "{account}" on target "{self.target.name}", '
+                f"{host}, while the login's password policy is on",
+                hint=(
+                    "there a wrong password counts toward a lockout threshold the tool "
+                    "cannot read (02-mssql-privileges.md §6.2); only a change logs in, "
+                    "with the policy off"
+                ),
+            )
         login = self.describe_user(account)
         if login is None:
             return _not_tried(f'there is no login "{account}" on this target')

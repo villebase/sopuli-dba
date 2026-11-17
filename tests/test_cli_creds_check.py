@@ -45,7 +45,7 @@ from sopuli.driver.protocol import (
     UserState,
     VerifyResult,
 )
-from sopuli.driver.registry import DRIVERS, NotWrittenError
+from sopuli.driver.registry import DRIVERS
 from sopuli.exit_codes import ExitCode
 from sopuli.output.document import SCHEMA_VERSION
 from sopuli.output.emit import EVENT_SCHEMA_VERSION
@@ -1001,38 +1001,6 @@ def test_a_target_that_cannot_log_in_safely_is_refused_before_anything_is_checke
     body = document(result)
     assert not list(validator.iter_errors(body))
     assert "lockout_threshold" in body["error"]["message"]
-
-
-def test_the_host_check_of_other_commands_does_not_hide_the_refusal(
-    runner: CliRunner,
-    write_config: Callable[[str], Path],
-    estate: Harness,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """As SQL Server's session is today: opening it for any other command
-    refuses a Windows host as not written. `creds check` skips that host
-    check and refuses by its own capability, so the run ends at plan time
-    with exit 5, never with ERROR rows (#1592 reviews)."""
-    monkeypatch.setitem(
-        DRIVERS, "oracle", dataclasses.replace(DRIVERS["oracle"], login_check_preflight=True)
-    )
-
-    def refuse(self: FakeSession) -> None:
-        raise UnsupportedCapabilityError("lockout_threshold", target="appdb-alpha")
-
-    def not_written(self: FakeSession) -> None:
-        raise NotWrittenError(
-            "appdb-alpha", product="a SQL Server instance", what="this", hint="not yet"
-        )
-
-    monkeypatch.setattr(FakeSession, "require_login_check", refuse, raising=False)
-    monkeypatch.setattr(FakeSession, "require_host", not_written, raising=False)
-    harness = estate()
-    result = run(runner, write_config(CONFIG))
-
-    assert isinstance(result.exception, UnsupportedCapabilityError)
-    assert result.exception.exit_code == ExitCode.UNSUPPORTED_CAPABILITY
-    assert all(session.attempts == [] for session in harness["sessions"])
 
 
 def test_a_flagged_product_whose_session_lacks_the_method_never_passes(

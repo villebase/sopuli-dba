@@ -141,7 +141,7 @@ from sopuli.config.scope import refuse_personal_on
 from sopuli.config.secret_refs import SecretRef
 from sopuli.config.selection import LeftOut, narrow, narrow_to_pairs
 from sopuli.config.sharing import native_layouts, pinned_versions, unsure_layouts
-from sopuli.config.targets import MARIADB, MSSQL, MYSQL, USER_AT_HOST_TYPES
+from sopuli.config.targets import MARIADB, MSSQL, MSSQL_STRICT, MYSQL, USER_AT_HOST_TYPES
 from sopuli.config.vault_env import ADDR_FLAG, DEFAULT_STORE_VARIABLE
 from sopuli.constraints import AccountConstraints, Constraints, reuse_restricted
 from sopuli.delivery import DeliveryBackend, Handover, Receipt
@@ -8997,7 +8997,7 @@ def creds_apply(
         or preflight_all
         or any(
             encryption_required_at(target, config, run.resolved) is not None
-            or target.target.type in CONNECT_CHECK_TYPES
+            or target.target.type in VALUE_CHECK_TYPES
             for target in _targets_of(config, bindings)
         )
         or bool(_attribute_needs(config, bindings))
@@ -9098,10 +9098,6 @@ def creds_apply(
         withheld = _withheld(_left_out(bindings, _owing(sources), previewed, estate))
         document.diagnostics.extend(withheld)
         repair_notes.extend(one.message for one in withheld)
-        # The value each SQL Server target with work would be sent (#1564).
-        versions = _value_versions(_targets_of(config, _surveyable(sources)), run, config)
-        document.diagnostics.extend(versions)
-        repair_notes.extend(one.message for one in versions)
         # The pre-flight runs here too, and it is the combination worth having:
         # `--dry-run --preflight` is "show me the plan, and tell me whether it
         # would work". Skipping it under a dry run would make the flag silently
@@ -9131,6 +9127,11 @@ def creds_apply(
             return _refuse_preflight(
                 findings, document, header=_header(plan, sources), notes=repair_notes
             )
+        # The value each SQL Server target with work would be sent (#1564),
+        # after the survey's refusal, as in `rotate`.
+        versions = _value_versions(_targets_of(config, _surveyable(sources)), run, config)
+        document.diagnostics.extend(versions)
+        repair_notes.extend(one.message for one in versions)
         # The guardrail pass's answer, from the accounts the survey read (#988).
         # After the refusal: a run the survey stops never reaches the pass. Under
         # `--force` it is the checks no flag waives (#1111).
@@ -11917,10 +11918,16 @@ def _require_encryption(
 #: value it computes (:data:`~sopuli.driver.protocol.PASSWORD_VALUE`, #1310).
 PASSWORD_VALUE_TYPES = frozenset({MARIADB})
 
-#: The products a connection can refuse as a missing capability, so that a
-#: run that changes passwords opens each of their targets at plan time:
-#: SQL Server under ``encrypt: strict`` (#1549, #1551).
-CONNECT_CHECK_TYPES = frozenset({MSSQL})
+#: The products whose session asks the server, before a change, which version
+#: of the password value it takes (``hash_version``, #1564).
+VALUE_CHECK_TYPES = frozenset({MSSQL})
+
+
+def _refused_at_connect(expanded: ExpandedTarget) -> bool:
+    """Whether the driver can refuse this target's connection as a missing
+    capability: SQL Server under ``encrypt: strict`` (#1549)."""
+    target = expanded.target
+    return target.type == MSSQL and target.mssql_settings.encrypt == MSSQL_STRICT
 
 
 def _require_connection(
@@ -11937,11 +11944,11 @@ def _require_connection(
     strict`` the server resets is refused as lacking ``strict_encryption``,
     exit 5, naming the target, before any password is drawn or any target
     changed. :func:`_plan_scope` raises it. One login per such target, shared
-    through ``scopes`` with the checks before it, and none for another
-    product. A target this cannot reach is left to the run.
+    through ``scopes`` with the checks before it, and none for any other
+    target. A target this cannot reach is left to the run.
     """
     for expanded in targets:
-        if expanded.target.type in CONNECT_CHECK_TYPES:
+        if _refused_at_connect(expanded):
             _plan_scope(expanded, run, config, scopes)
 
 
@@ -11966,17 +11973,19 @@ def _value_versions(
     login and the rolled-back value check, which refuses a target whose
     answer is neither ``ok`` nor ``15021``, exit 5, as the run would. A
     target this cannot reach, or whose check fails another way, such as for
-    a missing grant, gets no note: the run reports it on the target's rows.
+    a missing grant, gets a note that says so, with the error: the run would
+    stop on that target.
     """
     named: list[Diagnostic] = []
     for expanded in targets:
-        if expanded.target.type not in CONNECT_CHECK_TYPES:
+        if expanded.target.type not in VALUE_CHECK_TYPES:
             continue
         try:
             session = _open_session(expanded, run, config)
         except UnsupportedCapabilityError:
             raise
-        except Exception:  # noqa: BLE001 -- the run reports it on each row
+        except Exception as error:  # noqa: BLE001 -- a note, as the run's row would be
+            named.append(_unanswered(expanded.name, error))
             continue
         try:
             if not isinstance(session, _ValueChecked):
@@ -11984,7 +11993,8 @@ def _value_versions(
             version = session.hash_version()
         except UnsupportedCapabilityError:
             raise
-        except Exception:  # noqa: BLE001 -- likewise
+        except Exception as error:  # noqa: BLE001 -- likewise
+            named.append(_unanswered(expanded.name, error))
             continue
         finally:
             with suppress(Exception):
@@ -12000,6 +12010,18 @@ def _value_versions(
             )
         )
     return named
+
+
+def _unanswered(target: str, error: Exception) -> Diagnostic:
+    """The dry run's note for a target whose value check gave no answer."""
+    return Diagnostic(
+        level="info",
+        target=target,
+        message=(
+            f'target "{target}" did not say which password value it takes, and a change '
+            f"would stop there: {_finding(error).message}"
+        ),
+    )
 
 
 #: The products whose rollover close sends a password value, so it changes the
@@ -15420,7 +15442,9 @@ def _preview_rotation(
         rotating, skipped, shared=shared, selection=selection
     )
     document.diagnostics.extend(refused_ahead)
-    versions = _value_versions(_targets_of(config, rotating), run, config)
+    # What the run would stage, not every due binding: the guardrails skip
+    # the rest.
+    versions = _value_versions(_targets_of(config, drawn), run, config)
     document.diagnostics.extend(versions)
 
     stopped = named + named_shared

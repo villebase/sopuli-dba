@@ -22,13 +22,13 @@ SCOPE = object()
 RESET = UnsupportedCapabilityError("strict_encryption", target="mssql-dev", hint="reset")
 
 
-def target(name: str = "mssql-dev", kind: str = "mssql") -> ExpandedTarget:
+def target(name: str = "mssql-dev", kind: str = "mssql", encrypt: str = "strict") -> ExpandedTarget:
     return ExpandedTarget(
         target=Target(
             name=name,
             type=kind,
             dsn="127.0.0.1:1433",
-            mssql=TargetMssql(encrypt="strict") if kind == "mssql" else None,
+            mssql=TargetMssql(encrypt=encrypt) if kind == "mssql" else None,
         )
     )
 
@@ -94,15 +94,26 @@ def test_an_unreachable_target_is_left_to_the_run(monkeypatch: pytest.MonkeyPatc
     scopes: dict[str, Any] = {}
     connection([target()], None, None, scopes=scopes)
     assert scopes == {"mssql-dev": None}
-    assert versions([target()], None, None) == []
 
 
-def test_another_product_is_not_opened(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_only_a_strict_target_is_opened_for_the_connection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     asked = opening(monkeypatch, Session())
-    pg = target("pg-dev", "postgres")
-    connection([pg], None, None, scopes={})
-    assert versions([pg], None, None) == []
+    connection([target(encrypt="mandatory"), target("pg-dev", "postgres")], None, None, scopes={})
     assert asked == []
+
+
+def test_another_product_gets_no_value_check(monkeypatch: pytest.MonkeyPatch) -> None:
+    asked = opening(monkeypatch, Session())
+    assert versions([target("pg-dev", "postgres")], None, None) == []
+    assert asked == []
+
+
+def test_the_sql_server_session_answers_the_value_check() -> None:
+    """A rename of `hash_version` would silently drop every note."""
+    session = pytest.importorskip("sopuli.driver.mssql.session")
+    assert issubclass(session.MssqlSession, cli._ValueChecked)
 
 
 def test_the_dry_run_names_the_value(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -124,9 +135,18 @@ def test_a_value_the_check_refuses_refuses_the_dry_run(monkeypatch: pytest.Monke
     assert session.closed
 
 
-def test_a_check_that_fails_another_way_gets_no_note(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Such as a missing grant: the run's row names it."""
-    session = Session(DriverError("permission denied"))
-    opening(monkeypatch, session)
-    assert versions([target()], None, None) == []
-    assert session.closed
+@pytest.mark.parametrize("opens", [True, False])
+def test_a_check_that_fails_another_way_says_so(
+    monkeypatch: pytest.MonkeyPatch, opens: bool
+) -> None:
+    """Such as a missing grant, or no listener: a dry run has no rows to say it."""
+    failure = DriverError("permission denied")
+    session = Session(failure)
+    opening(monkeypatch, session if opens else failure)
+    (named,) = versions([target()], None, None)
+    assert named.level == "info"
+    assert named.message.startswith(
+        'target "mssql-dev" did not say which password value it takes, and a change '
+        "would stop there: permission denied"
+    )
+    assert session.closed is opens

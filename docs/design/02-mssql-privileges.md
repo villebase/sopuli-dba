@@ -437,8 +437,9 @@ clash says nothing about the value on a release that checks the name first.
 The check runs in a session that changes a password, before anything is
 written for the login. It also runs in the `--dry-run` of `creds apply`
 and `creds rotate`, on each target with something to send, and the plan
-names the value, such as `0x0300 password value (PBKDF2-HMAC-SHA512)`. A
-target the run only reads, or one that is `readonly`, never gets it. The rolled-back statement changes
+names the value, such as `0x0300 password value (PBKDF2-HMAC-SHA512)`, or
+the error where the check gave no answer. A target the run only reads, or
+one that is `readonly`, never gets it. The rolled-back statement changes
 nothing, but what a server audit or Extended Events keep of it is not
 measured (unverified: mssql-hash-check-audit).
 

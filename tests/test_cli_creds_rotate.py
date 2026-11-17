@@ -1603,8 +1603,8 @@ def test_a_connection_refused_as_a_capability_refuses_before_any_target_changes(
 ) -> None:
     """#1551: one target whose connection is SQL Server's reset under
     `encrypt: strict` stops the run before the other target changes, exit 5.
-    The fake is Oracle-shaped, so Oracle is made such a product here."""
-    monkeypatch.setattr("sopuli.cli.CONNECT_CHECK_TYPES", frozenset({"oracle"}))
+    The fake is Oracle-shaped, so its targets are made such targets here."""
+    monkeypatch.setattr("sopuli.cli._refused_at_connect", lambda expanded: True)
     refused = UnsupportedCapabilityError("strict_encryption", target="appdb-beta")
     harness = estate(connect_errors={"appdb-beta": refused})
     flags = ["--dry-run"] if dry_run else []
@@ -1620,8 +1620,8 @@ def test_the_dry_run_names_the_password_value(
     estate: Harness,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """#1564: for each target due."""
-    monkeypatch.setattr("sopuli.cli.CONNECT_CHECK_TYPES", frozenset({"oracle"}))
+    """#1564: for each target the run would stage on."""
+    monkeypatch.setattr("sopuli.cli.VALUE_CHECK_TYPES", frozenset({"oracle"}))
     monkeypatch.setattr(FakeSession, "hash_version", lambda self: 0x0200, raising=False)
     estate()
     result = run(runner, write_config(CONFIG), "--dry-run")

@@ -15,6 +15,7 @@ place and quietly test nothing.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
@@ -38,11 +39,13 @@ from sopuli.driver.protocol import (
     SKIPPED,
     VERIFY_LOGIN,
     Credential,
+    DriverError,
     Scope,
     UnsupportedCapabilityError,
     UserState,
     VerifyResult,
 )
+from sopuli.driver.registry import DRIVERS
 from sopuli.exit_codes import ExitCode
 from sopuli.output.document import SCHEMA_VERSION
 from sopuli.output.emit import EVENT_SCHEMA_VERSION
@@ -939,6 +942,129 @@ def test_an_uncomparable_target_is_refused_before_anything_is_checked(
     assert not list(validator.iter_errors(body))
     assert body["error"]["category"] == "capability"
     assert "appdb-alpha" in body["error"]["message"]
+
+
+def test_a_host_read_that_fails_in_the_plan_step_is_left_to_the_run(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A dropped connection while the host is read is the target's
+    finding, reported by the run, not the whole run's end (#1592 third
+    review)."""
+    monkeypatch.setitem(
+        DRIVERS, "oracle", dataclasses.replace(DRIVERS["oracle"], login_check_preflight=True)
+    )
+    calls: list[str] = []
+
+    def flaky(self: FakeSession) -> None:
+        calls.append("asked")
+        if len(calls) == 1:
+            raise DriverError("the connection was lost")
+
+    monkeypatch.setattr(FakeSession, "require_login_check", flaky, raising=False)
+    harness = estate()
+    result = run(runner, write_config(CONFIG))
+
+    # The plan step passed the first target over and asked the second; the
+    # run then checked both.
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert len(calls) == 2
+    assert sum(len(session.attempts) for session in harness["sessions"]) == 2
+
+
+def test_a_target_that_cannot_log_in_safely_is_refused_before_anything_is_checked(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    validator: Draft202012Validator,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Such as SQL Server on a Windows host, whose lockout threshold cannot
+    be read (#1552): exit 5 at plan time, naming the capability, with no
+    login anywhere (invariant 4)."""
+    monkeypatch.setitem(
+        DRIVERS, "oracle", dataclasses.replace(DRIVERS["oracle"], login_check_preflight=True)
+    )
+
+    def refuse(self: FakeSession) -> None:
+        raise UnsupportedCapabilityError("lockout_threshold", target="appdb-alpha")
+
+    monkeypatch.setattr(FakeSession, "require_login_check", refuse, raising=False)
+    harness = estate()
+    result = run(runner, write_config(CONFIG), "--output", "json")
+
+    assert isinstance(result.exception, UnsupportedCapabilityError)
+    assert result.exception.exit_code == ExitCode.UNSUPPORTED_CAPABILITY
+    assert all(session.attempts == [] for session in harness["sessions"])
+    body = document(result)
+    assert not list(validator.iter_errors(body))
+    assert "lockout_threshold" in body["error"]["message"]
+
+
+def test_a_flagged_product_whose_session_lacks_the_method_never_passes(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The registry's flag is the one gate: a session without the method
+    stops the run, never checks it unasked (#1592 review). The registry test
+    holds that every flagged product's session has it."""
+    monkeypatch.setitem(
+        DRIVERS, "oracle", dataclasses.replace(DRIVERS["oracle"], login_check_preflight=True)
+    )
+    harness = estate()
+    result = run(runner, write_config(CONFIG))
+
+    assert isinstance(result.exception, AttributeError)
+    assert all(session.attempts == [] for session in harness["sessions"])
+
+
+def test_a_hash_check_is_not_asked_whether_it_may_log_in(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`--method hash` makes no login, so the lockout question is not asked,
+    and the hash refusal is the one that names the capability (#1592
+    second review)."""
+    monkeypatch.setitem(
+        DRIVERS, "oracle", dataclasses.replace(DRIVERS["oracle"], login_check_preflight=True)
+    )
+
+    def never(self: FakeSession) -> None:
+        raise AssertionError("a hash check makes no login")
+
+    monkeypatch.setattr(FakeSession, "require_login_check", never, raising=False)
+    harness = estate(refusal=UnsupportedCapabilityError("offline_verify", target="appdb-alpha"))
+    result = run(runner, write_config(CONFIG), "--method", "hash")
+
+    assert isinstance(result.exception, UnsupportedCapabilityError)
+    assert result.exception.capability == "offline_verify"
+    assert all(session.attempts == [] for session in harness["sessions"])
+
+
+def test_a_product_without_the_flag_is_not_asked_before_a_login_check(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No extra connection for a product that needs no such step (#1552)."""
+
+    def never(self: FakeSession) -> None:
+        raise AssertionError("not asked")
+
+    monkeypatch.setattr(FakeSession, "require_login_check", never, raising=False)
+    harness = estate()
+    result = run(runner, write_config(CONFIG))
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    # One session per target, for the run itself.
+    assert len(harness["sessions"]) == 2
 
 
 def test_an_unreachable_target_is_left_to_the_run_rather_than_refused(

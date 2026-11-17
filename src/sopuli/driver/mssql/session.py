@@ -61,6 +61,7 @@ from sopuli.driver.mssql import (
     statements,
     survey,
 )
+from sopuli.driver.mssql import errors as server_errors
 from sopuli.driver.mssql import privileges as tool_login
 from sopuli.driver.mssql.admin import Assessment, Catalog, assess, read_catalog
 from sopuli.driver.mssql.client import client_lines
@@ -134,12 +135,20 @@ def scrub_value(message: str) -> str:
     return _VALUE.sub(VALUE_REMOVED, message)
 
 
-#: The server's answers to a login, by number (§7), and what each says about
-#: the password. ``18470`` (disabled) and ``18488`` (must change) say nothing
-#: until it is measured how such a login answers a wrong one (#1552).
-WRONG_PASSWORD = "18456"
-LOGIN_DISABLED = "18470"
-MUST_CHANGE = "18488"
+#: The server's answers to a login, by number (§7). ``18470`` (disabled) and
+#: ``18488`` (must change) are answered only to the right password: a wrong
+#: one is ``18456`` either way (``15_login_answers_probe.py``, LA2 to LA4).
+#: As :class:`~sopuli.driver.mssql.errors.Diagnosis` codes, which are text,
+#: from the error module's numbers, so the two cannot drift apart.
+WRONG_PASSWORD = str(server_errors.LOGIN_FAILED)
+LOGIN_DISABLED = str(server_errors.LOGIN_DISABLED)
+MUST_CHANGE = str(server_errors.MUST_CHANGE)
+
+#: The capability a `creds check` login needs on the host: a lockout
+#: threshold the tool can read, or no lockout at all. Linux has no lockout
+#: (LK2); on Windows ``LOGINPROPERTY`` gives no threshold (WP1), so the check
+#: is refused there at plan time (#1538, decision 3; #1552).
+LOCKOUT_THRESHOLD = "lockout_threshold"
 
 #: The host platform this build changes passwords on.
 LINUX = "Linux"
@@ -785,11 +794,25 @@ class MssqlSession(ClosesConnection):
                     detail="the server refused the password (18456)",
                 )
             if failure.code in (LOGIN_DISABLED, MUST_CHANGE):
+                # Never a pass: the login cannot use the password, so after a
+                # change it must not be promoted, and a check must not call
+                # the login in sync. `creds check` reads the state first, so
+                # it meets these only where the login was disabled or made to
+                # change its password since; they are answered only to the
+                # right password (LA2 to LA4), which its detail says.
+                # The error module keeps the server's words without their
+                # number, so the number is given once here.
+                detail = (
+                    f"the password is right, but the login was refused ({failure.code}): "
+                    f"{failure.message}"
+                    if for_check
+                    else f"{failure.message}: the login cannot use the password"
+                )
                 return VerifyResult(
                     method=VERIFY_LOGIN,
                     result=UNAVAILABLE,
                     latency_ms=_ms(started),
-                    detail=f"{failure.message}: this says nothing about the password",
+                    detail=detail,
                 )
             raise failure.as_error() from None
         latency = _ms(started)
@@ -799,6 +822,26 @@ class MssqlSession(ClosesConnection):
             connection.close()
         LOG.debug("login as %s: pass", login.name)
         return VerifyResult(method=VERIFY_LOGIN, result=PASS, latency_ms=latency)
+
+    def require_login_check(self) -> None:
+        """Refuse `creds check`'s login at plan time on a host whose lockout
+        the tool cannot read (#1538, decision 3; #1552). On Linux no login
+        locks (LK2). On Windows a wrong password counts toward a threshold
+        ``LOGINPROPERTY`` does not give (WP1), so a check could lock the
+        login. A host that names no platform is treated as Windows. The
+        command asks before any account is checked (invariant 4)."""
+        platform = self.host_platform()
+        if platform == LINUX:
+            return
+        raise UnsupportedCapabilityError(
+            LOCKOUT_THRESHOLD,
+            target=self.target.name,
+            hint=(
+                f"the host runs {platform or 'a platform it does not name'}, where a wrong "
+                "password counts toward a lockout threshold the tool login cannot read, "
+                "so a login check could lock the login (02-mssql-privileges.md §7)"
+            ),
+        )
 
     def require_verifier(self, account: str, secret: Secret) -> None:
         """Refuse ``hash`` and ``both`` at plan time (invariant 4): the tool

@@ -329,13 +329,15 @@ def test_two_spellings_of_one_login_are_refused() -> None:
 # ------------------------------------------------------------- the driver ---
 
 
-def test_only_uc1_s_change_and_the_reports_are_written() -> None:
-    """Every command but `doctor`, UC-1's change and UC-5's three reports is
-    refused before anything connects (#1549, #1551, #1555)."""
+def test_only_uc1_and_uc5_are_written() -> None:
+    """Every command but `doctor`, UC-1's change and check, and UC-5's three
+    reports is refused before anything connects (#1549, #1551, #1552,
+    #1555)."""
     target = loaded(targets=[SERVER]).expanded_targets[0].target
 
     assert DRIVERS["mssql"].commands == frozenset(
         {
+            "creds.check",
             "creds.apply",
             "creds.rotate",
             "creds.generate",
@@ -348,8 +350,17 @@ def test_only_uc1_s_change_and_the_reports_are_written() -> None:
     assert DRIVERS["mssql"].not_applicable == frozenset({"profile", "valid_until"})
     assert DRIVERS["mssql"].extra == "mssql"
     assert DRIVERS["mssql"].provides == frozenset({"pyodbc"})
+    # Only SQL Server's targets are asked before a login check (#1552), and
+    # its session has the method the flag promises.
+    assert DRIVERS["mssql"].login_check_preflight is True
+    assert not any(
+        driver.login_check_preflight for name, driver in DRIVERS.items() if name != "mssql"
+    )
+    session = pytest.importorskip("sopuli.driver.mssql.session")
+    assert callable(getattr(session.MssqlSession, "require_login_check", None))
     require_command(target, "doctor")
     require_command(target, "report.history")
+    require_command(target, "creds.check")
     with pytest.raises(DriverNotImplementedError) as caught:
-        require_command(target, "creds.check")
+        require_command(target, "account.list")
     assert caught.value.code == DRIVER_NOT_IMPLEMENTED

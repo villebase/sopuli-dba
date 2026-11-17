@@ -53,6 +53,7 @@ the SQL in `sql/oracle/` by hand. The PostgreSQL tool role is created by hand in
 `account expire-password` and the seen reset, because PostgreSQL cannot make a
 role change its password at its next login. A MySQL target and a MariaDB target
 each run `doctor`, the `creds` commands (§7) and the `account` commands (§9).
+A SQL Server target runs `doctor` only (§7).
 
 ---
 
@@ -1170,6 +1171,63 @@ acme_app@%  mariadb-dev  IN_SYNC  any second password ended; the current passwor
 
 1 closed
 ...
+```
+
+### A SQL Server instance
+
+`doctor` connects to SQL Server and reports it. No other command runs against
+it yet. The client is pyodbc, from `pip install "sopuli-dba[mssql]"`, and
+Microsoft's ODBC Driver 18 for SQL Server, which you install from Microsoft as
+a system package.
+
+The `mssql-matrix` profile runs SQL Server 2022 at `127.0.0.1:14322`:
+
+```
+docker compose --profile mssql-matrix up -d mssql-2022
+```
+
+Create the tool login as `sa`, whose password is `Sopuli-test-1`, with the
+grant that [`design/02-mssql-privileges.md`](design/02-mssql-privileges.md)
+§2.1 gives it. In `sqlcmd` or any other client:
+
+```sql
+CREATE LOGIN [sopuli_admin] WITH PASSWORD = N'Sopuli-test-admin1', CHECK_POLICY = ON;
+GRANT ALTER ANY LOGIN TO [sopuli_admin];
+```
+
+Save this as `mssql.yaml`, and export `SOPULI_DB_ADMIN_PASSWORD=Sopuli-test-admin1`:
+
+```yaml
+version: 1
+targets:
+  - name: mssql-dev
+    type: mssql
+    environment: dev
+    dsn: "127.0.0.1:14322"
+    admin: { username: sopuli_admin, auth: { method: env } }
+    mssql: { trust_server_certificate: true }
+```
+
+The image's certificate is self-signed, so the target sets
+`trust_server_certificate`. Run `doctor`:
+
+```
+$ sopuli --config mssql.yaml doctor
+...
+client
+  ...
+  pyodbc            5.5.0
+  odbc_driver       ODBC Driver 18 for SQL Server
+
+TARGET     REACHABLE  SCOPE   CONTAINER  OPEN MODE   CAPABILITIES  ENCRYPTION
+mssql-dev  yes        server  -          READ WRITE  0             tls
+
+1 note:
+  mssql-dev: the admin credential came from the environment variable SOPULI_DB_ADMIN_PASSWORD, which P2 supports and flags as low assurance
+
+1 warning:
+  targets[0].mssql.trust_server_certificate: target 'mssql-dev' does not verify the server (`trust_server_certificate: true`)
+    hint: anything between this run and the server can present its own certificate and read the password a run sets. Use `trust_server_certificate: false` (the default), with the CA that issued the server's certificate in the operating system's trust store, which ODBC Driver 18 checks the server against
 ```
 
 ---

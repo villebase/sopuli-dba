@@ -634,6 +634,83 @@ def live_mariadb() -> MariadbStack:
     return stack
 
 
+# ------------------------------------------------------- tier 1: SQL Server ---
+#
+# The `mssql-2022` service of `test/compose.yaml`'s `mssql-matrix` profile,
+# until #1549's stack adds one to tier 1. A freely pullable image, so a
+# missing one is a skip (§1).
+
+
+@dataclass(frozen=True)
+class MssqlStack:
+    """A running SQL Server, and `sa`, which reaches it."""
+
+    host: str
+    port: int
+    password: str
+    #: The tool login :meth:`tool_login` creates.
+    tool_user: str = "sopuli_admin"
+    tool_password: str = "Sopuli-test-admin1"
+
+    @property
+    def dsn(self) -> str:
+        return f"{self.host}:{self.port}"
+
+    def connect(self, timeout: int = 15) -> Any:
+        """A connection as `sa`, encrypted without a certificate check: the
+        image's certificate is self-signed."""
+        import pyodbc
+
+        pyodbc.pooling = False
+        return pyodbc.connect(
+            "Driver={ODBC Driver 18 for SQL Server};"
+            f"Server={{tcp:{self.host},{self.port}}};Database=master;Encrypt=yes;"
+            f"TrustServerCertificate=yes;UID=sa;PWD={{{self.password}}};",
+            autocommit=True,
+            timeout=timeout,
+        )
+
+    def tool_login(self) -> None:
+        """Create the tool login with `02-mssql-privileges.md` §2.1's grant,
+        once."""
+        connection = self.connect()
+        try:
+            cursor = connection.cursor()
+            cursor.execute(
+                f"IF SUSER_ID(N'{self.tool_user}') IS NULL CREATE LOGIN [{self.tool_user}] "
+                f"WITH PASSWORD = N'{self.tool_password}', CHECK_POLICY = ON"
+            )
+            cursor.execute(f"GRANT ALTER ANY LOGIN TO [{self.tool_user}]")
+        finally:
+            connection.close()
+
+
+@pytest.fixture(scope="session")
+def live_mssql() -> MssqlStack:
+    """A reachable SQL Server with the tool login, or a skip saying which part
+    was missing. The port follows `SOPULI_TEST_MSSQL2022_PORT`, as the compose
+    file's does. pyodbc is imported here: it is an extra, and a base install
+    must reach the skip."""
+    stack = MssqlStack(
+        host="127.0.0.1",
+        port=int(os.environ.get("SOPULI_TEST_MSSQL2022_PORT", "14322")),
+        password="Sopuli-test-1",
+    )
+    # A plain skip, not `_missing_environment`: the tier-1 lane starts no SQL
+    # Server, and has no ODBC Driver 18, until #1549's stack PR adds both. That
+    # PR makes these `_missing_environment`, as the other services' are.
+    try:
+        import pyodbc
+    except ImportError:  # pragma: no cover -- reached only in a base install
+        pytest.skip("pyodbc is not installed; `pip install -e '.[mssql]'`")
+    try:
+        stack.connect(timeout=5).close()
+    except pyodbc.Error as error:
+        pytest.skip(f"SQL Server not reachable at {stack.dsn}: {error}")
+    stack.tool_login()
+    return stack
+
+
 # -------------------------------------------------------- tier 1: Supabase ---
 #
 # The `supabase` service of `test/compose.yaml`, in the `supabase` profile,

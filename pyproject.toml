@@ -264,6 +264,14 @@ ignore_missing_imports = true
 module = ["pymysql", "pymysql.*"]
 ignore_missing_imports = true
 
+# pyodbc 5.5.0 ships a `pyodbc.pyi` without `py.typed`, so mypy does not read
+# it. In `src/`, only `sopuli.driver.mssql.session` imports pyodbc, which
+# ADR-006 requires; the tests that need it import it too. All treat its
+# objects as `Any`.
+[[tool.mypy.overrides]]
+module = ["pyodbc"]
+ignore_missing_imports = true
+
 # pyrage ships no type information either. Only the `sopuli.store.file`
 # package imports it, which ADR-006 requires, and the tests that need it; both
 # treat its objects as `Any`.

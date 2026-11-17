@@ -1882,9 +1882,9 @@ target for the cluster.
 A SQL Server target is the **instance**. A login belongs to the whole instance,
 so there is no database to name. The client is pyodbc with Microsoft ODBC
 Driver 18, which is a system package, as Oracle's Instant Client is
-([#1538](../decisions/log.md#1538), decision 6). The tool cannot run commands
-against a SQL Server target yet: every command but `doctor` refuses one, and
-`doctor` reports the driver as not written (open: #1549).
+([#1538](../decisions/log.md#1538), decision 6). `doctor` connects to a SQL
+Server target and reports it, and every other command refuses one, because
+the driver is not written further yet (open: #1549).
 
 ```yaml
 targets:
@@ -1921,9 +1921,11 @@ certificate, under `strict` only, so that is what `server_certificate` is.
 
 **`strict` is not the default**, because SQL Server 2019 and 2022 reset every
 strict connection in the measurements, and only 2025 accepted one (TL3,
-`mssql-client-tls`). A server that does not accept `strict` is refused at
-plan time, naming the target, rather than failing partway through a run
-(invariant 4; open: #1549).
+`mssql-client-tls`). A server that does not accept `strict` resets the
+connection, `10054`. The run then fails to connect to that target before any
+change, as for an unreachable one, with a hint to use `mandatory`. Refusing
+it at plan time with an exit code of its own, as invariant 4 asks, is not
+built (open: #1549).
 
 `optional`, and `trust_server_certificate: true`, warn with `SOPULI-W058` on
 every run, once per target: anything on the network path can then present its

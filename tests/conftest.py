@@ -253,10 +253,13 @@ class VaultStack:
 TIER1 = "SOPULI_TEST_TIER1"
 
 
-def _missing_environment(reason: str) -> NoReturn:
-    """Skip, or fail if this run was supposed to have an environment."""
-    if os.environ.get(TIER1) == "required":
-        pytest.fail(f"tier 1 required, but the environment was not there: {reason}", pytrace=False)
+def _missing_environment(reason: str, *, required_by: str = TIER1) -> NoReturn:
+    """Skip, or fail if this run was supposed to have an environment:
+    ``required_by`` set to ``required``. SQL Server's lane has its own."""
+    if os.environ.get(required_by) == "required":
+        pytest.fail(
+            f"{required_by}=required, but the environment was not there: {reason}", pytrace=False
+        )
     pytest.skip(reason)
 
 
@@ -647,13 +650,6 @@ def live_mariadb() -> MariadbStack:
 MSSQL = "SOPULI_TEST_MSSQL"
 
 
-def _missing_mssql(reason: str) -> NoReturn:
-    """Skip, or fail where the SQL Server lane said a server would be there."""
-    if os.environ.get(MSSQL) == "required":
-        pytest.fail(f"SQL Server required, but it was not there: {reason}", pytrace=False)
-    pytest.skip(reason)
-
-
 @dataclass(frozen=True)
 class MssqlStack:
     """A running SQL Server, and `sa`, which reaches it."""
@@ -716,11 +712,13 @@ def live_mssql() -> MssqlStack:
     try:
         import pyodbc
     except ImportError:  # pragma: no cover -- reached only in a base install
-        _missing_mssql("pyodbc is not installed; `pip install -e '.[mssql]'`")
+        _missing_environment(
+            "pyodbc is not installed; `pip install -e '.[mssql]'`", required_by=MSSQL
+        )
     try:
         stack.connect(timeout=5).close()
     except pyodbc.Error as error:
-        _missing_mssql(f"SQL Server not reachable at {stack.dsn}: {error}")
+        _missing_environment(f"SQL Server not reachable at {stack.dsn}: {error}", required_by=MSSQL)
     stack.tool_login()
     return stack
 

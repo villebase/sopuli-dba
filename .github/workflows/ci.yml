@@ -435,10 +435,9 @@ jobs:
           PY
 
       # The `mssql` extra installs pyodbc, which loads unixODBC's libodbc when
-      # it is imported. Microsoft ODBC Driver 18 and unixODBC are system
-      # packages that pip cannot install, as Instant Client is for Oracle. So
-      # this cell checks what the extra installs, and that, with no unixODBC,
-      # the registry names the system packages rather than a traceback (#1549).
+      # it is imported. unixODBC is a system package that pip cannot install,
+      # and the runner image carries it, so the driver module must load here.
+      # What the registry says without it is a tier-0 test (#1549).
       - name: the mssql extra brings what the driver uses
         if: matrix.shape == '[mssql]'
         run: |
@@ -446,19 +445,14 @@ jobs:
           import sys
 
           from sopuli.config.model import Target
-          from sopuli.driver.registry import DRIVERS, DriverNotInstalledError, resolve
+          from sopuli.driver.registry import DRIVERS, resolve
           from sopuli.extras import installed
 
           entry = DRIVERS["mssql"]
           if not installed(entry.provides):
               sys.exit(f"the mssql extra did not install all of {sorted(entry.provides)}")
-          try:
-              resolve(Target(name="shape", type="mssql", dsn="db.example.com:1433"))
-          except DriverNotInstalledError as refused:
-              print("without unixODBC the registry says:", refused.hint)
-          else:
-              print("pyodbc loads: unixODBC is on this runner")
-          print("the mssql extra brings", ", ".join(sorted(entry.provides)))
+          resolve(Target(name="shape", type="mssql", dsn="db.example.com:1433"))
+          print("the mssql extra brings", ", ".join(sorted(entry.provides)), "and the driver loads")
           PY
 
   # Tier 1 (04-testing.md §4): the UC-1 happy path and the store's real-backend
@@ -709,6 +703,11 @@ jobs:
       - name: bring up SQL Server
         working-directory: test
         run: docker compose --profile mssql up -d --wait mssql-2022
+
+      # The live modules skip whole when pyodbc does not import, before the
+      # fixture can fail, so the import is the gate here.
+      - name: the driver loads
+        run: python -c "import sopuli.driver.mssql.session"
 
       # The files by name: `-k` would still collect every module in
       # tests/driver, and the MySQL family's import PyMySQL, which this lane

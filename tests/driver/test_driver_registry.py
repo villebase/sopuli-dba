@@ -160,7 +160,7 @@ def test_a_missing_system_library_names_the_system_package(
     system packages to install, not a traceback."""
     monkeypatch.setattr(
         "sopuli.driver.registry.importlib.import_module",
-        _raising(ImportError("libodbc.so.2: cannot open shared object file")),
+        _raising(ImportError("libodbc.so.2: cannot open shared object file", name="pyodbc")),
     )
 
     with pytest.raises(DriverNotInstalledError) as refused:
@@ -171,18 +171,24 @@ def test_a_missing_system_library_names_the_system_package(
     assert refused.value.exit_code == ExitCode.CONFIG_INVALID
 
 
-def test_an_import_error_without_a_system_library_is_not_hidden(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize(
+    ("type_name", "failing"),
+    [("oracle", "oracledb"), ("mssql", "sopuli.driver.mssql.statements")],
+    ids=["no system library", "not the client's import"],
+)
+def test_another_import_error_is_not_hidden(
+    monkeypatch: pytest.MonkeyPatch, type_name: str, failing: str
 ) -> None:
-    """A driver with no system library has nothing to name, so its
-    ``ImportError`` is a fault in this tool and stays one."""
+    """Only the client's own import, on a driver that names a system library,
+    is reported as not installed. Anything else, such as a name this tool's
+    own module no longer exports, is a fault in this tool and stays one."""
     monkeypatch.setattr(
         "sopuli.driver.registry.importlib.import_module",
-        _raising(ImportError("cannot import name 'x' from 'oracledb'")),
+        _raising(ImportError(f"cannot import name 'x' from '{failing}'", name=failing)),
     )
 
     with pytest.raises(ImportError, match="cannot import name"):
-        resolve(target())
+        resolve(target(type_name=type_name))
 
 
 def test_a_driver_this_build_does_not_have_never_says_pip(

@@ -455,8 +455,10 @@ def resolve(target: Target) -> ModuleType:
         raise
     except ImportError as exc:
         # The client is there and a library it loads is not, such as
-        # unixODBC's libodbc for pyodbc on Linux. The message names the library.
-        if driver.system_library is None:
+        # unixODBC's libodbc for pyodbc on Linux: the import of the client's own
+        # module fails, and the message names the library. Any other import
+        # fault, in this tool's modules among them, stays a traceback.
+        if driver.system_library is None or exc.name not in driver.provides:
             raise
         raise DriverNotInstalledError(
             f'target "{target.name}" declares type "{target.type}", but its client '

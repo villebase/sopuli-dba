@@ -503,11 +503,17 @@ one.
 **A login whose `MUST_CHANGE` is pending cannot take a value.** While
 `IsMustChange` reads 1, the server refuses to turn `CHECK_POLICY` off,
 `15128` (`03_lock_expiry_probe.py`, the note beside LK5), so step 2 cannot
-run. The driver reads `IsMustChange` and refuses such a login at plan time,
-naming it (invariant 4). This build leaves it alone before anything is
-written or sent: `apply` reports it `EXPIRED` and changes nothing, and the
-driver refuses to record its flags. Refusing it in the pre-flight, before
-`creds rotate` stages a password, is not built (open: #1551).
+run. A pending `MUST_CHANGE` is the login's state, as an expiry is, not a
+capability the target lacks. The driver reads `IsMustChange` and refuses
+such a login, naming it. `creds rotate`'s pre-flight refuses the run for
+it, exit 1, before it stages a password. `creds apply` leaves the login
+alone before anything is written or sent, with or without `--preflight`:
+it reports it `EXPIRED` and changes nothing, the driver refuses to record
+its flags, and the run goes on to the other logins. `creds generate` stages
+a `pending` with no pre-flight, so it does not ask. A `pending` it stages
+for such a login is held until the owner clears `MUST_CHANGE`: each `apply`
+reports the login `EXPIRED`, and on Windows each run sets the `pending`
+again on the other targets that share it.
 
 **How `creds apply` tells that a target already holds the password depends
 on the host** ([#1551](../decisions/log.md#1551)). The tool login
@@ -518,18 +524,19 @@ capability (§7):
   PostgreSQL, and leaves a password that already works alone. It reads
   `IsLocked` before that login, and reports a locked login as `unavailable`
   without logging in.
-- **On Windows**, `apply` and `rotate` do not log in before a change, as on
-  MySQL and MariaDB. They set a password only from the vault's `pending`, or
-  for a rollback, and an account with only `current` is `SKIPPED`. While a
-  rotation's promotion is held, each `apply` sets the `pending` again and
-  reports `changed: true`, an exception to invariant 9 that ends when the
-  rotation completes. The login of step 3 is the only one, and it runs while
-  the policy is off. A login that `IsLocked` reports locked is changed all
-  the same, which ends the lockout, and the result names the lock it ended,
-  with a warning code. Under a domain's policy, whether a failed login while
-  the policy is off counts is not measured (unverified: mssql-domain-policy).
-  This build refuses a Windows host, and one that names no platform, with
-  `SOPULI-20006` before anything is sent (open: #1551).
+- **On Windows**, and on a host that names no platform, `apply` and `rotate`
+  do not log in before a change, as on MySQL and MariaDB. They set a
+  password only from the vault's `pending`, or for a rollback, and an
+  account with only `current` is `SKIPPED`. While a rotation's promotion is
+  held, each `apply` sets the `pending` again and reports `changed: true`,
+  an exception to invariant 9 that ends when the rotation completes. The
+  login of step 3 is the only one, and it runs while the policy is off.
+  `creds check` makes no login there. A login that `IsLocked` reports
+  locked is reported `LOCKED` and not changed. Changing it all the same,
+  which ends the lockout, with a warning code that names the lock it ended,
+  is not built (open: #1551). Under a domain's policy, whether a failed
+  login while the policy is off counts is not measured (unverified:
+  mssql-domain-policy).
 
 A check that turns the policy off to log in safely was rejected: it would
 change the login on every run, also when nothing needs a change.

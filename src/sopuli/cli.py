@@ -10708,6 +10708,24 @@ NOT_CHECKED_WITHOUT_LOGIN = (
     "and `creds rotate` changes the password"
 )
 
+#: The same, where `creds check` cannot compare them either: SQL Server on a
+#: host that is not Linux, where its login is refused too (#1551). Naming it
+#: would send the operator to a refusal.
+NOT_CHECKED_WITHOUT_LOGIN_OR_CHECK = (
+    "not changed: on this target the tool does not log in before a change, so "
+    "it cannot tell whether the account already has the vault's `current`, and it "
+    "sets a password only for a rotation in flight. `creds rotate` changes the "
+    "password"
+)
+
+
+def _skipped_without_login(session: Any) -> str:
+    """:data:`NOT_CHECKED_WITHOUT_LOGIN`, or its variant where the session
+    says `creds check` cannot compare either (``check_compares``)."""
+    if getattr(session, "check_compares", True):
+        return NOT_CHECKED_WITHOUT_LOGIN
+    return NOT_CHECKED_WITHOUT_LOGIN_OR_CHECK
+
 
 def _reach_after_change(
     binding: Binding,
@@ -10808,9 +10826,8 @@ def _keep_flags(binding: Binding, session: Any, account: str, marks: _VaultMarks
     before an earlier run turned the policy off. Flags that are both off need
     no record, because the change leaves nothing to set back. Raises where the
     flags cannot be kept, so the change is not sent: the session's own
-    refusals (a Windows host, a pending ``MUST_CHANGE``, a value version it
-    cannot read), a record the tool cannot read, and a vault write that
-    failed.
+    refusals (a pending ``MUST_CHANGE``, a value version it cannot read), a
+    record the tool cannot read, and a vault write that failed.
     """
     flags = session.policy_flags(account)
     if marks is None or binding.secret is None:
@@ -10886,7 +10903,10 @@ def _verify_before_change(
     block, and the tool reads the setting only on 9.7.4 and later, under an
     optional grant, for `creds check`'s guard (#1515). MariaDB says so too (#1270,
     decision 4): a failure counts toward ``max_password_errors``, which the
-    tool cannot read either. Without the login there is no answer, so a
+    tool cannot read either. SQL Server says so on a Windows host, and on one
+    that names no platform (#1551): a wrong password counts toward a lockout
+    threshold that ``LOGINPROPERTY`` does not give. Without the login there is
+    no answer, so a
     `pending` is set, and a `current` is left alone
     (:data:`NOT_CHECKED_WITHOUT_LOGIN`).
     """
@@ -11229,7 +11249,7 @@ def _apply_one(
             # run would reset the server's password expiry, fill its history and
             # empty its fast-auth cache (#1223). Only a rotation's `pending`, or a
             # rollback's `previous`, is set.
-            done = check_states.Outcome(apply_states.SKIPPED, NOT_CHECKED_WITHOUT_LOGIN)
+            done = check_states.Outcome(apply_states.SKIPPED, _skipped_without_login(session))
         else:
             done = None
         if done is not None:
@@ -11775,15 +11795,9 @@ def _open_session(
     session = driver.connect(target, credential.credential)
     if scope_only:
         return session
-    host_check = getattr(session, "require_host", None)
     try:
         if isinstance(session, ClusterIdentity):
             _claim(session, target.name, run, in_text=True)
-        if host_check is not None:
-            # SQL Server (#1551): after the scope and the claim, a host this
-            # build changes no password on is refused, before a pre-flight
-            # passes it or `rotate` stages.
-            host_check()
     except BaseException:
         with suppress(Exception):
             session.close()
@@ -12335,12 +12349,35 @@ def _preflight(
                         reuse=reuse,
                         states=states,
                         scopes=scopes,
+                        rotating=rotating,
                     )
                 )
         finally:
             with suppress(Exception):
                 session.close()
     return findings
+
+
+def _account_finding(
+    target: str, account: str, error: Exception, *, unread: str | None = None
+) -> Finding:
+    """A blocking pre-flight finding about one account, from ``error``.
+
+    ``unread`` names what could not be read, where the error is a read that
+    failed rather than an answer about the account, so the message says so.
+    """
+    reported = _finding(error)
+    message = reported.message
+    if unread is not None:
+        message = f"could not read {unread}: {message}"
+    return Finding(
+        target=target,
+        check=preflight.ACCOUNT,
+        message=message,
+        hint=reported.hint,
+        account=account,
+        category=reported.category,
+    )
 
 
 def _preflight_target(
@@ -12353,8 +12390,13 @@ def _preflight_target(
     reuse: list[tuple[str, UserState]] | None = None,
     states: dict[tuple[str, str], UserState] | None = None,
     scopes: dict[str, Scope] | None = None,
+    rotating: bool = False,
 ) -> tuple[Finding, ...]:
     """One reachable target, against §8's remaining checks.
+
+    ``rotating`` is set by `creds rotate`, whose pre-flight also asks the
+    session whether each login can take a password before one is staged
+    (``require_changeable``, SQL Server's pending ``MUST_CHANGE``, #1551).
 
     Reading is here and deciding is in :mod:`sopuli.preflight`, which is the
     arrangement every other verb in this file has with its own decision module.
@@ -12410,17 +12452,7 @@ def _preflight_target(
             # is the input guardrail 4 refuses on, and treating an unreadable
             # answer as "holds no admin role" is the silent success
             # `RolesUnreadableError` was raised to prevent.
-            reported = _finding(error)
-            unreadable.append(
-                Finding(
-                    target=target.name,
-                    check=preflight.ACCOUNT,
-                    message=reported.message,
-                    hint=reported.hint,
-                    account=binding.account,
-                    category=reported.category,
-                )
-            )
+            unreadable.append(_account_finding(target.name, binding.account, error))
             continue
         if states is not None and state is not None:
             states[(target.name, binding.account)] = state
@@ -12432,6 +12464,28 @@ def _preflight_target(
             # happen, so a profile that is not there must not refuse the run.
             reserved.add(binding.account.upper())
             continue
+        changeable = getattr(session, "require_changeable", None)
+        if rotating and changeable is not None:
+            # SQL Server (#1551): a login that can take no password, such as
+            # one whose `MUST_CHANGE` is pending, blocks `creds rotate` here,
+            # before it stages one for it. `apply` reports such a login as
+            # one row and goes on, so its pre-flight does not ask. A read that
+            # failed is a blocking finding too, as `describe_user`'s is above,
+            # and says that it is a read that failed, so the survey goes on to
+            # the other logins and targets.
+            try:
+                changeable(binding.account)
+            except Exception as error:  # noqa: BLE001 -- a finding, not a crash
+                about = isinstance(error, DriverError) and error.about_account
+                unreadable.append(
+                    _account_finding(
+                        target.name,
+                        binding.account,
+                        error,
+                        unread=None if about else "whether it can take a password",
+                    )
+                )
+                continue
 
         # §5's profile assignment, asked before anything is written (decision #301).
         # Only where the policy declares one and the account is not already on it:

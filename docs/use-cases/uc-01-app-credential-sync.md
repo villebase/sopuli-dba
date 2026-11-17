@@ -768,8 +768,9 @@ These rules decide what `apply` does with each account:
   policy off, logs in as the login, and sets the flags back. A run that
   stopped part way leaves the policy off, and the next `apply` sets the
   recorded flags back. On a Linux host, where no login locks, `apply` logs in
-  before a change, as on Oracle. A Windows host is refused before anything is
-  sent (open: #1551).
+  before a change, as on Oracle. On a Windows host, and one that names no
+  platform, it does not, as on MySQL: it sets a password only from `pending`,
+  or for a rollback.
 - **A locked account is not changed at all,** unless the policy asks for an
   unlock (below). The statement would succeed and the verification could never
   pass. The run would end with a database whose password is in no vault stage,

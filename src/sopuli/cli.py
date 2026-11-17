@@ -10806,9 +10806,8 @@ def _keep_flags(binding: Binding, session: Any, account: str, marks: _VaultMarks
     before an earlier run turned the policy off. Flags that are both off need
     no record, because the change leaves nothing to set back. Raises where the
     flags cannot be kept, so the change is not sent: the session's own
-    refusals (a Windows host, a pending ``MUST_CHANGE``, a value version it
-    cannot read), a record the tool cannot read, and a vault write that
-    failed.
+    refusals (a pending ``MUST_CHANGE``, a value version it cannot read), a
+    record the tool cannot read, and a vault write that failed.
     """
     flags = session.policy_flags(account)
     if marks is None or binding.secret is None:
@@ -10884,7 +10883,10 @@ def _verify_before_change(
     block, and the tool reads the setting only on 9.7.4 and later, under an
     optional grant, for `creds check`'s guard (#1515). MariaDB says so too (#1270,
     decision 4): a failure counts toward ``max_password_errors``, which the
-    tool cannot read either. Without the login there is no answer, so a
+    tool cannot read either. SQL Server says so on a Windows host, and on one
+    that names no platform (#1551): a wrong password counts toward a lockout
+    threshold that ``LOGINPROPERTY`` does not give. Without the login there is
+    no answer, so a
     `pending` is set, and a `current` is left alone
     (:data:`NOT_CHECKED_WITHOUT_LOGIN`).
     """
@@ -11773,15 +11775,9 @@ def _open_session(
     session = driver.connect(target, credential.credential)
     if scope_only:
         return session
-    host_check = getattr(session, "require_host", None)
     try:
         if isinstance(session, ClusterIdentity):
             _claim(session, target.name, run, in_text=True)
-        if host_check is not None:
-            # SQL Server (#1551): after the scope and the claim, a host this
-            # build changes no password on is refused, before a pre-flight
-            # passes it or `rotate` stages.
-            host_check()
     except BaseException:
         with suppress(Exception):
             session.close()
@@ -12430,6 +12426,26 @@ def _preflight_target(
             # happen, so a profile that is not there must not refuse the run.
             reserved.add(binding.account.upper())
             continue
+        changeable = getattr(session, "require_changeable", None)
+        if changeable is not None:
+            # SQL Server (#1551): a login that can take no password, such as
+            # one whose `MUST_CHANGE` is pending, blocks the run here, before
+            # `creds rotate` stages one for it.
+            try:
+                changeable(binding.account)
+            except Exception as error:  # noqa: BLE001 -- a finding about this account
+                reported = _finding(error)
+                unreadable.append(
+                    Finding(
+                        target=target.name,
+                        check=preflight.ACCOUNT,
+                        message=reported.message,
+                        hint=reported.hint,
+                        account=binding.account,
+                        category=reported.category,
+                    )
+                )
+                continue
 
         # §5's profile assignment, asked before anything is written (decision #301).
         # Only where the policy declares one and the account is not already on it:

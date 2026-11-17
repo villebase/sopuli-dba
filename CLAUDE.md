@@ -157,9 +157,10 @@ detail.
    random password has nothing to converge on, so it is outside this rule:
    `creds generate` and `account reset-password` report `changed: true` and say
    what they replaced. Any verb with an observable target state is convergent.
-   Three exceptions. On MySQL and MariaDB, `creds apply` does not log in
-   before a change, so while a rotation's promotion is held it sets the staged
-   `pending` again on each run, until the rotation completes. On MariaDB a
+   Three exceptions. On MySQL and MariaDB, and on SQL Server on a host that
+   is not Linux, `creds apply` does not log in before a change, so while a
+   rotation's promotion is held it sets the staged `pending` again on each
+   run, until the rotation completes. On MariaDB a
    target whose one reaching login did not pass holds it until a new `pending`
    is staged (#1316). On MySQL and MariaDB, `creds finish-rollover` cannot
    read whether an old password is kept, so it sends the close on every run
@@ -169,7 +170,8 @@ detail.
    and reports `changed: true` on every run. Reasons:
    [H7](docs/decisions/log.md#h7), [#1223](docs/decisions/log.md#1223),
    [#1224](docs/decisions/log.md#1224), [#1267](docs/decisions/log.md#1267),
-   [#1270](docs/decisions/log.md#1270), [#1271](docs/decisions/log.md#1271).
+   [#1270](docs/decisions/log.md#1270), [#1271](docs/decisions/log.md#1271),
+   [#1551](docs/decisions/log.md#1551).
 
 10. **Safety settings only ratchet toward safe.** `readonly`, `--dry-run`,
     `max_targets`, `confirm_environments`, `safety.delivery.allowed_methods`

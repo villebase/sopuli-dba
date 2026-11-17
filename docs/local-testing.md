@@ -53,9 +53,9 @@ the SQL in `sql/oracle/` by hand. The PostgreSQL tool role is created by hand in
 `account expire-password` and the seen reset, because PostgreSQL cannot make a
 role change its password at its next login. A MySQL target and a MariaDB target
 each run `doctor`, the `creds` commands (§7) and the `account` commands (§9).
-A SQL Server target runs `doctor`, `report accounts` and `report history`,
-and on a Linux host also `creds generate`, `creds apply`, `creds rotate` and
-`creds finish-rollover` (§7).
+A SQL Server target runs `doctor`, `report accounts`, `report history`,
+`creds generate`, `creds apply`, `creds rotate` and `creds finish-rollover`
+(§7).
 
 ---
 
@@ -1178,9 +1178,10 @@ acme_app@%  mariadb-dev  IN_SYNC  any second password ended; the current passwor
 ### A SQL Server instance
 
 `doctor` connects to SQL Server and reports it, `report accounts` checks
-its logins, and `report history` reads a login's last password change. On a
-Linux host, `creds generate`, `apply`, `rotate` and `finish-rollover` run
-against it too (§8.9 has a sample). The client is pyodbc, from `pip install
+its logins, and `report history` reads a login's last password change.
+`creds generate`, `apply`, `rotate` and `finish-rollover` run against it
+too (§8.9 has a sample). On a Windows host, `apply` sets a password only
+from `pending`, so it makes no login before a change. The client is pyodbc, from `pip install
 "sopuli-dba[mssql]"`, and
 Microsoft's ODBC Driver 18 for SQL Server, which you install from Microsoft as
 a system package.

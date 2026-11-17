@@ -1,14 +1,14 @@
-"""SQL Server's password change on a Linux host, with pyodbc replaced. Tier 0
+"""SQL Server's password change, with pyodbc replaced. Tier 0
 where pyodbc is installed: nothing here opens a socket (#1551).
 ``02-mssql-privileges.md`` §6.2 has the order these steps follow."""
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from typing import Any
 
 import pytest
 
+from sopuli import cli
 from sopuli.config.model import ExpandedTarget, Target
 from sopuli.driver.protocol import (
     FAIL,
@@ -98,20 +98,65 @@ def test_a_window_is_refused_by_capability() -> None:
     assert caught.value.capability == "password_rollover"
 
 
+@pytest.mark.parametrize(
+    ("platform", "first"),
+    [("Linux", True), ("Windows", False), (None, False)],
+    ids=["linux", "windows", "unnamed"],
+)
+def test_only_a_linux_host_logs_in_before_a_change(platform: str | None, first: bool) -> None:
+    """On Windows a wrong password counts toward a lockout (WP1), so `apply`
+    sets only a `pending` there, as on MySQL. An unnamed host is Windows."""
+    assert opened(platform=platform).verifies_before_change is first
+
+
+def test_apply_makes_no_login_before_a_change_on_windows(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The command reads the property, so it gets `None` and no login is made."""
+
+    def connect(text: str, **kwargs: Any) -> None:
+        raise AssertionError("no login is made")
+
+    monkeypatch.setattr(pyodbc, "connect", connect)
+    before: Any = cli._verify_before_change
+    assert before(opened(platform="Windows"), "acme_app", Secret(PASSWORD), 2, attempts=2) is None
+
+
 @pytest.mark.parametrize("platform", ["Windows", None], ids=["windows", "unnamed"])
-def test_a_host_that_is_not_linux_is_refused_before_anything_is_sent(
-    platform: str | None,
+def test_a_host_that_is_not_linux_takes_the_change(
+    monkeypatch: pytest.MonkeyPatch, platform: str | None
 ) -> None:
+    monkeypatch.setattr(session.accounts, "read_one", lambda *a, **k: login())
     one = opened(platform=platform)
-    calls: list[Callable[[], object]] = [
-        lambda: one.set_password("acme_app", Secret(PASSWORD)),
-        lambda: one.policy_flags("acme_app"),
-        lambda: one.verify_password("acme_app", Secret(PASSWORD)),
-    ]
-    for call in calls:
-        with pytest.raises(NotWrittenError, match="on a Windows host"):
-            call()
-    assert one.connection.sent == []
+    assert one.policy_flags("acme_app") == PolicyFlags(check_policy=True, check_expiration=False)
+    assert one.set_password("acme_app", Secret(PASSWORD)).changed
+    [statement] = one.connection.sent
+    assert statement.endswith(" HASHED, CHECK_POLICY = OFF")
+
+
+@pytest.mark.parametrize("platform", ["Windows", None], ids=["windows", "unnamed"])
+def test_a_check_login_is_refused_on_a_host_that_is_not_linux(
+    monkeypatch: pytest.MonkeyPatch, platform: str | None
+) -> None:
+    """Only a change's own login, with the policy off, is made there."""
+
+    def connect(text: str, **kwargs: Any) -> None:
+        raise AssertionError("no login is made")
+
+    monkeypatch.setattr(pyodbc, "connect", connect)
+    with pytest.raises(NotWrittenError, match="on a Windows host"):
+        opened(platform=platform).verify_password("acme_app", Secret(PASSWORD), for_check=True)
+
+
+def test_a_change_logs_in_on_windows(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Step 3, made while the policy is off."""
+
+    class Opened:
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(pyodbc, "connect", lambda text, **kwargs: Opened())
+    one = opened(platform="Windows")
+    one.describe_user = lambda account: state()
+    assert one.verify_password("acme_app", Secret(PASSWORD)).result == PASS
 
 
 def login(**changes: Any) -> Any:
@@ -222,9 +267,17 @@ def test_a_locked_login_is_not_tried(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "no login was attempted" in (verified.detail or "")
 
 
-def test_the_command_refuses_a_windows_host_when_it_opens_the_session() -> None:
-    """So `creds rotate` refuses before it stages, and a pre-flight before it
-    passes the target (invariant 4)."""
-    with pytest.raises(NotWrittenError, match="on a Windows host"):
-        opened(platform="Windows").require_host()
-    opened().require_host()
+def test_the_pre_flight_refuses_a_pending_must_change(monkeypatch: pytest.MonkeyPatch) -> None:
+    """So `creds rotate --preflight` refuses before it stages (invariant 4)."""
+    monkeypatch.setattr(session.accounts, "read_one", lambda *a, **k: login(must_change=True))
+    with pytest.raises(session.MustChangeError, match="must change its password"):
+        opened().require_changeable("acme_app")
+
+
+@pytest.mark.parametrize("found", [True, False], ids=["open", "missing"])
+def test_the_pre_flight_passes_a_login_that_can_take_a_value(
+    monkeypatch: pytest.MonkeyPatch, found: bool
+) -> None:
+    """A missing login is the pre-flight's own finding."""
+    monkeypatch.setattr(session.accounts, "read_one", lambda *a, **k: login() if found else None)
+    opened().require_changeable("acme_app")

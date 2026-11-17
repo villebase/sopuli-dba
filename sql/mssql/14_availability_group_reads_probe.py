@@ -231,10 +231,14 @@ def measure(service: str, major: str, results: dict[str, str]) -> None:
         results["AR5 groups read in the instance's master"] = read(one, GROUPS)
         ch.sa(one, f"GRANT VIEW ANY DEFINITION TO [{TOOL}]", master)
         ch.sa(one, f"GRANT VIEW ANY DEFINITION TO [{TOOL}]")
-        results["AR5 groups read there, VIEW ANY DEFINITION"] = read(one, GROUPS, master)
-        results["AR5 groups read in the instance's master, VIEW ANY DEFINITION"] = read(one, GROUPS)
-        ch.sa(one, f"REVOKE VIEW ANY DEFINITION FROM [{TOOL}]", master)
-        ch.sa(one, f"REVOKE VIEW ANY DEFINITION FROM [{TOOL}]")
+        try:
+            results["AR5 groups read there, VIEW ANY DEFINITION"] = read(one, GROUPS, master)
+            results["AR5 groups read in the instance's master, VIEW ANY DEFINITION"] = read(
+                one, GROUPS
+            )
+        finally:
+            ch.sa(one, f"REVOKE VIEW ANY DEFINITION FROM [{TOOL}]", master)
+            ch.sa(one, f"REVOKE VIEW ANY DEFINITION FROM [{TOOL}]")
         for where, database in (
             ("the group's master", master),
             ("the instance's master", "master"),

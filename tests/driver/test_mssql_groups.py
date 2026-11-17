@@ -16,10 +16,11 @@ from sopuli.config.model import ExpandedTarget, Target
 from sopuli.driver.mssql.groups import (
     PHYSICAL_NAME,
     REPLICAS,
-    ContainedGroupLoginError,
-    contained_master,
+    ContainedGroupMasterError,
     replicas,
+    require_instance_master,
 )
+from sopuli.driver.mssql.scope import SCOPE
 from sopuli.exit_codes import ExitCode
 
 
@@ -55,36 +56,40 @@ def test_a_server_in_no_group_has_no_replicas() -> None:
 
 
 @pytest.mark.parametrize("name", ["master", "MASTER"])
-def test_the_instances_own_master_is_not_a_group(name: str) -> None:
+def test_the_instances_own_master_passes(name: str) -> None:
     """AR6: on a server in no group, on every release, it is master."""
-    assert contained_master(FakeCursor({PHYSICAL_NAME: [(name,)]})) is None
+    require_instance_master(FakeCursor({PHYSICAL_NAME: [(name,)]}), target="mssql-dev")
 
 
-def test_a_contained_groups_master_is_named() -> None:
+def test_a_contained_groups_master_is_refused_by_name() -> None:
     """AR6: DB_NAME() says master there; the physical name does not."""
-    cursor = FakeCursor({PHYSICAL_NAME: [("sopuli_probe_cag_master",)]})
-    assert contained_master(cursor) == "sopuli_probe_cag_master"
+    cursor = FakeCursor({PHYSICAL_NAME: [("acme_cag_master",)]})
+    with pytest.raises(ContainedGroupMasterError) as caught:
+        require_instance_master(cursor, target="mssql-dev")
+    assert caught.value.category == "config"
+    assert caught.value.exit_code == ExitCode.CONFIG_INVALID
+    assert str(caught.value).startswith(
+        'target "mssql-dev" is a contained Availability Group\'s own master, acme_cag_master'
+    )
 
 
 @pytest.mark.parametrize("answer", [[], [(None,)], [("",)]])
-def test_a_read_that_cannot_say_counts_as_a_group(answer: list[tuple[Any, ...]]) -> None:
-    """Fails closed: a login is never let through as the instance's on a
-    read that did not say so."""
-    assert contained_master(FakeCursor({PHYSICAL_NAME: answer})) == "(unnamed)"
+def test_a_read_that_cannot_say_is_refused_and_says_so(answer: list[tuple[Any, ...]]) -> None:
+    """Fails closed, with a message that claims no group it did not see."""
+    with pytest.raises(ContainedGroupMasterError) as caught:
+        require_instance_master(FakeCursor({PHYSICAL_NAME: answer}), target="mssql-dev")
+    message = str(caught.value)
+    assert message.startswith('target "mssql-dev" did not say which database its session is in')
+    assert "is a contained" not in message
 
 
-def test_the_refusal_is_a_config_error_about_the_account() -> None:
-    error = ContainedGroupLoginError("acme_app_user", "acme_cag_master", target="mssql-dev")
-    assert error.category == "config"
-    assert error.exit_code == ExitCode.CONFIG_INVALID
-    assert error.about_account
-    assert 'account "acme_app_user" on target "mssql-dev"' in str(error)
-    assert "acme_cag_master" in str(error)
+#: A 2025 server whose master takes writes, as observe() reads it.
+SERVER = [("17.0.5065.9", 3, "READ_WRITE")]
 
 
 def _session(answers: dict[str, list[tuple[Any, ...]]]) -> Any:
     session = pytest.importorskip("sopuli.driver.mssql.session")
-    cursor = FakeCursor(answers)
+    cursor = FakeCursor({SCOPE: SERVER, **answers})
 
     class Connection:
         def cursor(self) -> FakeCursor:
@@ -97,22 +102,52 @@ def _session(answers: dict[str, list[tuple[Any, ...]]]) -> Any:
     return opened, cursor
 
 
-def test_the_session_reads_each_once() -> None:
-    opened, cursor = _session({REPLICAS: [("a",), ("b",)], PHYSICAL_NAME: [("master",)]})
+def test_the_replicas_are_read_once() -> None:
+    opened, cursor = _session({REPLICAS: [("a",), ("b",)]})
     for _ in range(2):
         assert opened.availability_replicas() == ("a", "b")
-        assert opened.contained_master() is None
-    assert cursor.sent == [REPLICAS, PHYSICAL_NAME]
+    assert cursor.sent == [REPLICAS]
 
 
-def test_describe_user_refuses_a_login_in_a_contained_groups_master(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_the_scope_refuses_a_contained_groups_master_once() -> None:
+    opened, cursor = _session({PHYSICAL_NAME: [("acme_cag_master",)]})
+    with pytest.raises(ContainedGroupMasterError):
+        opened.scope()
+    assert cursor.sent == [SCOPE, PHYSICAL_NAME]
+
+
+def test_the_scope_of_the_instances_master_is_read_and_kept() -> None:
+    opened, cursor = _session({PHYSICAL_NAME: [("master",)]})
+    assert opened.scope().read_write is True
+    opened.scope()
+    assert cursor.sent == [SCOPE, PHYSICAL_NAME]
+
+
+def _with_login(monkeypatch: pytest.MonkeyPatch, physical: str) -> Any:
     from sopuli.driver.mssql import accounts
 
-    opened, _ = _session({PHYSICAL_NAME: [("acme_cag_master",)]})
-    login = type("Login", (), {"name": "acme_app_user", "principal_id": 300})()
-    monkeypatch.setattr(accounts, "read_one", lambda cursor, account, target: login)
+    opened, cursor = _session({PHYSICAL_NAME: [(physical,)]})
+    read: list[str] = []
 
-    with pytest.raises(ContainedGroupLoginError):
+    def read_one(cursor: Any, account: str, target: str) -> None:
+        read.append(account)
+
+    monkeypatch.setattr(accounts, "read_one", read_one)
+    return opened, read
+
+
+def test_describe_user_refuses_before_reading_any_login(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A login the group's master does not have is refused too, not read as
+    missing: the scope refuses before the login is looked up."""
+    opened, read = _with_login(monkeypatch, "acme_cag_master")
+    with pytest.raises(ContainedGroupMasterError):
         opened.describe_user("acme_app_user")
+    assert read == []
+
+
+def test_describe_user_reads_a_login_in_the_instances_master(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    opened, read = _with_login(monkeypatch, "master")
+    assert opened.describe_user("acme_app_user") is None
+    assert read == ["acme_app_user"]

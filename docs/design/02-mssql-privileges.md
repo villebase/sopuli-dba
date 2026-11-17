@@ -247,7 +247,8 @@ on 2022** (unverified: mssql-ag-2022).
 and not the group's row or its own role** (`14_availability_group_reads_probe.py`,
 AR1, on 15.0.4510.2 and 17.0.5065.9). `sys.availability_replicas` gives every
 replica of every group the instance is in, itself among them, and the driver
-reads their names. `sys.availability_groups` gives a row only with `VIEW ANY
+reads their names, for `doctor`'s warning above (open: #1550).
+`sys.availability_groups` gives a row only with `VIEW ANY
 DEFINITION`, and the replica's role, PRIMARY or SECONDARY, needs `VIEW SERVER
 STATE` or `VIEW SERVER PERFORMANCE STATE`, both of which show every session
 (AR2, AR3, §3). So the driver reads neither, and needs no grant beyond
@@ -256,13 +257,15 @@ STATE` or `VIEW SERVER PERFORMANCE STATE`, both of which show every session
 A contained group, 2022 and later, has a `master` of its own, which it copies
 to every replica: on 17.0.5065.9, a login made there on the primary, and a
 password set there, log in on the secondary (AG5). **The tool refuses such a
-login**, before anything is changed, as a configuration fault: `config`,
-exit 9. A session in the group's `master` reads `DB_NAME()` as `master`
-(AR5), and its database's `physical_database_name` in `sys.databases` as the
-group's master, such as `acme_cag_master`, where the instance's `master`
-reads `master` on 2019, 2022 and 2025 (AR6). The driver reads it once per
-session, and refuses every login of a session whose database is not the
-instance's `master`, or whose name it cannot read.
+login**: it refuses the whole target, when it reads the session's scope,
+before any login is read, as a configuration fault: `config`, exit 9. A
+session in the group's `master` reads `DB_NAME()` as `master` (AR5), and its
+database's `physical_database_name` in `sys.databases` as the group's master,
+such as `acme_cag_master`, where the instance's `master` reads `master` on
+2019, 2022 and 2025 (AR6). The physical name describes the database, not the
+connection, so it says where the session is however it got there, through a
+group's listener or not. A session whose database names no physical name is
+refused too, with a message that says so.
 
 ---
 

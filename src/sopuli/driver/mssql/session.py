@@ -93,17 +93,23 @@ class MssqlSession(ClosesConnection):
     #: The Availability Group reads (:mod:`~sopuli.driver.mssql.groups`),
     #: read on first use.
     _replicas: tuple[str, ...] | None = field(default=None, init=False, repr=False)
-    _contained_master: str | None = field(default=None, init=False, repr=False)
-    _master_read: bool = field(default=False, init=False, repr=False)
 
     def scope(self) -> Scope:
         """What this session is: a server, read-write or not, and its
-        encryption. Probed on the first call and cached (invariant 3)."""
+        encryption. Probed on the first call and cached (invariant 3).
+
+        A session in a contained Availability Group's own ``master`` is
+        refused here, before any login is read
+        (:class:`~sopuli.driver.mssql.groups.ContainedGroupMasterError`)."""
         if self._scope is None:
             settings = self.target.target.mssql_settings
-            self._scope = self._read(
+            scope = self._read(
                 lambda cursor: observe(cursor, target=self.target.name, settings=settings)
             )
+            self._read(
+                lambda cursor: groups.require_instance_master(cursor, target=self.target.name)
+            )
+            self._scope = scope
             if LOG.isEnabledFor(logging.DEBUG):
                 LOG.debug(
                     "%s is a server, %s %s, encryption %s",
@@ -153,14 +159,13 @@ class MssqlSession(ClosesConnection):
         see one, so its name reads as ``None`` (``02-mssql-privileges.md``
         §4).
         """
+        # The scope refuses a contained group's master before a login is read.
+        self.scope()
         login = self._read(
             lambda cursor: accounts.read_one(cursor, account, target=self.target.name)
         )
         if login is None:
             return None
-        master = self.contained_master()
-        if master is not None:
-            raise groups.ContainedGroupLoginError(login.name, master, target=self.target.name)
         assessment = self.admin_assessment(login.principal_id)
         return accounts.state_of(
             login,
@@ -176,14 +181,6 @@ class MssqlSession(ClosesConnection):
         if self._replicas is None:
             self._replicas = self._read(groups.replicas)
         return self._replicas
-
-    def contained_master(self) -> str | None:
-        """The contained Availability Group's master the session is in, or
-        ``None`` where it is in the instance's own. Read once and cached."""
-        if not self._master_read:
-            self._contained_master = self._read(groups.contained_master)
-            self._master_read = True
-        return self._contained_master
 
     #: The words for two targets that are one instance
     #: (:class:`~sopuli.driver.clusters.ClusterIdentity`). Not fields.

@@ -20,7 +20,7 @@ from sopuli.secrets import Secret
 session_module = pytest.importorskip("sopuli.driver.mssql.session")
 
 
-def test_a_server_in_no_group_has_no_replicas_and_its_own_master(live_mssql: Any) -> None:
+def test_a_server_in_no_group_has_no_replicas_and_passes_the_scope(live_mssql: Any) -> None:
     target = ExpandedTarget(
         target=Target(
             name="tier1-mssql",
@@ -33,6 +33,7 @@ def test_a_server_in_no_group_has_no_replicas_and_its_own_master(live_mssql: Any
     opened = session_module.MssqlDriver(correlation_id="t1-1550").connect(target, credential)
     try:
         assert opened.availability_replicas() == ()
-        assert opened.contained_master() is None
+        # The scope passes: the session's database is the instance's master.
+        assert opened.scope().read_write is True
     finally:
         opened.close()

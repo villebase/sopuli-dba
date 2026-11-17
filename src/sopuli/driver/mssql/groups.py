@@ -43,21 +43,23 @@ CONTAINED_HINT = (
 )
 
 
-class ContainedGroupLoginError(DriverError):
+UNREAD_HINT = (
+    "the tool login reads its database's physical_database_name in sys.databases "
+    "with ALTER ANY LOGIN alone on every release measured; without it the tool cannot "
+    "tell the instance's master from a contained Availability Group's, whose logins "
+    "the group copies to every replica (02-mssql-privileges.md §4)"
+)
+
+
+class ContainedGroupMasterError(DriverError):
     """The session is in a contained Availability Group's own ``master``, so
-    every login it reads is the group's (#1538, decision 4). ``config``,
-    exit 9, before anything is changed (invariant 4)."""
+    every login it reads is the group's (#1538, decision 4), or the session
+    cannot tell whether it is. The whole target is refused, at its scope,
+    before any login is read: ``config``, exit 9, before anything is changed
+    (invariant 4)."""
 
     category = "config"
     exit_code = ExitCode.CONFIG_INVALID
-    about_account = True
-
-    def __init__(self, account: str, master: str, *, target: str) -> None:
-        super().__init__(
-            f'account "{account}" on target "{target}" is a login of a contained '
-            f"Availability Group, in its master {master}",
-            hint=CONTAINED_HINT,
-        )
 
 
 def replicas(cursor: Cursor) -> tuple[str, ...]:
@@ -66,16 +68,21 @@ def replicas(cursor: Cursor) -> tuple[str, ...]:
     return tuple(str(row[0]) for row in cursor.fetchall() if row[0] is not None)
 
 
-def contained_master(cursor: Cursor) -> str | None:
-    """The physical name of the contained group's master the session is in,
-    or ``None`` where it is in the instance's own ``master``.
-
-    A name that is not ``master``, or no name at all, counts as a contained
-    group's: a read that cannot say where the session is never lets a login
-    through as the instance's."""
+def require_instance_master(cursor: Cursor, *, target: str) -> None:
+    """Refuse a session that is not in the instance's own ``master``: one in
+    a contained group's, or one whose database names no physical name. A
+    read that cannot say where the session is never lets it through."""
     cursor.execute(PHYSICAL_NAME)
     row = cursor.fetchone()
-    name = None if row is None or row[0] is None else str(row[0])
-    if name is not None and name.lower() == MASTER:
-        return None
-    return name or "(unnamed)"
+    name = None if row is None or row[0] is None else str(row[0]).strip()
+    if name and name.lower() == MASTER:
+        return
+    if not name:
+        raise ContainedGroupMasterError(
+            f'target "{target}" did not say which database its session is in',
+            hint=UNREAD_HINT,
+        )
+    raise ContainedGroupMasterError(
+        f'target "{target}" is a contained Availability Group\'s own master, {name}',
+        hint=CONTAINED_HINT,
+    )

@@ -204,8 +204,9 @@ A login's state comes from one read (`accounts.py`). `is_disabled` is a lock
 a person set, `ALTER LOGIN … DISABLE`, and `LOGINPROPERTY`'s `IsLocked` a
 lockout after failed logins, which ends by itself
 ([#1554](../decisions/log.md#1554)). `IsExpired` and `IsMustChange` each
-mean the password has stopped working, and the expiry date is
-`DaysUntilExpiration` days from the read. The failed-login count is unknown:
+mean the password has stopped working. `DaysUntilExpiration` is in whole
+days, so the expiry date is the latest it can be: that many days and one more
+from the read. The failed-login count is unknown:
 it does not count past 1 on Linux (LK2), and no threshold is readable.
 
 **A contained user may have a login's name.** In its database the user's
@@ -219,10 +220,15 @@ it (§7).
 `SERVERPROPERTY('MachineName')` and `SERVERPROPERTY('ServerName')` are each
 the host's name. `master`'s `service_broker_guid` is all zeros, and `msdb`'s
 comes with the image: a second container of one image reads the same value
-(ID2, ID5). So the driver names an instance by `@@SERVERNAME`, and two
-targets that give one name are refused as one instance, as two targets on one
-MySQL server are. Two instances on hosts of one name are refused too,
-wrongly: nothing measured tells them apart.
+(ID2, ID5). So the driver names an instance by `SERVERPROPERTY('ServerName')`,
+and two targets that give one name are refused as one instance, as two
+targets on one MySQL server are. Two instances on hosts of one name are
+refused too, wrongly: nothing measured tells them apart. Such a pair can't
+be declared in one config; each needs a config of its own. The driver does
+not use `@@SERVERNAME`: by Microsoft's documentation it keeps the name of the
+host the instance was installed on, so hosts cloned from one image would
+read one name, where `ServerName` follows each host's own name. That
+difference is not measured.
 
 **Each replica of an Availability Group is a target of its own**
 (decision 4). On 15.0.4510.2 and 17.0.5065.9, a login and its password are

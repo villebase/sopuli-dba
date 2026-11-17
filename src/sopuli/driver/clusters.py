@@ -8,7 +8,8 @@ names, so the second is refused, as a name declared twice is
 A MySQL server is one set of accounts too, known by its ``server_uuid``, and
 so is a MariaDB server, known by its ``@@server_uid`` (#1286), and a Galera
 cluster, known by its ``wsrep_cluster_state_uuid`` (#1346). A SQL Server
-instance is known by its ``@@SERVERNAME``, the only identity measured, so two
+instance is known by its ``SERVERPROPERTY('ServerName')``, the host's name and
+the only identity measured, so two
 instances on hosts of one name are refused as one (#1549).
 
 A session that can say which cluster it reached has ``cluster_identity()``,

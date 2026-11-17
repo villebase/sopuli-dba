@@ -10,7 +10,7 @@ target's ``mssql:`` settings (:mod:`~sopuli.driver.mssql.connection`), labels
 the session with the run's correlation id, and reports the scope: ``server``,
 whether ``master`` takes writes, and its encryption. It reads a declared
 login (:meth:`MssqlSession.describe_user`), refusing every principal but a
-SQL login, and names the instance by ``@@SERVERNAME``
+SQL login, and names the instance by ``SERVERPROPERTY('ServerName')``
 (:meth:`MssqlSession.cluster_identity`). Every other method refuses with
 ``SOPULI-20006``, and the registry lists no command but `doctor`: the first
 verbs come with the password change (#1551) and the login check (#1552).
@@ -67,8 +67,9 @@ GUARDRAIL_NOT_READ = (
 
 
 def _server_name(cursor: Cursor) -> str | None:
-    """``@@SERVERNAME``, or ``None`` where the server gives none."""
-    cursor.execute("SELECT @@SERVERNAME")
+    """``SERVERPROPERTY('ServerName')``, or ``None`` where the server gives
+    none."""
+    cursor.execute("SELECT CAST(SERVERPROPERTY('ServerName') AS nvarchar(256))")
     row = cursor.fetchone()
     return str(row[0]) if row and row[0] is not None else None
 
@@ -143,19 +144,25 @@ class MssqlSession(ClosesConnection):
     #: The words for two targets that are one instance
     #: (:class:`~sopuli.driver.clusters.ClusterIdentity`). Not fields.
     identity_kind = "SQL Server instance"
-    identity_key = "@@SERVERNAME"
+    identity_key = "ServerName"
     identity_hint = (
         "declare each instance once: two targets on one instance would change its "
         "logins under two names"
     )
 
     def cluster_identity(self) -> str | None:
-        """The instance's ``@@SERVERNAME``, which the CLI uses to refuse two
-        targets that are one instance. It is the host's name, with the
-        instance's for a named instance. Nothing else measured tells two
-        instances apart: ``master``'s ``service_broker_guid`` is all zeros, and
-        ``msdb``'s comes with the image (``05_identity_probe.py``, ID2, ID5).
-        So two instances on hosts of one name are refused as one."""
+        """The instance's ``SERVERPROPERTY('ServerName')``, which the CLI uses
+        to refuse two targets that are one instance. It is the host's name,
+        with the instance's for a named instance. Nothing else measured tells
+        two instances apart: ``master``'s ``service_broker_guid`` is all zeros,
+        and ``msdb``'s comes with the image (``05_identity_probe.py``, ID2,
+        ID5). So two instances on hosts of one name are refused as one.
+
+        Not ``@@SERVERNAME``, which reads the same on the matrix (ID2): by
+        Microsoft's documentation it keeps the name the instance was installed
+        under until somebody resets it, so two hosts cloned from one image
+        would read one name. ``ServerName`` follows the host's own name. That
+        difference is not measured."""
         return self._read(_server_name)
 
     def byte_limit(self) -> NoReturn:

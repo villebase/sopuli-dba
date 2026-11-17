@@ -25,17 +25,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any
 
+from sopuli.driver.mysql_family.accounts import EXPIRED, LOCKED, OPEN, locked_status
 from sopuli.driver.protocol import Cursor, DriverError, UserState
 from sopuli.exit_codes import ExitCode
 
-#: ``UserState.status``, in the words Oracle uses for the same states, as the
-#: MySQL driver words them.
-OPEN = "OPEN"
-LOCKED = "LOCKED"
+__all__ = ["EXPIRED", "LOCKED", "LOCKED_TIMED", "OPEN"]
+
+#: A lockout after failed logins, in Oracle's word for it, as the MySQL survey
+#: spells it. The Oracle module's constant cannot be imported from here:
+#: ``tests/test_driver_seam.py`` keeps Oracle's modules inside its driver.
 LOCKED_TIMED = "LOCKED(TIMED)"
-EXPIRED = "EXPIRED"
 
 #: ``sys.server_principals.type`` of a login with a password.
 SQL_LOGIN = "S"
@@ -58,13 +58,19 @@ NOT_A_PASSWORD_LOGIN_HINT = (
     "account out of the config, or declare the SQL login that the application uses"
 )
 
+#: ``UserState.lockout_evidence`` of a disabled login that is also locked out.
+ALSO_LOCKED_OUT = "IsLocked reads 1: the login is also locked out after failed logins"
+
 #: Why ``password_changed_at`` is ``None`` for a login that has one.
 NO_CHANGE_DATE = "LOGINPROPERTY gave no PasswordLastSetTime for this login"
 
 #: One login by name. ``LOGINPROPERTY`` gives ``sql_variant``, which pyodbc
 #: cannot fetch, so each value is cast. ``PasswordLastSetTime`` is the
-#: server's local time, and is moved to UTC by the server's own offset. The
-#: last column is whether the login is the session's own.
+#: server's local time. It is moved to UTC by the server's offset now, read
+#: once from ``SYSDATETIMEOFFSET()``: no release before 2022 names the server's
+#: time zone, so on a host whose zone keeps daylight saving, a time set in the
+#: other season is an hour off. The last column is whether the login is the
+#: session's own.
 LOGIN = (
     "SELECT p.name, p.type, p.principal_id, p.is_disabled, "
     "l.is_policy_checked, l.is_expiration_checked, "
@@ -72,7 +78,7 @@ LOGIN = (
     "CAST(LOGINPROPERTY(p.name, 'IsMustChange') AS int), "
     "CAST(LOGINPROPERTY(p.name, 'IsExpired') AS int), "
     "CAST(LOGINPROPERTY(p.name, 'DaysUntilExpiration') AS int), "
-    "DATEADD(minute, DATEDIFF(minute, GETDATE(), GETUTCDATE()), "
+    "DATEADD(minute, -DATEPART(tzoffset, SYSDATETIMEOFFSET()), "
     "CAST(LOGINPROPERTY(p.name, 'PasswordLastSetTime') AS datetime)), "
     "CASE WHEN p.name = SUSER_SNAME() THEN 1 ELSE 0 END "
     "FROM sys.server_principals AS p "
@@ -118,14 +124,12 @@ class Login:
     session_login: bool
 
 
-def _flag(value: Any) -> bool:
-    return bool(value) if value is not None else False
-
-
 def read_one(cursor: Cursor, account: str, *, target: str) -> Login | None:
     """The declared login's row, ``None`` where no server principal has the
     name. Raises :class:`NotAPasswordLoginError` for any principal but a SQL
-    login."""
+    login, and :class:`~sopuli.driver.protocol.DriverError` for a SQL login
+    whose ``sys.sql_logins`` row was not read: its flags would otherwise read
+    as off."""
     cursor.execute(LOGIN, (account,))
     row = cursor.fetchone()
     if row is None:
@@ -137,33 +141,36 @@ def read_one(cursor: Cursor, account: str, *, target: str) -> Login | None:
         raise NotAPasswordLoginError(
             str(name), OTHER_KINDS.get(kind, f"a server principal of type {kind}"), target=target
         )
+    if policy is None or expiration is None:
+        raise DriverError(
+            f'login "{name}" on target "{target}" has no row in sys.sql_logins that the '
+            "tool login can read",
+            hint="sopuli cannot read the login's policy flags, so it does not guess them",
+        )
     return Login(
         name=str(name),
         principal_id=int(principal_id),
-        disabled=_flag(disabled),
-        policy_checked=_flag(policy),
-        expiration_checked=_flag(expiration),
-        locked_out=_flag(locked_out),
-        must_change=_flag(must_change),
-        expired=_flag(expired),
+        disabled=bool(disabled),
+        policy_checked=bool(policy),
+        expiration_checked=bool(expiration),
+        locked_out=bool(locked_out),
+        must_change=bool(must_change),
+        expired=bool(expired),
         days_until_expiration=int(days) if days is not None else None,
         changed_at=changed_at.replace(tzinfo=UTC) if isinstance(changed_at, datetime) else None,
-        session_login=_flag(own),
+        session_login=bool(own),
     )
 
 
 def status(*, disabled: bool, locked_out: bool, expired: bool) -> str:
-    """``UserState.status`` in Oracle's words. A disabled login is
-    ``LOCKED`` whatever its lockout, because a person set it."""
-    if disabled:
-        lock = LOCKED
-    elif locked_out:
-        lock = LOCKED_TIMED
-    else:
-        lock = ""
-    if expired and lock:
-        return f"{EXPIRED} & {lock}"
-    return EXPIRED if expired else (lock or OPEN)
+    """``UserState.status`` in Oracle's words, as the MySQL driver words its
+    states (:func:`~sopuli.driver.mysql_family.accounts.locked_status`), and
+    ``LOCKED(TIMED)`` for a lockout nobody set, as its survey does. A
+    disabled login is ``LOCKED`` whatever its lockout, because a person set
+    it."""
+    if locked_out and not disabled:
+        return f"{EXPIRED} & {LOCKED_TIMED}" if expired else LOCKED_TIMED
+    return locked_status(locked=disabled, expired=expired)
 
 
 def state_of(login: Login, *, now: datetime, admin_unread: str | None) -> UserState:
@@ -171,9 +178,10 @@ def state_of(login: Login, *, now: datetime, admin_unread: str | None) -> UserSt
 
     The password has stopped working where ``IsExpired`` says so, or where
     ``IsMustChange`` does: the server then answers its owner ``18488`` until
-    it is changed (LK5). The expiry date is ``DaysUntilExpiration`` days from
-    ``now``, to the day, because the server gives whole days, and ``None``
-    where the login's expiry is off.
+    it is changed (LK5). The server gives ``DaysUntilExpiration`` in whole
+    days, so the expiry date is the latest it can be: that many days and one
+    more from ``now``. An earlier bound would show a date already past for a
+    password with hours left. It is ``None`` where the login's expiry is off.
 
     The failed-login count is left unknown. ``BadPasswordCount`` does not
     count past 1 on the Linux images (LK2), and no lockout threshold is
@@ -185,13 +193,14 @@ def state_of(login: Login, *, now: datetime, admin_unread: str | None) -> UserSt
     expired = login.expired or login.must_change
     expires_at = None
     if login.expiration_checked and login.days_until_expiration is not None:
-        expires_at = now + timedelta(days=login.days_until_expiration)
+        expires_at = now + timedelta(days=login.days_until_expiration + 1)
     locked = login.disabled or login.locked_out
     return UserState(
         name=login.name,
         status=status(disabled=login.disabled, locked_out=login.locked_out, expired=expired),
         locked=locked,
         deliberately_locked=login.disabled,
+        lockout_evidence=ALSO_LOCKED_OUT if login.disabled and login.locked_out else None,
         expired=expired,
         password_changed_at=login.changed_at,
         password_changed_unknown=None if login.changed_at else NO_CHANGE_DATE,

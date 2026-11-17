@@ -16,6 +16,7 @@ from sopuli.driver.mssql.accounts import (
     Login,
     NotAPasswordLoginError,
 )
+from sopuli.driver.protocol import DriverError
 from sopuli.exit_codes import ExitCode
 
 NOW = datetime(2026, 11, 17, 12, 0, tzinfo=UTC)
@@ -120,9 +121,24 @@ def test_an_open_login() -> None:
 
 def test_a_disabled_login_is_locked_by_a_person() -> None:
     """``is_disabled`` is H4's plain lock, which a reset refuses (#1554)."""
-    state = accounts.state_of(login(disabled=True, locked_out=1), now=NOW, admin_unread=None)
+    state = accounts.state_of(login(disabled=True), now=NOW, admin_unread=None)
     assert state.status == LOCKED
     assert (state.locked, state.deliberately_locked) == (True, True)
+    assert state.lockout_evidence is None
+
+
+def test_a_disabled_login_that_is_also_locked_out_says_so() -> None:
+    """The refusal can then name the lockout too (#1454)."""
+    state = accounts.state_of(login(disabled=True, locked_out=1), now=NOW, admin_unread=None)
+    assert state.status == LOCKED
+    assert state.lockout_evidence == accounts.ALSO_LOCKED_OUT
+
+
+@pytest.mark.parametrize("column", ["policy", "expiration"])
+def test_a_sql_login_with_no_sql_logins_row_is_not_guessed(column: str) -> None:
+    """Its flags would otherwise read as off, and no expiry as "none"."""
+    with pytest.raises(DriverError, match="has no row in sys.sql_logins"):
+        accounts.read_one(FakeCursor(row(**{column: None})), "acme_app", target="mssql-dev")
 
 
 def test_a_lockout_is_timed() -> None:
@@ -144,9 +160,13 @@ def test_expired_and_locked_out() -> None:
     assert state.status == f"{EXPIRED} & {LOCKED_TIMED}"
 
 
-def test_the_expiry_date_counts_whole_days_where_expiry_is_on() -> None:
+def test_the_expiry_date_is_the_latest_it_can_be() -> None:
+    """Whole days: 0 days left may be 23 hours, so the date is never one
+    already past for a password that still works."""
     on = accounts.state_of(login(expiration=True, days=12), now=NOW, admin_unread=None)
-    assert on.password_expires_at == NOW + timedelta(days=12)
+    assert on.password_expires_at == NOW + timedelta(days=13)
+    last = accounts.state_of(login(expiration=True, days=0), now=NOW, admin_unread=None)
+    assert last.password_expires_at == NOW + timedelta(days=1)
     off = accounts.state_of(login(expiration=False, days=12), now=NOW, admin_unread=None)
     assert off.password_expires_at is None
 

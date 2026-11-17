@@ -117,7 +117,8 @@ def test_the_mariadb_session_names_its_server() -> None:
 
 
 def test_the_mssql_session_names_its_instance() -> None:
-    """For the same reason, on SQL Server, by ``@@SERVERNAME`` (#1549)."""
+    """For the same reason, on SQL Server, by ``SERVERPROPERTY('ServerName')``
+    (#1549)."""
     session_module = pytest.importorskip("sopuli.driver.mssql.session")
     from sopuli.config.model import ExpandedTarget, Target
 
@@ -125,7 +126,7 @@ def test_the_mssql_session_names_its_instance() -> None:
     session = session_module.MssqlSession(connection=None, target=target)
 
     assert isinstance(session, ClusterIdentity)
-    assert (session.identity_kind, session.identity_key) == ("SQL Server instance", "@@SERVERNAME")
+    assert (session.identity_kind, session.identity_key) == ("SQL Server instance", "ServerName")
     assert session.identity_caveat is None
 
 

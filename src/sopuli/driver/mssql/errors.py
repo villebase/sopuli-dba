@@ -184,6 +184,10 @@ STRICT_HINT = (
 #: :class:`~sopuli.driver.protocol.UnsupportedCapabilityError`'s ``remedy``.
 STRICT_REMEDY = "set `mssql.encrypt: mandatory` on the target"
 
+#: A :class:`Diagnosis`'s category for a capability the server lacks: the
+#: session raises it as :class:`~sopuli.driver.protocol.UnsupportedCapabilityError`.
+CAPABILITY = "capability"
+
 DRIVER_HINT = (
     "install Microsoft ODBC Driver 18 for SQL Server, Microsoft's system package: "
     "pyodbc reaches the server through it. `sopuli doctor` lists the ODBC drivers "
@@ -211,10 +215,6 @@ class Diagnosis(errors.Diagnosis):
     exit_code: ExitCode
     message: str
     hint: str | None = None
-    #: A reset under ``strict`` while connecting: the server does not take
-    #: TDS 8, as 2019 and 2022 do not (TL3). The session raises it as the
-    #: capability missing (:data:`STRICT_ENCRYPTION`).
-    strict_refused: bool = False
 
 
 def records(message: str) -> tuple[Record, ...]:
@@ -289,13 +289,14 @@ def from_error(
     if any(_CERTIFICATE.search(record.text) for record in found):
         hint = CERTIFICATE_HINT
     elif strict and connecting and any(record.number == CONNECTION_RESET for record in found):
+        # The server does not take TDS 8, as 2019 and 2022 do not (TL3). The
+        # session raises it as the capability missing (STRICT_ENCRYPTION).
         return Diagnosis(
             code=code,
-            category="capability",
+            category=CAPABILITY,
             exit_code=ExitCode.UNSUPPORTED_CAPABILITY,
             message=message,
             hint=STRICT_HINT,
-            strict_refused=True,
         )
     return Diagnosis(
         code=code, category="connectivity", exit_code=ExitCode.FAILURE, message=message, hint=hint

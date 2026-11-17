@@ -1924,10 +1924,13 @@ strict connection in the measurements, and only 2025 accepted one (TL3,
 `mssql-client-tls`). A server that does not accept `strict` resets the
 connection, `10054`, during the TLS handshake, before the login. The tool
 cannot read the server over a connection it resets, so a reset under
-`strict` while connecting is the capability missing: the target is refused
-at plan time, exit 5, naming `strict_encryption` and the target, with a hint
-to use `mandatory` (invariant 4). A network fault that resets the
-connection reads the same, and the hint says so.
+`strict` while connecting is the capability missing: the driver refuses the
+target, exit 5, naming `strict_encryption` and the target, with the
+driver's message and a hint to use `mandatory` (invariant 4). A network
+fault that resets the connection reads the same, and the hint says so.
+`doctor` reports the refusal for the target. A run that changes passwords
+refuses it at plan time, before any target is changed, from the first
+SQL Server verb on (open: #1551).
 
 `optional`, and `trust_server_certificate: true`, warn with `SOPULI-W058` on
 every run, once per target: anything on the network path can then present its

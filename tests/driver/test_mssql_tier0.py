@@ -213,7 +213,6 @@ def test_an_untrusted_certificate_names_the_settings() -> None:
 
 def test_a_reset_under_strict_is_the_capability_missing() -> None:
     refused = from_error(RESET, connecting=True, strict=True)
-    assert refused.strict_refused
     assert (refused.category, refused.exit_code, refused.hint) == (
         "capability",
         ExitCode.UNSUPPORTED_CAPABILITY,
@@ -228,7 +227,6 @@ def test_a_reset_under_strict_is_the_capability_missing() -> None:
 )
 def test_a_reset_elsewhere_is_a_connection_failure(connecting: bool, strict: bool) -> None:
     diagnosis = from_error(RESET, connecting=connecting, strict=strict)
-    assert not diagnosis.strict_refused
     assert (diagnosis.category, diagnosis.exit_code) == ("connectivity", ExitCode.FAILURE)
     assert diagnosis.hint != STRICT_HINT
 

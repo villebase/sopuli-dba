@@ -128,6 +128,9 @@ def test_a_reset_under_strict_refuses_the_capability(monkeypatch: pytest.MonkeyP
     assert caught.value.exit_code == ExitCode.UNSUPPORTED_CAPABILITY
     assert str(caught.value).startswith('target "mssql-dev" does not support strict_encryption')
     assert "encrypt: mandatory" in (caught.value.remedy or "")
+    # The vendor code and the driver's own words are kept (CLAUDE.md, Style).
+    assert caught.value.code == "08001"
+    assert "forcibly closed by the remote host" in (caught.value.hint or "")
 
 
 def test_every_other_method_is_not_written() -> None:

@@ -875,9 +875,17 @@ The probes are in `sql/mssql/`, and the matrix of 2019, 2022 and 2025 is the
   `0x0300` change changes nothing, also with `, CHECK_POLICY = OFF` in it. A
   value sent to a login that does not exist is no check: it answers `15151`
   in either version. `SERVERPROPERTY('ProductMajorVersion')` reads 15, 16 or
-  17, which is a release, not a capability. Which way the driver uses is
-  #1564.
+  17, which is a release, not a capability. The driver uses the rolled-back
+  `CREATE LOGIN` ([#1564](decisions/log.md#1564)).
   `sql/mssql/11_hash_version_probe.py` measures it.
+- `unverified` `mssql-hash-check-audit` (#1569) — **What do a server audit
+  and Extended Events keep of the driver's hash-version check?**
+  The driver sends, once per session, a `CREATE LOGIN` with a `0x0300` value
+  inside a transaction that it rolls back
+  ([#1564](decisions/log.md#1564)). It leaves no login, but an audit may
+  record it, and an auditor may ask about it. Measuring it needs a server
+  audit with the login-change groups, and probe 01's Extended Events
+  sessions, on 2019, 2022 and 2025.
 - `verified` `mssql-policy-off` (#1538, #1557) — **What does `CHECK_POLICY =
   OFF` clear, and does a failed login while it is off count toward a
   lockout?**

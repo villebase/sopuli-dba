@@ -53,9 +53,8 @@ the SQL in `sql/oracle/` by hand. The PostgreSQL tool role is created by hand in
 `account expire-password` and the seen reset, because PostgreSQL cannot make a
 role change its password at its next login. A MySQL target and a MariaDB target
 each run `doctor`, the `creds` commands (§7) and the `account` commands (§9).
-A SQL Server target runs `doctor`, `report accounts`, `report history`,
-`creds generate`, `creds apply`, `creds rotate` and `creds finish-rollover`
-(§7).
+A SQL Server target runs `doctor`, the three `report` commands, `creds
+generate`, `creds apply`, `creds rotate` and `creds finish-rollover` (§7).
 
 ---
 
@@ -1178,10 +1177,11 @@ acme_app@%  mariadb-dev  IN_SYNC  any second password ended; the current passwor
 ### A SQL Server instance
 
 `doctor` connects to SQL Server and reports it, `report accounts` checks
-its logins, and `report history` reads a login's last password change.
-`creds generate`, `apply`, `rotate` and `finish-rollover` run against it
-too (§8.9 has a sample). On a Windows host, `apply` sets a password only
-from `pending`, so it makes no login before a change. The client is pyodbc, from `pip install
+its logins, `report privileges` lists what each holds, and `report history`
+reads a login's last password change. `creds generate`, `apply`, `rotate`
+and `finish-rollover` run against it too (§8.9 has a sample). On a Windows
+host, `apply` sets a password only from `pending`, so it makes no login
+before a change. The client is pyodbc, from `pip install
 "sopuli-dba[mssql]"`, and
 Microsoft's ODBC Driver 18 for SQL Server, which you install from Microsoft as
 a system package.
@@ -1308,6 +1308,32 @@ mssql-dev  (16.0.4325.4, 16 accounts read, 1 with a problem, 1 not checked, 5 un
 It exits 3, for the missing login. The image runs on Linux, so no login
 locks, and the lockout limit reads as unlimited. The `##MS_…##` logins are
 read and left out.
+
+`report privileges` needs the two optional grants of
+[`design/02-mssql-privileges.md`](design/02-mssql-privileges.md) §2.2:
+`VIEW ANY DEFINITION` and `CONNECT ANY DATABASE`. Without them its parts are
+*not checked*. As `sa`, make a login `sopuli_report` with
+`ALTER ANY LOGIN` and the two grants, and a database `acme_sales` where the
+user `acme_rp_user` is in a role `acme_read` and in `db_datareader`. The role
+holds `SELECT` on `sales.orders`, and the user `UPDATE` on its column
+`total`. Run with `sopuli_report` as the target's admin:
+
+```
+$ sopuli --config mssql.yaml report privileges --account acme_rp_user
+mssql-dev  (16.0.4325.4, 1 account)
+  acme_rp_user  (undeclared)
+    roles: acme_sales.acme_read (default), acme_sales.db_datareader (default)
+    system: CONNECT SQL (server, direct)
+    objects: SELECT on 1 user_table (0 direct, 1 via roles)
+    columns: UPDATE on 1 column (1 direct, 0 via roles)
+    schemas: CONNECT on acme_sales (database, direct); db_datareader on acme_sales (fixed database role, via acme_sales.db_datareader)
+...
+```
+
+It exits 0. A fixed role, such as `db_datareader`, is listed under its own
+name, because no catalog row says what it gives. On this image `report
+privileges` without `--account` exits 4: the image has a Windows group
+login, so its two Windows logins are not checked.
 
 ---
 

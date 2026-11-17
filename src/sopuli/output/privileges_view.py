@@ -108,6 +108,7 @@ def _summary(one: AccountPrivileges, words: Words) -> list[str]:
     lines.append(f"    objects: {_counts(one.objects, words)}")
     lines.append(f"    columns: {_counts(one.columns, words, noun='column')}")
     lines.append(f"    schemas: {_schemas(one.schemas, words)}")
+    lines.extend(f"    not checked: {reason}" for reason in one.unreadable)
     return lines
 
 
@@ -263,6 +264,7 @@ def _detail(one: AccountPrivileges, words: Words) -> list[str]:
             rows,
         )
     )
+    lines.extend(f"    not checked: {reason}" for reason in one.unreadable)
     return lines
 
 
@@ -295,8 +297,10 @@ def build_results(reports: Sequence[TargetPrivileges]) -> list[dict[str, Any]]:
     return results
 
 
-def _result(one: AccountPrivileges, unreadable: Sequence[str]) -> dict[str, Any]:
-    complete = one.complete and not unreadable
+def _result(one: AccountPrivileges, target_unreadable: Sequence[str]) -> dict[str, Any]:
+    complete = one.complete and not target_unreadable
+    # The target's reasons, then this account's own (#1555, Q5).
+    unreadable = [*target_unreadable, *one.unreadable]
     return {
         "account": one.account,
         "target": one.target,

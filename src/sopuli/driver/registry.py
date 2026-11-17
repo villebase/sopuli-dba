@@ -334,9 +334,9 @@ DRIVERS: dict[str, DatabaseDriver] = {
         ),
     ),
     # The session connects and reports the instance for `doctor` (#1549),
-    # changes a password for UC-1 (#1551), and serves UC-5's `report history`
-    # and `report accounts` (#1555). SQL Server has no profile and no `VALID
-    # UNTIL`. Every other command refuses a SQL Server target with
+    # changes a password for UC-1 (#1551), and serves UC-5's three reports
+    # (#1555). SQL Server has no profile and no `VALID UNTIL`. Every other
+    # command refuses a SQL Server target with
     # SOPULI-20006. The client is pyodbc with Microsoft ODBC Driver 18, a
     # system package like Oracle's Instant Client (#1538, decision 6).
     "mssql": DatabaseDriver(
@@ -348,9 +348,8 @@ DRIVERS: dict[str, DatabaseDriver] = {
         password_limit=f"{MSSQL_LIMIT.max_bytes} as UTF-16",
         refuses=frozenset({CONTROL, ENCODING, BYTE_LENGTH}),
         fixed_limit=MSSQL_LIMIT,
-        # UC-1's change on a Linux host (#1551), and `report accounts` and
-        # `report history` (#1555). `creds check` is #1552, the `account`
-        # verbs #1554, and `report privileges` #1555.
+        # UC-1's change (#1551), and UC-5's reports (#1555).
+        # `creds check` is #1552, and the `account` verbs #1554.
         commands=frozenset(
             {
                 "creds.apply",
@@ -359,6 +358,7 @@ DRIVERS: dict[str, DatabaseDriver] = {
                 "creds.finish-rollover",
                 "report.accounts",
                 "report.history",
+                "report.privileges",
             }
         ),
         not_applicable=frozenset({"profile", "valid_until"}),

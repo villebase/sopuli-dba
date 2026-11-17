@@ -5,8 +5,8 @@ Depends on: `../design/00-principles.md`, `../design/01-configuration.md`,
 
 This document specifies `sopuli report accounts`, `sopuli report privileges`
 and `sopuli report history`. **All three are built, on Oracle, PostgreSQL,
-MySQL and MariaDB** (§4, §5, §6), with the `reports:` rules (§7), and `report
-accounts` and `report history` on SQL Server (§4, §6, #1555). §8 says
+MySQL, MariaDB and SQL Server** (§4, §5, §6), with the `reports:` rules
+(§7). §8 says
 what the service account needs to read on each product, and §3 how a check
 that cannot run is reported. §9 lists the decisions.
 
@@ -322,7 +322,7 @@ release is `SERVERPROPERTY('ProductVersion')`.
 
 ## 5. The privilege report
 
-**Built, on Oracle, PostgreSQL, MySQL and MariaDB** (the other products' terms
+**Built, on Oracle, PostgreSQL, MySQL, MariaDB and SQL Server** (the other products' terms
 are at the end of this section): `sopuli report privileges [--detail] [--account NAME]
 [--public]`, for the same accounts `report accounts` covers, and also for the
 common accounts it leaves out on a PDB target: their grants made in the PDB
@@ -472,6 +472,54 @@ are *not checked*, with the reason, and the run exits 4:
 
 `--public` lists `PUBLIC`'s grants once: a role every account holds, always
 active, so a role granted to it is active too.
+
+**On SQL Server** ([#1555](../decisions/log.md#1555)), as the tool login
+connected to `master`. The server level needs `VIEW ANY DEFINITION`, and the
+databases `CONNECT ANY DATABASE` as well (`02-mssql-privileges.md` §2.2).
+Each database is read with three-part names:
+
+- *system*: the permissions on the server, at level `server`, with each path
+  through nested server roles. A fixed server role the login reaches, such
+  as `sysadmin`, is listed under its own name, at level `fixed server role`,
+  because no catalog row says what it gives;
+- *schemas*: each database's permissions (level `database`, the database as
+  owner) and each schema's (level `schema`, named `database.schema`). A fixed
+  database role, such as `db_datareader`, is listed under its own name, at
+  level `fixed database role`. A schema the user, or a role on its path,
+  owns is listed as `CONTROL`, at level `schema owner`;
+- *objects*: the permissions on one object, named `database.schema` and the
+  object, with its type; and on a login, a server role or an endpoint. An
+  object the user, or a role on its path, owns apart from its schema is
+  listed as `CONTROL`, at level `object owner`. A name that holds a dot is
+  bracketed, as `[a.b].c`;
+- *columns*: column grants.
+
+A login reaches a database through its user there, the one with the login's
+SID; the database owner reaches it as `dbo`, whose SID the database records
+as the owner's. Its roles are its server roles and
+its database roles, named `database.role`. Every role is active at login. A
+`DENY` is not listed, so the report shows the wider reach. `--public` lists
+the grants of the server role `public`, of each database's `public` role,
+and of `guest` where it may connect, with the path `database.guest`. These
+are *not checked*, with the reason, and the run exits 4:
+
+- **everything, without `VIEW ANY DEFINITION`**: the tool login cannot see a
+  user-defined server role or one role's membership of another, so no path
+  is known. The roles list then holds the memberships it can see, and the
+  reason says it may be short. The same where `VIEW ANY SECURITY DEFINITION`
+  is denied, or where the read names a principal it has no row for;
+- **each database that refuses the tool login**, `916`, without `CONNECT ANY
+  DATABASE`, and each that is not online, by name. So is a database that
+  answers another refusal or cannot be read just then, such as an
+  Availability Group secondary that takes no reads, with the server's
+  message, and one whose read names a principal it has no row for, as a
+  `DENY` of `VIEW DEFINITION` on a role makes it. The other databases are
+  still read;
+- **a Windows or Entra login, where the server has a group login or a
+  database read has a group user**: the login also holds what each group it
+  is in holds, and the server keeps no record of a group's members. That
+  login alone is not checked; a SQL login, which no group can hold, keeps
+  its state (#1555, Q5).
 
 ---
 
@@ -690,9 +738,11 @@ account itself. Measured on 8.0.46 to
 On SQL Server (#1555), `report accounts` reads every login, its flags and
 its `LOGINPROPERTY` values (§4), and `report history` each login's
 `PasswordLastSetTime`. Both read with the tool login's one grant, `ALTER ANY
-LOGIN` (`02-mssql-privileges.md` §2.1). The privilege report is not built
-there yet. `02-mssql-privileges.md` §2.2 says what it will read, and which
-grants are optional.
+LOGIN` (`02-mssql-privileges.md` §2.1). The privilege report (§5) needs the
+two optional grants of `02-mssql-privileges.md` §2.2: `VIEW ANY DEFINITION`
+for the server level, and `CONNECT ANY DATABASE` as well for each database.
+Without them, what they would read is *not checked*. Measured on 16.0.4325.4
+(#1555).
 
 ---
 

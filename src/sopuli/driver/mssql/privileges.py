@@ -93,6 +93,7 @@ SELF_ROW = "SELECT " + ", ".join(expression for _, expression in SELF_COLUMNS)
 MSDB_ROW = f"SELECT COUNT(*) FROM {MSDB_READ} WHERE sid = SUSER_SID()"
 
 _GRANTED_STATES = ", ".join(f"'{state}'" for state in sorted(GRANTED))
+_LOGIN_GRANT_NAMES = ", ".join(f"'{grant}'" for grant in LOGIN_GRANTS)
 
 #: §3's grants on one login, held by the tool login, ``public`` or a role the
 #: tool login is a member of, nested roles followed. A grant on a server role
@@ -107,7 +108,7 @@ LOGIN_GRANT_ROWS = (
     "SELECT DISTINCT p.permission_name, o.name, p.major_id FROM sys.server_permissions AS p "
     "LEFT JOIN sys.server_principals AS o ON o.principal_id = p.major_id "
     f"WHERE p.class = {PRINCIPAL_CLASS} AND p.state IN ({_GRANTED_STATES}) "
-    f"AND p.permission_name IN ({', '.join(repr(g) for g in LOGIN_GRANTS)}) "
+    f"AND p.permission_name IN ({_LOGIN_GRANT_NAMES}) "
     f"AND (o.type IS NULL OR o.type <> '{ROLE_TYPE}') "
     "AND p.grantee_principal_id IN (SELECT principal_id FROM mine) "
     "OPTION (MAXRECURSION 100)"
@@ -130,8 +131,7 @@ class Self:
 def read_self(cursor: Cursor) -> Self:
     cursor.execute(SELF_ROW)
     row = tuple(cursor.fetchone())
-    if len(row) != len(SELF_COLUMNS):
-        raise ValueError(f"the audit's read gave {len(row)} columns, not {len(SELF_COLUMNS)}")
+    # strict: a row of another shape raises rather than shifting the answers.
     read = {name: value for (name, _), value in zip(SELF_COLUMNS, row, strict=True)}
     forbidden = (*FORBIDDEN_PERMISSIONS, *FORBIDDEN_ROLES)
     return Self(
@@ -175,7 +175,8 @@ def audit(cursor: Cursor, *, msdb_user: bool | None) -> PrivilegeAudit:
         unaudited.append(LOGIN_GRANTS_HIDDEN)
         remedies.append(
             f"the tool login is denied {VIEW_ANY_SECURITY_DEFINITION}, which hides its "
-            "grants on one login; revoke the denial (02-mssql-privileges.md §5)"
+            "grants on one login, and makes guardrail 9 refuse every managed login on the "
+            "verbs that set a password; revoke the denial (02-mssql-privileges.md §5)"
         )
     if msdb_user:
         over.add(MSDB_USER)

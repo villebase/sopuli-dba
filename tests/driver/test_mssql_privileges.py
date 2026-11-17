@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 
+from sopuli.config.model import ExpandedTarget, Target
 from sopuli.driver.mssql.privileges import (
     LOGIN_GRANT_ROWS,
     LOGIN_GRANTS_HIDDEN,
@@ -19,6 +20,7 @@ from sopuli.driver.mssql.privileges import (
     read_msdb_user,
     read_self,
 )
+from sopuli.driver.protocol import DriverError
 
 
 class FakeCursor:
@@ -63,7 +65,7 @@ def test_the_row_has_a_column_for_each_name() -> None:
 
 
 def test_a_row_of_another_shape_is_refused() -> None:
-    with pytest.raises(ValueError, match="columns"):
+    with pytest.raises(ValueError, match="shorter"):
         read_self(FakeCursor(row()[:-1]))
 
 
@@ -148,3 +150,58 @@ def test_the_msdb_read_counts_the_tool_logins_sid() -> None:
 def test_a_name_with_a_bracket_is_quoted_in_the_grant() -> None:
     found = audit(FakeCursor(row(alter_any_login=0, name="acme]admin")), msdb_user=False)
     assert found.missing == ("GRANT ALTER ANY LOGIN TO [acme]]admin]",)
+
+
+class MsdbRefusing(FakeCursor):
+    """A cursor whose msdb read raises ``error``."""
+
+    def __init__(self, error: Exception) -> None:
+        super().__init__(row())
+        self.error = error
+
+    def execute(self, statement: str, *params: Any) -> None:
+        if statement == MSDB_ROW:
+            raise self.error
+        super().execute(statement, *params)
+
+    def close(self) -> None:
+        pass
+
+
+def _session_over(cursor: FakeCursor) -> Any:
+    session = pytest.importorskip("sopuli.driver.mssql.session")
+
+    class Connection:
+        def cursor(self) -> FakeCursor:
+            return cursor
+
+    return session.MssqlSession(
+        connection=Connection(),
+        target=ExpandedTarget(target=Target(name="mssql-dev", type="mssql", dsn="h:1433")),
+    )
+
+
+def test_a_refused_msdb_read_leaves_the_audit() -> None:
+    pyodbc = pytest.importorskip("pyodbc")
+    refused = pyodbc.ProgrammingError(
+        "42000",
+        "[42000] [Microsoft][ODBC Driver 18 for SQL Server][SQL Server]The server principal "
+        '"sopuli_admin" is not able to access the database "msdb" under the current security '
+        "context. (916) (SQLExecDirectW)",
+    )
+    found = _session_over(MsdbRefusing(refused)).privileges(accounts=())
+    assert found.unreadable == (MSDB_READ,)
+    assert found.held == ("ALTER ANY LOGIN",)
+
+
+def test_a_lost_connection_on_the_msdb_read_is_raised() -> None:
+    """Only a refusal says msdb is closed; anything else is not hidden."""
+    pyodbc = pytest.importorskip("pyodbc")
+    lost = pyodbc.OperationalError(
+        "08S01",
+        "[08S01] [Microsoft][ODBC Driver 18 for SQL Server]TCP Provider: An existing connection "
+        "was forcibly closed by the remote host. (10054) (SQLExecDirectW)",
+    )
+    with pytest.raises(DriverError) as caught:
+        _session_over(MsdbRefusing(lost)).privileges(accounts=())
+    assert caught.value.category == "connectivity"

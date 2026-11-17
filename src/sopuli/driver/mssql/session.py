@@ -141,6 +141,10 @@ class MssqlSession(ClosesConnection):
         try:
             msdb_user: bool | None = self._read(tool_login.read_msdb_user)
         except DriverError as error:
+            # Only a refusal, 916 or 229, says msdb is closed to the tool
+            # login. A lost connection or a fault is raised as it is.
+            if error.category != "authorization":
+                raise
             LOG.debug("%s: msdb could not be read: %s", self.target.name, error.code)
             msdb_user = None
         return self._read(lambda cursor: tool_login.audit(cursor, msdb_user=msdb_user))

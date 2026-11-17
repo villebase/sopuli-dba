@@ -152,6 +152,39 @@ def test_an_uninstalled_driver_is_the_whole_contract(monkeypatch: pytest.MonkeyP
     assert refused.value.exit_code == ExitCode.CONFIG_INVALID
 
 
+def test_a_missing_system_library_names_the_system_package(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """pyodbc is installed and unixODBC is not: the import fails with an
+    ``ImportError`` that is no missing module (#1549). The operator gets the
+    system packages to install, not a traceback."""
+    monkeypatch.setattr(
+        "sopuli.driver.registry.importlib.import_module",
+        _raising(ImportError("libodbc.so.2: cannot open shared object file")),
+    )
+
+    with pytest.raises(DriverNotInstalledError) as refused:
+        resolve(Target(name="mssql-dev", type="mssql", dsn="db.example.com:1433"))
+
+    assert "libodbc.so.2" in str(refused.value)
+    assert "unixODBC" in str(refused.value.hint)
+    assert refused.value.exit_code == ExitCode.CONFIG_INVALID
+
+
+def test_an_import_error_without_a_system_library_is_not_hidden(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A driver with no system library has nothing to name, so its
+    ``ImportError`` is a fault in this tool and stays one."""
+    monkeypatch.setattr(
+        "sopuli.driver.registry.importlib.import_module",
+        _raising(ImportError("cannot import name 'x' from 'oracledb'")),
+    )
+
+    with pytest.raises(ImportError, match="cannot import name"):
+        resolve(target())
+
+
 def test_a_driver_this_build_does_not_have_never_says_pip(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

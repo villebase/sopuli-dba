@@ -59,14 +59,8 @@ class TargetHistory:
     absent: str | None = None
 
 
-def target_counts(reports: Sequence[TargetHistory]) -> tuple[int, int, int]:
-    """How many targets gave no answer, how many are of another product, and
-    how many refused for a capability. The first two are the other reports'
-    (:func:`~sopuli.output.report_view.target_counts`), so their exit codes
-    cannot drift apart; a refused target is taken out of the first."""
-    unanswered, unsupported = report_view.target_counts(reports)
-    refused = sum(1 for report in reports if report.error is not None and report.refused)
-    return unanswered - refused, unsupported, refused
+#: Shared with the other reports, so their exit codes cannot drift apart.
+target_counts = report_view.target_counts
 
 
 def render(reports: Sequence[TargetHistory]) -> str:
@@ -85,12 +79,7 @@ def _section(report: TargetHistory) -> list[str]:
         f"{count} account{'' if count == 1 else 's'})"
     ]
     if report.error is not None:
-        if report.refused:
-            what = "not checked"
-        elif report.read_failed:
-            what = "could not read"
-        else:
-            what = "could not connect"
+        what = report_view.not_answered_word(report, read_failed=report.read_failed)
         lines.append(f"  {what}: {report.error.message}; database dates not read")
     if report.absent is not None:
         lines.append(f"  no managed account {report.absent} on this target")

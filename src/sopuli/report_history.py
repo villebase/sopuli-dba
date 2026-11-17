@@ -106,6 +106,10 @@ MALFORMED_PROMOTION = "the promotion stamp the store keeps is malformed"
 NO_ACCOUNT = "no such account on this target"
 NO_DATE = "the database gives no date"
 NOT_MANAGED = "the tool does not manage this account's password, so it keeps no history of it"
+#: Why an account the tool does not manage is *not checked* where the target's
+#: database was not read: the database's date is all it has, and whether the
+#: account exists is unknown.
+DATABASE_NOT_READ = "the database was not read, so whether this account exists is unknown"
 #: A personal account where no reset can be recorded: a reset with no
 #: `reset_records:` block writes none (UC-2 §3). Only the database's date is
 #: shown for it (UC-5 §6).
@@ -320,14 +324,14 @@ def exit_code(
     refused: int = 0,
 ) -> int:
     """UC-5 §3's rule for a report that judges nothing: 5, then 1 for a target
-    or store that gave no answer, then 4 for anything not read. A target that
-    refused for a capability it lacks (``refused``) is not read, so 4: its
-    histories came from the store, so the command did run there (#1555)."""
+    or store that gave no answer, then 4 for anything not read, a target that
+    refused for a capability it lacks included."""
     return exit_code_for(
         unreachable=unreachable + unanswered,
         unsupported=unsupported,
         targets=targets,
-        incomplete=bool(refused) or any(not one.complete for one in histories),
+        incomplete=any(not one.complete for one in histories),
+        refused=refused,
     )
 
 

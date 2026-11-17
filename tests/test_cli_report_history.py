@@ -778,3 +778,26 @@ def test_a_capability_refused_at_connect_is_not_checked_and_keeps_the_store_hist
     assert states["acme_app"] == "REPORT_OK"
     assert "ERROR" not in states.values()
     assert "NOT_CHECKED" in states.values()
+
+    # An account the tool does not manage has only the database's date, which
+    # was not read: not checked, never REPORT_OK (#1586 review).
+    document = json.loads(
+        CliRunner()
+        .invoke(
+            cli,
+            [
+                "--config",
+                str(path),
+                "--output",
+                "json",
+                "report",
+                "history",
+                "--account",
+                "acme_ghost",
+            ],
+        )
+        .output
+    )
+    Draft202012Validator(RUN_SCHEMA).validate(document)
+    ghost = next(row for row in document["results"] if row["account"] == "acme_ghost")
+    assert ghost["state"] == "NOT_CHECKED"

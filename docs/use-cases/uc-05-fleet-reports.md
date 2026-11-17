@@ -653,6 +653,12 @@ account itself. Measured on 8.0.46 to
 9.7.4 and on 10.11.19 to 12.3.3 (`02-mysql-privileges.md` §2.4,
 `02-mariadb-privileges.md` §2.4, #1448).
 
+On SQL Server (#1555), `report history` reads each login's
+`PasswordLastSetTime` with the tool login's one grant, `ALTER ANY LOGIN`
+(`02-mssql-privileges.md` §2.1). The other reports are not built there yet.
+`02-mssql-privileges.md` §2.2 says what they will read, and which grants are
+optional.
+
 ---
 
 ## 9. Decisions

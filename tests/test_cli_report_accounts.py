@@ -485,9 +485,25 @@ def test_a_capability_refused_at_connect_is_not_checked_not_unreachable(
     assert [row["state"] for row in refused] == ["NOT_CHECKED"]
     assert not [row for row in document["results"] if row["state"] == "ERROR"]
     text = click.unstyle(report(write_config).output)
-    assert 'prod-alpha  not supported: target "prod-alpha" does not support strict_encryption' in (
+    assert 'prod-alpha  not checked: target "prod-alpha" does not support strict_encryption' in (
         text
     )
+
+
+def test_every_target_refused_for_a_capability_exits_4_not_5(
+    write_config: WriteConfig, sessions: dict[str, Opener]
+) -> None:
+    """Exit 5 is for a product the report is not written for. A target of a
+    product it is written for answered, so every report exits 4, as `report
+    history` does (#1555, #1586 review)."""
+
+    def refuse(target: Any, run: Any, config: Any) -> Any:
+        raise UnsupportedCapabilityError("strict_encryption", target=target.name)
+
+    sessions["prod-alpha"] = refuse
+    sessions["qa-alpha"] = refuse
+
+    assert report(write_config).exit_code == ExitCode.PARTIAL
 
 
 def test_a_clean_target_exits_0(write_config: WriteConfig, sessions: Any) -> None:

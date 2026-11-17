@@ -314,14 +314,16 @@ def exit_code(
     unsupported: int = 0,
     targets: int = 0,
     missing: Sequence[MissingProfile] = (),
+    refused: int = 0,
 ) -> int:
     """UC-5 §3: 5 if no target can run the report, 1 if a target was not reached,
     then 3 for a problem, then 4 for anything not checked.
 
     ``unsupported`` counts the targets of a product the report is not written
     for. Where every target is one, nothing could run, which is exit 5. Where
-    only some are, those targets are not checked, which is exit 4 at most. A
-    profile in ``missing`` is a problem (#1390).
+    only some are, those targets are not checked, which is exit 4 at most.
+    ``refused`` counts the targets that refused for a capability they lack,
+    each not checked (#1555). A profile in ``missing`` is a problem (#1390).
     """
     states = {row.state for row in rows}
     return exit_code_for(
@@ -330,6 +332,7 @@ def exit_code(
         targets=targets,
         problem=bool(states & {REPORT_PROBLEM, ACCOUNT_MISSING}) or bool(missing),
         incomplete=NOT_CHECKED in states,
+        refused=refused,
     )
 
 

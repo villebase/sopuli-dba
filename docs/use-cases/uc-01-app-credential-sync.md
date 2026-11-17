@@ -343,9 +343,10 @@ SQL Server targets cannot hold every entry at once. The write that records
 the flags then fails before the change, and that target is not changed. That
 OCI reads a `true` in metadata back as a boolean is not measured
 (unverified: oci-metadata-booleans). Until it is, a SQL Server binding under
-native staging is refused at plan time (open: #1551), because a value read
-back as a string would be refused as above, and the flags could then never
-be set back.
+native staging is refused at plan time, before anything connects, exit 5,
+naming `policy_flags_in_metadata` (open: #1584), because a value read back as
+a string would be refused as above, and the flags could then never be set
+back.
 
 ---
 
@@ -760,6 +761,15 @@ These rules decide what `apply` does with each account:
   `mariadb.ssl_mode` requires TLS, because an account that requires TLS
   refuses its right password over a session without it. MariaDB keeps no
   `password_last_changed` the tool can read, so there is no `stored` result.
+- **On SQL Server, a change runs in four steps** (#1551,
+  [`02-mssql-privileges.md`](../design/02-mssql-privileges.md) §6.2). The
+  login's `CHECK_POLICY` and `CHECK_EXPIRATION` go in the vault's
+  `policy_flags` (§3) first. The driver sends the value it computed with the
+  policy off, logs in as the login, and sets the flags back. A run that
+  stopped part way leaves the policy off, and the next `apply` sets the
+  recorded flags back. On a Linux host, where no login locks, `apply` logs in
+  before a change, as on Oracle. A Windows host is refused before anything is
+  sent (open: #1551).
 - **A locked account is not changed at all,** unless the policy asks for an
   unlock (below). The statement would succeed and the verification could never
   pass. The run would end with a database whose password is in no vault stage,

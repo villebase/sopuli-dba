@@ -284,8 +284,9 @@ a target. The config accepts `type: mssql`, and pyodbc comes with
 `sopuli-dba[mssql]`, beside Microsoft's ODBC Driver 18, a system package
 ([#1538](../decisions/log.md#1538), decision 6). `doctor` connects to a SQL
 Server instance and reports the scope, `server`, and the driver reads a
-declared login. Its entry lists no command yet, so every other command
-refuses a SQL Server target (open: #1551, #1552). What
+declared login. Its entry lists UC-1's `creds generate`, `apply`, `rotate`
+and `finish-rollover`, which change a password on a Linux host (#1551). Every
+other command refuses a SQL Server target (open: #1552, #1554, #1555). What
 PostgreSQL lacks, such as a rollover window, a profile, or a forced password
 change at next login, is refused at plan time by capability, not by product. A libpq older than 16 is a property of the client,
 not of the target, and is refused per account during the run: the one accepted

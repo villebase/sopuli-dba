@@ -183,10 +183,16 @@ through `sysadmin`, and the grants on one login held by the tool login,
 `public` or a role it is a member of. It warns, and refuses nothing. A user in
 `msdb` is read by the tool login's SID in `msdb.sys.database_principals`:
 `HAS_DBACCESS('msdb')` answers 1 for every login, because `msdb`'s `guest`
-is enabled (measured on 16.0.4325.4, #1550). The tool login sees the
-memberships of its own roles, nested ones included, with `ALTER ANY LOGIN`
-alone, where it does not see another login's (PA2; measured on 16.0.4325.4,
-#1550). So the audit needs no more than §2.1's grant.
+is enabled (measured on 16.0.4325.4, #1550). Where `guest` is closed the
+read is refused, and the audit says it could not read `msdb`. The tool login
+sees the memberships of its own roles, nested ones included, with `ALTER ANY
+LOGIN` alone, where it does not see another login's (PA2; measured on
+16.0.4325.4, #1550). So the audit needs no more than §2.1's grant. A denial
+of `VIEW ANY SECURITY DEFINITION` hides the tool login's own rows, its
+`CONNECT SQL` among them, with or without `VIEW ANY DEFINITION`, while
+`HAS_PERMS_BY_NAME` cannot tell it from a permission not held. So where the
+tool login cannot see its own `CONNECT SQL` row, the audit reports its grants
+on one login as not checked (measured on 16.0.4325.4, #1550).
 
 ---
 

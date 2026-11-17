@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Iterator
+from contextlib import suppress
 from typing import Any
 
 import pytest
@@ -52,13 +53,23 @@ def _held(cursor: Any, tool: str, permission: str) -> bool:
     return bool(cursor.fetchone()[0])
 
 
+def _undo(cursor: Any, statements: list[str]) -> None:
+    """Each statement on its own: one that fails, say because the setup
+    stopped before its object existed, does not keep the rest from running."""
+    for statement in statements:
+        with suppress(Exception):
+            cursor.execute(statement)
+
+
 @pytest.fixture
-def nested(live_mssql: Any) -> Iterator[tuple[Any, str]]:
+def nested(live_mssql: Any) -> Iterator[tuple[Any, str, str]]:
     """The tool login in a role nested in a role that holds IMPERSONATE on
-    a login. Yields `sa`'s cursor and the login's name; undoes everything,
-    and puts back VIEW ANY DEFINITION as it was."""
+    a login, and CONTROL on a server role. Yields `sa`'s cursor, the login's
+    name and that role's; undoes everything, and puts back VIEW ANY
+    DEFINITION as it was."""
     tag = uuid.uuid4().hex[:6]
     login, outer, inner = f"acme_t1_imp_{tag}", f"acme_t1_outer_{tag}", f"acme_t1_inner_{tag}"
+    controlled = f"acme_t1_ctl_{tag}"
     tool = live_mssql.tool_user
     sa = live_mssql.connect()
     cursor = sa.cursor()
@@ -69,21 +80,27 @@ def nested(live_mssql: Any) -> Iterator[tuple[Any, str]]:
         )
         cursor.execute(f"CREATE SERVER ROLE [{outer}]")
         cursor.execute(f"CREATE SERVER ROLE [{inner}]")
+        cursor.execute(f"CREATE SERVER ROLE [{controlled}]")
         cursor.execute(f"ALTER SERVER ROLE [{outer}] ADD MEMBER [{inner}]")
         cursor.execute(f"ALTER SERVER ROLE [{inner}] ADD MEMBER [{tool}]")
         cursor.execute(f"GRANT IMPERSONATE ON LOGIN::[{login}] TO [{outer}]")
-        yield cursor, login
+        cursor.execute(f"GRANT CONTROL ON SERVER ROLE::[{controlled}] TO [{outer}]")
+        yield cursor, login, controlled
     finally:
-        cursor.execute(
-            f"IF SUSER_ID(N'{inner}') IS NOT NULL BEGIN "
-            f"ALTER SERVER ROLE [{inner}] DROP MEMBER [{tool}]; "
-            f"ALTER SERVER ROLE [{outer}] DROP MEMBER [{inner}]; "
-            f"DROP SERVER ROLE [{inner}] END"
-        )
-        cursor.execute(f"IF SUSER_ID(N'{outer}') IS NOT NULL DROP SERVER ROLE [{outer}]")
-        cursor.execute(f"IF SUSER_ID(N'{login}') IS NOT NULL DROP LOGIN [{login}]")
         verb = "GRANT" if had_view else "REVOKE"
-        cursor.execute(f"{verb} VIEW ANY DEFINITION {'TO' if had_view else 'FROM'} [{tool}]")
+        _undo(
+            cursor,
+            [
+                f"ALTER SERVER ROLE [{inner}] DROP MEMBER [{tool}]",
+                f"ALTER SERVER ROLE [{outer}] DROP MEMBER [{inner}]",
+                f"DROP SERVER ROLE [{inner}]",
+                f"DROP SERVER ROLE [{outer}]",
+                f"DROP SERVER ROLE [{controlled}]",
+                f"DROP LOGIN [{login}]",
+                f"REVOKE VIEW ANY SECURITY DEFINITION FROM [{tool}]",
+                f"{verb} VIEW ANY DEFINITION {'TO' if had_view else 'FROM'} [{tool}]",
+            ],
+        )
         sa.close()
 
 
@@ -103,11 +120,13 @@ def test_the_documented_grant_reads_as_held(live_mssql: Any) -> None:
 
 
 def test_a_grant_through_a_nested_role_is_seen_with_or_without_view_any_definition(
-    live_mssql: Any, nested: tuple[Any, str]
+    live_mssql: Any, nested: tuple[Any, str, str]
 ) -> None:
     """The tool login sees its own roles' memberships, nested ones included,
-    with ALTER ANY LOGIN alone, where it does not see another login's (PA2)."""
-    cursor, login = nested
+    with ALTER ANY LOGIN alone, where it does not see another login's (PA2).
+    A grant on a server role is the same class, and is not a grant on a
+    login."""
+    cursor, login, controlled = nested
     tool = live_mssql.tool_user
     cursor.execute(f"REVOKE VIEW ANY DEFINITION FROM [{tool}]")
     without = _audit(live_mssql)
@@ -116,9 +135,23 @@ def test_a_grant_through_a_nested_role_is_seen_with_or_without_view_any_definiti
 
     for found in (without, with_grant):
         assert f"IMPERSONATE ON LOGIN::[{login}]" in found.over_granted
+        assert not any(controlled in held for held in found.over_granted)
         assert found.unaudited == ()
     assert "VIEW ANY DEFINITION" not in without.held
     assert "VIEW ANY DEFINITION" in with_grant.held
+
+
+def test_a_denied_view_any_security_definition_leaves_the_grants_unchecked(
+    live_mssql: Any, nested: tuple[Any, str, str]
+) -> None:
+    """FR5: the denial hides the rows, and the audit says so rather than
+    reading as clean. The fixture revokes the denial."""
+    cursor, login, _ = nested
+    cursor.execute(f"DENY VIEW ANY SECURITY DEFINITION TO [{live_mssql.tool_user}]")
+    found = _audit(live_mssql)
+
+    assert f"IMPERSONATE ON LOGIN::[{login}]" not in found.over_granted
+    assert found.unaudited == ("CONTROL or IMPERSONATE on a login",)
 
 
 def test_a_user_in_msdb_is_over_granted_and_guest_is_not(live_mssql: Any) -> None:
@@ -133,3 +166,20 @@ def test_a_user_in_msdb_is_over_granted_and_guest_is_not(live_mssql: Any) -> Non
             sa.cursor().execute(f"USE msdb; DROP USER [{tool}]; USE master;")
     finally:
         sa.close()
+
+
+def test_a_closed_msdb_guest_leaves_the_rest_of_the_audit(live_mssql: Any) -> None:
+    """With guest's CONNECT revoked in msdb the read is refused; the audit
+    says it could not read msdb, and gives the rest."""
+    sa = live_mssql.connect()
+    try:
+        sa.cursor().execute("USE msdb; REVOKE CONNECT FROM guest; USE master;")
+        try:
+            found = _audit(live_mssql)
+        finally:
+            sa.cursor().execute("USE msdb; GRANT CONNECT TO guest; USE master;")
+    finally:
+        sa.close()
+
+    assert found.unreadable == ("msdb.sys.database_principals",)
+    assert "ALTER ANY LOGIN" in found.held

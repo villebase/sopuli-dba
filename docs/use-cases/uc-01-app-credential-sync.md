@@ -2048,6 +2048,18 @@ worse than the drift the check was looking for. All of these mitigations apply:
    `ORA-28000`, and the row is `UNVERIFIABLE`. `--method hash` refuses such an
    account, because the PDB does not hold its verifiers either (below).
 
+**On SQL Server, `check` logs in only on a Linux host** (#1552,
+[`02-mssql-privileges.md`](../design/02-mssql-privileges.md) §7). No login
+locks there. On Windows a wrong password counts toward the host's lockout
+threshold, which the tool cannot read. So `check` asks each SQL Server target
+before any account is checked, and one that does not run on Linux ends the
+run at plan time with exit 5, naming `lockout_threshold`. A host that names no
+platform counts as Windows. A disabled login reads `LOCKED`, and one that must
+change its password `EXPIRED`, as above. The server answers `18470` and `18488`
+only to the right password, so where a login gets one of them the row says
+the password is right. `--method hash` and `both` are refused at plan time:
+the tool login reads no hash.
+
 ### `--method hash`: verification without a login attempt
 
 Hash mode is an opt-in extra. The default, `login`, does not depend on it.

@@ -640,7 +640,7 @@ escaped (invariant 11). A name in a vault path follows the rules of
 ## 7. Checking a password by login
 
 `creds check` verifies a password by logging in as the login (decision 3,
-open: #1552). It never reads a hash, which the tool login cannot (§2.1).
+#1552). It never reads a hash, which the tool login cannot (§2.1).
 `PWDCOMPARE` would take the password in a predicate, which invariant 14
 forbids. So the driver reports no `offline_verify`, and `--method hash` or
 `both` is refused at plan time.
@@ -664,9 +664,14 @@ What the server answers:
 | disabled | `18470` (LK1) |
 | must change its password | `18488` (LK5) |
 
-Whether a disabled login, or one that must change its password, answers a
-wrong password with `18456` or with its own number is not measured. Until it
-is, `18470` and `18488` are `unavailable`, not `pass` (open: #1552).
+**A disabled login, and one that must change its password, answers a wrong
+password `18456`**, as an open one does, and its own number only to the right
+password (`15_login_answers_probe.py`, LA2 to LA4, on 15.0.4510.2,
+16.0.4325.4 and 17.0.5065.9). So for `creds check`, `18470` and `18488` say
+the password is right, and the row says so beside the login's state, which
+`check` reads first. After a change, the login of `creds apply` and `creds
+rotate` reads them as `unavailable`, never as a pass: a login that cannot
+use the password has not confirmed it.
 
 **No login locks on the Linux images.** With `CHECK_POLICY = ON`, 30 wrong
 passwords in a row leave `IsLocked` 0, and the right password then logs in.
@@ -681,6 +686,7 @@ locked login answers its right password `18456`**, as a wrong one (WP3), so
 any login the driver makes reads `IsLocked` first, and reports a locked
 login as `unavailable` without logging in. The tool login reads the host's
 platform from `sys.dm_os_host_info` (WP0); the driver reads it once per
-session, and caches it as a capability. `creds check` refuses a Windows
-host by it, and treats a host that names no platform as Windows
-(open: #1552).
+session, and caches it as a capability. `creds check` asks each SQL Server
+target before any account is checked, and refuses a host that is not Linux
+at plan time, exit 5, naming `lockout_threshold`. A host that names no
+platform is treated as Windows (#1552).

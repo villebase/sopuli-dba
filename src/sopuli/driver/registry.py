@@ -129,6 +129,13 @@ class DatabaseDriver:
     #: setting the product lacks is not a gap anybody can close (UC-5 §3,
     #: #1458). It is a fact about the product, so it needs no connection.
     not_applicable: frozenset[str] = frozenset()
+    #: Whether `creds check` asks each of this product's targets, once and
+    #: before any account is checked, whether it may log in as an account
+    #: (``require_login_check``), at the cost of one more connection per
+    #: target. SQL Server's: on a Windows host a login can lock at a
+    #: threshold the tool cannot read, so the check is refused there at plan
+    #: time (invariant 4, #1552).
+    login_check_preflight: bool = False
     #: The system package the client loads when it is imported, where it has
     #: one, as a hint: pyodbc loads unixODBC's ``libodbc`` on Linux and macOS.
     #: Without it the import fails with an ``ImportError`` that is not a
@@ -348,10 +355,12 @@ DRIVERS: dict[str, DatabaseDriver] = {
         password_limit=f"{MSSQL_LIMIT.max_bytes} as UTF-16",
         refuses=frozenset({CONTROL, ENCODING, BYTE_LENGTH}),
         fixed_limit=MSSQL_LIMIT,
-        # UC-1's change on a Linux host (#1551), and UC-5's reports (#1555).
-        # `creds check` is #1552, and the `account` verbs #1554.
+        # UC-1's change on a Linux host (#1551), `creds check` by login on a
+        # Linux host (#1552), and UC-5's reports (#1555). The `account` verbs
+        # are #1554.
         commands=frozenset(
             {
+                "creds.check",
                 "creds.apply",
                 "creds.rotate",
                 "creds.generate",
@@ -362,6 +371,7 @@ DRIVERS: dict[str, DatabaseDriver] = {
             }
         ),
         not_applicable=frozenset({"profile", "valid_until"}),
+        login_check_preflight=True,
         system_library=(
             "install unixODBC (`unixodbc` on Debian and Ubuntu) and Microsoft ODBC Driver 18 "
             "for SQL Server, which are system packages: pyodbc loads unixODBC's libodbc when "

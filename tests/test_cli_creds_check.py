@@ -15,6 +15,7 @@ place and quietly test nothing.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
@@ -43,6 +44,7 @@ from sopuli.driver.protocol import (
     UserState,
     VerifyResult,
 )
+from sopuli.driver.registry import DRIVERS
 from sopuli.exit_codes import ExitCode
 from sopuli.output.document import SCHEMA_VERSION
 from sopuli.output.emit import EVENT_SCHEMA_VERSION
@@ -939,6 +941,55 @@ def test_an_uncomparable_target_is_refused_before_anything_is_checked(
     assert not list(validator.iter_errors(body))
     assert body["error"]["category"] == "capability"
     assert "appdb-alpha" in body["error"]["message"]
+
+
+def test_a_target_that_cannot_log_in_safely_is_refused_before_anything_is_checked(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    validator: Draft202012Validator,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Such as SQL Server on a Windows host, whose lockout threshold cannot
+    be read (#1552): exit 5 at plan time, naming the capability, with no
+    login anywhere (invariant 4)."""
+    monkeypatch.setitem(
+        DRIVERS, "oracle", dataclasses.replace(DRIVERS["oracle"], login_check_preflight=True)
+    )
+
+    def refuse(self: FakeSession) -> None:
+        raise UnsupportedCapabilityError("lockout_threshold", target="appdb-alpha")
+
+    monkeypatch.setattr(FakeSession, "require_login_check", refuse, raising=False)
+    harness = estate()
+    result = run(runner, write_config(CONFIG), "--output", "json")
+
+    assert isinstance(result.exception, UnsupportedCapabilityError)
+    assert result.exception.exit_code == ExitCode.UNSUPPORTED_CAPABILITY
+    assert all(session.attempts == [] for session in harness["sessions"])
+    body = document(result)
+    assert not list(validator.iter_errors(body))
+    assert "lockout_threshold" in body["error"]["message"]
+
+
+def test_a_product_without_the_flag_is_not_asked_before_a_login_check(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No extra connection for a product that needs no such step (#1552)."""
+
+    def never(self: FakeSession) -> None:
+        raise AssertionError("not asked")
+
+    monkeypatch.setattr(FakeSession, "require_login_check", never, raising=False)
+    harness = estate()
+    result = run(runner, write_config(CONFIG))
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    # One session per target, for the run itself.
+    assert len(harness["sessions"]) == 2
 
 
 def test_an_unreachable_target_is_left_to_the_run_rather_than_refused(

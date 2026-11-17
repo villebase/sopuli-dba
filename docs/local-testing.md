@@ -54,8 +54,8 @@ the SQL in `sql/oracle/` by hand. The PostgreSQL tool role is created by hand in
 role change its password at its next login. A MySQL target and a MariaDB target
 each run `doctor`, the `creds` commands (§7) and the `account` commands (§9).
 A SQL Server target runs `doctor` and the three `report` commands, and on a
-Linux host also `creds generate`, `creds apply`, `creds rotate` and `creds
-finish-rollover` (§7).
+Linux host also `creds generate`, `creds apply`, `creds check`, `creds
+rotate` and `creds finish-rollover` (§7).
 
 ---
 
@@ -1180,8 +1180,8 @@ acme_app@%  mariadb-dev  IN_SYNC  any second password ended; the current passwor
 `doctor` connects to SQL Server and reports it, `report accounts` checks
 its logins, `report privileges` lists what each holds, and `report history`
 reads a login's last password change. On a
-Linux host, `creds generate`, `apply`, `rotate` and `finish-rollover` run
-against it too (§8.9 has a sample). The client is pyodbc, from `pip install
+Linux host, `creds generate`, `apply`, `check`, `rotate` and
+`finish-rollover` run against it too (§8.9 has a sample). The client is pyodbc, from `pip install
 "sopuli-dba[mssql]"`, and
 Microsoft's ODBC Driver 18 for SQL Server, which you install from Microsoft as
 a system package.
@@ -1805,7 +1805,18 @@ ACCOUNT        TARGET     STATE    DETAIL
 acme_app_user  mssql-dev  IN_SYNC  the vault's password is already accepted; nothing to change
 
 nothing changed
+
+$ sopuli --config file.yaml creds check
+...
+ACCOUNT        TARGET     STATE    DETAIL
+acme_app_user  mssql-dev  IN_SYNC  vault v4 verified by login
+
+all 1 in sync
 ```
+
+`creds check` logs in as the login. On a Windows host it is refused before
+any login, with exit 5, because a wrong password there counts toward a
+lockout the tool cannot read.
 
 The change turns the login's `CHECK_POLICY` off and sets it and
 `CHECK_EXPIRATION` back after the login, as

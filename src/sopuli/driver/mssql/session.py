@@ -132,12 +132,18 @@ def scrub_value(message: str) -> str:
     return _VALUE.sub(VALUE_REMOVED, message)
 
 
-#: The server's answers to a login, by number (§7), and what each says about
-#: the password. ``18470`` (disabled) and ``18488`` (must change) say nothing
-#: until it is measured how such a login answers a wrong one (#1552).
+#: The server's answers to a login, by number (§7). ``18470`` (disabled) and
+#: ``18488`` (must change) are answered only to the right password: a wrong
+#: one is ``18456`` either way (``15_login_answers_probe.py``, LA2 to LA4).
 WRONG_PASSWORD = "18456"
 LOGIN_DISABLED = "18470"
 MUST_CHANGE = "18488"
+
+#: The capability a `creds check` login needs on the host: a lockout
+#: threshold the tool can read, or no lockout at all. Linux has no lockout
+#: (LK2); on Windows ``LOGINPROPERTY`` gives no threshold (WP1), so the check
+#: is refused there at plan time (#1538, decision 3; #1552).
+LOCKOUT_THRESHOLD = "lockout_threshold"
 
 #: The host platform this build changes passwords on.
 LINUX = "Linux"
@@ -743,11 +749,26 @@ class MssqlSession(ClosesConnection):
                     detail="the server refused the password (18456)",
                 )
             if failure.code in (LOGIN_DISABLED, MUST_CHANGE):
+                if for_check:
+                    # Answered only to the right password (LA2 to LA4). `creds
+                    # check` reports the login's state, read first, and this
+                    # rides after it as what the password showed.
+                    return VerifyResult(
+                        method=VERIFY_LOGIN,
+                        result=PASS,
+                        latency_ms=_ms(started),
+                        detail=(
+                            f"the password is right, and the login was refused "
+                            f"({failure.code}): {failure.message}"
+                        ),
+                    )
+                # After a change, a login that cannot log in has not verified
+                # the password it was given: never a pass that promotes it.
                 return VerifyResult(
                     method=VERIFY_LOGIN,
                     result=UNAVAILABLE,
                     latency_ms=_ms(started),
-                    detail=f"{failure.message}: this says nothing about the password",
+                    detail=f"{failure.message}: the login cannot use the password",
                 )
             raise failure.as_error() from None
         latency = _ms(started)
@@ -757,6 +778,26 @@ class MssqlSession(ClosesConnection):
             connection.close()
         LOG.debug("login as %s: pass", login.name)
         return VerifyResult(method=VERIFY_LOGIN, result=PASS, latency_ms=latency)
+
+    def require_login_check(self) -> None:
+        """Refuse `creds check`'s login at plan time on a host whose lockout
+        the tool cannot read (#1538, decision 3; #1552). On Linux no login
+        locks (LK2). On Windows a wrong password counts toward a threshold
+        ``LOGINPROPERTY`` does not give (WP1), so a check could lock the
+        login. A host that names no platform is treated as Windows. The
+        command asks before any account is checked (invariant 4)."""
+        platform = self.host_platform()
+        if platform == LINUX:
+            return
+        raise UnsupportedCapabilityError(
+            LOCKOUT_THRESHOLD,
+            target=self.target.name,
+            hint=(
+                f"the host runs {platform or 'a platform it does not name'}, where a wrong "
+                "password counts toward a lockout threshold the tool login cannot read, "
+                "so a login check could lock the login (02-mssql-privileges.md §7)"
+            ),
+        )
 
     def require_verifier(self, account: str, secret: Secret) -> None:
         """Refuse ``hash`` and ``both`` at plan time (invariant 4): the tool

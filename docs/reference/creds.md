@@ -150,7 +150,10 @@ refuses the login within `--lockout-margin` tries of the profile's limit.
 Without that grant the guard is unavailable: the row says so, and the
 check goes ahead. The same applies to a common account on a target that is
 not `CDB$ROOT`, because the root counts its failed logins. PostgreSQL has
-no failed-login lockout.
+no failed-login lockout. On SQL Server the command logs in only where the
+host runs Linux, which locks no login. On a Windows host the lockout
+threshold cannot be read, so the run is refused with exit 5 before it
+checks anything, naming `lockout_threshold`.
 
 The command reads each account's status separately, so a locked account,
 an expired password and a missing account each get their own state. A

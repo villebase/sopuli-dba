@@ -436,8 +436,13 @@ The plan cache, Query Store and the error log keep none of these statements.
 
 ### 6.2 UC-1: the password never reaches the server
 
-**The password never reaches the server** (decision 2, open: #1551). The
-driver computes the stored value on the client and sends it with `HASHED`. A
+**The password never reaches the server** (decision 2, invariant 15). The
+driver computes the stored value on the client and sends it with `HASHED`.
+A tier-1 test records every statement, batch, call and error in an Extended
+Events session, changes a password through the driver, sends a refused
+change, and finds the password in none of the session, the plan cache, the
+default trace or the error log
+(`tests/driver/test_mssql_no_password_live.py`). A
 value is a 2-byte version, a 4-byte salt the driver draws, and a 64-byte
 digest of the password in UTF-16LE followed by the salt:
 

@@ -177,6 +177,23 @@ refused to all of them, `229` (RP6). The reports do not read the error log.
 | `VIEW SERVER STATE`, and `VIEW SERVER PERFORMANCE STATE` (2022 and later) | each shows every session (RP5; `14_availability_group_reads_probe.py`, AR2 and AR3). Each also reads the replica's role in an Availability Group, which the driver does not read: what it reads of a group needs neither (§4) |
 | a database user in `msdb` | no operation of the tool needs one, and `msdb` holds the SQL Server Agent jobs, which may run as an administrator |
 
+`doctor --check-privileges` reads each row as the tool login, of itself:
+`HAS_PERMS_BY_NAME` and `IS_SRVROLEMEMBER`, which answer through any role and
+through `sysadmin`, and the grants on one login held by the tool login,
+`public` or a role it is a member of. It warns, and refuses nothing. A user in
+`msdb` is read by the tool login's SID in `msdb.sys.database_principals`:
+`HAS_DBACCESS('msdb')` answers 1 for every login, because `msdb`'s `guest`
+is enabled (measured on 16.0.4325.4, #1550). Where `guest` is closed the
+read is refused, and the audit says it could not read `msdb`. The tool login
+sees the memberships of its own roles, nested ones included, with `ALTER ANY
+LOGIN` alone, where it does not see another login's (PA2; measured on
+16.0.4325.4, #1550). So the audit needs no more than §2.1's grant. A denial
+of `VIEW ANY SECURITY DEFINITION` hides the tool login's own rows, its
+`CONNECT SQL` among them, with or without `VIEW ANY DEFINITION`, while
+`HAS_PERMS_BY_NAME` cannot tell it from a permission not held. So where the
+tool login cannot see its own `CONNECT SQL` row, the audit reports its grants
+on one login as not checked (measured on 16.0.4325.4, #1550).
+
 ---
 
 ## 4. Managed accounts
@@ -359,8 +376,8 @@ every path. Where it does not, the guardrail refuses every managed login at
 plan time, and names the missing grant** ([#1567](../decisions/log.md#1567)).
 Without the grant, a role the login owns is invisible, so no
 login can be shown to own none, and the guardrail never passes a path it
-could not read. `doctor` reports whether the tool login holds the grant
-(open: #1550).
+could not read. `doctor --check-privileges` reports whether the tool login
+holds the grant, and says what is refused without it.
 
 The guardrail does not read database paths, such as `db_owner` in `msdb` or
 a `TRUSTWORTHY` database owned by a member of `sysadmin`: they are
@@ -408,7 +425,7 @@ and 2025 answer `15025` first. A refused `0x0300` change changes nothing
 
 **The driver reads it once per session, before a change, with the
 rolled-back `CREATE LOGIN`, under a random name, and caches the answer as a
-capability** ([#1564](../decisions/log.md#1564), open: #1550). `ok` means the
+capability** ([#1564](../decisions/log.md#1564)). `ok` means the
 server takes `0x0300`, and `15021` that it does not. Any other answer fails
 the check at plan time, `15025` among them: the tool cannot see every name
 a login would clash with, such as a user-defined role's, and an answer to a
@@ -436,9 +453,11 @@ change runs in this order, on every host:
 4. Set `CHECK_POLICY` and `CHECK_EXPIRATION` back to the values of step 1.
 
 A run that stops between the steps leaves the policy off. The next run reads
-the recorded values from the vault and sets them back. The record stays
-until step 4 has run, also when a new `pending` replaces the old one
-(open: #1551).
+the recorded values from the vault and sets them back (open: #1551). The
+record is `policy_flags`
+([UC-1 §3](../use-cases/uc-01-app-credential-sync.md#policy_flags-a-sql-server-logins-settings-while-its-policy-is-off)),
+and it stays until step 4 has run, also when a new `pending` replaces the old
+one.
 
 **A login whose `MUST_CHANGE` is pending cannot take a value.** While
 `IsMustChange` reads 1, the server refuses to turn `CHECK_POLICY` off,
@@ -615,5 +634,7 @@ compute a lockout margin (`09_windows_policy_probe.py`, WP1 and WP2). **A
 locked login answers its right password `18456`**, as a wrong one (WP3), so
 any login the driver makes reads `IsLocked` first, and reports a locked
 login as `unavailable` without logging in. The tool login reads the host's
-platform from `sys.dm_os_host_info` (WP0); the driver reads it as a
-capability (open: #1550).
+platform from `sys.dm_os_host_info` (WP0); the driver reads it once per
+session, and caches it as a capability. `creds check` refuses a Windows
+host by it, and treats a host that names no platform as Windows
+(open: #1552).

@@ -38,6 +38,7 @@ from sopuli.payload import (
     GENERATED,
     ORIGIN,
     PENDING,
+    POLICY_FLAGS,
     PREVIOUS,
     REACH_PASSED,
     REACH_SPENT,
@@ -770,6 +771,9 @@ def test_the_origin_is_cleared_with_the_pending_it_described() -> None:
     assert patch[PENDING]["acme_web_user"] is REMOVE
     # As is the reaching-login mark, which describes `pending` too (#1316).
     assert patch[REACHED]["acme_web_user"] is REMOVE
+    # The policy flags describe the login, not `pending`: absent from the
+    # patch, so a promotion keeps them (#1551).
+    assert POLICY_FLAGS not in patch
 
 
 def _ref() -> SecretRef:

@@ -39,6 +39,7 @@ import pyodbc
 from sopuli.config.model import ExpandedTarget, Runtime
 from sopuli.config.targets import MSSQL_STRICT
 from sopuli.driver.mssql import accounts, capabilities
+from sopuli.driver.mssql import privileges as tool_login
 from sopuli.driver.mssql.admin import Assessment, Catalog, assess, read_catalog
 from sopuli.driver.mssql.client import client_lines
 from sopuli.driver.mssql.connection import connection_string
@@ -58,6 +59,7 @@ from sopuli.driver.protocol import (
     Cursor,
     DriverContext,
     DriverError,
+    PrivilegeAudit,
     Scope,
     Timeouts,
     UnsupportedCapabilityError,
@@ -229,8 +231,23 @@ class MssqlSession(ClosesConnection):
             ),
         )
 
-    def privileges(self, *args: Any, **kwargs: Any) -> NoReturn:
-        self._not_written("audit the tool login's grants")
+    def privileges(self, *, accounts: tuple[str, ...] = ()) -> PrivilegeAudit:
+        """What the tool login holds, needs and should not hold
+        (:mod:`~sopuli.driver.mssql.privileges`). ``accounts`` is ignored:
+        ``ALTER ANY LOGIN`` reaches every login. Uncached: a run asks once.
+
+        The user in ``msdb`` is a read of its own: where ``msdb`` refuses the
+        tool login, the audit stands and says so."""
+        try:
+            msdb_user: bool | None = self._read(tool_login.read_msdb_user)
+        except DriverError as error:
+            # Only a refusal, 916 or 229, says msdb is closed to the tool
+            # login. A lost connection or a fault is raised as it is.
+            if error.category != "authorization":
+                raise
+            LOG.debug("%s: msdb could not be read: %s", self.target.name, error.code)
+            msdb_user = None
+        return self._read(lambda cursor: tool_login.audit(cursor, msdb_user=msdb_user))
 
     def describe_user(self, account: str) -> UserState | None:
         """The login's state, ``None`` where no login has the name

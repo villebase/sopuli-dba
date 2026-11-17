@@ -7,12 +7,15 @@ from typing import Any
 
 from sopuli.driver.grants import OBJECT, GrantRow
 from sopuli.driver.mssql import server_grants
-from sopuli.driver.mssql.admin import DENIED_SECURITY, PARTIAL_READ
+from sopuli.driver.mssql.admin import VIEW_DEFINITIONS
 from sopuli.driver.mssql.server_grants import (
+    DENIED_SECURITY,
     FIXED_ROLE_LEVEL,
     NO_DEFINITIONS,
+    PARTIAL_READ,
     PUBLIC_GRANTEE,
     SERVER_LEVEL,
+    WINDOWS_GROUPS,
     Permission,
     Principal,
 )
@@ -168,17 +171,50 @@ VIEWS = (
 )
 
 
-def test_read_without_view_any_definition_names_the_grant() -> None:
-    found = server_grants.read(FakeCursor((0, None), *VIEWS), ["acme_app_user"], public=False)
+def test_read_without_view_any_definition_reads_the_roles_alone() -> None:
+    cursor = FakeCursor((0, None), *VIEWS)
+    found = server_grants.read(cursor, ["acme_app_user"], public=False)
 
     assert found.unread == NO_DEFINITIONS
     assert found.system is None
+    assert [role.role for role in found.roles] == ["acme_readers"]
+    # The permissions are not read: they could not be used (#1589 review).
+    assert server_grants.PERMISSIONS not in cursor.sent
 
 
-def test_read_with_a_denied_security_definition_is_refused() -> None:
-    found = server_grants.read(FakeCursor((1, 0), *VIEWS), ["acme_app_user"], public=False)
+def test_read_with_a_denied_security_definition_reads_nothing_more() -> None:
+    """The denial hides every row (FR5)."""
+    cursor = FakeCursor((1, 0), *VIEWS)
+    found = server_grants.read(cursor, ["acme_app_user"], public=False)
 
     assert found.unread == DENIED_SECURITY
+    assert found.roles == ()
+    assert cursor.sent == [VIEW_DEFINITIONS]
+
+
+def test_without_the_grant_a_zero_for_security_definition_is_not_a_denial() -> None:
+    """Without VIEW ANY DEFINITION, HAS_PERMS_BY_NAME answers 0 for VIEW ANY
+    SECURITY DEFINITION because it is not held: the live test reads that."""
+    found = server_grants.read(FakeCursor((0, 0), *VIEWS), ["acme_app_user"], public=False)
+
+    assert found.unread == NO_DEFINITIONS
+    assert [role.role for role in found.roles] == ["acme_readers"]
+
+
+def test_a_windows_login_on_a_server_with_a_windows_group_names_the_gap() -> None:
+    """The server keeps no record of a group's members (#1589 review)."""
+    group = Principal(273, "EXAMPLE\\acme_admins", "G")
+    found = server_grants.survey(
+        [*PRINCIPALS, group], MEMBERSHIPS, PERMISSIONS, ("EXAMPLE\\acme_svc",), public=False
+    )
+
+    assert found.gaps == (WINDOWS_GROUPS,)
+    assert found.system is not None
+    assert survey(public=False).gaps == ()
+    without_group = server_grants.survey(
+        PRINCIPALS, MEMBERSHIPS, PERMISSIONS, ("EXAMPLE\\acme_svc",), public=False
+    )
+    assert without_group.gaps == ()
 
 
 def test_read_with_the_grant_reads_the_paths() -> None:

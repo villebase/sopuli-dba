@@ -34,9 +34,15 @@ narrower. ``WITH GRANT OPTION`` (state ``W``) makes a row grantable.
 login sees no user-defined server role's row and no role's membership of
 another (``12_guardrail_paths_probe.py``, PA2), so the paths are not known:
 *system* and *objects* are ``None``, with the grant named. The roles list then
-holds the direct memberships the tool login can see. A denial of ``VIEW ANY
-SECURITY DEFINITION``, and a read that names a principal it has no row for,
-are refused the same way (:mod:`~sopuli.driver.mssql.admin`).
+holds the direct memberships the tool login can see, and the reason says it
+may be short. A denial of ``VIEW ANY SECURITY DEFINITION`` hides every row,
+so nothing is read; a read that names a principal it has no row for is
+refused the same way, as guardrail 9's is (:mod:`~sopuli.driver.mssql.admin`).
+
+**A Windows group.** A Windows login also holds what each Windows group login
+it is in holds, and the server keeps no record of a group's members: Windows
+answers that at login. Where a Windows login is surveyed on a server that has
+a Windows group login, the parts are read and that gap is named.
 """
 
 from __future__ import annotations
@@ -46,9 +52,7 @@ from dataclasses import dataclass
 
 from sopuli.driver.grants import OBJECT, SYSTEM, GrantRow, RoleGrant
 from sopuli.driver.mssql.admin import (
-    DENIED_SECURITY,
     GRANTED,
-    PARTIAL_READ,
     PRINCIPAL_CLASS,
     PUBLIC,
     READS,
@@ -71,10 +75,39 @@ ENDPOINT_CLASS = 105
 
 #: Why the server level is not checked without ``VIEW ANY DEFINITION``.
 NO_DEFINITIONS = (
-    "server-level privileges: the tool login does not hold VIEW ANY DEFINITION, so it "
-    "cannot see user-defined server roles or one role's membership of another; "
+    "server-level privileges, and server roles the tool login cannot see: it does not "
+    "hold VIEW ANY DEFINITION, so it cannot see user-defined server roles or one role's "
+    "membership of another, and the roles listed may be fewer than the login holds; "
     "GRANT VIEW ANY DEFINITION to the tool login (02-mssql-privileges.md §2.2)"
 )
+#: Why the server level is not checked where ``VIEW ANY SECURITY
+#: DEFINITION`` is denied (2022 and later), which hides every principal,
+#: membership and grant (``13_fixed_roles_probe.py``, FR5).
+DENIED_SECURITY = (
+    "server-level privileges and server roles: the tool login is denied VIEW ANY "
+    "SECURITY DEFINITION, which hides every principal, membership and grant; revoke "
+    "the denial (02-mssql-privileges.md §2.2)"
+)
+#: Why the server level is not checked where the read names a principal it
+#: has no row for: a denial hides a principal's row and not the rows that
+#: name it (FR5), or the principal was made during the read, twice.
+PARTIAL_READ = (
+    "server-level privileges and server roles: the read names a server principal "
+    "the tool login has no row for, one a DENY of VIEW DEFINITION hides or one made "
+    "during the read; revoke any such DENY to the tool login, and run the report "
+    "again (02-mssql-privileges.md §2.2)"
+)
+#: What the parts cannot show where a Windows login is surveyed on a server
+#: that has a Windows group login: SQL Server keeps no record of a group's
+#: members, which Windows answers at login.
+WINDOWS_GROUPS = (
+    "the server-level privileges a Windows login holds through a Windows group login: "
+    "the server keeps no record of which Windows logins are in a group, so they are not "
+    "listed"
+)
+
+#: ``sys.server_principals.type`` of a Windows login, and of a Windows group.
+WINDOWS_LOGIN, WINDOWS_GROUP = "U", "G"
 
 PRINCIPALS = "SELECT principal_id, name, type, is_fixed_role FROM sys.server_principals"
 MEMBERSHIPS = "SELECT role_principal_id, member_principal_id FROM sys.server_role_members"
@@ -120,40 +153,48 @@ class ServerGrants:
     """The server level of a :class:`~sopuli.driver.grants.GrantSurvey`.
 
     ``system`` and ``objects`` are ``None`` where the read was not complete,
-    and ``unread`` then says why.
+    and ``unread`` then says why; ``roles`` then holds the memberships the
+    tool login could see. ``gaps`` says what complete parts cannot show, such
+    as a Windows login's privileges through a Windows group.
     """
 
     roles: tuple[RoleGrant, ...]
     system: tuple[GrantRow, ...] | None
     objects: tuple[GrantRow, ...] | None
     unread: str | None = None
+    gaps: tuple[str, ...] = ()
 
 
 def read(cursor: Cursor, accounts: Sequence[str], *, public: bool) -> ServerGrants:
     """The server level for ``accounts``, as the tool login reads it.
 
-    Without ``VIEW ANY DEFINITION`` the views are read for the roles alone.
-    A read that names a principal it has no row for is made again, once, as
-    guardrail 9's is (:func:`~sopuli.driver.mssql.admin.read_catalog`)."""
+    Where ``VIEW ANY SECURITY DEFINITION`` is denied, every row is hidden, so
+    nothing more is read. Without ``VIEW ANY DEFINITION`` the principals and
+    memberships are read for the roles alone. A read that names a principal
+    it has no row for is made again, once, as guardrail 9's is
+    (:func:`~sopuli.driver.mssql.admin.read_catalog`)."""
     cursor.execute(VIEW_DEFINITIONS)
     row = cursor.fetchone()
-    unread: str | None = None
-    if row is None or row[0] != 1:
-        unread = NO_DEFINITIONS
-    elif row[1] == 0:
-        unread = DENIED_SECURITY
+    missing = row is None or row[0] != 1
+    # 0 for VIEW ANY SECURITY DEFINITION is a denial only where VIEW ANY
+    # DEFINITION, which implies it, is held: without that, 0 means it is not
+    # held at all (measured on 16.0.4325.4, #1578 and #1589).
+    if not missing and row is not None and row[1] == 0:
+        return ServerGrants(roles=(), system=None, objects=None, unread=DENIED_SECURITY)
+    if missing:
+        principals, memberships = _read_members(cursor)
+        return survey(principals, memberships, (), accounts, public=public, unread=NO_DEFINITIONS)
     found = ServerGrants(roles=(), system=None, objects=None, unread=PARTIAL_READ)
     for _ in range(READS):
-        principals, memberships, permissions = _read_views(cursor)
-        found = survey(principals, memberships, permissions, accounts, public=public, unread=unread)
-        if found.unread != PARTIAL_READ or unread is not None:
+        principals, memberships = _read_members(cursor)
+        permissions = _read_permissions(cursor)
+        found = survey(principals, memberships, permissions, accounts, public=public)
+        if found.unread != PARTIAL_READ:
             break
     return found
 
 
-def _read_views(
-    cursor: Cursor,
-) -> tuple[list[Principal], list[tuple[int, int]], list[Permission]]:
+def _read_members(cursor: Cursor) -> tuple[list[Principal], list[tuple[int, int]]]:
     cursor.execute(PRINCIPALS)
     principals = [
         Principal(int(pid), str(name), str(kind).strip(), bool(fixed))
@@ -161,8 +202,12 @@ def _read_views(
     ]
     cursor.execute(MEMBERSHIPS)
     memberships = [(int(role), int(member)) for role, member in cursor.fetchall()]
+    return principals, memberships
+
+
+def _read_permissions(cursor: Cursor) -> list[Permission]:
     cursor.execute(PERMISSIONS)
-    permissions = [
+    return [
         Permission(
             int(grantee),
             str(name),
@@ -174,7 +219,6 @@ def _read_views(
         )
         for grantee, name, class_, desc, major, state, endpoint in cursor.fetchall()
     ]
-    return principals, memberships, permissions
 
 
 def survey(
@@ -192,9 +236,14 @@ def survey(
     by_id = {p.principal_id: p for p in principals}
     pairs = frozenset(memberships)
     rows = tuple(permissions)
+    # The names come as the accounts survey read them, in the server's own
+    # spelling, so they are matched exactly (PrivilegeSurvey).
     by_name = {p.name: p for p in by_id.values() if not p.is_role}
     if unread is None and not _names_known(by_id, pairs, rows):
         unread = PARTIAL_READ
+    parents: dict[int, list[int]] = {}
+    for role_id, member_id in pairs:
+        parents.setdefault(member_id, []).append(role_id)
     roles = tuple(
         RoleGrant(
             grantee=name,
@@ -205,14 +254,12 @@ def survey(
         )
         for name in dict.fromkeys(accounts)
         if name in by_name
-        for role_id, member_id in sorted(pairs)
-        if member_id == by_name[name].principal_id and role_id in by_id
+        for role_id in sorted(parents.get(by_name[name].principal_id, ()))
+        # A role the tool login cannot see; the reason in `unread` says so.
+        if role_id in by_id
     )
     if unread is not None:
         return ServerGrants(roles=roles, system=None, objects=None, unread=unread)
-    parents: dict[int, list[int]] = {}
-    for role_id, member_id in pairs:
-        parents.setdefault(member_id, []).append(role_id)
     granted: dict[int, list[Permission]] = {}
     for row in rows:
         if row.state in GRANTED:
@@ -237,10 +284,14 @@ def survey(
                 _grant(PUBLIC_GRANTEE, row, (), by_id)
                 for row in granted.get(everyone.principal_id, ())
             )
+    surveyed = [by_name[name] for name in accounts if name in by_name]
+    groups = any(p.type == WINDOWS_GROUP for p in by_id.values())
+    windows = any(p.type == WINDOWS_LOGIN for p in surveyed)
     return ServerGrants(
         roles=roles,
         system=tuple(row for row in found if row.kind == SYSTEM),
         objects=tuple(row for row in found if row.kind == OBJECT),
+        gaps=(WINDOWS_GROUPS,) if groups and windows else (),
     )
 
 

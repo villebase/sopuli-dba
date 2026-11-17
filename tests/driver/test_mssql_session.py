@@ -137,7 +137,6 @@ def test_every_other_method_is_not_written() -> None:
     """Refused without a round trip: the session has no connection here."""
     opened = session.MssqlSession(connection=None, target=target())
     calls: list[Callable[[], object]] = [
-        lambda: opened.privileges(accounts=()),
         lambda: opened.set_password("acme_app", Secret("x")),
         lambda: opened.verify_password("acme_app", Secret("x")),
     ]

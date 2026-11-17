@@ -118,6 +118,15 @@ REACHED = "reached"
 REACH_SPENT, REACH_PASSED = "spent", "passed"
 REACH_RESULTS = frozenset({REACH_SPENT, REACH_PASSED})
 
+#: A SQL Server login's ``CHECK_POLICY`` and ``CHECK_EXPIRATION``, as read
+#: before a change turned the policy off (#1551). The value maps each target
+#: name to the two flags, per account in a shared document, as :data:`REACHED`.
+#: Unlike :data:`REACHED` it does not describe ``pending``: it describes the
+#: login, whose policy stays off until the flags are set back. So no staging
+#: write and no promotion clears it, and a target's entry is removed only once
+#: its flags are set back (:mod:`sopuli.policy_flags`).
+POLICY_FLAGS = "policy_flags"
+
 #: When and by whom a version's password was made. Written into each version's
 #: content under native staging (decision 3, #1158), beside ``origin``.
 GENERATED_AT, GENERATED_BY = "generated_at", "generated_by"
@@ -134,6 +143,7 @@ RESERVED = (
     ORIGIN,
     ROLLOVER,
     REACHED,
+    POLICY_FLAGS,
     *STAMPS,
     GENERATED_AT,
     GENERATED_BY,
@@ -151,6 +161,7 @@ __all__ = [
     "GENERATED_BY",
     "ORIGIN",
     "PENDING",
+    "POLICY_FLAGS",
     "PREVIOUS",
     "REACHED",
     "REACH_PASSED",

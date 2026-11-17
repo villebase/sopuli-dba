@@ -211,9 +211,26 @@ def test_an_untrusted_certificate_names_the_settings() -> None:
     assert diagnosis.message.startswith("SSL Provider: The certificate chain was issued")
 
 
-def test_a_reset_under_strict_says_strict() -> None:
-    assert from_error(RESET, connecting=True, strict=True).hint == STRICT_HINT
-    assert from_error(RESET, connecting=True).hint != STRICT_HINT
+def test_a_reset_under_strict_is_the_capability_missing() -> None:
+    refused = from_error(RESET, connecting=True, strict=True)
+    assert refused.strict_refused
+    assert (refused.category, refused.exit_code, refused.hint) == (
+        "capability",
+        ExitCode.UNSUPPORTED_CAPABILITY,
+        STRICT_HINT,
+    )
+
+
+@pytest.mark.parametrize(
+    ("connecting", "strict"),
+    [(True, False), (False, True)],
+    ids=["not strict", "on an open session"],
+)
+def test_a_reset_elsewhere_is_a_connection_failure(connecting: bool, strict: bool) -> None:
+    diagnosis = from_error(RESET, connecting=connecting, strict=strict)
+    assert not diagnosis.strict_refused
+    assert (diagnosis.category, diagnosis.exit_code) == ("connectivity", ExitCode.FAILURE)
+    assert diagnosis.hint != STRICT_HINT
 
 
 def test_an_unreachable_server_is_a_connection_failure() -> None:

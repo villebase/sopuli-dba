@@ -6252,7 +6252,13 @@ the register.
   `SOPULI-W058`. `host_name_in_certificate` names the name to check, only
   under `mandatory`, the one mode whose name check was measured (TL4), and
   `server_certificate` pins the server's own certificate, only under
-  `strict`. There is no key for a CA file.
+  `strict`. There is no key for a CA file. #1549 later decided that a reset
+  under `strict` while connecting is refused as the capability missing, exit
+  5, naming `strict_encryption`: 2019 and 2022 reset the connection before
+  the login, so the reset is the only answer the tool gets, and a network
+  fault that reads the same is named in the hint. A second connection under
+  `mandatory` to tell the two apart was rejected: it would log in with
+  weaker settings than the operator chose.
 - **Why:** `Encrypt=yes` checks the chain and the name (TL1, TL4), so
   `mandatory` is a safe default. `ServerCertificate` naming a CA never
   connected (TL6), and naming the server's own certificate connected only

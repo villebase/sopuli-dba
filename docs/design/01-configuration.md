@@ -1922,10 +1922,12 @@ certificate, under `strict` only, so that is what `server_certificate` is.
 **`strict` is not the default**, because SQL Server 2019 and 2022 reset every
 strict connection in the measurements, and only 2025 accepted one (TL3,
 `mssql-client-tls`). A server that does not accept `strict` resets the
-connection, `10054`. The run then fails to connect to that target before any
-change, as for an unreachable one, with a hint to use `mandatory`. Refusing
-it at plan time with an exit code of its own, as invariant 4 asks, is not
-built (open: #1549).
+connection, `10054`, during the TLS handshake, before the login. The tool
+cannot read the server over a connection it resets, so a reset under
+`strict` while connecting is the capability missing: the target is refused
+at plan time, exit 5, naming `strict_encryption` and the target, with a hint
+to use `mandatory` (invariant 4). A network fault that resets the
+connection reads the same, and the hint says so.
 
 `optional`, and `trust_server_certificate: true`, warn with `SOPULI-W058` on
 every run, once per target: anything on the network path can then present its

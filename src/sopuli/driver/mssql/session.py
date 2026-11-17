@@ -39,7 +39,7 @@ from sopuli.driver.mssql import accounts
 from sopuli.driver.mssql.admin import Assessment, Catalog, assess, read_catalog
 from sopuli.driver.mssql.client import client_lines
 from sopuli.driver.mssql.connection import connection_string
-from sopuli.driver.mssql.errors import from_error
+from sopuli.driver.mssql.errors import STRICT_ENCRYPTION, STRICT_REMEDY, from_error
 from sopuli.driver.mssql.scope import observe
 from sopuli.driver.protocol import (
     ClosesConnection,
@@ -49,6 +49,7 @@ from sopuli.driver.protocol import (
     DriverError,
     Scope,
     Timeouts,
+    UnsupportedCapabilityError,
     UserState,
 )
 from sopuli.driver.registry import NotWrittenError
@@ -269,6 +270,13 @@ class MssqlDriver:
                 failure.code,
                 time.monotonic() - started,
             )
+            if failure.strict_refused:
+                # Invariant 4: the server cannot be read over a connection it
+                # resets, so the reset is the tool's only answer to whether it
+                # takes TDS 8. A network fault reads the same; the hint says so.
+                raise UnsupportedCapabilityError(
+                    STRICT_ENCRYPTION, target=target.name, hint=failure.hint, remedy=STRICT_REMEDY
+                ) from error
             raise failure.as_error() from error
         connection.timeout = self.timeouts.query_s
         LOG.debug(

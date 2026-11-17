@@ -170,12 +170,19 @@ CERTIFICATE_HINT = (
     "certificate holds, or set `mssql.host_name_in_certificate`"
 )
 
+#: The capability a reset under ``strict`` reports missing (#1549): TDS 8,
+#: which wraps the whole connection in TLS. ``error.target_capability``.
+STRICT_ENCRYPTION = "strict_encryption"
+
 STRICT_HINT = (
     "the connection was reset under `mssql.encrypt: strict`. SQL Server 2019 and 2022 "
     "reset every strict connection in the measurements, and only 2025 took one. If "
     "this server is 2019 or 2022, it does not take `strict`: set `encrypt: mandatory`. "
     "If it is 2025, something on the network reset the connection"
 )
+
+#: :class:`~sopuli.driver.protocol.UnsupportedCapabilityError`'s ``remedy``.
+STRICT_REMEDY = "set `mssql.encrypt: mandatory` on the target"
 
 DRIVER_HINT = (
     "install Microsoft ODBC Driver 18 for SQL Server, Microsoft's system package: "
@@ -204,6 +211,10 @@ class Diagnosis(errors.Diagnosis):
     exit_code: ExitCode
     message: str
     hint: str | None = None
+    #: A reset under ``strict`` while connecting: the server does not take
+    #: TDS 8, as 2019 and 2022 do not (TL3). The session raises it as the
+    #: capability missing (:data:`STRICT_ENCRYPTION`).
+    strict_refused: bool = False
 
 
 def records(message: str) -> tuple[Record, ...]:
@@ -277,8 +288,15 @@ def from_error(
     hint = _FAILED_TO_CONNECT if connecting else LOST
     if any(_CERTIFICATE.search(record.text) for record in found):
         hint = CERTIFICATE_HINT
-    elif strict and any(record.number == CONNECTION_RESET for record in found):
-        hint = STRICT_HINT
+    elif strict and connecting and any(record.number == CONNECTION_RESET for record in found):
+        return Diagnosis(
+            code=code,
+            category="capability",
+            exit_code=ExitCode.UNSUPPORTED_CAPABILITY,
+            message=message,
+            hint=STRICT_HINT,
+            strict_refused=True,
+        )
     return Diagnosis(
         code=code, category="connectivity", exit_code=ExitCode.FAILURE, message=message, hint=hint
     )

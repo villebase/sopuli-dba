@@ -10,8 +10,14 @@ from typing import Any
 import pytest
 
 from sopuli.config.model import ExpandedTarget, Target, TargetMssql
-from sopuli.driver.protocol import AuthenticationError, Credential, Timeouts
+from sopuli.driver.protocol import (
+    AuthenticationError,
+    Credential,
+    Timeouts,
+    UnsupportedCapabilityError,
+)
 from sopuli.driver.registry import DRIVER_NOT_IMPLEMENTED, NotWrittenError
+from sopuli.exit_codes import ExitCode
 from sopuli.secrets import Secret
 
 pyodbc = pytest.importorskip("pyodbc")
@@ -100,6 +106,28 @@ def test_a_refused_login_logs_no_password(monkeypatch: pytest.MonkeyPatch) -> No
     assert "connect to mssql-dev as sopuli_admin failed with 18456" in text
     assert PASSWORD not in text
     assert PASSWORD not in str(caught.value)
+
+
+RESET = (
+    "08001",
+    "[08001] [Microsoft][ODBC Driver 18 for SQL Server]SSL Provider: An existing connection "
+    "was forcibly closed by the remote host.\r\n (10054) (SQLDriverConnect)",
+)
+
+
+def test_a_reset_under_strict_refuses_the_capability(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Invariant 4: exit 5, naming the capability and the target (#1549)."""
+
+    def connect(text: str, **kwargs: Any) -> FakeConnection:
+        raise pyodbc.OperationalError(*RESET)
+
+    monkeypatch.setattr(pyodbc, "connect", connect)
+    with pytest.raises(UnsupportedCapabilityError) as caught:
+        session.MssqlDriver(correlation_id="run-1").connect(target(encrypt="strict"), CREDENTIAL)
+    assert caught.value.capability == "strict_encryption"
+    assert caught.value.exit_code == ExitCode.UNSUPPORTED_CAPABILITY
+    assert str(caught.value).startswith('target "mssql-dev" does not support strict_encryption')
+    assert "encrypt: mandatory" in (caught.value.remedy or "")
 
 
 def test_every_other_method_is_not_written() -> None:

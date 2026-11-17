@@ -250,7 +250,11 @@ reads `public`'s grants as every login's: a grant of `ALTER ANY SERVER ROLE`
 to `public` refuses every managed login. The guardrail reads grants, with or
 without `WITH GRANT OPTION`, and not denials: a login is refused for a grant
 whatever it is denied. A grant on a principal the read has no row for, and a
-membership of one, count as a grant on and a membership of a refused role. The guardrail applies to the
+membership of one, count as a grant on and a membership of a refused role.
+A read with no row for the login, or none for `public`, refuses the login.
+Whether the fixed roles of 2022 and later, such as `##MS_LoginManager##`,
+show their permissions in `sys.server_permissions` is not measured
+(open: #1553). If they do not, the guardrail does not see what their members hold. The guardrail applies to the
 password verbs, and the tool's own login is exempt, as on MySQL
 ([#1222](../decisions/log.md#1222)).
 

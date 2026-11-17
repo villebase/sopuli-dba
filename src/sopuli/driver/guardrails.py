@@ -116,7 +116,7 @@ function and nothing else.
 from __future__ import annotations
 
 from collections.abc import Collection
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from sopuli.config.targets import MARIADB
 from sopuli.driver.protocol import UserState
@@ -327,10 +327,12 @@ def server_reserved(state: UserState) -> bool:
     No grant to the tool account changes any of these answers. For checks 6 and
     8 the server is what refuses the change; for check 9 the tool refuses it,
     whatever the server would allow. So the pre-flight asks for no grant on such
-    an account (#1117), because the guardrails skip the account anyway. A check
-    9 refusal for a path the driver could not read (``admin_unread``) is
-    the one a grant changes, to the tool login rather than for the account,
-    and its reason names that grant (#1567).
+    an account (#1117), because the guardrails skip the account anyway.
+
+    A path the driver could not read (``admin_unread``) is not one of these:
+    a grant to the tool login can change it (#1567). So it is left out here,
+    `creds generate` stages the account, and check 9 refuses it when a
+    password verb reaches it.
 
     Read from :func:`review` and :data:`NEVER_WAIVED`, not restated, so a later
     check of the same kind is included without an edit here. Check 1 is left
@@ -343,7 +345,7 @@ def server_reserved(state: UserState) -> bool:
 def server_refusal(state: UserState) -> Refusal | None:
     """The first refusal :func:`server_reserved` is true for, with its reason, or
     ``None``. `creds generate` reports it on the account it skips (#1174)."""
-    found = review(state, declared=(state.name,)).refusals
+    found = review(replace(state, admin_unread=None), declared=(state.name,)).refusals
     return next((refusal for refusal in found if refusal.check in UNWAIVABLE), None)
 
 

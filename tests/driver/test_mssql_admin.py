@@ -10,9 +10,11 @@ from __future__ import annotations
 
 import pytest
 
-from sopuli.driver.guardrails import GLOBAL_PRIVILEGE, review
+from sopuli.driver.guardrails import GLOBAL_PRIVILEGE, review, server_refusal
 from sopuli.driver.mssql.admin import (
     MISSING_GRANT,
+    MISSING_LOGIN,
+    MISSING_PUBLIC,
     PRINCIPAL_CLASS,
     SERVER_CLASS,
     Assessment,
@@ -238,8 +240,29 @@ def test_without_view_any_definition_every_login_is_refused() -> None:
     assert "VIEW ANY DEFINITION" in MISSING_GRANT
 
 
-def test_a_login_missing_from_a_complete_catalog_is_refused() -> None:
-    assert assess(12345, catalog()).unread == MISSING_GRANT
+def test_a_login_missing_from_a_complete_catalog_is_refused_without_blaming_the_grant() -> None:
+    assert assess(12345, catalog()).unread == MISSING_LOGIN
+    assert "VIEW ANY DEFINITION" not in MISSING_LOGIN
+
+
+def test_a_complete_catalog_without_public_refuses_every_login() -> None:
+    """`public`'s grants are every login's, so a read without its row never passes."""
+    read = Catalog.read([p for p in FIXED if p is not PUBLIC], (), ())
+    assert assess(APP.principal_id, read) == Assessment(unread=MISSING_PUBLIC)
+
+
+def test_the_catalog_s_indexes_are_built_once() -> None:
+    read = catalog(OPS, grants=(Permission(OPS.principal_id, "CONTROL SERVER", SERVER_CLASS, 0),))
+    assert read.refused is read.refused
+    assert refused_roles(read) is read.refused
+
+
+def test_an_unread_path_does_not_make_creds_generate_skip_the_login() -> None:
+    """The grant to the tool login changes the answer, so generate stages
+    the login, and check 9 refuses it on the password verbs (#1567)."""
+    state = UserState(name=APP.name, status="OPEN", admin_unread=MISSING_GRANT)
+    assert server_refusal(state) is None
+    assert not review(state, declared=(APP.name,)).permitted
 
 
 def test_guardrail_nine_prints_the_findings() -> None:

@@ -434,9 +434,12 @@ server takes `0x0300`, and `15021` that it does not. Any other answer fails
 the check at plan time, `15025` among them: the tool cannot see every name
 a login would clash with, such as a user-defined role's, and an answer to a
 clash says nothing about the value on a release that checks the name first.
-The check runs in a session that changes a password, and in its `--dry-run`,
-so that the plan names the value it will send. A target the run only reads,
-or one that is `readonly`, never gets it. The rolled-back statement changes
+The check runs in a session that changes a password, before anything is
+written for the login. It also runs in the `--dry-run` of `creds apply`
+and `creds rotate`, on each target with something to send, and the plan
+names the value, such as `0x0300 password value (PBKDF2-HMAC-SHA512)`, or
+the error where the check gave no answer. A target the run only reads, or
+one that is `readonly`, never gets it. The rolled-back statement changes
 nothing, but what a server audit or Extended Events keep of it is not
 measured (unverified: mssql-hash-check-audit).
 

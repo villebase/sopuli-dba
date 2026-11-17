@@ -72,7 +72,7 @@ from contextlib import nullcontext, suppress
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from types import ModuleType
-from typing import Any, TypeVar
+from typing import Any, Protocol, TypeVar, runtime_checkable
 
 import click
 
@@ -141,7 +141,7 @@ from sopuli.config.scope import refuse_personal_on
 from sopuli.config.secret_refs import SecretRef
 from sopuli.config.selection import LeftOut, narrow, narrow_to_pairs
 from sopuli.config.sharing import native_layouts, pinned_versions, unsure_layouts
-from sopuli.config.targets import MARIADB, MYSQL, USER_AT_HOST_TYPES
+from sopuli.config.targets import MARIADB, MSSQL, MSSQL_STRICT, MYSQL, USER_AT_HOST_TYPES
 from sopuli.config.vault_env import ADDR_FLAG, DEFAULT_STORE_VARIABLE
 from sopuli.constraints import AccountConstraints, Constraints, reuse_restricted
 from sopuli.delivery import DeliveryBackend, Handover, Receipt
@@ -8993,14 +8993,15 @@ def creds_apply(
     refuse_if_over_limit(run.resolved, plan.blast_radius, action="applying a password")
     bindings = [binding for binding in config.bindings if binding.secret is not None]
     # A dry run connects only for the pre-flight, for `require_encryption`'s
-    # read (#857), or for the attribute capability read (#1072); without any of
-    # them it reads the vault.
+    # read (#857), for the attribute capability read (#1072), or for a SQL
+    # Server target (#1551); without any of them it reads the vault.
     connects = (
         not run.dry_run
         or strategy is not None
         or preflight_all
         or any(
             encryption_required_at(target, config, run.resolved) is not None
+            or target.target.type in VALUE_CHECK_TYPES
             for target in _targets_of(config, bindings)
         )
         or bool(_attribute_needs(config, bindings))
@@ -9076,6 +9077,7 @@ def creds_apply(
     _require_encryption(_targets_of(config, bindings), run, config, scopes=scopes)
     _require_attribute_capabilities(bindings, run, config, scopes=scopes)
     _require_password_value(_targets_of(config, bindings), run, config, scopes=scopes)
+    _require_connection(_targets_of(config, bindings), run, config, scopes=scopes)
 
     # `--confirm` already means "proceed without asking" here -- it is what
     # `--source previous` requires -- so the flag answers both gates. Two flags
@@ -9129,6 +9131,11 @@ def creds_apply(
             return _refuse_preflight(
                 findings, document, header=_header(plan, sources), notes=repair_notes
             )
+        # The value each SQL Server target with work would be sent (#1564),
+        # after the survey's refusal, as in `rotate`.
+        versions = _value_versions(_targets_of(config, _surveyable(sources)), run, config)
+        document.diagnostics.extend(versions)
+        repair_notes.extend(one.message for one in versions)
         # The guardrail pass's answer, from the accounts the survey read (#988).
         # After the refusal: a run the survey stops never reaches the pass. Under
         # `--force` it is the checks no flag waives (#1111).
@@ -11830,13 +11837,17 @@ def _plan_scope(
 
     ``None`` where the target could not be reached or its scope not read: the
     run reports that on its rows, and each check makes its own second check
-    when it sends.
+    when it sends. A connection the driver refuses as a missing capability,
+    such as SQL Server's reset under ``encrypt: strict``, refuses the run
+    here instead, exit 5 (invariant 4, #1551).
     """
     if expanded.name in scopes:
         return scopes[expanded.name]
     found: Scope | None = None
     try:
         session = _open_session(expanded, run, config)
+    except UnsupportedCapabilityError:
+        raise
     except Exception:  # noqa: BLE001 -- the run reports it on each row
         scopes[expanded.name] = None
         return None
@@ -11910,6 +11921,112 @@ def _require_encryption(
 #: The products whose driver reports whether the server takes the password
 #: value it computes (:data:`~sopuli.driver.protocol.PASSWORD_VALUE`, #1310).
 PASSWORD_VALUE_TYPES = frozenset({MARIADB})
+
+#: The products whose session asks the server, before a change, which version
+#: of the password value it takes (``hash_version``, #1564).
+VALUE_CHECK_TYPES = frozenset({MSSQL})
+
+
+def _refused_at_connect(expanded: ExpandedTarget) -> bool:
+    """Whether the driver can refuse this target's connection as a missing
+    capability: SQL Server under ``encrypt: strict`` (#1549)."""
+    target = expanded.target
+    return target.type == MSSQL and target.mssql_settings.encrypt == MSSQL_STRICT
+
+
+def _require_connection(
+    targets: Iterable[ExpandedTarget],
+    run: Invocation,
+    config: Config,
+    *,
+    scopes: dict[str, Scope | None],
+) -> None:
+    """Refuse, at plan time, a target whose connection the driver refuses as
+    a missing capability (#1551).
+
+    Invariant 4: a SQL Server target whose connection under ``encrypt:
+    strict`` the server resets is refused as lacking ``strict_encryption``,
+    exit 5, naming the target, before any password is drawn or any target
+    changed. :func:`_plan_scope` raises it. One login per such target, shared
+    through ``scopes`` with the checks before it, and none for any other
+    target. A target this cannot reach is left to the run.
+    """
+    for expanded in targets:
+        if _refused_at_connect(expanded):
+            _plan_scope(expanded, run, config, scopes)
+
+
+@runtime_checkable
+class _ValueChecked(Protocol):
+    """A session that asks the server which password value it takes."""
+
+    def hash_version(self) -> int: ...
+
+
+#: What each SQL Server value version is, for the plan's note.
+_VALUE_VERSIONS = {0x0300: "PBKDF2-HMAC-SHA512", 0x0200: "SHA-512"}
+
+
+def _value_versions(
+    targets: Iterable[ExpandedTarget], run: Invocation, config: Config
+) -> list[Diagnostic]:
+    """`--dry-run`: the password value each SQL Server target would be sent,
+    as an ``info`` diagnostic per target (#1564).
+
+    The caller passes the targets with something to send. Each gets one
+    login and the rolled-back value check, which refuses a target whose
+    answer is neither ``ok`` nor ``15021``, exit 5, as the run would. A
+    target this cannot reach, or whose check fails another way, such as for
+    a missing grant, gets a note that says so, with the error: the run would
+    stop on that target.
+    """
+    named: list[Diagnostic] = []
+    for expanded in targets:
+        if expanded.target.type not in VALUE_CHECK_TYPES:
+            continue
+        try:
+            session = _open_session(expanded, run, config)
+        except UnsupportedCapabilityError:
+            raise
+        except Exception as error:  # noqa: BLE001 -- a note, as the run's row would be
+            named.append(_unanswered(expanded.name, error))
+            continue
+        try:
+            if not isinstance(session, _ValueChecked):
+                continue
+            version = session.hash_version()
+        except UnsupportedCapabilityError:
+            raise
+        except Exception as error:  # noqa: BLE001 -- likewise
+            named.append(_unanswered(expanded.name, error))
+            continue
+        finally:
+            with suppress(Exception):
+                session.close()
+        named.append(
+            Diagnostic(
+                level="info",
+                target=expanded.name,
+                message=(
+                    f'target "{expanded.name}" takes a 0x{version:04X} password value '
+                    f"({_VALUE_VERSIONS[version]}), which a change sends"
+                ),
+            )
+        )
+    return named
+
+
+def _unanswered(target: str, error: Exception) -> Diagnostic:
+    """The dry run's note for a target whose value check gave no answer."""
+    return Diagnostic(
+        level="info",
+        target=target,
+        message=(
+            f'target "{target}" did not say which password value it takes, and a change '
+            f"would stop there: {_finding(error).message}"
+        ),
+    )
+
 
 #: The products whose rollover close sends a password value, so it changes the
 #: account's login, and `finish-rollover` runs UC-1 §4's checks first, as `creds
@@ -14394,6 +14511,7 @@ def creds_rotate(
     _require_encryption(_targets_of(config, bindings), run, config, scopes=scopes)
     _require_attribute_capabilities(bindings, run, config, scopes=scopes)
     _require_password_value(_targets_of(config, bindings), run, config, scopes=scopes)
+    _require_connection(_targets_of(config, bindings), run, config, scopes=scopes)
 
     if run.dry_run:
         # Invariant 8: the plan, the survey, and nothing written anywhere. The
@@ -15260,6 +15378,9 @@ def _preview_rotation(
 ) -> str:
     """`--dry-run`: the plan, what is due, and whether the estate would take it.
 
+    It names the value each SQL Server target due would be sent
+    (:func:`_value_versions`), as a note.
+
     **The pre-flight runs**, which is what makes `--dry-run` worth typing here
     rather than only reading the plan. It writes nothing and takes no lock, and
     "show me what this would do, and tell me whether it would work" is the
@@ -15325,6 +15446,10 @@ def _preview_rotation(
         rotating, skipped, shared=shared, selection=selection
     )
     document.diagnostics.extend(refused_ahead)
+    # What the run would stage, not every due binding: the guardrails skip
+    # the rest.
+    versions = _value_versions(_targets_of(config, drawn), run, config)
+    document.diagnostics.extend(versions)
 
     stopped = named + named_shared
     document.finish(
@@ -15337,7 +15462,8 @@ def _preview_rotation(
         [
             f"{header}\n\nnothing was rotated (--dry-run)",
             *render_notices(
-                caveat_notes(findings) + [one.message for one in skipped_ahead + refused_ahead]
+                caveat_notes(findings)
+                + [one.message for one in [*versions, *skipped_ahead, *refused_ahead]]
             ),
         ]
     )

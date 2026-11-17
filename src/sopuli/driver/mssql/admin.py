@@ -1,4 +1,4 @@
-"""The grants that make a SQL Server login one the tool must not manage. Tier 0.
+"""The grants that make a SQL Server login one the tool must not manage.
 
 Guardrail 9 on SQL Server (`02-mssql-privileges.md` §5, decision 5 of
 #1538, #1567). The tool login's ``ALTER ANY LOGIN`` sets the password of any
@@ -6,7 +6,7 @@ login the server does not protect, and the server does not protect a login
 that can reach ``CONTROL SERVER`` in a step or two (GR4, PA1). So the tool
 refuses a managed login that, itself or through a server role:
 
-- is a member of ``sysadmin`` or ``securityadmin``;
+- is a member of ``sysadmin``, ``securityadmin`` or ``##MS_LoginManager##``;
 - holds ``CONTROL SERVER``, ``ALTER ANY LOGIN``, ``IMPERSONATE ANY LOGIN`` or
   ``ALTER ANY SERVER ROLE``;
 - holds ``CONTROL``, ``ALTER`` or ``IMPERSONATE`` on one login;
@@ -25,9 +25,9 @@ that holds ``ALTER`` on that one.
 row, so no owner, and no role's membership of another role
 (``12_guardrail_paths_probe.py``, PA2). No login can then be shown to own no
 refused role, so :func:`assess` refuses every login and names the missing
-grant (#1567). The session reads the catalog only when the tool login holds
-the grant, and otherwise passes an empty :class:`Catalog` with ``complete``
-false.
+grant (#1567). :func:`read_catalog` reads the catalog only when the tool
+login holds the grant, and otherwise returns an empty :class:`Catalog` with
+``complete`` false. It is the module's one read; everything else is tier 0.
 
 **Two rules keep the answer on the safe side.** A ``DENY`` row is not read:
 a member of ``sysadmin`` ignores it, and counting only grants refuses more,
@@ -47,6 +47,8 @@ from collections.abc import Iterable, Mapping, Set
 from dataclasses import dataclass, field
 from functools import cached_property
 
+from sopuli.driver.protocol import Cursor
+
 #: ``sys.server_permissions.class``: the server itself, and one server
 #: principal, a login or a server role.
 SERVER_CLASS = 100
@@ -61,8 +63,13 @@ ROLE_TYPE = "R"
 #: ``WITH GRANT OPTION``. A ``DENY`` is ``D``, and is not read.
 GRANTED = frozenset({"G", "W"})
 
-#: The fixed server roles whose members the list refuses by name.
-ADMIN_ROLES = ("sysadmin", "securityadmin")
+#: The fixed server roles whose members the list refuses, by name. A fixed
+#: role has no rows in ``sys.server_permissions``, so what it gives is read
+#: from its name. These are the three that give a permission of the list:
+#: ``sysadmin`` all four, and ``securityadmin`` and, from 2022,
+#: ``##MS_LoginManager##`` ``ALTER ANY LOGIN`` (``13_fixed_roles_probe.py``,
+#: FR1 and FR2).
+ADMIN_ROLES = ("sysadmin", "securityadmin", "##MS_LoginManager##")
 
 #: The role every login is a member of without a membership row.
 PUBLIC = "public"
@@ -236,6 +243,47 @@ class Assessment:
 
     grants: frozenset[str] = frozenset()
     unread: str | None = None
+
+
+#: Whether the tool login holds ``VIEW ANY DEFINITION``, itself, through a
+#: role, or through ``CONTROL SERVER``.
+VIEW_DEFINITIONS = "SELECT HAS_PERMS_BY_NAME(NULL, NULL, 'VIEW ANY DEFINITION')"
+
+#: The three reads of §5's table. Only the two classes the list names are
+#: read from ``sys.server_permissions``.
+PRINCIPALS = "SELECT principal_id, name, type, owning_principal_id FROM sys.server_principals"
+MEMBERSHIPS = "SELECT role_principal_id, member_principal_id FROM sys.server_role_members"
+PERMISSIONS = (
+    "SELECT grantee_principal_id, permission_name, class, major_id, state "
+    f"FROM sys.server_permissions WHERE class IN ({SERVER_CLASS}, {PRINCIPAL_CLASS})"
+)
+
+
+def read_catalog(cursor: Cursor) -> Catalog:
+    """What guardrail 9 reads, as the tool login.
+
+    Without ``VIEW ANY DEFINITION``, nothing more is read, and the catalog is
+    not complete: a partial read would pass a login whose role it cannot see
+    (PA2, #1567). Each statement goes without parameters: pyodbc binds a
+    ``None`` as one.
+    """
+    cursor.execute(VIEW_DEFINITIONS)
+    row = cursor.fetchone()
+    if row is None or row[0] != 1:
+        return Catalog(complete=False)
+    cursor.execute(PRINCIPALS)
+    principals = [
+        Principal(int(pid), str(name), str(kind).strip(), None if owner is None else int(owner))
+        for pid, name, kind, owner in cursor.fetchall()
+    ]
+    cursor.execute(MEMBERSHIPS)
+    memberships = [(int(role), int(member)) for role, member in cursor.fetchall()]
+    cursor.execute(PERMISSIONS)
+    permissions = [
+        Permission(int(grantee), str(name), int(class_), int(major), str(state).strip())
+        for grantee, name, class_, major, state in cursor.fetchall()
+    ]
+    return Catalog.read(principals, memberships, permissions)
 
 
 def bracketed(name: str) -> str:

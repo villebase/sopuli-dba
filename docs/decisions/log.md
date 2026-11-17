@@ -6081,6 +6081,10 @@ the register.
      user-defined role's row, so not its owner, nor a role's membership of
      another role. `ALTER` on a login reached no power, and `TAKE OWNERSHIP`
      on a login cannot be granted. What follows from these is #1567.
+     #1553 also measured the fixed roles (`13_fixed_roles_probe.py`): none
+     has a row in the server-level views, and `##MS_LoginManager##`, 2022
+     and later, gives `ALTER ANY LOGIN`, as `securityadmin` does, so the
+     guardrail names it beside `sysadmin` and `securityadmin`.
      [#1567](#1567) later made the guardrail refuse every managed login
      where the tool login lacks `VIEW ANY DEFINITION`, and dropped `TAKE
      OWNERSHIP` on a login from the list.

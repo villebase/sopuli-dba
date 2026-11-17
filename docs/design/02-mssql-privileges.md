@@ -40,7 +40,8 @@ disables and enables it, and sets `MUST_CHANGE`
 The server protects some logins from it. The tool login is refused the
 password, `15151`, of a login that (`04_grants_probe.py`, GR1):
 
-- is a member of `sysadmin` or `securityadmin`;
+- is a member of `sysadmin` or `securityadmin`, or, 2022 and later,
+  `##MS_LoginManager##` (`13_fixed_roles_probe.py`, FR3);
 - is a member of a server role that holds `CONTROL SERVER`;
 - holds `CONTROL SERVER`, `ALTER ANY LOGIN` or `IMPERSONATE ANY LOGIN`.
 
@@ -246,7 +247,7 @@ measured (open: #1550).
 The tool refuses to manage a login that, itself or through a server role
 (decision 5, [#1567](../decisions/log.md#1567), open: #1553):
 
-- is a member of `sysadmin` or `securityadmin`;
+- is a member of `sysadmin`, `securityadmin` or `##MS_LoginManager##`;
 - holds `CONTROL SERVER`, `ALTER ANY LOGIN`, `IMPERSONATE ANY LOGIN` or `ALTER
   ANY SERVER ROLE`;
 - holds `CONTROL`, `ALTER` or `IMPERSONATE` on one login;
@@ -262,14 +263,19 @@ without `WITH GRANT OPTION`, and not denials: a login is refused for a grant
 whatever it is denied. A grant on a principal the read has no row for, and a
 membership of one, count as a grant on and a membership of a refused role.
 A read with no row for the login, or none for `public`, refuses the login.
-Whether the fixed roles of 2022 and later, such as `##MS_LoginManager##`,
-show their permissions in `sys.server_permissions` is not measured
-(open: #1553). If they do not, the guardrail does not see what their members hold. The guardrail applies to the
-password verbs, and the tool's own login is exempt, as on MySQL
-([#1222](../decisions/log.md#1222)).
+The guardrail applies to the password verbs, and the tool's own login is
+exempt, as on MySQL ([#1222](../decisions/log.md#1222)).
+
+**A fixed server role has no rows in `sys.server_permissions`**, so the
+guardrail reads what one gives from its name (`13_fixed_roles_probe.py`, FR1).
+Three give a permission of the list: `sysadmin` all four, and
+`securityadmin` and `##MS_LoginManager##`, 2022 and later, `ALTER ANY LOGIN`
+(FR2). The guardrail refuses a member of any of the three. No other fixed
+role gives one.
 
 The server already refuses the password of a member of `sysadmin`,
-`securityadmin` or a role that holds `CONTROL SERVER`, and of a login that
+`securityadmin`, `##MS_LoginManager##` (FR3) or a role that holds `CONTROL
+SERVER`, and of a login that
 holds `CONTROL SERVER`, `ALTER ANY LOGIN` or `IMPERSONATE ANY LOGIN`, `15151`
 (GR1). The guardrail refuses them at plan time instead (invariant 4). The
 server does not refuse a login that holds `ALTER ANY SERVER ROLE`, which is

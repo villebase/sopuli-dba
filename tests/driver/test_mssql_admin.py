@@ -12,16 +12,21 @@ import pytest
 
 from sopuli.driver.guardrails import GLOBAL_PRIVILEGE, review, server_refusal
 from sopuli.driver.mssql.admin import (
+    MEMBERSHIPS,
     MISSING_GRANT,
     MISSING_LOGIN,
     MISSING_PUBLIC,
+    PERMISSIONS,
     PRINCIPAL_CLASS,
+    PRINCIPALS,
     SERVER_CLASS,
+    VIEW_DEFINITIONS,
     Assessment,
     Catalog,
     Permission,
     Principal,
     assess,
+    read_catalog,
     refused_roles,
 )
 from sopuli.driver.protocol import UserState
@@ -282,3 +287,56 @@ def test_guardrail_nine_prints_the_findings() -> None:
     assert refusal.reason == (
         "the account holds CONTROL SERVER through [acme_ops], IMPERSONATE ON LOGIN::[sa]"
     )
+
+
+def test_a_member_of_login_manager_is_refused() -> None:
+    """FR2: `##MS_LoginManager##` gives ALTER ANY LOGIN with no permission row."""
+    manager = Principal(16, "##MS_LoginManager##", "R", owner_id=1)
+    read = catalog(manager, members=((manager.principal_id, APP.principal_id),))
+    assert grants_of(read) == {"##MS_LoginManager##"}
+
+
+class FakeCursor:
+    """Answers each of `read_catalog`'s statements, and records them."""
+
+    def __init__(self, answers: dict[str, list[tuple[object, ...]]]) -> None:
+        self.answers = answers
+        self.sent: list[tuple[object, ...]] = []
+        self.rows: list[tuple[object, ...]] = []
+
+    def execute(self, *args: object) -> None:
+        self.sent.append(args)
+        self.rows = self.answers[str(args[0])]
+
+    def fetchone(self) -> object:
+        return self.rows[0] if self.rows else None
+
+    def fetchall(self) -> object:
+        return self.rows
+
+
+def test_read_catalog_stops_without_view_any_definition() -> None:
+    cursor = FakeCursor({VIEW_DEFINITIONS: [(0,)]})
+    assert read_catalog(cursor) == Catalog(complete=False)
+    assert cursor.sent == [(VIEW_DEFINITIONS,)]
+
+
+def test_read_catalog_reads_the_three_views_without_parameters() -> None:
+    """pyodbc binds a `None` as a parameter, so none is passed."""
+    cursor = FakeCursor(
+        {
+            VIEW_DEFINITIONS: [(1,)],
+            PRINCIPALS: [(2, "public", "R ", 1), (300, "acme_app_user", "S ", None)],
+            MEMBERSHIPS: [(2, 300)],
+            PERMISSIONS: [(300, "CONTROL SERVER", 100, 0, "G ")],
+        }
+    )
+    read = read_catalog(cursor)
+
+    assert cursor.sent == [(VIEW_DEFINITIONS,), (PRINCIPALS,), (MEMBERSHIPS,), (PERMISSIONS,)]
+    assert read == Catalog.read(
+        [Principal(2, "public", "R", 1), Principal(300, "acme_app_user", "S")],
+        [(2, 300)],
+        [Permission(300, "CONTROL SERVER", 100, 0, "G")],
+    )
+    assert assess(300, read).grants == frozenset({"CONTROL SERVER"})

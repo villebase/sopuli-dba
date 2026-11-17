@@ -31,6 +31,7 @@ import pyodbc
 
 from sopuli.config.model import ExpandedTarget, Runtime
 from sopuli.config.targets import MSSQL_STRICT
+from sopuli.driver.mssql.admin import Assessment, Catalog, assess, read_catalog
 from sopuli.driver.mssql.client import client_lines
 from sopuli.driver.mssql.connection import connection_string
 from sopuli.driver.mssql.errors import from_error
@@ -63,6 +64,8 @@ class MssqlSession(ClosesConnection):
     target: ExpandedTarget
     #: Invariant 3's cache, probed on first use.
     _scope: Scope | None = field(default=None, init=False, repr=False)
+    #: Guardrail 9's catalog, read on first use (:meth:`admin_assessment`).
+    _catalog: Catalog | None = field(default=None, init=False, repr=False)
 
     def scope(self) -> Scope:
         """What this session is: a server, read-write or not, and its
@@ -81,6 +84,21 @@ class MssqlSession(ClosesConnection):
                     self._scope.encryption.method,
                 )
         return self._scope
+
+    def admin_assessment(self, principal_id: int) -> Assessment:
+        """Guardrail 9's input for the login ``principal_id``
+        (`02-mssql-privileges.md` §5): the grants it reaches, or why they
+        could not be read. The catalog is read on the first call and cached
+        for the session, so every managed login on the target is assessed
+        against one read."""
+        if self._catalog is None:
+            self._catalog = self._read(read_catalog)
+            LOG.debug(
+                "%s guardrail catalog: %s",
+                self.target.name,
+                "complete" if self._catalog.complete else "without VIEW ANY DEFINITION",
+            )
+        return assess(principal_id, self._catalog)
 
     def _not_written(self, what: str) -> NoReturn:
         raise NotWrittenError(

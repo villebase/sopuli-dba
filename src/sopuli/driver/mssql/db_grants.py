@@ -34,7 +34,7 @@ database and sees no row of another user (``07_report_reads_probe.py``, RP4).
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence, Set
 from dataclasses import dataclass
 
 from sopuli.driver.grants import COLUMN, OBJECT, SCHEMA, GrantRow, RoleGrant
@@ -46,18 +46,19 @@ DATABASE_LEVEL = "database"
 SCHEMA_LEVEL = "schema"
 FIXED_ROLE_LEVEL = "fixed database role"
 SCHEMA_OWNER_LEVEL = "schema owner"
+OBJECT_OWNER_LEVEL = "object owner"
 
 #: ``sys.database_permissions.class`` of the database, an object or column,
 #: and a schema.
 DATABASE_CLASS, OBJECT_CLASS, SCHEMA_CLASS = 0, 1, 3
 
-#: ``sys.database_principals.principal_id`` of ``dbo`` and of ``guest``.
-DBO_ID, GUEST_ID = 1, 2
+#: ``sys.database_principals.principal_id`` of ``guest``.
+GUEST_ID = 2
 PUBLIC_ROLE = "public"
 ONLINE = "ONLINE"
 
 #: Every database, with its state and its owner's SID.
-DATABASES = "SELECT name, state_desc, owner_sid FROM sys.databases ORDER BY name"
+DATABASES = "SELECT name, state_desc FROM sys.databases ORDER BY name"
 
 #: ``sys.database_principals.type`` of a Windows group user and an Entra
 #: group user, through which a Windows or Entra login reaches a database
@@ -65,12 +66,13 @@ DATABASES = "SELECT name, state_desc, owner_sid FROM sys.databases ORDER BY name
 GROUP_USER_TYPES = frozenset({"G", "X"})
 
 #: Errors a database that is ``ONLINE`` in ``sys.databases`` can still answer
-#: to a read: an Availability Group secondary that takes no reads (976), one
-#: in single-user use (924), one dropped or taken offline since (911, 942),
-#: or in recovery (922, 952). Each names that database as not checked, with
+#: to a read: an Availability Group secondary that takes no reads, or only
+#: with read intent, or is in neither role (976, 978, 983), one in
+#: single-user use (924), one dropped or taken offline since (911, 942), or
+#: in recovery (922, 952). Each names that database as not checked, with
 #: the server's message, and the others are still read. Not measured; by
 #: Microsoft's documentation of the numbers.
-UNREADABLE_DATABASE = frozenset({"911", "922", "924", "942", "952", "976"})
+UNREADABLE_DATABASE = frozenset({"911", "922", "924", "942", "952", "976", "978", "983"})
 
 
 def principals_query(database: str) -> str:
@@ -89,6 +91,18 @@ def members_query(database: str) -> str:
 
 def schemas_query(database: str) -> str:
     return f"SELECT schema_id, name, principal_id FROM {bracketed(database)}.sys.schemas"
+
+
+def owned_objects_query(database: str) -> str:
+    """Every object whose owner is set apart from its schema's, by
+    ``ALTER AUTHORIZATION ON OBJECT::``. Its owner holds every permission on
+    it without a row in ``sys.database_permissions``."""
+    db = bracketed(database)
+    return (
+        "SELECT s.name, o.name, o.type_desc, o.principal_id "
+        f"FROM {db}.sys.all_objects AS o JOIN {db}.sys.schemas AS s "
+        "ON s.schema_id = o.schema_id WHERE o.principal_id IS NOT NULL"
+    )
 
 
 def permissions_query(database: str) -> str:
@@ -116,7 +130,6 @@ class Database:
 
     name: str
     state: str
-    owner_sid: bytes | None
 
 
 @dataclass(frozen=True)
@@ -160,6 +173,9 @@ class Catalog:
     permissions: tuple[Permission, ...]
     #: ``(schema name, owner principal id)`` per schema.
     schemas: tuple[tuple[str, int], ...] = ()
+    #: ``(schema, object, type_desc, owner principal id)`` per object owned
+    #: apart from its schema.
+    owned_objects: tuple[tuple[str, str, str, int], ...] = ()
 
     @property
     def group_users(self) -> bool:
@@ -178,6 +194,7 @@ class Catalog:
             *(id_ for pair in self.memberships for id_ in pair),
             *(row.grantee_id for row in self.permissions if row.state in GRANTED),
             *(owner for _, owner in self.schemas),
+            *(owner for *_, owner in self.owned_objects),
         }
         return named <= known
 
@@ -192,15 +209,20 @@ class DatabaseGrants:
 
 def read_databases(cursor: Cursor) -> list[Database]:
     cursor.execute(DATABASES)
-    return [
-        Database(str(name), str(state), None if sid is None else bytes(sid))
-        for name, state, sid in cursor.fetchall()
-    ]
+    return [Database(str(name), str(state)) for name, state in cursor.fetchall()]
 
 
-def read_catalog(cursor: Cursor, database: str) -> Catalog:
-    """One database's principals, memberships, schemas and grants. A
-    database that refuses the tool login raises ``916`` on the first read."""
+def read_catalog(
+    cursor: Cursor, database: str, *, sids: Set[bytes] = frozenset(), public: bool = True
+) -> Catalog:
+    """One database's principals, memberships, schemas, owned objects and
+    grants. A database that refuses the tool login raises ``916`` on the
+    first read.
+
+    The principals come first. Where no user has one of ``sids``, the
+    surveyed logins' SIDs, and ``public`` is not asked for, nothing in the
+    database can add a row, so the rest is not read: an instance with many
+    databases costs one read for each that holds no surveyed login."""
     cursor.execute(principals_query(database))
     principals = tuple(
         Principal(
@@ -208,6 +230,8 @@ def read_catalog(cursor: Cursor, database: str) -> Catalog:
         )
         for pid, name, kind, sid, fixed in cursor.fetchall()
     )
+    if not public and not any(p.sid in sids for p in principals if not p.is_role):
+        return Catalog(principals, (), ())
     cursor.execute(members_query(database))
     memberships = tuple((int(role), int(member)) for role, member in cursor.fetchall())
     cursor.execute(schemas_query(database))
@@ -226,7 +250,12 @@ def read_catalog(cursor: Cursor, database: str) -> Catalog:
         )
         for grantee, name, class_, desc, major, minor, state, *names in cursor.fetchall()
     )
-    return Catalog(principals, memberships, permissions, schemas)
+    cursor.execute(owned_objects_query(database))
+    owned = tuple(
+        (str(schema), str(name), str(kind), int(owner))
+        for schema, name, kind, owner in cursor.fetchall()
+    )
+    return Catalog(principals, memberships, permissions, schemas, owned)
 
 
 def survey(
@@ -240,7 +269,10 @@ def survey(
     """One database's rows for ``accounts``, from what was read.
 
     ``logins`` is each login's SID, by name. A login reaches the database as
-    the user with its SID, or as ``dbo`` where it owns the database."""
+    the user with its SID. The database owner is the one whose SID ``dbo``
+    has, which the database itself records: after a restore from another
+    server it can differ from ``sys.databases.owner_sid``, so that is not
+    read."""
     by_id = {p.principal_id: p for p in catalog.principals}
     by_sid = {p.sid: p for p in catalog.principals if not p.is_role and p.sid}
     parents: dict[int, list[int]] = {}
@@ -258,10 +290,13 @@ def survey(
         if holder is not None and holder.fixed and holder.name == schema:
             continue
         owned.setdefault(owner, []).append(schema)
+    owned_objects: dict[int, list[tuple[str, str, str]]] = {}
+    for schema, object_name, kind, owner in catalog.owned_objects:
+        owned_objects.setdefault(owner, []).append((schema, object_name, kind))
     name = database.name
 
     def role_name(role_id: int) -> str:
-        return f"{name}.{by_id[role_id].name}"
+        return qualified(name, by_id[role_id].name)
 
     rows: list[GrantRow] = []
     roles: list[RoleGrant] = []
@@ -269,7 +304,7 @@ def survey(
         sid = logins.get(account)
         if sid is None:
             continue
-        user = by_id.get(DBO_ID) if sid == database.owner_sid else by_sid.get(sid)
+        user = by_sid.get(sid)
         if user is None:
             continue
         roles.extend(
@@ -289,8 +324,12 @@ def survey(
             if holder.is_role and holder.fixed:
                 rows.append(_database_row(account, holder.name, name, names, FIXED_ROLE_LEVEL))
             rows.extend(
-                _schema_owner(account, f"{name}.{schema}", names)
+                _schema_owner(account, qualified(name, schema), names)
                 for schema in owned.get(holder.principal_id, ())
+            )
+            rows.extend(
+                _object_owner(account, qualified(name, schema), object_name, kind, names)
+                for schema, object_name, kind in owned_objects.get(holder.principal_id, ())
             )
             rows.extend(
                 _grant(account, row, name, names) for row in granted.get(holder.principal_id, ())
@@ -304,10 +343,17 @@ def survey(
             )
         if _guest_connects(granted):
             rows.extend(
-                _grant(PUBLIC_GRANTEE, row, name, (f"{name}.guest",))
+                _grant(PUBLIC_GRANTEE, row, name, (qualified(name, "guest"),))
                 for row in granted.get(GUEST_ID, ())
             )
     return DatabaseGrants(roles=tuple(roles), rows=tuple(rows))
+
+
+def qualified(*names: str) -> str:
+    """``names`` joined by dots, as the report names a database's role,
+    schema or object. A name that holds a dot is bracketed, so `a.b`'s
+    schema `c` and `a`'s schema `b.c` stay two owners."""
+    return ".".join(bracketed(name) if "." in name else name for name in names)
 
 
 def not_read_reason(names: Iterable[str], why: str) -> str:
@@ -381,7 +427,7 @@ def _grant(grantee: str, row: Permission, database: str, path: tuple[str, ...]) 
             grantee=grantee,
             kind=SCHEMA,
             privilege=row.permission,
-            owner=f"{database}.{row.schema_name or f'#{row.major_id}'}",
+            owner=qualified(database, row.schema_name or f"#{row.major_id}"),
             name=None,
             object_type="SCHEMA",
             column=None,
@@ -390,15 +436,18 @@ def _grant(grantee: str, row: Permission, database: str, path: tuple[str, ...]) 
             grantable=grantable,
             level=SCHEMA_LEVEL,
         )
-    if row.class_ == OBJECT_CLASS and row.object_name is not None:
+    if row.class_ == OBJECT_CLASS:
+        # An object the tool login cannot see keeps its id, and a grant on
+        # one of its columns stays a column grant, never the wider object's.
         column = row.minor_id > 0
+        seen = row.object_name is not None
         return GrantRow(
             grantee=grantee,
             kind=COLUMN if column else OBJECT,
             privilege=row.permission,
-            owner=f"{database}.{row.schema_name}",
-            name=row.object_name,
-            object_type=row.object_type,
+            owner=qualified(database, row.schema_name) if seen and row.schema_name else database,
+            name=row.object_name if seen else f"#{row.major_id}",
+            object_type=row.object_type if seen else row.class_desc,
             column=(row.column_name or f"#{row.minor_id}") if column else None,
             path=path,
             first_role_default=active,
@@ -456,4 +505,24 @@ def _schema_owner(grantee: str, schema: str, path: tuple[str, ...]) -> GrantRow:
         first_role_default=True if path else None,
         grantable=True,
         level=SCHEMA_OWNER_LEVEL,
+    )
+
+
+def _object_owner(
+    grantee: str, schema: str, name: str, kind: str, path: tuple[str, ...]
+) -> GrantRow:
+    """``CONTROL`` on an object the user, or a role on its path, owns apart
+    from its schema: the owner holds every permission on it without a row."""
+    return GrantRow(
+        grantee=grantee,
+        kind=OBJECT,
+        privilege="CONTROL",
+        owner=schema,
+        name=name,
+        object_type=kind,
+        column=None,
+        path=path,
+        first_role_default=True if path else None,
+        grantable=True,
+        level=OBJECT_OWNER_LEVEL,
     )

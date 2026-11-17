@@ -10,6 +10,7 @@ from sopuli.driver.mssql import db_grants
 from sopuli.driver.mssql.db_grants import (
     DATABASE_LEVEL,
     FIXED_ROLE_LEVEL,
+    OBJECT_OWNER_LEVEL,
     SCHEMA_LEVEL,
     SCHEMA_OWNER_LEVEL,
     Catalog,
@@ -21,14 +22,15 @@ from sopuli.driver.mssql.server_grants import PUBLIC_GRANTEE
 
 APP_SID, OWNER_SID, OTHER_SID = b"\x82\x01", b"\x82\x02", b"\x82\x03"
 LOGINS = {"acme_app_user": APP_SID, "acme_owner_user": OWNER_SID, "acme_none_user": OTHER_SID}
-DB = Database("acme", "ONLINE", OWNER_SID)
+DB = Database("acme", "ONLINE")
 
 PUBLIC, DBO, GUEST, APP, READ, OUTER, DATAREADER = 0, 1, 2, 5, 6, 7, 16390
 DB_OWNER = 16384
 CATALOG = Catalog(
     principals=(
         Principal(PUBLIC, "public", "R", None),
-        Principal(DBO, "dbo", "S", b"\x01"),
+        # The database records its owner as dbo's SID.
+        Principal(DBO, "dbo", "S", OWNER_SID),
         Principal(GUEST, "guest", "S", b"\x00"),
         Principal(APP, "acme_app_user", "S", APP_SID),
         Principal(READ, "acme_read", "R", None),
@@ -263,17 +265,79 @@ class FakeCursor:
         raise AssertionError("every read here is a fetchall")
 
 
-def test_read_catalog_reads_four_views_with_nothing_bound() -> None:
+def test_read_catalog_reads_five_views_with_nothing_bound() -> None:
     cursor = FakeCursor(
         [(APP, "acme_app_user", "S ", APP_SID, 0)],
         [(READ, APP)],
         [(5, "sales", OUTER)],
         [(APP, "CONNECT", 0, "DATABASE", 0, 0, "G ", None, None, None, None)],
+        [("sales", "orders", "USER_TABLE", APP)],
     )
-    catalog = db_grants.read_catalog(cursor, "acme")
+    catalog = db_grants.read_catalog(cursor, "acme", sids=frozenset({APP_SID}), public=False)
 
     assert catalog.principals == (Principal(APP, "acme_app_user", "S", APP_SID),)
     assert catalog.schemas == (("sales", OUTER),)
     assert catalog.permissions[0].state == "G"
-    assert len(cursor.sent) == 4
+    assert catalog.owned_objects == (("sales", "orders", "USER_TABLE", APP),)
+    assert len(cursor.sent) == 5
     assert "password_hash" not in " ".join(cursor.sent)
+
+
+def test_a_database_with_no_surveyed_user_is_read_for_its_principals_alone() -> None:
+    """Nothing there can add a row, so it costs one read (#1591 review),
+    unless --public asks for its grants."""
+    cursor = FakeCursor([(APP, "acme_app_user", "S ", APP_SID, 0)])
+    catalog = db_grants.read_catalog(cursor, "acme", sids=frozenset({OTHER_SID}), public=False)
+
+    assert len(cursor.sent) == 1
+    assert catalog.permissions == ()
+
+    public = FakeCursor([(APP, "acme_app_user", "S ", APP_SID, 0)], [], [], [], [])
+    db_grants.read_catalog(public, "acme", sids=frozenset({OTHER_SID}), public=True)
+    assert len(public.sent) == 5
+
+
+def test_an_object_a_role_owns_gives_control() -> None:
+    """ALTER AUTHORIZATION ON OBJECT:: leaves no permission row (#1591
+    review)."""
+    owning = Catalog(
+        CATALOG.principals,
+        CATALOG.memberships,
+        CATALOG.permissions,
+        CATALOG.schemas,
+        (("sales", "orders", "USER_TABLE", READ),),
+    )
+    found = rows(db_grants.survey(DB, owning, LOGINS, ("acme_app_user",), public=False))
+
+    assert (
+        OBJECT,
+        "CONTROL",
+        "acme.sales",
+        "orders",
+        None,
+        ("acme.acme_read",),
+        OBJECT_OWNER_LEVEL,
+    ) in found
+
+
+def test_a_column_grant_on_an_object_the_login_cannot_see_stays_a_column_grant() -> None:
+    """Never the wider grant on the whole object (#1591 review)."""
+    hidden = Permission(APP, "SELECT", 1, "OBJECT_OR_COLUMN", 91, 3, "G")
+    survey_ = db_grants.survey(
+        DB,
+        Catalog(CATALOG.principals, CATALOG.memberships, (hidden,), CATALOG.schemas),
+        LOGINS,
+        ("acme_app_user",),
+        public=False,
+    )
+    (row,) = [one for one in survey_.rows if one.privilege == "SELECT"]
+
+    assert (row.kind, row.owner, row.name, row.column) == (COLUMN, "acme", "#91", "#3")
+
+
+def test_a_name_with_a_dot_is_bracketed() -> None:
+    """`a.b`'s schema `c` and `a`'s schema `b.c` stay two owners (#1591
+    review)."""
+    assert db_grants.qualified("a.b", "c") == "[a.b].c"
+    assert db_grants.qualified("a", "b.c") == "a.[b.c]"
+    assert db_grants.qualified("acme", "sales") == "acme.sales"

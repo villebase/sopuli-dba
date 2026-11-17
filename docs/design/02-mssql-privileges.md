@@ -168,7 +168,9 @@ DEFINITION` it reads them all (RP4). Neither reads a hash.
   `[database].sys.database_principals`, `sys.database_role_members`,
   `sys.schemas` and `sys.database_permissions`, joined to `sys.all_objects`
   and `sys.all_columns` for names, so a grant on a system object is named
-  too. With both grants each database is read; without
+  too, and `sys.all_objects` for an object owned apart from its schema. A
+  database where no user has a surveyed login's SID is read for its
+  principals alone, unless `--public` asks for its grants. With both grants each database is read; without
   `CONNECT ANY DATABASE` each one but `master`, `tempdb` and `msdb`, where
   `guest` lets the tool login in, refuses it, `916`, and is named as not
   checked (measured on 16.0.4325.4).

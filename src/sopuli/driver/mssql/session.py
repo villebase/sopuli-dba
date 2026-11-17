@@ -460,6 +460,9 @@ class MssqlSession(ClosesConnection):
             unreadable.append(db_grants.SERVER_NOT_READ)
             return _grant_survey(server, roles, rows, unreadable, read=0, group_users=False)
         logins = dict(server.login_sids)
+        # The surveyed logins' SIDs: a database with no user for one is read
+        # for its principals alone, unless --public asks for its grants.
+        sids = frozenset(logins[name] for name in accounts if name in logins)
         refused: list[str] = []
         offline: list[str] = []
         read = 0
@@ -469,7 +472,11 @@ class MssqlSession(ClosesConnection):
                 offline.append(database.name)
                 continue
             try:
-                catalog = self._read(partial(db_grants.read_catalog, database=database.name))
+                catalog = self._read(
+                    partial(
+                        db_grants.read_catalog, database=database.name, sids=sids, public=public
+                    )
+                )
             except DriverError as error:
                 if error.code == str(DATABASE_DENIED):
                     refused.append(database.name)

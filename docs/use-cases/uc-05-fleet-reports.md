@@ -488,11 +488,15 @@ Each database is read with three-part names:
   level `fixed database role`. A schema the user, or a role on its path,
   owns is listed as `CONTROL`, at level `schema owner`;
 - *objects*: the permissions on one object, named `database.schema` and the
-  object, with its type; and on a login, a server role or an endpoint;
+  object, with its type; and on a login, a server role or an endpoint. An
+  object the user, or a role on its path, owns apart from its schema is
+  listed as `CONTROL`, at level `object owner`. A name that holds a dot is
+  bracketed, as `[a.b].c`;
 - *columns*: column grants.
 
 A login reaches a database through its user there, the one with the login's
-SID, or as `dbo` in a database it owns. Its roles are its server roles and
+SID; the database owner reaches it as `dbo`, whose SID the database records
+as the owner's. Its roles are its server roles and
 its database roles, named `database.role`. Every role is active at login. A
 `DENY` is not listed, so the report shows the wider reach. `--public` lists
 the grants of the server role `public`, of each database's `public` role,

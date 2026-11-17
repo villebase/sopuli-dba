@@ -1883,8 +1883,9 @@ A SQL Server target is the **instance**. A login belongs to the whole instance,
 so there is no database to name. The client is pyodbc with Microsoft ODBC
 Driver 18, which is a system package, as Oracle's Instant Client is
 ([#1538](../decisions/log.md#1538), decision 6). `doctor` connects to a SQL
-Server target and reports it, and every other command refuses one, because
-the driver changes and checks no password yet (open: #1551, #1552).
+Server target and reports it. UC-1's `creds generate`, `apply`, `rotate` and
+`finish-rollover` change a password on one on a Linux host (#1551), and every
+other command refuses one (open: #1552, #1554, #1555).
 
 ```yaml
 targets:

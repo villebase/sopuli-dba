@@ -5,21 +5,27 @@ It imports ``pyodbc`` at module scope, so a machine without the ``mssql``
 extra gets ``SOPULI-20002`` from the registry rather than a traceback (ADR-006
 rule 1). The modules beside it are tier 0.
 
-**What this build does** (#1549). It connects through ODBC Driver 18 with the
-target's ``mssql:`` settings (:mod:`~sopuli.driver.mssql.connection`), labels
-the session with the run's correlation id, and reports the scope: ``server``,
-whether ``master`` takes writes, and its encryption. It reads a declared
-login (:meth:`MssqlSession.describe_user`), refusing every principal but a
-SQL login, and names the instance by ``SERVERPROPERTY('ServerName')``
-(:meth:`MssqlSession.cluster_identity`). Every other method refuses with
-``SOPULI-20006``, and the registry lists no command but `doctor`: the first
-verbs come with the password change (#1551) and the login check (#1552).
-It reads the host's platform and the password value's version as
-capabilities (:mod:`~sopuli.driver.mssql.capabilities`, #1550), and what
-it can of the Availability Groups the instance is in
-(:mod:`~sopuli.driver.mssql.groups`): the replicas' names, for `doctor`'s
-``SOPULI-W076``, and whether its database is a contained group's master,
-which the scope refuses.
+**What this build does** (#1549, #1550, #1551). It connects through ODBC
+Driver 18 with the target's ``mssql:`` settings
+(:mod:`~sopuli.driver.mssql.connection`), labels the session with the run's
+correlation id, and reports the scope: ``server``, whether ``master`` takes
+writes, and its encryption. It reads a declared login
+(:meth:`MssqlSession.describe_user`), refusing every principal but a SQL
+login, and names the instance by ``SERVERPROPERTY('ServerName')``
+(:meth:`MssqlSession.cluster_identity`). It reads the host's platform and the
+password value's version as capabilities
+(:mod:`~sopuli.driver.mssql.capabilities`), and what it can of the
+Availability Groups the instance is in (:mod:`~sopuli.driver.mssql.groups`):
+the replicas' names, for `doctor`'s ``SOPULI-W076``, and whether its database
+is a contained group's master, which the scope refuses.
+
+On a Linux host it changes a password for `creds apply` and `creds rotate`,
+in ``02-mssql-privileges.md`` §6.2's order: the command records the login's
+flags (:meth:`MssqlSession.policy_flags`), :meth:`MssqlSession.set_password`
+sends the value with the policy off, :meth:`MssqlSession.verify_password`
+logs in as the login, and :meth:`MssqlSession.restore_policy` sets the flags
+back. A Windows host is refused with ``SOPULI-20006`` before anything is sent
+(#1551's next part), and so is every method not written yet.
 
 **pyodbc's pooling is off for the process.** A pooled connection is kept open
 after ``close()``, and the next ``connect()`` with the same string reuses it
@@ -30,9 +36,10 @@ check it must log in for real.
 from __future__ import annotations
 
 import logging
+import re
 import time
 from collections.abc import Callable, Iterator, Mapping
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, NoReturn, TypeVar
@@ -41,7 +48,7 @@ import pyodbc
 
 from sopuli.config.model import ExpandedTarget, Runtime
 from sopuli.config.targets import MSSQL_STRICT
-from sopuli.driver.mssql import accounts, capabilities, groups
+from sopuli.driver.mssql import accounts, capabilities, groups, statements
 from sopuli.driver.mssql import privileges as tool_login
 from sopuli.driver.mssql.admin import Assessment, Catalog, assess, read_catalog
 from sopuli.driver.mssql.client import client_lines
@@ -55,8 +62,21 @@ from sopuli.driver.mssql.errors import (
     records,
     server_error,
 )
+from sopuli.driver.mssql.limits import LIMIT
+from sopuli.driver.mssql.password import password_value
 from sopuli.driver.mssql.scope import observe
 from sopuli.driver.protocol import (
+    FAIL,
+    OFFLINE_VERIFY,
+    OLD_DISCARD,
+    PASS,
+    PASSWORD_ROLLOVER,
+    UNAVAILABLE,
+    VERIFY_BOTH,
+    VERIFY_HASH,
+    VERIFY_LOGIN,
+    AuditCoverage,
+    ChangeResult,
     ClosesConnection,
     Credential,
     Cursor,
@@ -67,16 +87,74 @@ from sopuli.driver.protocol import (
     Timeouts,
     UnsupportedCapabilityError,
     UserState,
+    VerifyResult,
+    require_capability,
     require_read_write,
 )
 from sopuli.driver.registry import NotWrittenError
 from sopuli.output.debug import logger
+from sopuli.passwords import ByteLimit
+from sopuli.policy_flags import PolicyFlags
+from sopuli.secrets import Secret
 
 LOG = logger("mssql")
 
 pyodbc.pooling = False
 
 T = TypeVar("T")
+
+
+#: A password value as a hex literal, or the start of one, in a message the
+#: server quotes a statement in. The value allows an offline guessing attack,
+#: so no message keeps one (``02-mssql-privileges.md`` §6.2).
+_VALUE = re.compile(r"0x[0-9A-Fa-f]{8,}")
+
+#: What replaces a value in a message.
+VALUE_REMOVED = "0x…"
+
+
+def scrub_value(message: str) -> str:
+    """``message`` with every password value in it replaced by
+    :data:`VALUE_REMOVED`, for a statement that carries one (#786)."""
+    return _VALUE.sub(VALUE_REMOVED, message)
+
+
+#: The server's answers to a login, by number (§7), and what each says about
+#: the password. ``18470`` (disabled) and ``18488`` (must change) say nothing
+#: until it is measured how such a login answers a wrong one (#1552).
+WRONG_PASSWORD = "18456"
+LOGIN_DISABLED = "18470"
+MUST_CHANGE = "18488"
+
+#: The host platform this build changes passwords on.
+LINUX = "Linux"
+
+
+class MustChangeError(DriverError):
+    """A login whose ``MUST_CHANGE`` is pending: the server refuses to turn its
+    policy off, ``15128``, so it cannot take a value (§6.2). Refused before
+    anything is written or sent."""
+
+    about_account = True
+
+    def __init__(self, account: str, *, target: str) -> None:
+        super().__init__(
+            f'login "{account}" on target "{target}" must change its password at its next '
+            "login, so it cannot take a value the tool computes",
+            hint=(
+                "the server refuses CHECK_POLICY = OFF while MUST_CHANGE is pending. Let "
+                "the owner log in and change it, or clear it by hand, then run again"
+            ),
+        )
+
+
+def _not_tried(detail: str) -> VerifyResult:
+    """A login :meth:`MssqlSession.verify_password` settled without trying."""
+    return VerifyResult(method=VERIFY_LOGIN, result=UNAVAILABLE, detail=detail)
+
+
+def _ms(started: float) -> int:
+    return int((time.monotonic() - started) * 1000)
 
 
 def _server_name(cursor: Cursor) -> str | None:
@@ -95,6 +173,10 @@ class MssqlSession(ClosesConnection):
 
     connection: Any
     target: ExpandedTarget
+    #: The run's, for the logins :meth:`verify_password` makes as a managed
+    #: login, which carry the same ``APP`` and login timeout.
+    correlation_id: str = ""
+    timeouts: Timeouts = field(default_factory=Timeouts)
     #: Invariant 3's cache, probed on first use.
     _scope: Scope | None = field(default=None, init=False, repr=False)
     #: :class:`~sopuli.driver.clusters.ClusterIdentity`'s: nothing is claimed
@@ -329,11 +411,117 @@ class MssqlSession(ClosesConnection):
         difference is not measured."""
         return self._read(_server_name)
 
-    def byte_limit(self) -> NoReturn:
-        self._not_written("say how long a password may be")
+    def byte_limit(self) -> ByteLimit:
+        """128 UTF-16 code units, whatever the server
+        (:mod:`~sopuli.driver.mssql.limits`)."""
+        return LIMIT
 
-    def set_password(self, *args: Any, **kwargs: Any) -> NoReturn:
-        self._not_written("set a password")
+    def password_constraints(self, account: str) -> None:
+        """Nothing beyond the length, read without a round trip: the server's
+        policy does not apply to a value (§6.2). Not on the protocol: ``creds
+        generate`` asks it of a driver that has it."""
+
+    def require_host(self) -> None:
+        """Refuse, when the command opens the session, a host this build
+        changes no password on: every command but `doctor` asks, so a Windows
+        host is refused before a pre-flight passes it or `creds rotate`
+        stages a password there (invariant 4)."""
+        self._require_linux("run this command")
+
+    def _require_linux(self, what: str) -> None:
+        """Refuse ``what`` on a host that is not Linux, before anything is
+        sent. A Windows host locks a login, so `apply` there must not log in
+        before a change, which is #1551's next part. A host that names no
+        platform is treated as Windows."""
+        if self.host_platform() != LINUX:
+            self._not_written(f"{what} on a Windows host")
+
+    #: The command records the flags :meth:`policy_flags` reads, before
+    #: :meth:`set_password`, and calls :meth:`restore_policy` after the login
+    #: (``02-mssql-privileges.md`` §6.2). Read by the command, as
+    #: ``verifies_before_change`` is.
+    keeps_policy_flags = True
+
+    def policy_flags(self, account: str) -> PolicyFlags:
+        """Step 1: the login's ``CHECK_POLICY`` and ``CHECK_EXPIRATION`` as
+        they are now, which the command records in the vault before
+        :meth:`set_password` turns the policy off.
+
+        Refuses, before anything is written or sent, a Windows host, a login
+        whose ``MUST_CHANGE`` is pending (:class:`MustChangeError`), and a
+        server whose value version cannot be read (:meth:`hash_version`).
+        """
+        self._require_linux("set a password")
+        login = self._read(
+            lambda cursor: accounts.read_one(cursor, account, target=self.target.name)
+        )
+        if login is None:
+            raise DriverError(
+                f'there is no login "{account}" on target "{self.target.name}"',
+                hint="create the login, or check the account's name in the config",
+            )
+        if login.must_change:
+            raise MustChangeError(login.name, target=self.target.name)
+        # The value's version, asked here so that a server that takes neither,
+        # or a tool login the check refuses, stops the change before the
+        # command writes the record (#1564).
+        self.hash_version()
+        return PolicyFlags(
+            check_policy=login.policy_checked, check_expiration=login.expiration_checked
+        )
+
+    def set_password(
+        self,
+        account: str,
+        secret: Secret,
+        *,
+        old_password: str = OLD_DISCARD,
+        previous: Secret | None = None,
+    ) -> ChangeResult:
+        """Step 2: send the value at :meth:`hash_version`'s version, with the
+        policy off in the same statement (``02-mssql-privileges.md`` §6.2).
+
+        The password never reaches the server: the value is computed here. A
+        message the server answers with keeps no value (:func:`scrub_value`).
+        SQL Server keeps one password per login, so any ``old_password`` but
+        :data:`~sopuli.driver.protocol.OLD_DISCARD` is refused by capability.
+        """
+        if old_password != OLD_DISCARD:
+            self.require_rollover(account)
+        self._require_linux("set a password")
+        require_read_write(
+            self.scope(), target=self.target.name, hint="a password change is a write to master"
+        )
+        statement = statements.set_password_value(
+            account, password_value(secret, self.hash_version())
+        )
+        with self._cursor() as cursor:
+            try:
+                cursor.execute(statement)
+            except pyodbc.Error as error:
+                failure = from_error(error, scrub=scrub_value).as_error()
+                failure.password_sent = True
+                raise failure from None
+        LOG.debug("%s: set the password value of %s", self.target.name, account)
+        return ChangeResult(changed=True)
+
+    def restore_policy(self, account: str, flags: PolicyFlags) -> bool:
+        """Step 4: set ``CHECK_POLICY`` and ``CHECK_EXPIRATION`` back to
+        ``flags``, and say whether a statement was sent. Where both were off,
+        step 2 changed neither, and nothing is sent."""
+        if not flags.check_policy and not flags.check_expiration:
+            return False
+        require_read_write(
+            self.scope(),
+            target=self.target.name,
+            hint="setting the flags back is a write to master",
+        )
+        statement = statements.restore_policy(
+            account, policy=flags.check_policy, expiration=flags.check_expiration
+        )
+        self._read(lambda cursor: cursor.execute(statement))
+        LOG.debug("%s: set the policy flags of %s back", self.target.name, account)
+        return True
 
     def suspend_account(self, account: str) -> NoReturn:
         self._not_written("suspend a login")
@@ -344,8 +532,11 @@ class MssqlSession(ClosesConnection):
     def expire_password(self, account: str) -> NoReturn:
         self._not_written("expire a password")
 
-    def audit_coverage(self, account: str) -> NoReturn:
-        self._not_written("read audit coverage")
+    def audit_coverage(self, account: str) -> AuditCoverage:
+        """Never raises, as the protocol promises: the answer is unknown."""
+        return AuditCoverage(
+            audited=None, detail="the SQL Server driver does not read audit settings yet"
+        )
 
     def apply_attributes(self, *args: Any, **kwargs: Any) -> NoReturn:
         self._not_written("apply login attributes")
@@ -359,17 +550,102 @@ class MssqlSession(ClosesConnection):
     def accounts_matching(self, *args: Any, **kwargs: Any) -> NoReturn:
         self._not_written("list logins")
 
-    def verify_password(self, *args: Any, **kwargs: Any) -> NoReturn:
-        self._not_written("verify a password")
+    def verify_password(
+        self,
+        account: str,
+        secret: Secret,
+        *,
+        method: str = VERIFY_LOGIN,
+        lockout_margin: int = 2,
+        attempts: int = 1,
+        for_check: bool = False,
+    ) -> VerifyResult:
+        """Log in once as ``account`` with ``secret``, at ``master``, and say
+        what that showed (``02-mssql-privileges.md`` §7).
 
-    def require_verifier(self, *args: Any, **kwargs: Any) -> NoReturn:
-        self._not_written("check a password by its stored value")
+        ``login`` only: the tool login reads no hash, so ``hash`` and ``both``
+        are refused by capability. On Linux no login locks (LK2), so
+        ``lockout_margin`` and ``attempts`` have nothing to guard; a Windows
+        host is refused before any login. The login's state is read first: a
+        login that is missing, disabled or locked out (``IsLocked``) is
+        :data:`~sopuli.driver.protocol.UNAVAILABLE` with no login, because a
+        locked login answers its right password as a wrong one (WP3).
+        """
+        if method in (VERIFY_HASH, VERIFY_BOTH):
+            self.require_verifier(account, secret)
+        if method != VERIFY_LOGIN:
+            raise UnsupportedCapabilityError(
+                f"verification method {method!r}",
+                target=self.target.name,
+                hint="this driver verifies by `login` only",
+            )
+        self._require_linux("log in as a login")
+        login = self.describe_user(account)
+        if login is None:
+            return _not_tried(f'there is no login "{account}" on this target')
+        if login.locked:
+            return _not_tried(f"the login is {login.status}; no login was attempted")
+        text = connection_string(
+            self.target,
+            Credential(username=login.name, secret=secret),
+            correlation_id=self.correlation_id,
+        )
+        started = time.monotonic()
+        try:
+            connection = pyodbc.connect(text, autocommit=True, timeout=self.timeouts.connect_s)
+        except pyodbc.Error as error:
+            failure = from_error(error, connecting=True)
+            LOG.debug("login as %s failed with %s", login.name, failure.code)
+            if failure.code == WRONG_PASSWORD:
+                return VerifyResult(
+                    method=VERIFY_LOGIN,
+                    result=FAIL,
+                    latency_ms=_ms(started),
+                    detail="the server refused the password (18456)",
+                )
+            if failure.code in (LOGIN_DISABLED, MUST_CHANGE):
+                return VerifyResult(
+                    method=VERIFY_LOGIN,
+                    result=UNAVAILABLE,
+                    latency_ms=_ms(started),
+                    detail=f"{failure.message}: this says nothing about the password",
+                )
+            raise failure.as_error() from None
+        latency = _ms(started)
+        # The login has answered. A socket that drops as it closes does not
+        # change the answer.
+        with suppress(pyodbc.Error):
+            connection.close()
+        LOG.debug("login as %s: pass", login.name)
+        return VerifyResult(method=VERIFY_LOGIN, result=PASS, latency_ms=latency)
 
-    def require_rollover(self, account: str) -> NoReturn:
-        self._not_written("keep a rollover window")
+    def require_verifier(self, account: str, secret: Secret) -> None:
+        """Refuse ``hash`` and ``both`` at plan time (invariant 4): the tool
+        login reads ``NULL`` for every hash (§2.1)."""
+        require_capability(
+            self.scope(),
+            OFFLINE_VERIFY,
+            target=self.target.name,
+            hint="the tool login reads no password hash; use --method login, the default",
+        )
 
-    def finish_rollover(self, *args: Any, **kwargs: Any) -> NoReturn:
-        self._not_written("finish a rollover")
+    def require_rollover(self, account: str) -> None:
+        """SQL Server keeps one password per login, so this always refuses
+        (invariant 4)."""
+        require_capability(
+            self.scope(),
+            PASSWORD_ROLLOVER,
+            target=self.target.name,
+            hint=(
+                "SQL Server keeps one password per login, so there is no window to open: "
+                "use --strategy staged, or leave --strategy out"
+            ),
+        )
+
+    def finish_rollover(self, account: str, *, current: Secret | None = None) -> ChangeResult:
+        """A login never has a window, so there is none to end (invariant 4)."""
+        self.require_rollover(account)
+        raise UnsupportedCapabilityError(PASSWORD_ROLLOVER, target=self.target.name)
 
     def _read(self, reader: Callable[[Any], T]) -> T:
         """Run ``reader`` on a cursor of this session. A closed session is a
@@ -448,7 +724,12 @@ class MssqlDriver:
             credential.username,
             time.monotonic() - started,
         )
-        return MssqlSession(connection=connection, target=target)
+        return MssqlSession(
+            connection=connection,
+            target=target,
+            correlation_id=self.correlation_id,
+            timeouts=self.timeouts,
+        )
 
 
 def build_driver(context: DriverContext) -> MssqlDriver:

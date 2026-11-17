@@ -454,8 +454,11 @@ change runs in this order, on every host:
 4. Set `CHECK_POLICY` and `CHECK_EXPIRATION` back to the values of step 1.
 
 A run that stops between the steps leaves the policy off. The next run reads
-the recorded values from the vault and sets them back (open: #1551). The
-record is `policy_flags`
+the recorded values from the vault and sets them back: a `creds apply` that
+finds the login already holds the password sets the recorded flags back, and
+its row says so. Flags that were both off need no record, because step 2
+leaves nothing to set back. A record the vault cannot write stops the change
+on that login before step 2. The record is `policy_flags`
 ([UC-1 §3](../use-cases/uc-01-app-credential-sync.md#policy_flags-a-sql-server-logins-settings-while-its-policy-is-off)),
 and it stays until step 4 has run, also when a new `pending` replaces the old
 one.
@@ -464,10 +467,13 @@ one.
 `IsMustChange` reads 1, the server refuses to turn `CHECK_POLICY` off,
 `15128` (`03_lock_expiry_probe.py`, the note beside LK5), so step 2 cannot
 run. The driver reads `IsMustChange` and refuses such a login at plan time,
-naming it (invariant 4).
+naming it (invariant 4). This build leaves it alone before anything is
+written or sent: `apply` reports it `EXPIRED` and changes nothing, and the
+driver refuses to record its flags. Refusing it in the pre-flight, before
+`creds rotate` stages a password, is not built (open: #1551).
 
 **How `creds apply` tells that a target already holds the password depends
-on the host** ([#1551](../decisions/log.md#1551), open: #1551). The tool login
+on the host** ([#1551](../decisions/log.md#1551)). The tool login
 reads no hash (§2.1), and the driver reads the host's platform as a
 capability (§7):
 
@@ -485,6 +491,8 @@ capability (§7):
   the same, which ends the lockout, and the result names the lock it ended,
   with a warning code. Under a domain's policy, whether a failed login while
   the policy is off counts is not measured (unverified: mssql-domain-policy).
+  This build refuses a Windows host, and one that names no platform, with
+  `SOPULI-20006` before anything is sent (open: #1551).
 
 A check that turns the policy off to log in safely was rejected: it would
 change the login on every run, also when nothing needs a change.
@@ -514,12 +522,12 @@ longer one before anything is sent.
 
 The value still allows an offline guessing attack, so treat it as sensitive.
 On 2019 it is a single round of SHA-512. Where the server's error message
-quotes the statement, the driver replaces the value in it before the message
-is kept (open: #1551).
+quotes the statement, the driver replaces the value in it with `0x…` before
+the message is kept.
 
 SQL Server has no rollover window, as PostgreSQL has none. `--strategy
 rollover` is refused, exit 5, and `creds finish-rollover` finds no window to
-close (open: #1551).
+close.
 
 ### 6.3 UC-2: the seen reset sends the password once
 

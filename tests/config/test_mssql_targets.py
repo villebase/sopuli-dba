@@ -329,12 +329,14 @@ def test_two_spellings_of_one_login_are_refused() -> None:
 # ------------------------------------------------------------- the driver ---
 
 
-def test_only_doctor_is_written() -> None:
-    """Every command, `doctor` aside, is refused before anything connects
-    (#1549)."""
+def test_only_uc1_s_change_is_written() -> None:
+    """Every command but `doctor` and UC-1's change is refused before
+    anything connects (#1549, #1551)."""
     target = loaded(targets=[SERVER]).expanded_targets[0].target
 
-    assert DRIVERS["mssql"].commands == frozenset()
+    assert DRIVERS["mssql"].commands == frozenset(
+        {"creds.apply", "creds.rotate", "creds.generate", "creds.finish-rollover"}
+    )
     assert DRIVERS["mssql"].extra == "mssql"
     assert DRIVERS["mssql"].provides == frozenset({"pyodbc"})
     require_command(target, "doctor")

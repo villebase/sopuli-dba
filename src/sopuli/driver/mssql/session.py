@@ -38,23 +38,34 @@ from __future__ import annotations
 import logging
 import re
 import time
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from functools import partial
 from typing import Any, NoReturn, TypeVar
 
 import pyodbc
 
 from sopuli.config.model import ExpandedTarget, Runtime
 from sopuli.config.targets import MSSQL_STRICT
-from sopuli.driver.mssql import accounts, capabilities, groups, statements, survey
+from sopuli.driver.grants import COLUMN, OBJECT, SCHEMA, GrantRow, GrantSurvey, RoleGrant
+from sopuli.driver.mssql import (
+    accounts,
+    capabilities,
+    db_grants,
+    groups,
+    server_grants,
+    statements,
+    survey,
+)
 from sopuli.driver.mssql import privileges as tool_login
 from sopuli.driver.mssql.admin import Assessment, Catalog, assess, read_catalog
 from sopuli.driver.mssql.client import client_lines
 from sopuli.driver.mssql.connection import connection_string
 from sopuli.driver.mssql.errors import (
     CAPABILITY,
+    DATABASE_DENIED,
     STRICT_ENCRYPTION,
     STRICT_REMEDY,
     from_error,
@@ -157,6 +168,39 @@ def _not_tried(detail: str) -> VerifyResult:
 
 def _ms(started: float) -> int:
     return int((time.monotonic() - started) * 1000)
+
+
+def _grant_survey(
+    server: server_grants.ServerGrants,
+    roles: Sequence[RoleGrant],
+    rows: Sequence[GrantRow],
+    unreadable: Sequence[str],
+    *,
+    read: int,
+    group_users: bool,
+) -> GrantSurvey:
+    """The server level and the databases' rows as one survey. A part is
+    ``None`` where its rows could not be read at all: *system* and the
+    server's *objects* without a complete server read, and *schemas*,
+    *columns* and the databases' *objects* where no database was ``read``,
+    never an empty list in their place. ``group_users`` is whether a database
+    read has a Windows or Entra group user."""
+    databases_read = read > 0
+    objects: tuple[GrantRow, ...] | None = None
+    if server.objects is not None and databases_read:
+        objects = (*server.objects, *(row for row in rows if row.kind == OBJECT))
+    return GrantSurvey(
+        roles=tuple(roles),
+        system=server.system,
+        objects=objects,
+        columns=tuple(row for row in rows if row.kind == COLUMN) if databases_read else None,
+        schemas=tuple(row for row in rows if row.kind == SCHEMA) if databases_read else None,
+        unreadable=tuple(unreadable),
+        # A Windows or Entra login on a server with a group login, or a
+        # database with a group user: that login alone is not checked
+        # (#1555, Q5).
+        account_unreadable=server.gaps(database_groups=group_users),
+    )
 
 
 def _server_name(cursor: Cursor) -> str | None:
@@ -392,6 +436,71 @@ class MssqlSession(ClosesConnection):
         self.scope()
         platform = self.host_platform()
         return self._read(lambda cursor: survey.survey(cursor, platform=platform)), frozenset()
+
+    def survey_privileges(self, accounts: Sequence[str], *, public: bool) -> GrantSurvey:
+        """Every privilege ``accounts`` hold, one row per path, for `report
+        privileges` (:class:`~sopuli.driver.grants.PrivilegeSurvey`).
+
+        The server level first (:mod:`~sopuli.driver.mssql.server_grants`).
+        Where it was not read completely, no database is read, because no
+        login's user can be followed. Otherwise each online database is read
+        on its own (:mod:`~sopuli.driver.mssql.db_grants`). One that refuses
+        the tool login, ``916``, is named as not checked with the grants that
+        open it; one that answers another refusal, ``229``, or one of
+        :data:`~sopuli.driver.mssql.db_grants.UNREADABLE_DATABASE`, with the
+        server's message; one whose read names a principal it has no row
+        for, with :data:`~sopuli.driver.mssql.db_grants.PARTIAL`. Any other
+        failure fails the target."""
+        self.scope()
+        server = self._read(lambda cursor: server_grants.read(cursor, accounts, public=public))
+        unreadable = [server.unread] if server.unread else []
+        roles = list(server.roles)
+        rows: list[GrantRow] = []
+        if server.unread is not None:
+            unreadable.append(db_grants.SERVER_NOT_READ)
+            return _grant_survey(server, roles, rows, unreadable, read=0, group_users=False)
+        logins = dict(server.login_sids)
+        # The surveyed logins' SIDs: a database with no user for one is read
+        # for its principals alone, unless --public asks for its grants.
+        sids = frozenset(logins[name] for name in accounts if name in logins)
+        refused: list[str] = []
+        offline: list[str] = []
+        read = 0
+        group_users = False
+        for database in self._read(db_grants.read_databases):
+            if database.state != db_grants.ONLINE:
+                offline.append(database.name)
+                continue
+            try:
+                catalog = self._read(
+                    partial(
+                        db_grants.read_catalog, database=database.name, sids=sids, public=public
+                    )
+                )
+            except DriverError as error:
+                if error.code == str(DATABASE_DENIED):
+                    refused.append(database.name)
+                elif (
+                    error.category == "authorization" or error.code in db_grants.UNREADABLE_DATABASE
+                ):
+                    unreadable.append(db_grants.unreadable_reason(database.name, error.message))
+                else:
+                    raise
+                LOG.debug("%s: %s was not read: %s", self.target.name, database.name, error.code)
+                continue
+            if not catalog.complete:
+                unreadable.append(db_grants.unreadable_reason(database.name, db_grants.PARTIAL))
+                continue
+            read += 1
+            group_users = group_users or catalog.group_users
+            found = db_grants.survey(database, catalog, logins, accounts, public=public)
+            roles.extend(found.roles)
+            rows.extend(found.rows)
+        if refused:
+            unreadable.append(db_grants.not_read_reason(refused, db_grants.REFUSED))
+        if offline:
+            unreadable.append(db_grants.not_read_reason(offline, db_grants.NOT_ONLINE))
+        return _grant_survey(server, roles, rows, unreadable, read=read, group_users=group_users)
 
     def availability_replicas(self) -> tuple[str, ...]:
         """The names of the replicas of every Availability Group the instance

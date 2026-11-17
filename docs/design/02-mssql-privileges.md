@@ -133,7 +133,7 @@ Give the login no other permission, no server role, and no database user.
 
 ### 2.2 What the reports can read
 
-UC-5's reports run as the tool login (open: #1555). With §2.1's grant alone
+UC-5's reports run as the tool login (#1555). With §2.1's grant alone
 they read every login, its policy flags, its dates, and its server roles and
 permissions (RP1 to RP3). `VIEW ANY DEFINITION` alone reads the same, and so
 does `securityadmin`. With §2.1's grant alone, a user-defined server role is
@@ -153,6 +153,34 @@ Without them, every database refuses the tool login, `916` (RP4). Each
 database is then *not checked*. Both are needed: `CONNECT ANY DATABASE` alone
 opens a database and sees no row of another user, and with `VIEW ANY
 DEFINITION` it reads them all (RP4). Neither reads a hash.
+
+`report privileges` reads, as the tool login connected to `master` (UC-5 §5):
+
+- the server level: `sys.server_principals`, `sys.server_role_members` and
+  `sys.server_permissions`, with `sys.endpoints` for an endpoint's name.
+  Without `VIEW ANY DEFINITION` the paths through nested server roles are
+  not known, so the server level, and with it every database, is *not
+  checked*. `HAS_PERMS_BY_NAME` answers 0 for `VIEW ANY SECURITY
+  DEFINITION` when it is not held, as well as when it is denied, so a 0
+  reads as a denial only where `VIEW ANY DEFINITION` is held (measured on
+  16.0.4325.4, #1555);
+- each online database, with three-part names:
+  `[database].sys.database_principals`, `sys.database_role_members`,
+  `sys.schemas` and `sys.database_permissions`, joined to `sys.all_objects`
+  and `sys.all_columns` for names, so a grant on a system object is named
+  too, and `sys.all_objects` for an object owned apart from its schema. A
+  database where no user has a surveyed login's SID is read for its
+  principals alone, unless `--public` asks for its grants. With both grants each database is read; without
+  `CONNECT ANY DATABASE` each one but `master`, `tempdb` and `msdb`, where
+  `guest` lets the tool login in, refuses it, `916`, and is named as not
+  checked (measured on 16.0.4325.4).
+
+The server keeps no record of which Windows or Entra logins are in a group,
+so a Windows or Entra login on a server with a group login, or where a
+database read has a group user, is not checked in the privilege report
+(#1555, Q5). A `DENY` of `VIEW DEFINITION` on a database role hides the
+role's row and not the membership naming it (measured on 16.0.4325.4), so
+a database whose read names a principal it has no row for is not checked.
 
 **No source measured gives a login's last good login.** No catalog view has a
 column for it. At the images' login auditing level, 2, the error log records

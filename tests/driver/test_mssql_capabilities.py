@@ -43,11 +43,26 @@ REFUSED_0300 = _refused(
 )
 #: 2022's answer where the name is taken (HV8).
 NAME_TAKEN = _refused(15025, "The server principal 'x' already exists.")
+#: A login without ALTER ANY LOGIN (measured on 16.0.4325.4).
+NO_PERMISSION = _refused(15247, "User does not have permission to perform this action.")
+#: A trigger's PRINT before 2019's refusal: an informational record first.
+PRINTED_FIRST = pyodbc.ProgrammingError(
+    "42000",
+    "[01000] [Microsoft][ODBC Driver 18 for SQL Server][SQL Server]a trigger ran (0) "
+    "(SQLExecDirectW); [42000] [Microsoft][ODBC Driver 18 for SQL Server][SQL Server]"
+    "Invalid value given for parameter PASSWORD. Specify a valid parameter value. (15021) "
+    "(SQLExecDirectW)",
+)
 #: A connection that broke: a client record only.
 LOST = pyodbc.OperationalError(
     "08S01",
     "[08S01] [Microsoft][ODBC Driver 18 for SQL Server]TCP Provider: An existing connection "
     "was forcibly closed by the remote host. (10054) (SQLExecDirectW)",
+)
+#: The client's query timeout: the server keeps the transaction open.
+TIMEOUT = pyodbc.OperationalError(
+    "HYT00",
+    "[HYT00] [Microsoft][ODBC Driver 18 for SQL Server]Query timeout expired (0) (SQLExecDirectW)",
 )
 
 
@@ -59,13 +74,15 @@ class FakeCursor:
         self.connection.sent.append(statement)
         if statement.startswith("BEGIN TRANSACTION") and self.connection.raises is not None:
             raise self.connection.raises
+        if statement == capabilities.END_TRANSACTION and self.connection.end_raises is not None:
+            raise self.connection.end_raises
         return self
 
     def nextset(self) -> bool:
         return False
 
     def fetchone(self) -> Any:
-        return ("Linux",)
+        return (self.connection.platform,)
 
     def close(self) -> None:
         pass
@@ -74,8 +91,10 @@ class FakeCursor:
 class FakeConnection:
     timeout = 0
 
-    def __init__(self, raises: Any = None) -> None:
+    def __init__(self, raises: Any = None, end_raises: Any = None) -> None:
         self.raises = raises
+        self.end_raises = end_raises
+        self.platform: str | None = "Linux"
         self.sent: list[str] = []
 
     def cursor(self) -> FakeCursor:
@@ -85,9 +104,9 @@ class FakeConnection:
         pass
 
 
-def _session(raises: Any = None, *, read_write: bool = True) -> Any:
+def _session(raises: Any = None, *, read_write: bool = True, end_raises: Any = None) -> Any:
     opened = session.MssqlSession(
-        connection=FakeConnection(raises),
+        connection=FakeConnection(raises, end_raises),
         target=ExpandedTarget(
             target=Target(name="mssql-dev", type="mssql", dsn="127.0.0.1:1433", mssql=TargetMssql())
         ),
@@ -167,11 +186,54 @@ def test_another_answer_refuses_and_is_asked_again() -> None:
     assert len(checks) == 2
 
 
-def test_a_broken_connection_is_the_connections_error() -> None:
+@pytest.mark.parametrize("failure", [LOST, TIMEOUT], ids=["lost", "timeout"])
+def test_a_client_failure_ends_the_transaction_and_is_the_connections_error(
+    failure: Any,
+) -> None:
+    """A client timeout leaves the batch's transaction open on the server."""
+    opened = _session(failure)
     with pytest.raises(DriverError) as caught:
-        _session(LOST).hash_version()
+        opened.hash_version()
     assert not isinstance(caught.value, UnsupportedCapabilityError)
     assert caught.value.category == "connectivity"
+    assert opened.connection.sent[-1] == capabilities.END_TRANSACTION
+
+
+def test_a_failure_to_end_the_transaction_leaves_the_first_error() -> None:
+    """The server ends a broken session's transaction with it."""
+    with pytest.raises(DriverError) as caught:
+        _session(TIMEOUT, end_raises=LOST).hash_version()
+    assert caught.value.category == "connectivity"
+
+
+def test_a_missing_permission_is_the_tool_logins_not_the_targets() -> None:
+    """15247: the tool login lacks ALTER ANY LOGIN; the hint names it."""
+    with pytest.raises(DriverError) as caught:
+        _session(NO_PERMISSION).hash_version()
+    assert not isinstance(caught.value, UnsupportedCapabilityError)
+    assert caught.value.category == "authorization"
+    assert caught.value.code == "15247"
+    assert "ALTER ANY LOGIN" in (caught.value.hint or "")
+
+
+def test_an_informational_record_is_not_the_answer() -> None:
+    """A trigger's PRINT comes first; the 15021 after it is the answer."""
+    assert _session(PRINTED_FIRST).hash_version() == SHA512
+
+
+def test_the_refusal_keeps_the_servers_words() -> None:
+    with pytest.raises(UnsupportedCapabilityError) as caught:
+        _session(NAME_TAKEN).hash_version()
+    assert "answered 15025 (The server principal 'x' already exists.)" in (caught.value.hint or "")
+
+
+@pytest.mark.parametrize("platform", [None, "", "  "])
+def test_an_unnamed_platform_is_unknown_not_linux(platform: str | None) -> None:
+    opened = _session()
+    opened.connection.platform = platform
+    assert opened.host_platform() is None
+    assert opened.host_platform() is None
+    assert opened.connection.sent == [capabilities.HOST_PLATFORM]
 
 
 def test_a_read_only_master_is_not_checked() -> None:

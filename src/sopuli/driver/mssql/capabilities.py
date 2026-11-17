@@ -44,9 +44,6 @@ from sopuli.secrets import Secret
 #: The host's platform, ``Linux`` or ``Windows`` (WP0).
 HOST_PLATFORM = "SELECT host_platform FROM sys.dm_os_host_info"
 
-#: ``host_platform`` of a Windows host.
-WINDOWS = "Windows"
-
 #: The answer of a server that takes the ``0x0300`` value, and the number of
 #: one that does not (HV6).
 TAKES_IT = "ok"
@@ -62,11 +59,15 @@ CHECK_PREFIX = "sopuli_hash_check_"
 END_TRANSACTION = "IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION"
 
 
-def host_platform(cursor: Cursor) -> str:
-    """``Linux`` or ``Windows``, as ``sys.dm_os_host_info`` gives it."""
+def host_platform(cursor: Cursor) -> str | None:
+    """``Linux`` or ``Windows``, as ``sys.dm_os_host_info`` gives it, or
+    ``None`` where it gives no row or no name. Unknown is not Linux: a caller
+    treats it as Windows, whose lockout the tool cannot see."""
     cursor.execute(HOST_PLATFORM)
     row = cursor.fetchone()
-    return str(row[0]).strip() if row is not None and row[0] is not None else ""
+    if row is None or row[0] is None or not str(row[0]).strip():
+        return None
+    return str(row[0]).strip()
 
 
 def check_name() -> str:
@@ -86,20 +87,22 @@ def check_statement(name: str) -> str:
     )
 
 
-def version_from(answer: str, *, target: str) -> int:
+def version_from(answer: str, *, target: str, message: str | None = None) -> int:
     """The version the server takes, from the check's answer: ``ok`` or the
-    first server error's number. Any other answer refuses the target as
-    lacking ``password_value`` (#1564)."""
+    first server error's number, with ``message`` its text. Any other answer
+    refuses the target as lacking ``password_value`` (#1564), with the
+    server's own words."""
     if answer == TAKES_IT:
         return PBKDF2_SHA512
     if answer == REFUSES_IT:
         return SHA512
+    said = f" ({message})" if message else ""
     raise UnsupportedCapabilityError(
         PASSWORD_VALUE,
         target=target,
         hint=(
-            f"the server answered {answer} to the check that tells whether it takes a "
-            "0x0300 password value, where only ok or 15021 says which value to send; "
+            f"the server answered {answer}{said} to the check that tells whether it takes "
+            "a 0x0300 password value, where only ok or 15021 says which value to send; "
             "nothing was changed. Run the command again, and if the answer stays, "
             "report it (02-mssql-privileges.md §6.2)"
         ),

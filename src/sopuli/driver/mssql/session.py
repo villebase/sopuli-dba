@@ -41,7 +41,7 @@ from sopuli.driver.mssql import accounts, capabilities
 from sopuli.driver.mssql.admin import Assessment, Catalog, assess, read_catalog
 from sopuli.driver.mssql.client import client_lines
 from sopuli.driver.mssql.connection import connection_string
-from sopuli.driver.mssql.errors import from_error, records
+from sopuli.driver.mssql.errors import RULES, from_error, records
 from sopuli.driver.mssql.scope import observe
 from sopuli.driver.protocol import (
     ClosesConnection,
@@ -89,6 +89,7 @@ class MssqlSession(ClosesConnection):
     _catalog: Catalog | None = field(default=None, init=False, repr=False)
     #: The capabilities of #1550, read on first use.
     _host_platform: str | None = field(default=None, init=False, repr=False)
+    _host_read: bool = field(default=False, init=False, repr=False)
     _hash_version: int | None = field(default=None, init=False, repr=False)
 
     def scope(self) -> Scope:
@@ -124,11 +125,14 @@ class MssqlSession(ClosesConnection):
             )
         return assess(principal_id, self._catalog)
 
-    def host_platform(self) -> str:
+    def host_platform(self) -> str | None:
         """``Linux`` or ``Windows``: the host's platform, read once and
-        cached (:mod:`~sopuli.driver.mssql.capabilities`)."""
-        if self._host_platform is None:
+        cached (:mod:`~sopuli.driver.mssql.capabilities`). ``None`` where the
+        server named none, which a caller treats as Windows: the side whose
+        lockout the tool cannot see."""
+        if not self._host_read:
             self._host_platform = self._read(capabilities.host_platform)
+            self._host_read = True
             LOG.debug("%s runs on %s", self.target.name, self._host_platform or "an unnamed host")
         return self._host_platform
 
@@ -140,8 +144,10 @@ class MssqlSession(ClosesConnection):
         one included, so that the plan names the value it would send; the
         command never calls it for a target that is ``readonly``. A session
         that found ``master`` read-only refuses it, as it refuses a write.
-        Any answer but ``ok`` or ``15021`` refuses the target as lacking
-        ``password_value``, and is not cached: the next call asks again.
+        Any other answer refuses the target as lacking ``password_value``, with
+        the server's own words, and is not cached: the next call asks again.
+        A refusal the driver's error rules call ``authorization``, a missing
+        permission, is raised as that instead: it names the grant to add.
         """
         if self._hash_version is None:
             require_read_write(
@@ -149,8 +155,12 @@ class MssqlSession(ClosesConnection):
                 target=self.target.name,
                 hint="the check for the password value's version is a write, rolled back",
             )
-            answer = self._check_answer(capabilities.check_statement(capabilities.check_name()))
-            self._hash_version = capabilities.version_from(answer, target=self.target.name)
+            answer, message = self._check_answer(
+                capabilities.check_statement(capabilities.check_name())
+            )
+            self._hash_version = capabilities.version_from(
+                answer, target=self.target.name, message=message
+            )
             LOG.debug(
                 "%s takes a 0x%04X password value (check answered %s)",
                 self.target.name,
@@ -159,10 +169,16 @@ class MssqlSession(ClosesConnection):
             )
         return self._hash_version
 
-    def _check_answer(self, statement: str) -> str:
-        """``ok``, or the number of the first server error, for the check's
-        batch. A failure with no server record is the connection's, and is
-        raised as :meth:`_read` raises it."""
+    def _check_answer(self, statement: str) -> tuple[str, str | None]:
+        """``ok``, or the number and text of the first server error, for the
+        check's batch. An informational record, SQLSTATE ``01…``, such as a
+        trigger's ``PRINT``, is not an answer.
+
+        Whatever the failure, the transaction the batch opened is ended
+        before anything is raised: a client timeout leaves it open on the
+        server. A failure with no server error is the connection's, and a
+        missing permission is the tool login's; each is raised as
+        :meth:`_read` raises it."""
         if self.connection is None:
             raise DriverError(
                 f'the session to target "{self.target.name}" is closed',
@@ -177,16 +193,33 @@ class MssqlSession(ClosesConnection):
                 while cursor.nextset():
                     pass
             except pyodbc.Error as error:
+                self._end_transaction(cursor)
+                diagnosis = from_error(error)
                 args: tuple[Any, ...] = getattr(error, "args", ())
                 found = records(str(args[1]) if len(args) > 1 else str(error))
-                server = next((record for record in found if record.server), None)
-                if server is None:
-                    raise from_error(error).as_error() from error
-                cursor.execute(capabilities.END_TRANSACTION)
-                return str(server.number)
-            return capabilities.TAKES_IT
+                server = next(
+                    (r for r in found if r.server and not r.sqlstate.startswith("01")), None
+                )
+                rule = RULES.get(server.number) if server is not None else None
+                if server is None or (rule is not None and rule.category == "authorization"):
+                    raise diagnosis.as_error() from error
+                return str(server.number), server.text
+            return capabilities.TAKES_IT, None
         finally:
             cursor.close()
+
+    def _end_transaction(self, cursor: Any) -> None:
+        """End the check's transaction if one is open. A connection that
+        cannot take it has no transaction to keep: the server ends it with
+        the session. So a failure here is left to the error being raised."""
+        try:
+            cursor.execute(capabilities.END_TRANSACTION)
+        except pyodbc.Error as error:
+            LOG.debug(
+                "%s: ending the check's transaction failed: %s",
+                self.target.name,
+                from_error(error).code,
+            )
 
     def _not_written(self, what: str) -> NoReturn:
         raise NotWrittenError(

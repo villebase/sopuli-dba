@@ -63,6 +63,10 @@ READ_ONLY_DATABASE = 3906
 #: STATE`` is.
 PERMISSION_DENIED = 229
 SERVER_PERMISSION_DENIED = 300
+#: ``CREATE LOGIN`` or ``ALTER LOGIN`` from a login without ``ALTER ANY
+#: LOGIN``: "User does not have permission to perform this action" (measured
+#: on 16.0.4325.4, #1550).
+NO_LOGIN_PERMISSION = 15247
 
 #: The Windows socket error a server answers a ``strict`` connection with when
 #: it does not take TDS 8: 2019 and 2022 reset it, from Windows and from Linux
@@ -149,6 +153,13 @@ RULES: dict[int, Rule] = {
     ),
     SERVER_PERMISSION_DENIED: Rule(
         "authorization", hint="the tool login lacks the server permission the message names"
+    ),
+    NO_LOGIN_PERMISSION: Rule(
+        "authorization",
+        hint=(
+            "the tool login lacks ALTER ANY LOGIN, the grant every change of a login needs "
+            "(02-mssql-privileges.md §2.1)"
+        ),
     ),
 }
 

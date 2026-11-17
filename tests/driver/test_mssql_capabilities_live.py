@@ -9,6 +9,8 @@ HV6). The check leaves no login and no open transaction.
 
 from __future__ import annotations
 
+import uuid
+from dataclasses import replace
 from typing import Any
 
 import pytest
@@ -16,7 +18,7 @@ import pytest
 from sopuli.config.model import ExpandedTarget, Target, TargetMssql
 from sopuli.driver.mssql.capabilities import CHECK_PREFIX
 from sopuli.driver.mssql.password import PBKDF2_SHA512
-from sopuli.driver.protocol import Credential
+from sopuli.driver.protocol import Credential, DriverError
 from sopuli.secrets import Secret
 
 session_module = pytest.importorskip("sopuli.driver.mssql.session")
@@ -33,6 +35,29 @@ def _session(live_mssql: Any) -> Any:
     )
     credential = Credential(username=live_mssql.tool_user, secret=Secret(live_mssql.tool_password))
     return session_module.MssqlDriver(correlation_id="t1-1550").connect(target, credential)
+
+
+def test_a_login_without_alter_any_login_is_refused_for_the_grant(live_mssql: Any) -> None:
+    """The check from a login with no grant: 15247, the tool login's fault,
+    not the target's (measured on 16.0.4325.4)."""
+    name = f"acme_t1_noperm_{uuid.uuid4().hex[:6]}"
+    password = "Acme-Noperm-pw1"
+    sa = live_mssql.connect()
+    sa.cursor().execute(f"CREATE LOGIN [{name}] WITH PASSWORD = N'{password}', CHECK_POLICY = OFF")
+    try:
+        stack = replace(live_mssql, tool_user=name, tool_password=password)
+        opened = _session(stack)
+        try:
+            with pytest.raises(DriverError) as caught:
+                opened.hash_version()
+        finally:
+            opened.close()
+    finally:
+        sa.cursor().execute(f"DROP LOGIN [{name}]")
+        sa.close()
+
+    assert caught.value.category == "authorization"
+    assert caught.value.code == "15247"
 
 
 def test_the_tool_login_reads_the_host_platform(live_mssql: Any) -> None:

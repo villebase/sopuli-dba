@@ -368,7 +368,7 @@ jobs:
       matrix:
         # base first, because it is the cell that can actually fail: the others
         # prove an extra resolves, and base proves the boundary held.
-        shape: ["", "[oracle]", "[postgres]", "[mysql]", "[mariadb]", "[hashicorp]", "[oci]", "[file]", "[notify]", "[yopass]", "[onepassword]", "[keyring]", "[all]"]
+        shape: ["", "[oracle]", "[postgres]", "[mysql]", "[mariadb]", "[mssql]", "[hashicorp]", "[oci]", "[file]", "[notify]", "[yopass]", "[onepassword]", "[keyring]", "[all]"]
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -406,7 +406,7 @@ jobs:
           import sys
 
           # CLIENTS in tests/store/test_install_shape.py.
-          clients = ("httpx", "keyring", "nacl", "oci", "onepassword", "oracledb", "psycopg", "pymysql", "pyrage", "pysequoia")
+          clients = ("httpx", "keyring", "nacl", "oci", "onepassword", "oracledb", "psycopg", "pymysql", "pyodbc", "pyrage", "pysequoia")
           present = [name for name in clients if importlib.util.find_spec(name) is not None]
           if present:
               sys.exit(f"base install pulled in a backend client: {', '.join(present)}")
@@ -432,6 +432,27 @@ jobs:
               sys.exit(f"the mariadb extra did not install all of {sorted(entry.provides)}")
           import sopuli.driver.mariadb.password  # noqa: F401 -- loads nacl.bindings
           print("the mariadb extra brings", ", ".join(sorted(entry.provides)))
+          PY
+
+      # The `mssql` extra installs pyodbc, which loads unixODBC's libodbc when
+      # it is imported. unixODBC is a system package that pip cannot install,
+      # and the runner image carries it, so the driver module must load here.
+      # What the registry says without it is a tier-0 test (#1549).
+      - name: the mssql extra brings what the driver uses
+        if: matrix.shape == '[mssql]'
+        run: |
+          python - <<'PY'
+          import sys
+
+          from sopuli.config.model import Target
+          from sopuli.driver.registry import DRIVERS, resolve
+          from sopuli.extras import installed
+
+          entry = DRIVERS["mssql"]
+          if not installed(entry.provides):
+              sys.exit(f"the mssql extra did not install all of {sorted(entry.provides)}")
+          resolve(Target(name="shape", type="mssql", dsn="db.example.com:1433"))
+          print("the mssql extra brings", ", ".join(sorted(entry.provides)), "and the driver loads")
           PY
 
   # Tier 1 (04-testing.md §4): the UC-1 happy path and the store's real-backend
@@ -632,6 +653,80 @@ jobs:
         working-directory: test
         run: docker compose --profile '*' down
 
+  # The SQL Server driver's tier-1 tests (#1549), against `mssql-2022` in
+  # test/compose.yaml's `mssql` profile. A lane of its own, not tier 1's: the
+  # image is amd64 only and about 2 GB, and pyodbc reaches the server through
+  # Microsoft ODBC Driver 18, a system package this lane installs.
+  # `SOPULI_TEST_MSSQL: required` turns a missing server or driver into a
+  # failure, as `SOPULI_TEST_TIER1` does in tier 1. Gated and required like
+  # tier 1 (#1120).
+  tier1-mssql:
+    name: tier 1 (SQL Server)
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - run: pip install -e ".[dev,mssql]"
+
+      # The release sql/mssql/06_client_library.Dockerfile measured, from
+      # Microsoft's repository for the runner's own Ubuntu release, read from
+      # /etc/os-release: `ubuntu-latest` moves. The runner image may carry that
+      # repository already, so the list and key are written under the names
+      # Microsoft's own prod.list uses, and a second definition cannot conflict.
+      # unixODBC comes from Ubuntu's archive. A failed `update` is carried
+      # past, as in tier 1: the install below is the gate.
+      - name: install Microsoft ODBC Driver 18
+        run: |
+          curl -fsSL https://packages.microsoft.com/keys/microsoft.asc \
+            | sudo gpg --batch --yes --dearmor -o /usr/share/keyrings/microsoft-prod.gpg
+          release=$(. /etc/os-release && echo "$VERSION_ID")
+          curl -fsSL "https://packages.microsoft.com/config/ubuntu/$release/prod.list" \
+            | sudo tee /etc/apt/sources.list.d/microsoft-prod.list > /dev/null
+          sudo apt-get update -qq \
+            || echo "::warning::apt-get update reported errors; the install below is the gate"
+          sudo ACCEPT_EULA=Y apt-get install -y --no-install-recommends --allow-downgrades \
+            unixodbc msodbcsql18=18.7.1.1-1
+          odbcinst -q -d -n "ODBC Driver 18 for SQL Server"
+
+      - name: bring up SQL Server
+        working-directory: test
+        run: docker compose --profile mssql up -d --wait mssql-2022
+
+      # The live modules skip whole when pyodbc does not import, before the
+      # fixture can fail, so the import is the gate here.
+      - name: the driver loads
+        run: python -c "import sopuli.driver.mssql.session"
+
+      # The files by name: `-k` would still collect every module in
+      # tests/driver, and the MySQL family's import PyMySQL, which this lane
+      # does not install.
+      - name: pytest
+        env:
+          SOPULI_TEST_MSSQL: required
+        run: pytest tests/driver/test_mssql_*.py
+
+      - name: container logs
+        if: always()
+        working-directory: test
+        run: docker compose --profile mssql logs --tail 100
+
+      - name: tear down
+        if: always()
+        working-directory: test
+        run: docker compose --profile '*' down
+
   # The lane a prose-only pull request still has to pass, and what makes the
   # skipping above safe (#458).
   #
@@ -713,7 +808,7 @@ jobs:
   # for the wrong one.
   ci-ok:
     name: ci ok
-    needs: [changes, lint, test, install-shape, release-build, tier1, docs]
+    needs: [changes, lint, test, install-shape, release-build, tier1, tier1-mssql, docs]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5

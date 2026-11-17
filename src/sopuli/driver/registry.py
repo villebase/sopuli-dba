@@ -129,6 +129,11 @@ class DatabaseDriver:
     #: setting the product lacks is not a gap anybody can close (UC-5 §3,
     #: #1458). It is a fact about the product, so it needs no connection.
     not_applicable: frozenset[str] = frozenset()
+    #: The system package the client loads when it is imported, where it has
+    #: one, as a hint: pyodbc loads unixODBC's ``libodbc`` on Linux and macOS.
+    #: Without it the import fails with an ``ImportError`` that is not a
+    #: missing module, and :func:`resolve` reports it as not installed.
+    system_library: str | None = None
 
     @property
     def install_command(self) -> str:
@@ -342,6 +347,11 @@ DRIVERS: dict[str, DatabaseDriver] = {
         refuses=frozenset({CONTROL, ENCODING, BYTE_LENGTH}),
         fixed_limit=MSSQL_LIMIT,
         commands=frozenset(),
+        system_library=(
+            "install unixODBC (`unixodbc` on Debian and Ubuntu) and Microsoft ODBC Driver 18 "
+            "for SQL Server, which are system packages: pyodbc loads unixODBC's libodbc when "
+            "it is imported"
+        ),
     ),
 }
 
@@ -443,6 +453,18 @@ def resolve(target: Target) -> ModuleType:
                 hint="this is not something to install -- the driver is not written yet",
             ) from exc
         raise
+    except ImportError as exc:
+        # The client is there and a library it loads is not, such as
+        # unixODBC's libodbc for pyodbc on Linux: the import of the client's own
+        # module fails, and the message names the library. Any other import
+        # fault, in this tool's modules among them, stays a traceback.
+        if driver.system_library is None or exc.name not in driver.provides:
+            raise
+        raise DriverNotInstalledError(
+            f'target "{target.name}" declares type "{target.type}", but its client '
+            f"cannot load a system library: {exc}",
+            hint=driver.system_library,
+        ) from exc
 
 
 def require_command(target: Target, command: str) -> None:

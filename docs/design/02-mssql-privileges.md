@@ -480,7 +480,7 @@ longer one before anything is sent.
 The value still allows an offline guessing attack, so treat it as sensitive.
 On 2019 it is a single round of SHA-512. Where the server's error message
 quotes the statement, the driver replaces the value in it before the message
-is kept (open: #1549).
+is kept (open: #1551).
 
 SQL Server has no rollover window, as PostgreSQL has none. `--strategy
 rollover` is refused, exit 5, and `creds finish-rollover` finds no window to

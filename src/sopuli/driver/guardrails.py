@@ -57,6 +57,10 @@ the command layer applies.
    `creds finish-rollover`, `account suspend` and `account expire-password`,
    and for the last two on the session's own account too
    (:data:`GUARDED_TYPES`). `creds check` and `doctor` refuse nothing by it.
+   On SQL Server the driver reports the grants of `02-mssql-privileges.md`
+   §5, and where it could not read every path, it says why in
+   ``admin_unread``, and check 9 refuses the account with that reason
+   (#1567).
 
 ### Refused, permitted, or *could not establish*
 
@@ -323,7 +327,10 @@ def server_reserved(state: UserState) -> bool:
     No grant to the tool account changes any of these answers. For checks 6 and
     8 the server is what refuses the change; for check 9 the tool refuses it,
     whatever the server would allow. So the pre-flight asks for no grant on such
-    an account (#1117), because the guardrails skip the account anyway.
+    an account (#1117), because the guardrails skip the account anyway. A check
+    9 refusal for a path the driver could not read (``admin_unread``) is
+    the one a grant changes, to the tool login rather than for the account,
+    and its reason names that grant (#1567).
 
     Read from :func:`review` and :data:`NEVER_WAIVED`, not restated, so a later
     check of the same kind is included without an edit here. Check 1 is left
@@ -460,7 +467,11 @@ def review(
     # `every_account` ends the exemption, for MariaDB's suspend and expire
     # (#1272).
     privileges = sorted(state.global_privileges)
-    if privileges and (every_account or (sets_password and not state.session_account)):
+    check9 = every_account or (sets_password and not state.session_account)
+    if state.admin_unread and check9:
+        # A path the driver could not read never passes (#1567).
+        found.append(Refusal(GLOBAL_PRIVILEGE, name, state.admin_unread))
+    elif privileges and check9:
         named = ", ".join(privileges[:NAMED_PRIVILEGES])
         rest = len(privileges) - NAMED_PRIVILEGES
         if rest > 0:

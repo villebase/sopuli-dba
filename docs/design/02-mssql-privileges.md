@@ -247,7 +247,10 @@ No flag waives it. Membership is followed through server roles that are
 members of other server roles. Every login is a member of the server role
 `public`, which has no rows in `sys.server_role_members`, so the guardrail
 reads `public`'s grants as every login's: a grant of `ALTER ANY SERVER ROLE`
-to `public` refuses every managed login. The guardrail applies to the
+to `public` refuses every managed login. The guardrail reads grants, with or
+without `WITH GRANT OPTION`, and not denials: a login is refused for a grant
+whatever it is denied. A grant on a principal the read has no row for, and a
+membership of one, count as a grant on and a membership of a refused role. The guardrail applies to the
 password verbs, and the tool's own login is exempt, as on MySQL
 ([#1222](../decisions/log.md#1222)).
 

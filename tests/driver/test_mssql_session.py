@@ -147,6 +147,18 @@ def test_every_other_method_is_not_written() -> None:
         assert "is a SQL Server instance, and this build cannot" in str(caught.value)
 
 
+def test_a_personal_role_is_refused_as_role_lookup_missing() -> None:
+    """So `report accounts` shows the role's members as undeclared and warns
+    with `SOPULI-W075`, rather than failing the target (#1555)."""
+    opened = session.MssqlSession(connection=None, target=target())
+
+    with pytest.raises(UnsupportedCapabilityError) as caught:
+        opened.resolve_role("acme_ops")
+
+    assert caught.value.capability == "role_lookup"
+    assert "#1554" in (caught.value.hint or "")
+
+
 def test_client_report_names_pyodbc() -> None:
     lines = session.client_report(env={}, runtime=None)
     assert lines["pyodbc"] == pyodbc.version

@@ -41,7 +41,7 @@ import pyodbc
 
 from sopuli.config.model import ExpandedTarget, Runtime
 from sopuli.config.targets import MSSQL_STRICT
-from sopuli.driver.mssql import accounts, capabilities, groups
+from sopuli.driver.mssql import accounts, capabilities, groups, survey
 from sopuli.driver.mssql import privileges as tool_login
 from sopuli.driver.mssql.admin import Assessment, Catalog, assess, read_catalog
 from sopuli.driver.mssql.client import client_lines
@@ -57,6 +57,7 @@ from sopuli.driver.mssql.errors import (
 )
 from sopuli.driver.mssql.scope import observe
 from sopuli.driver.protocol import (
+    ROLE_LOOKUP,
     ClosesConnection,
     Credential,
     Cursor,
@@ -70,6 +71,7 @@ from sopuli.driver.protocol import (
     require_read_write,
 )
 from sopuli.driver.registry import NotWrittenError
+from sopuli.driver.survey import SurveyedAccount
 from sopuli.output.debug import logger
 
 LOG = logger("mssql")
@@ -297,6 +299,18 @@ class MssqlSession(ClosesConnection):
             global_privileges=assessment.grants,
         )
 
+    def survey_with_profiles(self) -> tuple[tuple[SurveyedAccount, ...], frozenset[str]]:
+        """Every login, and no profiles: SQL Server has none.
+
+        :class:`~sopuli.driver.survey.AccountSurvey`, for `report accounts`
+        (:mod:`~sopuli.driver.mssql.survey`). The registry makes the profile
+        check *not applicable* here, so the empty set reports nothing missing.
+        The scope comes first, so a contained group's master is refused before
+        a login is read, as in :meth:`describe_user`."""
+        self.scope()
+        platform = self.host_platform()
+        return self._read(lambda cursor: survey.survey(cursor, platform=platform)), frozenset()
+
     def availability_replicas(self) -> tuple[str, ...]:
         """The names of the replicas of every Availability Group the instance
         is in, itself among them, or none (:mod:`~sopuli.driver.mssql.groups`).
@@ -354,7 +368,18 @@ class MssqlSession(ClosesConnection):
         self._not_written("resolve a profile")
 
     def resolve_role(self, role: str) -> NoReturn:
-        self._not_written("resolve a role")
+        """Refused as ``role_lookup`` missing: a personal rule's `role:` is
+        UC-2's, which is not written for SQL Server yet (#1554). `report
+        accounts` then shows the role's members as undeclared and warns with
+        `SOPULI-W075`, rather than failing the target (UC-5 §4)."""
+        raise UnsupportedCapabilityError(
+            ROLE_LOOKUP,
+            target=self.target.name,
+            hint=(
+                "a personal_accounts: rule's role: is not resolved on SQL Server yet: UC-2 "
+                "is not written for it (#1554)"
+            ),
+        )
 
     def accounts_matching(self, *args: Any, **kwargs: Any) -> NoReturn:
         self._not_written("list logins")

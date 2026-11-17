@@ -53,7 +53,8 @@ the SQL in `sql/oracle/` by hand. The PostgreSQL tool role is created by hand in
 `account expire-password` and the seen reset, because PostgreSQL cannot make a
 role change its password at its next login. A MySQL target and a MariaDB target
 each run `doctor`, the `creds` commands (§7) and the `account` commands (§9).
-A SQL Server target runs `doctor` and `report history` only (§7).
+A SQL Server target runs `doctor`, `report accounts` and `report history`
+only (§7).
 
 ---
 
@@ -1175,9 +1176,9 @@ acme_app@%  mariadb-dev  IN_SYNC  any second password ended; the current passwor
 
 ### A SQL Server instance
 
-`doctor` connects to SQL Server and reports it, and `report history` reads
-a login's last password change. No other command runs against it yet. The
-client is pyodbc, from `pip install "sopuli-dba[mssql]"`, and
+`doctor` connects to SQL Server and reports it, `report accounts` checks
+its logins, and `report history` reads a login's last password change. No
+other command runs against it yet. The client is pyodbc, from `pip install "sopuli-dba[mssql]"`, and
 Microsoft's ODBC Driver 18 for SQL Server, which you install from Microsoft as
 a system package.
 
@@ -1256,6 +1257,45 @@ mssql-dev  (16.0.4325.4, 1 account)
     note: the tool does not manage this account's password, so it keeps no history of it
 ...
 ```
+
+`report accounts` checks every login against the `reports:` rules. As `sa`,
+make `acme_rpt_exp` with `CHECK_POLICY = ON, CHECK_EXPIRATION = ON`, and
+`acme_owner` with `CHECK_POLICY = OFF`, then `ALTER LOGIN [acme_owner]
+DISABLE`. Add these rules to `mssql.yaml`:
+
+```yaml
+reports:
+  accounts:
+    - accounts: [acme_app, acme_rpt_exp]
+      settings: { password_lifetime: unlimited, failed_login_limit: unlimited }
+    - accounts: ["acme_owner*"]
+      login: refused
+    - accounts: [acme_rpt_gone]
+      settings: { password_lifetime: unlimited }
+```
+
+```
+$ sopuli --config mssql.yaml report accounts --all
+mssql-dev  (16.0.4325.4, 16 accounts read, 1 with a problem, 1 not checked, 5 undeclared)
+  ACCOUNT                       KIND        PROFILE  STATUS  FAILED LOGINS  STATE            FINDING
+  acme_rpt_gone                 technical   -        -       -              ACCOUNT_MISSING  present: not on this target
+  acme_rpt_exp                  technical   -        OPEN    unknown        NOT_CHECKED      password_lifetime: CHECK_EXPIRATION is on, so the host's password policy sets the maximum age, which the tool login cannot read
+  BUILTIN\Administrators        undeclared  -        OPEN    unknown        UNDECLARED       not in config
+  NT AUTHORITY\NETWORK SERVICE  undeclared  -        OPEN    unknown        UNDECLARED       not in config
+  NT AUTHORITY\SYSTEM           undeclared  -        OPEN    unknown        UNDECLARED       not in config
+  sa                            undeclared  -        OPEN    unknown        UNDECLARED       not in config
+  sopuli_admin                  undeclared  -        OPEN    unknown        UNDECLARED       not in config
+  acme_app                      technical   -        OPEN    unknown        REPORT_OK        -
+  acme_owner                    technical   -        LOCKED  unknown        REPORT_OK        -
+  failed logins unknown: BadPasswordCount does not count past 1 on a Linux host
+  failed logins unknown: a Windows group has no password
+  failed logins unknown: a Windows login has no password
+...
+```
+
+It exits 3, for the missing login. The image runs on Linux, so no login
+locks, and the lockout limit reads as unlimited. The `##MS_…##` logins are
+read and left out.
 
 ---
 

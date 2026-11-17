@@ -289,7 +289,9 @@ class FakeCursor:
 
 def test_a_server_that_takes_writes() -> None:
     scope = observe(
-        FakeCursor(("16.0.4325.4", 3, "READ_WRITE")), target="mssql-dev", settings=TargetMssql()
+        FakeCursor(("16.0.4325.4", 3, "READ_WRITE", "master")),
+        target="mssql-dev",
+        settings=TargetMssql(),
     )
     assert (scope.type, scope.db_release, scope.open_mode, scope.read_write) == (
         SERVER,
@@ -302,14 +304,16 @@ def test_a_server_that_takes_writes() -> None:
 
 def test_a_read_only_master() -> None:
     scope = observe(
-        FakeCursor(("16.0.4325.4", 3, "READ_ONLY")), target="mssql-dev", settings=TargetMssql()
+        FakeCursor(("16.0.4325.4", 3, "READ_ONLY", "master")),
+        target="mssql-dev",
+        settings=TargetMssql(),
     )
     assert (scope.open_mode, scope.read_write) == ("READ ONLY", False)
 
 
 def test_optional_encryption_is_unknown() -> None:
     scope = observe(
-        FakeCursor(("16.0.4325.4", 3, "READ_WRITE")),
+        FakeCursor(("16.0.4325.4", 3, "READ_WRITE", "master")),
         target="mssql-dev",
         settings=TargetMssql(encrypt="optional"),
     )
@@ -319,7 +323,11 @@ def test_optional_encryption_is_unknown() -> None:
 
 def test_azure_sql_database_is_refused() -> None:
     with pytest.raises(NotAnInstanceError) as caught:
-        observe(FakeCursor(("12.0.2000.8", 5, "READ_WRITE")), target="az", settings=TargetMssql())
+        observe(
+            FakeCursor(("12.0.2000.8", 5, "READ_WRITE", "master")),
+            target="az",
+            settings=TargetMssql(),
+        )
     assert caught.value.exit_code == ExitCode.CONFIG_INVALID
     assert 'target "az" is Azure SQL Database' in str(caught.value)
 
@@ -328,7 +336,9 @@ def test_azure_sql_database_is_refused() -> None:
 def test_azure_synapse_is_refused(edition: int) -> None:
     with pytest.raises(NotAnInstanceError) as caught:
         observe(
-            FakeCursor(("12.0.2000.8", edition, "READ_WRITE")), target="az", settings=TargetMssql()
+            FakeCursor(("12.0.2000.8", edition, "READ_WRITE", "master")),
+            target="az",
+            settings=TargetMssql(),
         )
     assert 'target "az" is Azure Synapse' in str(caught.value)
 

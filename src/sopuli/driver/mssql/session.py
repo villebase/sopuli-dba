@@ -38,7 +38,7 @@ import pyodbc
 
 from sopuli.config.model import ExpandedTarget, Runtime
 from sopuli.config.targets import MSSQL_STRICT
-from sopuli.driver.mssql import accounts, capabilities
+from sopuli.driver.mssql import accounts, capabilities, groups
 from sopuli.driver.mssql import privileges as tool_login
 from sopuli.driver.mssql.admin import Assessment, Catalog, assess, read_catalog
 from sopuli.driver.mssql.client import client_lines
@@ -99,6 +99,12 @@ class MssqlSession(ClosesConnection):
     identity_caveat: str | None = field(default=None, init=False, repr=False)
     #: Guardrail 9's catalog, read on first use (:meth:`admin_assessment`).
     _catalog: Catalog | None = field(default=None, init=False, repr=False)
+    #: The Availability Group reads (:mod:`~sopuli.driver.mssql.groups`),
+    #: read on first use.
+    _replicas: tuple[str, ...] | None = field(default=None, init=False, repr=False)
+    #: Why :meth:`scope` refused this session, kept so that it is raised
+    #: again without another read.
+    _scope_refusal: DriverError | None = field(default=None, init=False, repr=False)
     #: The capabilities of #1550, read on first use.
     _host_platform: str | None = field(default=None, init=False, repr=False)
     _host_read: bool = field(default=False, init=False, repr=False)
@@ -106,12 +112,24 @@ class MssqlSession(ClosesConnection):
 
     def scope(self) -> Scope:
         """What this session is: a server, read-write or not, and its
-        encryption. Probed on the first call and cached (invariant 3)."""
+        encryption. Probed on the first call and cached (invariant 3).
+
+        A session in a contained Availability Group's own ``master`` is
+        refused here, before any login is read
+        (:class:`~sopuli.driver.mssql.groups.ContainedGroupMasterError`). A
+        refusal is kept as the scope is, and raised again on the next call
+        without another read."""
+        if self._scope_refusal is not None:
+            raise self._scope_refusal
         if self._scope is None:
             settings = self.target.target.mssql_settings
-            self._scope = self._read(
-                lambda cursor: observe(cursor, target=self.target.name, settings=settings)
-            )
+            try:
+                self._scope = self._read(
+                    lambda cursor: observe(cursor, target=self.target.name, settings=settings)
+                )
+            except (groups.ContainedGroupMasterError, groups.MasterUnreadError) as refused:
+                self._scope_refusal = refused
+                raise
             if LOG.isEnabledFor(logging.DEBUG):
                 LOG.debug(
                     "%s is a server, %s %s, encryption %s",
@@ -127,7 +145,9 @@ class MssqlSession(ClosesConnection):
         (`02-mssql-privileges.md` §5): the grants it reaches, or why they
         could not be read. The catalog is read on the first call and cached
         for the session, so every managed login on the target is assessed
-        against one read."""
+        against one read. The scope comes first, so a session in a contained
+        group's master is refused before any login is read."""
+        self.scope()
         if self._catalog is None:
             self._catalog = self._read(read_catalog)
             LOG.debug(
@@ -259,6 +279,8 @@ class MssqlSession(ClosesConnection):
         see one, so its name reads as ``None`` (``02-mssql-privileges.md``
         §4).
         """
+        # The scope refuses a contained group's master before a login is read.
+        self.scope()
         login = self._read(
             lambda cursor: accounts.read_one(cursor, account, target=self.target.name)
         )
@@ -271,6 +293,14 @@ class MssqlSession(ClosesConnection):
             admin_unread=assessment.unread,
             global_privileges=assessment.grants,
         )
+
+    def availability_replicas(self) -> tuple[str, ...]:
+        """The names of the replicas of every Availability Group the instance
+        is in, itself among them, or none (:mod:`~sopuli.driver.mssql.groups`).
+        Read once and cached."""
+        if self._replicas is None:
+            self._replicas = self._read(groups.replicas)
+        return self._replicas
 
     #: The words for two targets that are one instance
     #: (:class:`~sopuli.driver.clusters.ClusterIdentity`). Not fields.

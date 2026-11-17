@@ -93,6 +93,9 @@ class MssqlSession(ClosesConnection):
     #: The Availability Group reads (:mod:`~sopuli.driver.mssql.groups`),
     #: read on first use.
     _replicas: tuple[str, ...] | None = field(default=None, init=False, repr=False)
+    #: Why :meth:`scope` refused this session, kept so that it is raised
+    #: again without another read.
+    _scope_refusal: DriverError | None = field(default=None, init=False, repr=False)
 
     def scope(self) -> Scope:
         """What this session is: a server, read-write or not, and its
@@ -100,16 +103,20 @@ class MssqlSession(ClosesConnection):
 
         A session in a contained Availability Group's own ``master`` is
         refused here, before any login is read
-        (:class:`~sopuli.driver.mssql.groups.ContainedGroupMasterError`)."""
+        (:class:`~sopuli.driver.mssql.groups.ContainedGroupMasterError`). A
+        refusal is kept as the scope is, and raised again on the next call
+        without another read."""
+        if self._scope_refusal is not None:
+            raise self._scope_refusal
         if self._scope is None:
             settings = self.target.target.mssql_settings
-            scope = self._read(
-                lambda cursor: observe(cursor, target=self.target.name, settings=settings)
-            )
-            self._read(
-                lambda cursor: groups.require_instance_master(cursor, target=self.target.name)
-            )
-            self._scope = scope
+            try:
+                self._scope = self._read(
+                    lambda cursor: observe(cursor, target=self.target.name, settings=settings)
+                )
+            except (groups.ContainedGroupMasterError, groups.MasterUnreadError) as refused:
+                self._scope_refusal = refused
+                raise
             if LOG.isEnabledFor(logging.DEBUG):
                 LOG.debug(
                     "%s is a server, %s %s, encryption %s",
@@ -125,7 +132,9 @@ class MssqlSession(ClosesConnection):
         (`02-mssql-privileges.md` §5): the grants it reaches, or why they
         could not be read. The catalog is read on the first call and cached
         for the session, so every managed login on the target is assessed
-        against one read."""
+        against one read. The scope comes first, so a session in a contained
+        group's master is refused before any login is read."""
+        self.scope()
         if self._catalog is None:
             self._catalog = self._read(read_catalog)
             LOG.debug(

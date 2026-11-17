@@ -29,8 +29,9 @@ REPLICAS = (
     "ORDER BY replica_server_name"
 )
 
-#: The physical name of the session's database (AR6).
-PHYSICAL_NAME = "SELECT physical_database_name FROM sys.databases WHERE database_id = DB_ID()"
+#: The physical name of the session's database (AR6), as a subquery: the
+#: scope reads it in its own round trip (:data:`~sopuli.driver.mssql.scope.SCOPE`).
+PHYSICAL_NAME = "(SELECT physical_database_name FROM sys.databases WHERE database_id = DB_ID())"
 
 #: The physical name of the instance's own ``master``.
 MASTER = "master"
@@ -52,14 +53,24 @@ UNREAD_HINT = (
 
 
 class ContainedGroupMasterError(DriverError):
-    """The session is in a contained Availability Group's own ``master``, so
-    every login it reads is the group's (#1538, decision 4), or the session
-    cannot tell whether it is. The whole target is refused, at its scope,
-    before any login is read: ``config``, exit 9, before anything is changed
-    (invariant 4)."""
+    """The session's database is not the instance's own ``master``: as in a
+    contained Availability Group's own ``master``, whose logins the group
+    copies to every replica (#1538, decision 4). The whole target is refused,
+    at its scope, before any login is read: ``config``, exit 9, before
+    anything is changed (invariant 4)."""
 
     category = "config"
     exit_code = ExitCode.CONFIG_INVALID
+
+
+class MasterUnreadError(DriverError):
+    """The session's database gave no physical name, so the tool cannot tell
+    the instance's ``master`` from a contained group's. Refused, as an
+    unknown is (invariant 4), but nothing in the config is at fault:
+    ``database``, exit 1."""
+
+    category = "database"
+    exit_code = ExitCode.FAILURE
 
 
 def replicas(cursor: Cursor) -> tuple[str, ...]:
@@ -68,21 +79,25 @@ def replicas(cursor: Cursor) -> tuple[str, ...]:
     return tuple(str(row[0]) for row in cursor.fetchall() if row[0] is not None)
 
 
-def require_instance_master(cursor: Cursor, *, target: str) -> None:
-    """Refuse a session that is not in the instance's own ``master``: one in
-    a contained group's, or one whose database names no physical name. A
-    read that cannot say where the session is never lets it through."""
-    cursor.execute(PHYSICAL_NAME)
-    row = cursor.fetchone()
-    name = None if row is None or row[0] is None else str(row[0]).strip()
+def require_instance_master(physical_name: object, *, target: str) -> None:
+    """Refuse a session whose database is not the instance's own ``master``,
+    by the ``physical_database_name`` the scope read.
+
+    Only a contained group's ``master`` was measured to give another name
+    (AR6), so another name is refused as one, and the message says what was
+    read rather than claiming more. A name that cannot be read is refused
+    too: a read that cannot say where the session is never lets it through.
+    """
+    name = None if physical_name is None else str(physical_name).strip()
     if name and name.lower() == MASTER:
         return
     if not name:
-        raise ContainedGroupMasterError(
+        raise MasterUnreadError(
             f'target "{target}" did not say which database its session is in',
             hint=UNREAD_HINT,
         )
     raise ContainedGroupMasterError(
-        f'target "{target}" is a contained Availability Group\'s own master, {name}',
+        f'target "{target}" connects to a database whose physical name is {name}, '
+        "not the instance's master, as a contained Availability Group's own master does",
         hint=CONTAINED_HINT,
     )

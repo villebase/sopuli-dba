@@ -264,8 +264,12 @@ database's `physical_database_name` in `sys.databases` as the group's master,
 such as `acme_cag_master`, where the instance's `master` reads `master` on
 2019, 2022 and 2025 (AR6). The physical name describes the database, not the
 connection, so it says where the session is however it got there, through a
-group's listener or not. A session whose database names no physical name is
-refused too, with a message that says so.
+group's listener or not. The scope reads it in the same round trip as the
+release. Any physical name but `master` is refused as a contained group's
+master would be, and the message names what was read: only a contained
+group's master was measured to give another name. A database that gives no
+physical name is refused too, as `database`, exit 1: the tool cannot tell
+where the session is, and the config is not at fault.
 
 ---
 

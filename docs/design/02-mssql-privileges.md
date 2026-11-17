@@ -105,6 +105,19 @@ instance is in (§4). `ALTER ANY LOGIN` alone tells whether the server takes
 a `0x0300` value (§6.2). Which grant the Availability Group reads need is not
 measured (open: #1550).
 
+**A tool login that changes passwords also needs this grant**, for guardrail
+9 (§5):
+
+```sql
+GRANT VIEW ANY DEFINITION TO [sopuli_admin];
+```
+
+With it, the guardrail follows every path to an administrative grant. Without
+it, the tool cannot see a user-defined server role or its owner, so the
+guardrail refuses every managed login on the password verbs, and names the
+missing grant ([#1567](../decisions/log.md#1567)). `creds check`, `doctor`
+and the reports work without it. It reads no hash.
+
 Give the login no other permission, no server role, and no database user.
 
 ### 2.2 What the reports can read
@@ -221,12 +234,12 @@ measured (open: #1550).
 ## 5. Guardrail 9: a managed login with administrative grants
 
 The tool refuses to manage a login that, itself or through a server role
-(decision 5, open: #1567):
+(decision 5, [#1567](../decisions/log.md#1567), open: #1553):
 
 - is a member of `sysadmin` or `securityadmin`;
 - holds `CONTROL SERVER`, `ALTER ANY LOGIN`, `IMPERSONATE ANY LOGIN` or `ALTER
   ANY SERVER ROLE`;
-- holds `CONTROL`, `ALTER`, `IMPERSONATE` or `TAKE OWNERSHIP` on one login;
+- holds `CONTROL`, `ALTER` or `IMPERSONATE` on one login;
 - holds `CONTROL`, `ALTER` or `TAKE OWNERSHIP` on a server role this list
   refuses, or owns such a role.
 
@@ -252,10 +265,12 @@ holder add itself to the role. `TAKE OWNERSHIP` on such a role does not, at
 first, `15151`, but it lets the holder take the role with `ALTER
 AUTHORIZATION`, and then add itself (PA3). `ALTER` on a login reached no
 power: `EXECUTE AS`, the password and `DISABLE` are refused, and renaming
-the login is not measured. `TAKE OWNERSHIP` on a login cannot be granted:
-the `GRANT` is a syntax error (PA3). Whether the list keeps these two is
-open (open: #1567). The server refuses the password of a member of a role
-nested in a role that holds `CONTROL SERVER`, `15151` (PA1).
+the login is not measured. The list keeps it: a holder can change the
+login's settings, as it set `DEFAULT_DATABASE` (PA3), and on the tool login
+that is an attack on the tool. `TAKE OWNERSHIP` on a login cannot be
+granted: the `GRANT` is a syntax error (PA3), so the list does not name it.
+The server refuses the password of a member of a role nested in a role that
+holds `CONTROL SERVER`, `15151` (PA1).
 
 | Where | What it shows |
 |---|---|
@@ -270,10 +285,19 @@ With `ALTER ANY LOGIN` alone, the tool login reads less than the table shows
 role, so it cannot follow one role nested in another. It reads a login's own
 grants and memberships, with a role named by its id, and that role's grants
 by the id. With `VIEW ANY DEFINITION` as well, it reads every row the table
-names (PA4). What the tool login must hold, and what the guardrail does
-where it cannot see a path, is open (open: #1567). The guardrail does not read database
-paths, such as `db_owner` in `msdb` or a `TRUSTWORTHY` database owned by a
-member of `sysadmin`: they are database-level reads, and none was measured.
+names (PA4).
+
+**Where the tool login holds `VIEW ANY DEFINITION`, the guardrail follows
+every path. Where it does not, the guardrail refuses every managed login at
+plan time, and names the missing grant** ([#1567](../decisions/log.md#1567),
+open: #1553). Without the grant, a role the login owns is invisible, so no
+login can be shown to own none, and the guardrail never passes a path it
+could not read. `doctor` reports whether the tool login holds the grant
+(open: #1550).
+
+The guardrail does not read database paths, such as `db_owner` in `msdb` or
+a `TRUSTWORTHY` database owned by a member of `sysadmin`: they are
+database-level reads, and none was measured.
 
 ---
 
@@ -313,9 +337,20 @@ where the server refuses `0x0300`, and `ok` where it takes it, and leaves no
 login. `15021` also answers a value of the wrong length, so the check means
 this only for a value the driver computed. Where the name is taken, 2022
 and 2025 answer `15025` first. A refused `0x0300` change changes nothing
-(`11_hash_version_probe.py`, HV3, HV6 to HV8). What an audit keeps of the
-rolled-back statement is not measured. Which of these the driver uses is
-open (open: #1564).
+(`11_hash_version_probe.py`, HV3, HV6 to HV8).
+
+**The driver reads it once per session, before a change, with the
+rolled-back `CREATE LOGIN`, under a random name, and caches the answer as a
+capability** ([#1564](../decisions/log.md#1564), open: #1550). `ok` means the
+server takes `0x0300`, and `15021` that it does not. Any other answer fails
+the check at plan time, `15025` among them: the tool cannot see every name
+a login would clash with, such as a user-defined role's, and an answer to a
+clash says nothing about the value on a release that checks the name first.
+The check runs in a session that changes a password, and in its `--dry-run`,
+so that the plan names the value it will send. A target the run only reads,
+or one that is `readonly`, never gets it. The rolled-back statement changes
+nothing, but what a server audit or Extended Events keep of it is not
+measured (unverified: mssql-hash-check-audit).
 
 `HASHED` is refused on a login with `CHECK_POLICY = ON`, `33020` (CH4). So a
 change runs in this order, on every host:

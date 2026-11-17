@@ -6007,7 +6007,8 @@ the register.
      capability is not known yet (`mssql-hash-version`). #1550 later
      measured it: a `CREATE LOGIN` with a `0x0300` value, rolled back,
      answers `15021` where the server refuses `0x0300`, and leaves no login.
-     Which way the driver reads it is #1564.
+     Which way the driver reads it is #1564. [#1564](#1564) later chose
+     that rolled-back `CREATE LOGIN`, once per session.
   3. `creds check` logs in. Where the host has a lockout the tool cannot
      read, on Windows until `mssql-windows-policy` is measured, the check is
      refused. The tool never reads `password_hash`. #1557 later measured it
@@ -6080,6 +6081,9 @@ the register.
      user-defined role's row, so not its owner, nor a role's membership of
      another role. `ALTER` on a login reached no power, and `TAKE OWNERSHIP`
      on a login cannot be granted. What follows from these is #1567.
+     [#1567](#1567) later made the guardrail refuse every managed login
+     where the tool login lacks `VIEW ANY DEFINITION`, and dropped `TAKE
+     OWNERSHIP` on a login from the list.
   6. Only pyodbc with ODBC Driver 18 gives the server's number for a wrong
      password, a disabled login and a login that must change its password,
      `18456`, `18470` and `18488`. Errors carry the vendor code.
@@ -6257,3 +6261,88 @@ the register.
   CA installed in every client's store, or would run `optional`, with no
   encryption at all, and the test stack would need a CA of its own on every
   runner.
+
+## #1564
+
+- **Decided:** 2026-11-17, #1564
+- **Question:** how does the SQL Server driver decide, before it changes a
+  password, whether to send a `0x0300` value (PBKDF2-HMAC-SHA512, 100,000
+  rounds) or a `0x0200` one (one round of SHA-512)?
+- **Decision:** the maintainer's, as proposed. Once per session, before a
+  change, the driver sends `CREATE LOGIN` with a `0x0300` value it computed,
+  `HASHED, CHECK_POLICY = OFF`, under a random name, inside a transaction
+  that it rolls back. It caches the answer as a capability: `ok` means the
+  server takes `0x0300`, `15021` that it does not, and any other answer,
+  `15025` among them, fails the check at plan time. The check runs in a
+  session that changes a password and in its `--dry-run`, never on a target
+  the run only reads or a `readonly` one. What an audit keeps of the
+  statement is measured next (`mssql-hash-check-audit`, #1569).
+- **Why:** it is the only option that reads a capability (P1), known at plan
+  time (invariant 4), and touches no managed login. Probe 11 measured it on
+  15.0.4510.2, 16.0.4325.4 and 17.0.5065.9 (HV6 to HV8): it leaves no login,
+  and needs nothing beyond `ALTER ANY LOGIN`. `15021` also refuses a value
+  of the wrong length, so the answer means "refuses `0x0300`" only for a
+  value the driver computed. With a name that exists, 2022 and 2025 answer
+  `15025`, and 2019 still `15021`. The review of #1570 narrowed the issue's
+  proposal, which read `15025` as "takes `0x0300`": the tool cannot see
+  every name it could clash with, such as a user-defined role's, and the
+  answer depends on the order in which a release checks.
+- **Rejected:**
+  - Sending `0x0300` and then `0x0200` after a `15021`: `--dry-run` cannot
+    say which it will send, and on 2019 every change costs a refused `ALTER
+    LOGIN` on a managed login, which an audit may record as a failure.
+  - Branching on `SERVERPROPERTY('ProductMajorVersion')` ≥ 16: a release
+    number, not a capability. It misses a release that changes what it
+    takes, and Azure SQL reports its own numbers.
+  - Always `0x0200`: on 2022 and 2025 it stores a weaker value than the
+    server would, and on 2025 it weakens the `0x0300` hash it replaces.
+
+## #1567
+
+- **Decided:** 2026-11-17, #1567
+- **Question:** guardrail 9 on SQL Server must follow nested server roles
+  and role ownership ([#1538](#1538), decision 5). With `ALTER ANY LOGIN`
+  alone the tool login cannot read either. What does it hold, and what does
+  the guardrail do where it cannot see a path? And two lines of the list:
+  `TAKE OWNERSHIP` on one login, and `ALTER` on one login.
+- **Decision:** the maintainer's, each as proposed:
+  1. Where the tool login holds `VIEW ANY DEFINITION`, the guardrail
+     follows every path. Where it does not, the guardrail refuses every
+     managed login on the password verbs at plan time, and names the
+     missing grant. `creds check`, `doctor` and the reports work without
+     it, and `doctor` reports whether the tool login holds it. The issue
+     proposed refusing only a member of, or a grantee on, a user-defined
+     server role. The review of #1570 found that this misses ownership: the
+     tool cannot see a role it does not belong to, so no login can be shown
+     to own none. The maintainer chose to refuse every login instead.
+  2. `TAKE OWNERSHIP` on one login leaves the list.
+  3. `ALTER` on one login stays on the list.
+- **Why:**
+  1. Probe 12 (`12_guardrail_paths_probe.py`, PA2 to PA4, on 15.0.4510.2,
+     16.0.4325.4 and 17.0.5065.9) shows that `ALTER ANY LOGIN` alone does
+     not see a user-defined role's row, so not its owner, nor a role's
+     membership of another role, and that every path on a role reaches
+     `CONTROL SERVER`. Refusing every login without the grant keeps the
+     narrow grant usable for the reads, and the guardrail is never wrong in
+     the unsafe direction.
+  2. `GRANT TAKE OWNERSHIP ON LOGIN::` is a syntax error on every release,
+     so the line could never match. No login is refused differently.
+  3. `ALTER` on a login reached no measured power, but its holder can
+     change the login's settings, such as `DEFAULT_DATABASE`, and on the
+     tool login that is an attack on the tool. Few logins hold it, so
+     refusing it costs little.
+- **Rejected:**
+  1. `VIEW ANY DEFINITION` required for every verb: it removes the narrow
+     grant of `02-mssql-privileges.md` §2.1 also for `creds check`,
+     `doctor` and the reports, which do not need it. `ALTER ANY LOGIN`
+     alone, always failing closed: an estate that puts application logins
+     in user-defined roles could not manage them even where an
+     administrator would add the grant. Reading what it can and documenting
+     the gap, or warning that ownership was not checked: a login that owns
+     a `CONTROL SERVER` role would pass, and the tool would set its
+     password. Measuring another source of ownership first: probe 12's PA2
+     found none among the catalog views.
+  2. Keeping the line: the list would name a grant that does not exist.
+  3. Dropping `ALTER`: its holder set `DEFAULT_DATABASE` (PA3), renaming
+     the login and its other settings are not measured, and refusing it
+     costs little.

@@ -1,12 +1,22 @@
 """Invariant 15 on SQL Server: the password never reaches the server (#1551).
 
-The driver sends the value it computed, with ``HASHED``. This module changes
-a password through the driver with an Extended Events session recording every
-statement, batch and error, then looks for the password in that session, the
-plan cache, the default trace and the error log. ``02-mssql-privileges.md``
-§6.1 has the measurement this guards (``01_password_text_probe.py``): a
-statement that does not parse keeps its text, so the guard is that no
-statement ever holds the password, sent or failed.
+The driver sends the value it computed, with ``HASHED``. Two checks, because
+neither is enough alone:
+
+* **What the driver sends.** Every statement and bind the session sends is
+  recorded at the client. None holds the password, and the change is an
+  ``ALTER LOGIN … HASHED``. This is the check that catches a driver sending
+  the password in clear: ``02-mssql-privileges.md`` §6.1 measured that a
+  clear-text ``ALTER LOGIN`` that parses leaves no text in any place the
+  server keeps (PT0 to PT2, PT4), so no server-side read can see it.
+* **What the server keeps.** An Extended Events session records every
+  statement, batch, call and error the tool login makes. The test then reads
+  it, the plan cache, the default trace and the error log for the password.
+  A control shows the reader finds a password where §6.1 says one is kept: a
+  clear-text statement that does not parse (PT3).
+
+The login made with the password in step 3 is a login, not a statement, and
+carries it as every login does.
 """
 
 from __future__ import annotations
@@ -31,9 +41,12 @@ LOGIN, OLD = "w1_np_acme_app", "W1-np-old-pw-1"
 
 
 def xe_session(name: str) -> str:
-    """Every statement, batch, call and error on the server, with its text."""
+    """Every statement, batch, call and error the tool login makes, with its
+    text. The predicate keeps out the reader's own polling, which runs as
+    `sa`, and every other connection to the instance."""
+    where = f"WHERE (sqlserver.server_principal_name = N'{TOOL}')"
     events = ", ".join(
-        f"ADD EVENT {event} (ACTION (sqlserver.sql_text, sqlserver.session_id))"
+        f"ADD EVENT {event} (ACTION (sqlserver.sql_text, sqlserver.session_id) {where})"
         for event in (
             "sqlserver.sql_batch_starting",
             "sqlserver.sql_batch_completed",
@@ -45,8 +58,8 @@ def xe_session(name: str) -> str:
     return (
         f"CREATE EVENT SESSION [{name}] ON SERVER {events} "
         "ADD TARGET package0.ring_buffer (SET max_memory = 8192) "
-        # `NO_EVENT_LOSS` refuses `error_reported` (25643), so a lost event is
-        # possible in principle; the test asserts the session saw the run.
+        # `NO_EVENT_LOSS` refuses `error_reported` (25643), so each test
+        # waits for a marker sent after what it checks.
         "WITH (MAX_DISPATCH_LATENCY = 1 SECONDS)"
     )
 
@@ -77,19 +90,26 @@ class Recorder:
         ).fetchall()
         return "".join(row[0] or "" for row in rows)
 
-    def kept(self, anchor: str) -> dict[str, str]:
+    def kept(self, marker: str) -> dict[str, str]:
         """The text of each place a statement could be kept, once the events
-        name ``anchor``. Stopping the session would empty its ring buffer, so
-        this waits out the dispatch latency instead."""
+        hold ``marker``, which the caller sent after everything it checks.
+        Stopping the session would empty its ring buffer, so this waits out
+        the dispatch latency instead."""
         deadline = time.monotonic() + 15
         events = self.events()
-        while anchor not in events and time.monotonic() < deadline:
+        while marker not in events and time.monotonic() < deadline:
             time.sleep(0.5)
             events = self.events()
+        assert marker in events, "the session recorded everything up to the marker"
+        assert 'droppedCount="0"' in events, "the ring buffer dropped no event"
         cache = self.cursor.execute(
             "SELECT t.text FROM sys.dm_exec_cached_plans p "
             "CROSS APPLY sys.dm_exec_sql_text(p.plan_handle) t"
         ).fetchall()
+        (default_traces,) = self.cursor.execute(
+            "SELECT COUNT(*) FROM sys.traces WHERE is_default = 1"
+        ).fetchone()
+        assert default_traces == 1, "the default trace is on, so reading it checks something"
         trace = self.cursor.execute(
             "SELECT CAST(g.TextData AS nvarchar(max)) FROM sys.traces t "
             "CROSS APPLY sys.fn_trace_gettable(t.path, DEFAULT) g "
@@ -104,67 +124,115 @@ class Recorder:
         }
 
 
+class Sent:
+    """The session's connection, recording each statement and its binds."""
+
+    def __init__(self, connection: Any) -> None:
+        self._connection = connection
+        self.statements: list[str] = []
+
+    def cursor(self) -> Any:
+        return _SentCursor(self._connection.cursor(), self.statements)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._connection, name)
+
+
+class _SentCursor:
+    def __init__(self, cursor: Any, statements: list[str]) -> None:
+        self._cursor = cursor
+        self._statements = statements
+
+    def execute(self, sql: str, *params: Any) -> Any:
+        self._statements.append(f"{sql} {params!r}")
+        self._cursor.execute(sql, *params)
+        return self
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._cursor, name)
+
+
+def mark(connection: Any) -> str:
+    """A statement the tool login sends last, which the recorder waits for."""
+    marker = f"sopuli_np_marker_{uuid.uuid4().hex[:12]}"
+    connection.cursor().execute(f"SELECT N'{marker}'")
+    return marker
+
+
 @pytest.fixture
-def recorded(live_mssql: Any) -> Iterator[tuple[Any, Recorder]]:
-    """A tool session that may change ``LOGIN``, and a recorder started after
-    the setup, so the setup's own passwords are not in what it records."""
+def recorded(live_mssql: Any) -> Iterator[tuple[Any, Recorder, Sent]]:
+    """A tool session that may change ``LOGIN``, with its statements recorded,
+    and a recorder started after the setup, so the setup's own passwords are
+    not in what it records. Everything it makes is dropped, also when the
+    setup fails part way."""
     from sopuli.driver.mssql.session import MssqlDriver
 
     admin = live_mssql.connect()
     cursor = admin.cursor()
-    for login in (TOOL, LOGIN):
-        cursor.execute(f"IF SUSER_ID(N'{login}') IS NOT NULL DROP LOGIN [{login}]")
-    cursor.execute(f"CREATE LOGIN [{TOOL}] WITH PASSWORD = N'{TOOL_PASSWORD}', CHECK_POLICY = ON")
-    cursor.execute(f"GRANT ALTER ANY LOGIN TO [{TOOL}]")
-    cursor.execute(f"GRANT VIEW ANY DEFINITION TO [{TOOL}]")
-    cursor.execute(f"CREATE LOGIN [{LOGIN}] WITH PASSWORD = N'{OLD}', CHECK_POLICY = ON")
     recorder = Recorder(admin, f"sopuli_test_no_password_{uuid.uuid4().hex[:8]}")
-    recorder.stop()
-    recorder.start()
-    target = ExpandedTarget(
-        target=Target(
-            name="mssql-dev",
-            type="mssql",
-            dsn=live_mssql.dsn,
-            mssql=TargetMssql(trust_server_certificate=True),
-        )
-    )
-    opened = MssqlDriver(correlation_id="no-password").connect(
-        target, Credential(username=TOOL, secret=Secret(TOOL_PASSWORD))
-    )
+    opened = None
     try:
-        yield opened, recorder
+        for login in (TOOL, LOGIN):
+            cursor.execute(f"IF SUSER_ID(N'{login}') IS NOT NULL DROP LOGIN [{login}]")
+        cursor.execute(
+            f"CREATE LOGIN [{TOOL}] WITH PASSWORD = N'{TOOL_PASSWORD}', CHECK_POLICY = ON"
+        )
+        cursor.execute(f"GRANT ALTER ANY LOGIN TO [{TOOL}]")
+        cursor.execute(f"GRANT VIEW ANY DEFINITION TO [{TOOL}]")
+        cursor.execute(f"CREATE LOGIN [{LOGIN}] WITH PASSWORD = N'{OLD}', CHECK_POLICY = ON")
+        recorder.start()
+        target = ExpandedTarget(
+            target=Target(
+                name="mssql-dev",
+                type="mssql",
+                dsn=live_mssql.dsn,
+                mssql=TargetMssql(trust_server_certificate=True),
+            )
+        )
+        opened = MssqlDriver(correlation_id="no-password").connect(
+            target, Credential(username=TOOL, secret=Secret(TOOL_PASSWORD))
+        )
+        sent = Sent(opened.connection)
+        opened.connection = sent
+        yield opened, recorder, sent
     finally:
-        opened.close()
+        if opened is not None:
+            opened.close()
         recorder.stop()
         for login in (LOGIN, TOOL):
             cursor.execute(f"IF SUSER_ID(N'{login}') IS NOT NULL DROP LOGIN [{login}]")
         admin.close()
 
 
-def test_a_change_leaves_the_password_nowhere(recorded: tuple[Any, Recorder]) -> None:
-    session, recorder = recorded
+def test_a_change_sends_and_leaves_the_password_nowhere(
+    recorded: tuple[Any, Recorder, Sent],
+) -> None:
+    session, recorder, sent = recorded
     password = f"Acme-np-{uuid.uuid4().hex[:12]}"
     flags = session.policy_flags(LOGIN)
     assert session.set_password(LOGIN, Secret(password)).changed
     assert session.verify_password(LOGIN, Secret(password)).result == PASS
     assert session.restore_policy(LOGIN, flags)
 
-    kept = recorder.kept(LOGIN)
-    # The recorder saw the run: the flags read and the restore name the login.
-    assert LOGIN in kept["extended events"], "the session recorded the run"
+    # What the driver sent: the value with HASHED, and never the password.
+    assert any("ALTER LOGIN" in line and " HASHED" in line for line in sent.statements)
+    for line in sent.statements:
+        assert password not in line, "the driver sent the password"
+
+    # What the server kept.
+    kept = recorder.kept(mark(session.connection))
     for place, text in kept.items():
         assert password not in text, f"the password is in the {place}"
 
 
 def test_the_recorder_finds_a_password_sent_in_clear(
-    recorded: tuple[Any, Recorder], live_mssql: Any
+    recorded: tuple[Any, Recorder, Sent], live_mssql: Any
 ) -> None:
     """The control: a clear-text statement that does not parse is kept as sent
-    (§6.1, PT3). If this fails, the two tests beside it prove nothing."""
+    (§6.1, PT3). If this fails, the server-side reads prove nothing."""
     import pyodbc
 
-    _, recorder = recorded
+    _, recorder, _ = recorded
     password = f"Acme-np-{uuid.uuid4().hex[:12]}"
     connection = live_mssql.connect_as(TOOL, TOOL_PASSWORD)
     try:
@@ -172,32 +240,37 @@ def test_the_recorder_finds_a_password_sent_in_clear(
             connection.cursor().execute(
                 f"ALTER LOGIN [{LOGIN}] WITH PASSWORD = N'{password}' NOT_A_KEYWORD"
             )
+        marker = mark(connection)
     finally:
         connection.close()
-    assert password in recorder.kept(password)["extended events"]
+    assert password in recorder.kept(marker)["extended events"]
 
 
 def test_a_change_the_server_refuses_leaves_the_password_nowhere(
-    recorded: tuple[Any, Recorder], live_mssql: Any
+    recorded: tuple[Any, Recorder, Sent], live_mssql: Any
 ) -> None:
     """A statement that fails is kept as sent (§6.1, PT3), so what is sent
-    must hold no password even when the server refuses it. `15151`: there is
-    no such login."""
+    must hold no password even when the server refuses it. The driver reads
+    the login before it sends, so a refused change cannot be made through
+    `set_password`: this sends the driver's own statement, for both value
+    versions, for a login that does not exist, `15151`."""
     import pyodbc
 
-    _, recorder = recorded
+    _, recorder, _ = recorded
     password = f"Acme-np-{uuid.uuid4().hex[:12]}"
     missing = f"w1_np_missing_{uuid.uuid4().hex[:6]}"
-    statement = set_password_value(missing, password_value(Secret(password), 0x0200))
     connection = live_mssql.connect_as(TOOL, TOOL_PASSWORD)
     try:
-        with pytest.raises(pyodbc.Error) as refused:
-            connection.cursor().execute(statement)
+        for version in (0x0200, 0x0300):
+            statement = set_password_value(missing, password_value(Secret(password), version))
+            with pytest.raises(pyodbc.Error) as refused:
+                connection.cursor().execute(statement)
+            assert "15151" in str(refused.value)
+        marker = mark(connection)
     finally:
         connection.close()
-    assert "15151" in str(refused.value)
 
-    kept = recorder.kept(missing)
-    assert missing in kept["extended events"], "the session recorded the refused statement"
+    kept = recorder.kept(marker)
+    assert missing in kept["extended events"], "the session recorded the refused statements"
     for place, text in kept.items():
         assert password not in text, f"the password is in the {place}"

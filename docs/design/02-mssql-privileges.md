@@ -438,11 +438,15 @@ The plan cache, Query Store and the error log keep none of these statements.
 
 **The password never reaches the server** (decision 2, invariant 15). The
 driver computes the stored value on the client and sends it with `HASHED`.
-A tier-1 test records every statement, batch, call and error in an Extended
-Events session, changes a password through the driver, sends a refused
-change, and finds the password in none of the session, the plan cache, the
-default trace or the error log
-(`tests/driver/test_mssql_no_password_live.py`). A
+A tier-1 test changes a password through the driver and finds it in no
+statement or bind the driver sent. A clear-text statement that parses leaves
+no text the server keeps (§6.1), so this is the check that would catch one.
+The test also records the tool login's statements, batches, calls and errors
+in an Extended Events session, sends the driver's statement for a login that
+does not exist, and finds the password in none of the session, the plan
+cache, the default trace or the error log. It does not read a server audit
+or Query Store. A control finds a password that a statement which does not
+parse sends in clear (`tests/driver/test_mssql_no_password_live.py`). A
 value is a 2-byte version, a 4-byte salt the driver draws, and a 64-byte
 digest of the password in UTF-16LE followed by the salt:
 

@@ -218,9 +218,11 @@ detail.
     Server the driver computes the `0x0200` or `0x0300` value on the client
     and sends `ALTER LOGIN … WITH PASSWORD = 0x… HASHED`. SQL Server keeps a
     statement that does not parse in Extended Events and an audit as sent,
-    password included. One exception is accepted on SQL Server: UC-2's seen
-    reset sends a password with `MUST_CHANGE`, which a value cannot carry,
-    in a statement that always parses, and the server masks it. The
+    password included. One exception is accepted on SQL Server, for UC-2's
+    seen reset, which is not built yet (#1554): it sends a password with
+    `MUST_CHANGE`, which a value cannot carry, in a statement that always
+    parses, and the server masks it ([#1538](docs/decisions/log.md#1538),
+    decision 2). The
     verifier, hash or value still allows an offline guessing attack, so treat
     it as sensitive, but it is never the password.
     `docs/design/02-postgres-privileges.md` §6, `02-mysql-privileges.md` §6,

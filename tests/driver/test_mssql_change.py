@@ -268,7 +268,7 @@ def test_a_locked_login_is_not_tried(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_the_pre_flight_refuses_a_pending_must_change(monkeypatch: pytest.MonkeyPatch) -> None:
-    """So `creds rotate --preflight` refuses before it stages (invariant 4)."""
+    """So `creds rotate`'s pre-flight refuses before it stages, exit 1."""
     monkeypatch.setattr(session.accounts, "read_one", lambda *a, **k: login(must_change=True))
     with pytest.raises(session.MustChangeError, match="must change its password"):
         opened().require_changeable("acme_app")

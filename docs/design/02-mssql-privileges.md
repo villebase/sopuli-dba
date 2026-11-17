@@ -475,8 +475,9 @@ one.
 **A login whose `MUST_CHANGE` is pending cannot take a value.** While
 `IsMustChange` reads 1, the server refuses to turn `CHECK_POLICY` off,
 `15128` (`03_lock_expiry_probe.py`, the note beside LK5), so step 2 cannot
-run. The driver reads `IsMustChange` and refuses such a login at plan time,
-naming it (invariant 4). The pre-flight, which `creds rotate` always runs
+run. A pending `MUST_CHANGE` is the login's state, as an expiry is, not a
+capability the target lacks. The driver reads `IsMustChange` and refuses
+such a login, naming it. The pre-flight, which `creds rotate` always runs
 and `creds apply --preflight` asks for, refuses the run for it, exit 1,
 before `rotate` stages a password. Without a pre-flight, `apply` leaves the
 login alone before anything is written or sent: it reports it `EXPIRED` and

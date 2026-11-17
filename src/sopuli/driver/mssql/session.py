@@ -450,7 +450,7 @@ class MssqlSession(ClosesConnection):
     def require_changeable(self, account: str) -> None:
         """Refuse, in the pre-flight, a login whose ``MUST_CHANGE`` is pending
         (:class:`MustChangeError`), before `creds rotate` stages a password
-        for it (§6.2, invariant 4). A missing login is the pre-flight's own
+        for it (§6.2). A missing login is the pre-flight's own
         finding, so it passes here."""
         login = self._read(
             lambda cursor: accounts.read_one(cursor, account, target=self.target.name)

@@ -330,11 +330,22 @@ such as a flag that is not `true` or `false`, is never written over: the
 change on that target is refused and the record kept, since it may be the only
 copy of the login's settings.
 
-It follows the mirror rule and is a reserved root name. Under native staging it
-is in the secret's metadata, and every write keeps it. That OCI reads a `true`
-in metadata back as a boolean is not measured
-(unverified: oci-metadata-booleans). A value read back as anything else is
-refused, as above.
+It follows the mirror rule and is a reserved root name, so a secret with a
+field of its own named `policy_flags` must rename that field before a ref can
+address it. A secret that changes between one account and several while it
+holds a record is refused, in either direction, as one holding a live
+`pending` is: the record would be left where the new layout does not read it.
+
+Under native staging it is in the secret's metadata, and every write keeps it.
+OCI's metadata holds about 5,100 characters in all (`oci-metadata-limits`),
+and one target's entry takes about 55. So a credential on more than about 80
+SQL Server targets cannot hold every entry at once. The write that records
+the flags then fails before the change, and that target is not changed. That
+OCI reads a `true` in metadata back as a boolean is not measured
+(unverified: oci-metadata-booleans). Until it is, a SQL Server binding under
+native staging is refused at plan time (open: #1551), because a value read
+back as a string would be refused as above, and the flags could then never
+be set back.
 
 ---
 

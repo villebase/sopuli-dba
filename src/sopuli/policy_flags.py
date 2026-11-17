@@ -119,7 +119,32 @@ def record_patch(layout: StageLayout, target: str, flags: PolicyFlags) -> dict[s
     return layout.patch(POLICY_FLAGS, {target: flags.to_record()})
 
 
-def remove_patch(layout: StageLayout, target: str) -> dict[str, Any]:
-    """A merge patch removing ``target``'s entry, once its flags are set back
-    on the server (§6.2, step 4). The other targets' entries stay."""
-    return layout.patch(POLICY_FLAGS, {target: REMOVE})
+def remove_patch(document: Any, layout: StageLayout, target: str) -> dict[str, Any]:
+    """A merge patch removing ``target``'s entry from ``document``, once its
+    flags are set back on the server (§6.2, step 4). The other targets'
+    entries stay.
+
+    A node the removal would leave empty goes with it: the account's entry
+    in a shared document, and the record's root where nothing else is in it.
+    So no store keeps an empty ``policy_flags: {}`` behind, whether it takes
+    merge patches or stages natively. Read ``document`` with :func:`recorded`
+    first, which refuses one of the wrong shape.
+    """
+    path = (*layout.location(POLICY_FLAGS), target)
+    # The shallowest node along the path whose only content is the next step.
+    cut = len(path) - 1
+    node: Any = document
+    nodes: list[Any] = []
+    for segment in path[:-1]:
+        node = node.get(segment) if isinstance(node, Mapping) else None
+        nodes.append(node)
+    for depth in range(len(path) - 2, -1, -1):
+        held = nodes[depth]
+        if isinstance(held, Mapping) and set(held) <= {path[depth + 1]}:
+            cut = depth
+        else:
+            break
+    patch: Any = REMOVE
+    for segment in reversed(path[: cut + 1]):
+        patch = {segment: patch}
+    return dict(patch)

@@ -23,6 +23,7 @@ from sopuli.payload import (
     StageLayout,
     merge,
 )
+from sopuli.payload import apply_patch as applied
 from sopuli.policy_flags import (
     PolicyFlags,
     PolicyFlagsUnreadableError,
@@ -69,9 +70,22 @@ def test_the_record_is_the_decided_shape() -> None:
 
 def test_removing_one_target_keeps_the_others() -> None:
     document = merge(record_patch(SHARED, "mssql-dev", ON), record_patch(SHARED, "mssql-test", ON))
-    after = merge(document, remove_patch(SHARED, "mssql-dev"))
+    after = applied(document, remove_patch(document, SHARED, "mssql-dev"))
     assert recorded(after, SHARED, "mssql-dev") is None
     assert recorded(after, SHARED, "mssql-test") == ON
+
+
+def test_removing_the_last_target_leaves_no_empty_node() -> None:
+    """No store keeps an empty record behind, whatever its write mechanism."""
+    other = record_patch(StageLayout("DB_CREDENTIALS", ("acme_batch_user",)), "mssql-dev", ON)
+    document = merge({"DB_CREDENTIALS": {"acme_app_user": "a"}}, record_patch(SHARED, "x", ON))
+
+    assert POLICY_FLAGS not in applied(document, remove_patch(document, SHARED, "x"))
+    shared = merge(document, other)
+    after = applied(shared, remove_patch(shared, SHARED, "x"))
+    assert after[POLICY_FLAGS] == other[POLICY_FLAGS], "the other account's entry stays"
+    one = record_patch(ONE, "mssql-dev", ON)
+    assert POLICY_FLAGS not in applied(one, remove_patch(one, ONE, "mssql-dev"))
 
 
 @pytest.mark.parametrize(
@@ -126,8 +140,10 @@ def test_the_record_outlives_a_new_pending_and_a_promotion() -> None:
     apply_patch(store, "apps/acme", promoted, cas=_version(store))
     assert recorded(_data(store), ONE, "mssql-dev") == ON
 
-    apply_patch(store, "apps/acme", remove_patch(ONE, "mssql-dev"), cas=_version(store))
+    removal = remove_patch(_data(store), ONE, "mssql-dev")
+    apply_patch(store, "apps/acme", removal, cas=_version(store))
     assert recorded(_data(store), ONE, "mssql-dev") is None
+    assert POLICY_FLAGS not in _data(store)
 
 
 def _version(store: MemoryStore) -> int:

@@ -318,6 +318,7 @@ class NativeStagedStore:
                 return None
             if version is None:
                 self._refuse_a_native_pending(path, stored)
+                _refuse_native_policy_flags(path, stored)
             # A record left from when the secret was native names no pending
             # here, so a reader must not take it for one.
             return replace(
@@ -350,6 +351,16 @@ class NativeStagedStore:
                 f"accounts, and now holds one, which uses native staging",
                 hint="finish the rotation under the config it was started with, or remove the "
                 "fields by hand, then change the config",
+            )
+        if isinstance(current.data, Mapping) and POLICY_FLAGS in current.data:
+            # Native staging keeps the record in the attributes and drops the
+            # content's copy from the next version, so reading on would lose a
+            # login's only record of its policy flags (#1551).
+            raise LayoutChangedError(
+                f"{path!r} holds `{POLICY_FLAGS}` as a field, from when it held several "
+                f"accounts, and now holds one, which uses native staging",
+                hint="let the run that recorded it set the flags back under the config it was "
+                "started with, or move the field by hand, then change the config",
             )
         staged = self.inner.read_stage(path, PENDING)
         live = staged is not None and staged.generation == current.attributes.get(PENDING_VERSION)
@@ -503,7 +514,7 @@ class NativeStagedStore:
             fresh = self._view(path, view.layout)
             assert fresh is not None
             return self._promote(path, fresh.current, new, pending=True, cas=token)
-        token = self.inner.stage(path, content, attributes=_stamps(view.attributes), cas=cas)
+        token = self.inner.stage(path, content, attributes=_kept(view.attributes), cas=cas)
         staged = self.inner.read_stage(path, PENDING)
         assert staged is not None
         return self._promote(path, staged, new, pending=False, cas=token)
@@ -517,7 +528,7 @@ class NativeStagedStore:
         changes the stamps or the reaching-login mark. Only then is the mark
         kept: it describes that pending, and every other write leaves it none.
         """
-        attributes = _stamps(new)
+        attributes = _kept(new)
         if pending:
             attributes[PENDING_VERSION] = target.attributes[PENDING_VERSION]
             if new.get(REACHED) is not None:
@@ -536,7 +547,7 @@ class NativeStagedStore:
         live, which is the safe side.
         """
         expected = self._next_generation(path, view)
-        attributes = {**_stamps(new), PENDING_VERSION: expected}
+        attributes = {**_kept(new), PENDING_VERSION: expected}
         content = self._content(
             view.layout, new[PENDING], new[ORIGIN], view.base(), rollover=new[ROLLOVER]
         )
@@ -668,17 +679,31 @@ def _without_residue(data: Any) -> Any:
     }
 
 
+def _refuse_native_policy_flags(path: str, stored: Stored) -> None:
+    """Refuse a path read in payload fields whose attributes hold a policy-flags
+    record, from when it held one account (#1551).
+
+    Read in payload fields the record is not in the document, so the next
+    change would find none, read the login's flags with the policy already
+    off, and record that: the login's own settings would be lost for good.
+    """
+    if stored.attributes.get(POLICY_FLAGS):
+        raise LayoutChangedError(
+            f"{path!r} holds a record of a login's policy flags in its metadata, from when "
+            f"it held one account, and is now shared by several",
+            hint="let the run that recorded it set the flags back under the config it was "
+            "started with, then add the account",
+        )
+
+
 def _without(attributes: Mapping[str, Any], key: str) -> Mapping[str, Any]:
     return MappingProxyType({name: value for name, value in attributes.items() if name != key})
 
 
-def _stamps(keys: Mapping[str, Any]) -> dict[str, Any]:
-    """The :data:`KEPT_KEYS` ``keys`` holds. An emptied policy-flags record,
-    the last target's entry removed, is left out rather than kept as ``{}``."""
-    kept = {key: keys[key] for key in KEPT_KEYS if keys.get(key) is not None}
-    if kept.get(POLICY_FLAGS) == {}:
-        del kept[POLICY_FLAGS]
-    return kept
+def _kept(keys: Mapping[str, Any]) -> dict[str, Any]:
+    """The :data:`KEPT_KEYS` ``keys`` holds: what every write carries into
+    the attributes, the stamps and the policy flags."""
+    return {key: keys[key] for key in KEPT_KEYS if keys.get(key) is not None}
 
 
 def _get(data: Any, key: str) -> Any:

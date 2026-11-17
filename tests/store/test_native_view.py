@@ -30,6 +30,7 @@ from sopuli.payload import (
     merge,
     stage_layout,
 )
+from sopuli.policy_flags import remove_patch
 from sopuli.store import MemoryStore
 from sopuli.store.credentials import READ_MODIFY_WRITE, apply_patch, read_secret, resolve
 from sopuli.store.native_view import (
@@ -260,7 +261,9 @@ def test_removing_the_last_target_leaves_no_policy_flags(
 ) -> None:
     seeded(view)
     apply_patch(view, PATH, LAYOUT.patch(POLICY_FLAGS, FLAGS), cas=token(view))
-    apply_patch(view, PATH, LAYOUT.patch(POLICY_FLAGS, {"mssql-dev": REMOVE}), cas=token(view))
+    held = view.read(PATH)
+    assert held is not None
+    apply_patch(view, PATH, remove_patch(held.data, LAYOUT, "mssql-dev"), cas=held.version)
 
     after = view.read(PATH)
     assert after is not None
@@ -268,6 +271,30 @@ def test_removing_the_last_target_leaves_no_policy_flags(
     stored = inner.read(PATH)
     assert stored is not None
     assert POLICY_FLAGS not in stored.attributes
+
+
+def test_a_held_record_refuses_the_move_to_several_accounts(
+    view: NativeStagedStore, inner: MemoryStore
+) -> None:
+    """Read in payload fields the record is not in the document, so the next
+    change would record the policy as off. Refused, as a live pending is."""
+    seeded(view)
+    apply_patch(view, PATH, LAYOUT.patch(POLICY_FLAGS, FLAGS), cas=token(view))
+    shared = NativeStagedStore(inner, native=lambda path: None, by="x", now=lambda: NOW)
+
+    with pytest.raises(LayoutChangedError, match="policy flags"):
+        shared.read(PATH)
+
+
+def test_a_record_in_the_content_refuses_the_move_to_one_account(
+    view: NativeStagedStore, inner: MemoryStore
+) -> None:
+    """A payload-field record, left from when the secret held several
+    accounts. Native staging would drop it from the next version."""
+    inner.write(PATH, {"password": "a", POLICY_FLAGS: {"acme_app_user": FLAGS}}, cas=0)
+
+    with pytest.raises(LayoutChangedError, match="policy_flags"):
+        view.read(PATH)
 
 
 def test_a_mark_in_the_content_is_not_carried_into_a_new_version(

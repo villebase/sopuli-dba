@@ -141,7 +141,7 @@ from sopuli.config.scope import refuse_personal_on
 from sopuli.config.secret_refs import SecretRef
 from sopuli.config.selection import LeftOut, narrow, narrow_to_pairs
 from sopuli.config.sharing import native_layouts, pinned_versions, unsure_layouts
-from sopuli.config.targets import MARIADB, MYSQL, USER_AT_HOST_TYPES
+from sopuli.config.targets import MARIADB, MSSQL, MYSQL, USER_AT_HOST_TYPES
 from sopuli.config.vault_env import ADDR_FLAG, DEFAULT_STORE_VARIABLE
 from sopuli.constraints import AccountConstraints, Constraints, reuse_restricted
 from sopuli.delivery import DeliveryBackend, Handover, Receipt
@@ -8989,14 +8989,16 @@ def creds_apply(
     refuse_if_over_limit(run.resolved, plan.blast_radius, action="applying a password")
     bindings = [binding for binding in config.bindings if binding.secret is not None]
     # A dry run connects only for the pre-flight, for `require_encryption`'s
-    # read (#857), or for the attribute capability read (#1072); without any of
-    # them it reads the vault.
+    # read (#857), for the attribute capability read (#1072), or for a SQL
+    # Server target's value check (#1551); without any of them it reads the
+    # vault.
     connects = (
         not run.dry_run
         or strategy is not None
         or preflight_all
         or any(
             encryption_required_at(target, config, run.resolved) is not None
+            or target.target.type in VALUE_CHECK_TYPES
             for target in _targets_of(config, bindings)
         )
         or bool(_attribute_needs(config, bindings))
@@ -9067,8 +9069,11 @@ def creds_apply(
     # Before the preview and before the lock (#857), so a refusal is the same for
     # both and holds no lock. Every target the plan names: one whose accounts have
     # nothing staged is checked too, which can only refuse more. The checks
-    # share one login per target.
+    # share one login per target. The value check comes first: it opens its
+    # own login on a SQL Server target, and refuses one that resets a
+    # `strict` connection, which a later check would leave to the run.
     scopes: dict[str, Scope | None] = {}
+    versions = _require_value_check(_targets_of(config, bindings), run, config, scopes=scopes)
     _require_encryption(_targets_of(config, bindings), run, config, scopes=scopes)
     _require_attribute_capabilities(bindings, run, config, scopes=scopes)
     _require_password_value(_targets_of(config, bindings), run, config, scopes=scopes)
@@ -9096,6 +9101,9 @@ def creds_apply(
         withheld = _withheld(_left_out(bindings, _owing(sources), previewed, estate))
         document.diagnostics.extend(withheld)
         repair_notes.extend(one.message for one in withheld)
+        # The value each SQL Server target would be sent (#1564).
+        document.diagnostics.extend(versions)
+        repair_notes.extend(one.message for one in versions)
         # The pre-flight runs here too, and it is the combination worth having:
         # `--dry-run --preflight` is "show me the plan, and tell me whether it
         # would work". Skipping it under a dry run would make the flag silently
@@ -11907,6 +11915,73 @@ def _require_encryption(
 #: value it computes (:data:`~sopuli.driver.protocol.PASSWORD_VALUE`, #1310).
 PASSWORD_VALUE_TYPES = frozenset({MARIADB})
 
+#: The products whose session asks the server, before a change, which version
+#: of the password value it takes (``hash_version``, #1564).
+VALUE_CHECK_TYPES = frozenset({MSSQL})
+
+#: What each SQL Server value version is, for the plan's note.
+_VALUE_VERSIONS = {0x0300: "PBKDF2-HMAC-SHA512", 0x0200: "SHA-512"}
+
+
+def _require_value_check(
+    targets: Iterable[ExpandedTarget],
+    run: Invocation,
+    config: Config,
+    *,
+    scopes: dict[str, Scope | None],
+) -> list[Diagnostic]:
+    """Refuse, at plan time, a SQL Server target a change cannot reach, and
+    say which value each other one takes (#1551).
+
+    Invariant 4, before any password is drawn or any target changed: a
+    target whose connection under ``encrypt: strict`` the server resets is
+    refused as lacking ``strict_encryption`` (#1549), and one whose answer to
+    the value check is neither ``ok`` nor ``15021`` as lacking
+    ``password_value`` (#1564). Exit 5, naming the capability and the target.
+    One login per SQL Server target, whose scope goes in ``scopes`` for the
+    checks after it, and none for another product. A target this cannot
+    reach, or whose check fails another way, such as for a missing grant, is
+    left to the run, which reports it on its rows.
+
+    The session that changes the password asks the check again: a run makes
+    it twice per target. Returns an ``info`` diagnostic per target that
+    answered, naming the value, which `--dry-run` prints.
+    """
+    named: list[Diagnostic] = []
+    for expanded in targets:
+        if expanded.target.type not in VALUE_CHECK_TYPES:
+            continue
+        try:
+            session = _open_session(expanded, run, config)
+        except UnsupportedCapabilityError:
+            raise
+        except Exception:  # noqa: BLE001 -- the run reports it on each row
+            scopes.setdefault(expanded.name, None)
+            continue
+        try:
+            scopes[expanded.name] = session.scope()
+            # SQL Server's own method, read as `keeps_policy_flags` is.
+            version: int = getattr(session, "hash_version")()  # noqa: B009
+        except UnsupportedCapabilityError:
+            raise
+        except Exception:  # noqa: BLE001 -- likewise
+            continue
+        finally:
+            with suppress(Exception):
+                session.close()
+        named.append(
+            Diagnostic(
+                level="info",
+                target=expanded.name,
+                message=(
+                    f'target "{expanded.name}" takes a 0x{version:04X} password value '
+                    f"({_VALUE_VERSIONS.get(version, 'unknown')}), which a change sends"
+                ),
+            )
+        )
+    return named
+
+
 #: The products whose rollover close sends a password value, so it changes the
 #: account's login, and `finish-rollover` runs UC-1 §4's checks first, as `creds
 #: apply` does (#1344). Oracle's and MySQL's close sets no password.
@@ -14385,8 +14460,9 @@ def creds_rotate(
     # Before the preview and before the lock (#857), so a refusal is the same for
     # both and holds no lock. Every target the plan names, due or not: a target
     # with nothing due is checked too, which can only refuse more. The checks
-    # share one login per target.
+    # share one login per target, and the value check comes first, as in `apply`.
     scopes: dict[str, Scope | None] = {}
+    versions = _require_value_check(_targets_of(config, bindings), run, config, scopes=scopes)
     _require_encryption(_targets_of(config, bindings), run, config, scopes=scopes)
     _require_attribute_capabilities(bindings, run, config, scopes=scopes)
     _require_password_value(_targets_of(config, bindings), run, config, scopes=scopes)
@@ -14408,6 +14484,7 @@ def creds_rotate(
             force=force,
             selection=selection,
             finish_windows=finish_windows,
+            versions=versions,
         )
 
     # Step 1, and it happens before the lock rather than under it: a prompt
@@ -15253,8 +15330,12 @@ def _preview_rotation(
     force: bool,
     selection: Selection,
     finish_windows: bool = False,
+    versions: Sequence[Diagnostic] = (),
 ) -> str:
     """`--dry-run`: the plan, what is due, and whether the estate would take it.
+
+    ``versions`` names the value each SQL Server target would be sent
+    (:func:`_require_value_check`), as a note.
 
     **The pre-flight runs**, which is what makes `--dry-run` worth typing here
     rather than only reading the plan. It writes nothing and takes no lock, and
@@ -15321,6 +15402,7 @@ def _preview_rotation(
         rotating, skipped, shared=shared, selection=selection
     )
     document.diagnostics.extend(refused_ahead)
+    document.diagnostics.extend(versions)
 
     stopped = named + named_shared
     document.finish(
@@ -15333,7 +15415,8 @@ def _preview_rotation(
         [
             f"{header}\n\nnothing was rotated (--dry-run)",
             *render_notices(
-                caveat_notes(findings) + [one.message for one in skipped_ahead + refused_ahead]
+                caveat_notes(findings)
+                + [one.message for one in [*versions, *skipped_ahead, *refused_ahead]]
             ),
         ]
     )

@@ -334,9 +334,10 @@ DRIVERS: dict[str, DatabaseDriver] = {
         ),
     ),
     # The session connects and reports the instance for `doctor` (#1549), and
-    # every other command refuses a SQL Server target with SOPULI-20006. The
-    # client is pyodbc with Microsoft ODBC Driver 18, a system package like
-    # Oracle's Instant Client (#1538, decision 6).
+    # reads a login's date of the last password change for UC-5's `report
+    # history` (#1555). Every other command refuses a SQL Server target with
+    # SOPULI-20006. The client is pyodbc with Microsoft ODBC Driver 18, a
+    # system package like Oracle's Instant Client (#1538, decision 6).
     "mssql": DatabaseDriver(
         module="sopuli.driver.mssql.session",
         extra="mssql",
@@ -346,7 +347,7 @@ DRIVERS: dict[str, DatabaseDriver] = {
         password_limit=f"{MSSQL_LIMIT.max_bytes} as UTF-16",
         refuses=frozenset({CONTROL, ENCODING, BYTE_LENGTH}),
         fixed_limit=MSSQL_LIMIT,
-        commands=frozenset(),
+        commands=frozenset({"report.history"}),
         system_library=(
             "install unixODBC (`unixodbc` on Debian and Ubuntu) and Microsoft ODBC Driver 18 "
             "for SQL Server, which are system packages: pyodbc loads unixODBC's libodbc when "

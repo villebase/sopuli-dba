@@ -6004,6 +6004,13 @@ def _personal_role_members(session: Any, config: Config, target: ExpandedTarget)
     return _RoleMembers(tuple(members), tuple(unresolved))
 
 
+#: What makes a report's target *not checked* rather than unreachable when its
+#: session is opened (UC-5 §3): a product the report is not written for, and a
+#: target that lacks a capability the connection needs, such as SQL Server's
+#: `strict_encryption` on 2019 and 2022 (#1376, #1555).
+_NOT_CHECKED_AT_CONNECT = (DriverNotImplementedError, NotWrittenError, UnsupportedCapabilityError)
+
+
 def _report_target(
     target: ExpandedTarget, run: Invocation, config: Config
 ) -> report_view.TargetReport:
@@ -6019,8 +6026,9 @@ def _report_target(
     try:
         try:
             session = _open_session(target, run, config)
-        except (DriverNotImplementedError, NotWrittenError) as error:
-            # Another product: refused before connecting. Not checked on this
+        except _NOT_CHECKED_AT_CONNECT as error:
+            # Another product, refused before connecting, or a target that
+            # lacks a capability the connection needs. Not checked on this
             # target, rather than unreachable (UC-5 §3).
             return report_view.TargetReport(
                 target=target.name, error=_finding(error), unsupported=True
@@ -6166,7 +6174,7 @@ def _privileges_target(
     try:
         try:
             session = _open_session(target, run, config)
-        except (DriverNotImplementedError, NotWrittenError) as error:
+        except _NOT_CHECKED_AT_CONNECT as error:
             return privileges_view.TargetPrivileges(
                 target=target.name, error=_finding(error), unsupported=True
             )
@@ -6274,7 +6282,7 @@ def report_history_command(
         for target in config.expanded_targets
     ]
     histories = [one for report in reports for one in report.accounts]
-    unreachable, unsupported = history_view.target_counts(reports)
+    unreachable, unsupported, refused = history_view.target_counts(reports)
     document.results = history_view.build_results(reports)
     document.finish(
         history_states.exit_code(
@@ -6283,6 +6291,7 @@ def report_history_command(
             unsupported=unsupported,
             targets=len(reports),
             unanswered=sum(len(report.failures) for report in reports),
+            refused=refused,
         ),
         history_view.summarise(reports),
     )
@@ -6486,7 +6495,7 @@ def _history_target(
 
     session = None
     error: Error | None = None
-    read_failed = False
+    read_failed = refused_capability = False
     try:
         if found:
             try:
@@ -6495,6 +6504,10 @@ def _history_target(
                 return history_view.TargetHistory(
                     target=target.name, error=_finding(refused), unsupported=True
                 )
+            except UnsupportedCapabilityError as lacking:
+                # Such as SQL Server's `strict_encryption` (#1555): not checked,
+                # with the store's histories still shown (UC-5 §3).
+                error, refused_capability = _finding(lacking), True
             except Exception as failed:  # noqa: BLE001 -- a per-target finding
                 error = _finding(failed)
 
@@ -6516,6 +6529,7 @@ def _history_target(
             failures=tuple(failures),
             error=error,
             read_failed=read_failed,
+            refused=refused_capability,
             absent=absent,
         )
     finally:

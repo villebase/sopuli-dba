@@ -317,14 +317,17 @@ def exit_code(
     unsupported: int,
     targets: int,
     unanswered: int = 0,
+    refused: int = 0,
 ) -> int:
     """UC-5 §3's rule for a report that judges nothing: 5, then 1 for a target
-    or store that gave no answer, then 4 for anything not read."""
+    or store that gave no answer, then 4 for anything not read. A target that
+    refused for a capability it lacks (``refused``) is not read, so 4: its
+    histories came from the store, so the command did run there (#1555)."""
     return exit_code_for(
         unreachable=unreachable + unanswered,
         unsupported=unsupported,
         targets=targets,
-        incomplete=any(not one.complete for one in histories),
+        incomplete=bool(refused) or any(not one.complete for one in histories),
     )
 
 

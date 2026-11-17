@@ -6357,3 +6357,68 @@ the register.
   3. Dropping `ALTER`: its holder set `DEFAULT_DATABASE` (PA3), renaming
      the login and its other settings are not measured, and refusing it
      costs little.
+
+## #1555
+
+- **Decided:** 2026-11-17, #1555
+- **Question:** UC-5's reports on SQL Server. How does a report word a
+  target that refuses the connection for `strict_encryption`? Which logins
+  does `report accounts` list? How are a login's password lifetime, lockout
+  limit and failed-login count read? How does the privilege report fill its
+  four parts?
+- **Decision:** the maintainer's, each as proposed on the issue:
+  1. A target refused at connect for a missing capability, such as
+     `strict_encryption` on 2019 and 2022, is *not checked* on that target,
+     naming the capability. The run exits 4 where nothing else is wrong.
+  2. `report accounts` lists every login: SQL logins, Windows logins and
+     groups, Entra logins and groups, and logins mapped to a certificate or
+     an asymmetric key. The `##MS_…##` logins setup makes are left out
+     unless a rule names them. `sa` is listed.
+  3. `is_disabled` is a lock somebody set, and `IsLocked` a lockout. With
+     `CHECK_EXPIRATION` off, the password lifetime is `unlimited`; with it
+     on, *not checked*. With `CHECK_POLICY` off, the lockout limit is
+     `unlimited`, and on a Linux host also with it on; on Windows, or a host
+     that names no platform, *not checked*. The failed-login count is
+     `BadPasswordCount` on Windows and `unknown` on Linux. A profile and
+     `VALID UNTIL` are *not applicable*.
+  4. *system* holds the server permissions, with their paths through
+     nested server roles, and each fixed server role under its own name.
+     *schemas* holds each database's permissions (level `database`) and
+     each schema's (level `schema`), naming the database. *objects* holds
+     the permissions on one object, and on one login, endpoint or server
+     role. *columns* holds column grants. Database roles are named
+     `database.role`, for the user that maps to the login by SID, and a
+     login that owns a database is its `dbo`. Every role is active at
+     login. `--public` lists `public`'s grants, and `guest`'s where it is
+     enabled. Without `CONNECT ANY DATABASE` and `VIEW ANY DEFINITION`,
+     every database but `master` is *not checked*, by name, as is one that
+     is offline or refuses the tool login.
+- **Why:**
+  1. UC-5 §3 and [#1376](#1376) make a capability a target lacks *not
+     checked*, and [#1549](#1549) already reads the reset as the
+     capability missing.
+  2. The privilege report exists to show who holds what, and a Windows
+     group in `sysadmin` is the line an auditor most wants. Oracle's own
+     accounts are left out the same way, and a DBA wants to see that `sa`
+     is disabled.
+  3. Each value is read where a measurement shows it, and *not checked*
+     where the host's policy holds it: `LOGINPROPERTY` gives no threshold
+     and no maximum age (`mssql-windows-policy`, WP1). No login locks on the
+     Linux images (LK2), and `BadPasswordCount` stops at 1 there.
+  4. It fills the four parts as PostgreSQL, MySQL and MariaDB do
+     ([#1482](#1482), [#1483](#1483)). A fixed role's permissions are in no
+     catalog row (`13_fixed_roles_probe.py`), so it is named as
+     PostgreSQL's `pg_*` roles are.
+- **Rejected:**
+  1. Unreachable, exit 1: every report run on a 2019 or 2022 target under
+     `strict` would exit 1, though nothing is down. The cost accepted: a
+     network fault that resets the connection the same way reads as *not
+     checked*, and the hint names that case.
+  2. SQL logins only: the report would never show a Windows login or group,
+     whatever it holds.
+  3. A lifetime computed as the days since `PasswordLastSetTime` plus
+     `DaysUntilExpiration`: the countdown over days is not measured, and an
+     error of one day could pass a rule's limit. The cost accepted: a rule's
+     `password_lifetime: unlimited` on a login whose expiry is on reads *not
+     checked*, not as a problem.
+  4. No other mapping was proposed.

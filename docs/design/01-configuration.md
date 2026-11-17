@@ -1928,7 +1928,9 @@ cannot read the server over a connection it resets, so a reset under
 target, exit 5, naming `strict_encryption` and the target, with the
 driver's message and a hint to use `mandatory` (invariant 4). A network
 fault that resets the connection reads the same, and the hint says so.
-`doctor` reports the refusal for the target. A run that changes passwords
+`doctor` reports the refusal for the target. A `report` command shows the
+target as *not checked*, naming the capability, and exits 4 where nothing
+else is wrong (UC-5 §3, #1555). A run that changes passwords
 refuses it at plan time, before any target is changed, from the first
 SQL Server verb on (open: #1551).
 

@@ -465,6 +465,31 @@ def test_an_unreachable_target_exits_1_and_the_others_are_reported(
     assert "prod-alpha  could not connect: ORA-12541" in text
 
 
+def test_a_capability_refused_at_connect_is_not_checked_not_unreachable(
+    write_config: WriteConfig, sessions: dict[str, Opener]
+) -> None:
+    """Such as SQL Server's `strict_encryption` on 2019 and 2022, a refusal
+    that names a missing capability is *not checked* on that target, and the
+    run exits 4 (UC-5 §3, #1555)."""
+
+    def refuse(target: Any, run: Any, config: Any) -> Any:
+        raise UnsupportedCapabilityError("strict_encryption", target="prod-alpha")
+
+    sessions["prod-alpha"] = refuse
+    result = report(write_config, json_out=True)
+    document = json.loads(result.output)
+
+    assert result.exit_code == ExitCode.PARTIAL, result.output
+    Draft202012Validator(RUN_SCHEMA).validate(document)
+    refused = [row for row in document["results"] if row["target"] == "prod-alpha"]
+    assert [row["state"] for row in refused] == ["NOT_CHECKED"]
+    assert not [row for row in document["results"] if row["state"] == "ERROR"]
+    text = click.unstyle(report(write_config).output)
+    assert 'prod-alpha  not supported: target "prod-alpha" does not support strict_encryption' in (
+        text
+    )
+
+
 def test_a_clean_target_exits_0(write_config: WriteConfig, sessions: Any) -> None:
     result = report(write_config, "--target", "qa-alpha")
     assert result.exit_code == ExitCode.SUCCESS, result.output

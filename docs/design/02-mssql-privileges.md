@@ -606,10 +606,23 @@ either path ([#1554](../decisions/log.md#1554), open: #1554).
 The statement is a batch of its own, never inside `EXEC`. The password is a
 Unicode string literal with each `'` doubled, so the statement always
 parses. The server then keeps it with the password left out or masked
-(§6.1). It is an exception to invariant 15, which decision 2 accepts.
+(§6.1). It is an exception to invariant 15, which decision 2 accepts. A
+tier-1 test sends it through the driver, with a `'`, ODBC's escape
+characters `{` `}` `?` and a character outside the Basic Multilingual Plane
+in the password. It finds the password in no Extended Events record, the
+plan cache, the default trace or the error log, the login then answers
+`18488`, and both flags read on. The driver
+sends it, and `account reset-password` does not run on SQL Server until the
+seen path's expiry gate is decided (open: #1554).
 
 `MUST_CHANGE` needs `CHECK_POLICY` and `CHECK_EXPIRATION` on, and neither can
-be turned off while it is pending (LK5). So the seen reset leaves both on. On
+be turned off while it is pending (LK5). So the seen reset leaves both on,
+also on a login where they were off, which the tier-1 test checks. With
+`CHECK_POLICY` on, the server checks the password against the host's policy,
+which the tool cannot read: a password the host refuses fails that account
+during the run, as a `policy` error. The Linux image answers `33062` for one
+too short and `33064` for one not complex enough (measured on 16.0.4325.4);
+a Windows host's numbers are not measured. On
 the Linux images a new password then expires after 90 days (LK6).
 
 The unseen path sends a value with steps 1, 2 and 4 of §6.2, which also ends

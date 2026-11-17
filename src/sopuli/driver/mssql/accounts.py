@@ -173,6 +173,17 @@ def status(*, disabled: bool, locked_out: bool, expired: bool) -> str:
     return locked_status(locked=disabled, expired=expired)
 
 
+def login_status(login: Login) -> str:
+    """:func:`status` of one login. Its password has stopped working where
+    ``IsExpired`` says so, or where ``IsMustChange`` does (LK5): the one rule,
+    for :func:`state_of` and the verbs that change a login alike."""
+    return status(
+        disabled=login.disabled,
+        locked_out=login.locked_out,
+        expired=login.expired or login.must_change,
+    )
+
+
 def state_of(
     login: Login,
     *,
@@ -204,7 +215,7 @@ def state_of(
     locked = login.disabled or login.locked_out
     return UserState(
         name=login.name,
-        status=status(disabled=login.disabled, locked_out=login.locked_out, expired=expired),
+        status=login_status(login),
         locked=locked,
         deliberately_locked=login.disabled,
         lockout_evidence=ALSO_LOCKED_OUT if login.disabled and login.locked_out else None,

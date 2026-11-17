@@ -68,6 +68,13 @@ SERVER_PERMISSION_DENIED = 300
 #: on 16.0.4325.4, #1550).
 NO_LOGIN_PERMISSION = 15247
 
+#: A clear-text password the host's policy refuses, under ``CHECK_POLICY =
+#: ON``: too short, and not complex enough. Measured on 16.0.4325.4, the
+#: Linux image, by UC-2's seen reset (#1599). A Windows host's numbers for
+#: the same refusals are not measured.
+PASSWORD_TOO_SHORT = 33062
+PASSWORD_NOT_COMPLEX = 33064
+
 #: The Windows socket error a server answers a ``strict`` connection with when
 #: it does not take TDS 8: 2019 and 2022 reset it, from Windows and from Linux
 #: (``10_client_tls_probe.py``, TL3).
@@ -132,6 +139,17 @@ RULES: dict[int, Rule] = {
         ),
     ),
     ALREADY_EXISTS: Rule("database", hint="a login or server role already has this name"),
+    PASSWORD_TOO_SHORT: Rule(
+        "policy",
+        hint="the host's password policy refused the new password; raise the policy's `length`",
+    ),
+    PASSWORD_NOT_COMPLEX: Rule(
+        "policy",
+        hint=(
+            "the host's password policy refused the new password; give the policy "
+            "uppercase, lowercase, digit and symbol classes"
+        ),
+    ),
     INVALID_HASH: Rule(
         "database",
         hint="the server did not take the password value: its version or its length",

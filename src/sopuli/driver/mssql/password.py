@@ -29,7 +29,9 @@ takes a value for a longer one (CH6), so :func:`password_value` admits the
 password before it computes anything.
 
 The statement that carries the value is built elsewhere: this module renders
-the value as the hex literal it goes in.
+the value as the hex literal it goes in. One statement is built here, because
+it carries the password itself: UC-2's seen reset, the exception to invariant
+15 that #1538's decision 2 accepts (:class:`MustChange`).
 """
 
 from __future__ import annotations
@@ -39,11 +41,12 @@ import hashlib
 # `csprng`, not `random`: the salt must come from the system's random source,
 # and a name that reads like the `random` module invites the wrong swap.
 import secrets as csprng
+from typing import Any
 
 from sopuli.config import charsets
 from sopuli.driver.mssql.limits import LIMIT, MAX_PASSWORD_CHARACTERS
 from sopuli.driver.protocol import DriverError
-from sopuli.secrets import Secret
+from sopuli.secrets import REDACTED, Secret
 
 #: SHA-512 of the password and the salt.
 SHA512 = 0x0200
@@ -127,3 +130,62 @@ def hex_literal(value: bytes) -> str:
     if len(value) != VALUE_LENGTH or int.from_bytes(value[:2], "big") not in VERSIONS:
         raise ValueError(f"not a {VALUE_LENGTH}-byte password value of a known version")
     return "0x" + value.hex().upper()
+
+
+class MustChange:
+    """UC-2's seen reset: the one statement that sends a password in clear
+    (#1538, decision 2; ``02-mssql-privileges.md`` §6.3). It refuses to
+    render itself, as Oracle's :class:`~sopuli.driver.oracle.statements.Statement`
+    does: its text is as sensitive as the password, so every
+    stringification is :attr:`redacted` (invariant 2).
+
+    ``MUST_CHANGE`` has no ``HASHED`` form (CH5), so the password goes as a
+    Unicode literal with each ``'`` doubled, in a statement that always
+    parses: the server keeps such a statement with the password left out or
+    masked, and keeps one that fails to parse as sent (§6.1, PT0 to PT3).
+    The password is admitted first, so a control character, which could end
+    the literal's line, is refused before anything is built. ``UNLOCK`` ends
+    a lockout after failed logins, which a new password alone leaves in
+    place, and is accepted with ``MUST_CHANGE`` (WP4). Both flags go on, as
+    ``MUST_CHANGE`` needs (LK5). With ``CHECK_POLICY`` on, the server checks
+    the password against the host's policy.
+
+    ``login`` is the login's name, which this quotes, so that no caller can
+    put an unquoted name into the one statement that carries a password.
+    :meth:`send` sends the statement as a batch of its own, never inside
+    ``EXEC``.
+    """
+
+    __slots__ = ("_forms", "_sql", "redacted")
+
+    def __init__(self, login: str, secret: Secret, *, unlock: bool) -> None:
+        # Imported here: `statements` imports this module for `hex_literal`.
+        from sopuli.driver.mssql.statements import quoted_name
+
+        quoted_login = quoted_name(login)
+        admit(secret)
+        text = secret.reveal()
+        doubled = text.replace("'", "''")
+        options = "MUST_CHANGE UNLOCK" if unlock else "MUST_CHANGE"
+        tail = f" {options}, CHECK_POLICY = ON, CHECK_EXPIRATION = ON"
+        self._sql = f"ALTER LOGIN {quoted_login} WITH PASSWORD = N'{doubled}'{tail}"
+        self.redacted = f"ALTER LOGIN {quoted_login} WITH PASSWORD = N'{REDACTED}'{tail}"
+        self._forms = tuple(sorted({text, doubled}, key=len, reverse=True))
+
+    def send(self, cursor: Any) -> None:
+        """Execute the statement on ``cursor``: the driver call."""
+        cursor.execute(self._sql)
+
+    def scrub(self, message: str) -> str:
+        """``message`` with the password, as typed and with each ``'``
+        doubled, replaced by ``***``. No answer measured echoes it, and this
+        is the guard if one did (#786)."""
+        for form in self._forms:
+            message = message.replace(form, REDACTED)
+        return message
+
+    def __str__(self) -> str:
+        return self.redacted
+
+    def __repr__(self) -> str:
+        return f"MustChange({self.redacted!r})"

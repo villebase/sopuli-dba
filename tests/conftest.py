@@ -671,14 +671,16 @@ class MssqlStack:
 
     def connect_as(self, user: str, password: str, timeout: int = 15) -> Any:
         """A connection as `user`, encrypted without a certificate check: the
-        image's certificate is self-signed."""
+        image's certificate is self-signed. The password is braced, with each
+        `}` doubled, as ODBC escapes a value."""
         import pyodbc
 
         pyodbc.pooling = False
+        braced = password.replace("}", "}}")
         return pyodbc.connect(
             "Driver={ODBC Driver 18 for SQL Server};"
             f"Server={{tcp:{self.host},{self.port}}};Database=master;Encrypt=yes;"
-            f"TrustServerCertificate=yes;UID={user};PWD={{{password}}};",
+            f"TrustServerCertificate=yes;UID={user};PWD={{{braced}}};",
             autocommit=True,
             timeout=timeout,
         )

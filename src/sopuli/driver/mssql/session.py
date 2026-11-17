@@ -77,18 +77,21 @@ from sopuli.driver.mssql.errors import (
     server_error,
 )
 from sopuli.driver.mssql.limits import LIMIT
-from sopuli.driver.mssql.password import password_value
+from sopuli.driver.mssql.password import MustChange, password_value
 from sopuli.driver.mssql.scope import observe
 from sopuli.driver.protocol import (
     ACCOUNT_LOCK,
+    ACCOUNT_UNLOCK,
     EXPIRE_PASSWORD,
     FAIL,
     OFFLINE_VERIFY,
     OLD_DISCARD,
     PASS,
     PASSWORD_ROLLOVER,
+    PASSWORD_SET,
     PROFILE_MANAGEMENT,
     ROLE_LOOKUP,
+    ROLLOVER_FINISH,
     UNAVAILABLE,
     VERIFY_BOTH,
     VERIFY_HASH,
@@ -585,7 +588,10 @@ class MssqlSession(ClosesConnection):
     def password_constraints(self, account: str) -> None:
         """Nothing beyond the length, read without a round trip: the server's
         policy does not apply to a value (§6.2). Not on the protocol: ``creds
-        generate`` asks it of a driver that has it."""
+        generate`` asks it of a driver that has it. UC-2's seen reset sends the
+        password in clear with ``CHECK_POLICY`` on, so the host's policy does
+        apply to it, and a password it refuses fails that account during the
+        run (§6.3)."""
 
     @property
     def verifies_before_change(self) -> bool:
@@ -700,6 +706,16 @@ class MssqlSession(ClosesConnection):
         LOG.debug("%s: set the policy flags of %s back", self.target.name, account)
         return True
 
+    def _login_to_change(self, account: str) -> tuple[accounts.Login, str]:
+        """The login a verb changes, and its status, read before anything is
+        sent. A name with no login is refused (:func:`_no_login`)."""
+        login = self._read(
+            lambda cursor: accounts.read_one(cursor, account, target=self.target.name)
+        )
+        if login is None:
+            raise _no_login(account, target=self.target.name)
+        return login, accounts.login_status(login)
+
     def suspend_account(self, account: str) -> AccountChange:
         """``ALTER LOGIN … DISABLE``, or report that the login is already
         disabled (#1554, ``02-mssql-privileges.md`` §6.3).
@@ -712,16 +728,7 @@ class MssqlSession(ClosesConnection):
         require_read_write(
             self.scope(), target=self.target.name, hint="a suspension is a write to master"
         )
-        login = self._read(
-            lambda cursor: accounts.read_one(cursor, account, target=self.target.name)
-        )
-        if login is None:
-            raise _no_login(account, target=self.target.name)
-        status = accounts.status(
-            disabled=login.disabled,
-            locked_out=login.locked_out,
-            expired=login.expired or login.must_change,
-        )
+        login, status = self._login_to_change(account)
         if login.disabled:
             return AccountChange(
                 ACCOUNT_LOCK,
@@ -748,8 +755,77 @@ class MssqlSession(ClosesConnection):
             detail=f"login was {status.lower()}; sent ALTER LOGIN … DISABLE",
         )
 
-    def reset_password(self, *args: Any, **kwargs: Any) -> NoReturn:
-        self._not_written("reset a password")
+    def reset_password(
+        self, account: str, secret: Secret, *, expire: bool, keep_rollover: bool = False
+    ) -> tuple[AccountChange, ...]:
+        """UC-2 §4.1's seen path on SQL Server: one statement, with
+        ``MUST_CHANGE``, and ``UNLOCK`` where a lockout is in place
+        (``02-mssql-privileges.md`` §6.3; #1554, decision 3).
+
+        The password goes in clear, the exception to invariant 15 that #1538's
+        decision 2 accepts (:class:`~.password.MustChange`). A disabled login
+        is refused before anything is sent: `account suspend` set it, and a
+        reset does not undo that (H4). The tool's own login is refused by the
+        guardrails, from :meth:`describe_user`, as on every driver.
+
+        The unseen path, which sends a value with the policy off, is not
+        written: where it records the flags is open (#1554, Q7). Which
+        capability lets the seen path through the command's plan-time gate is
+        open too (#1554, Q8), so the command does not reach this yet. SQL
+        Server has no rollover window: ``keep_rollover`` is refused by
+        capability, and the third row never sends anything.
+        """
+        if not expire:
+            self._not_written("reset a password on the unseen path")
+        if keep_rollover:
+            self.require_rollover(account)
+        require_read_write(
+            self.scope(), target=self.target.name, hint="a password reset is a write to master"
+        )
+        login, status = self._login_to_change(account)
+        if login.disabled:
+            raise DriverError(
+                f'login "{login.name}" on target "{self.target.name}" is disabled, and a reset '
+                "does not change that",
+                hint=(
+                    "a disabled login is somebody's decision -- `account suspend`, usually -- "
+                    "and handing it a working password would undo it silently. Run ALTER "
+                    "LOGIN … ENABLE first if that is what you mean (H4)"
+                ),
+            )
+        statement = MustChange(login.name, secret, unlock=login.locked_out)
+        with self._cursor() as cursor:
+            try:
+                statement.send(cursor)
+            except pyodbc.Error as error:
+                failure = from_error(error, scrub=statement.scrub).as_error()
+                failure.password_sent = True
+                raise failure from None
+        LOG.debug("%s: reset the password of %s, MUST_CHANGE", self.target.name, login.name)
+        return (
+            AccountChange(
+                ACCOUNT_UNLOCK,
+                changed=login.locked_out,
+                status=status,
+                detail=(
+                    "the login was locked out after failed logins; sent UNLOCK with the password"
+                    if login.locked_out
+                    else "the login was not locked out"
+                ),
+            ),
+            AccountChange(
+                PASSWORD_SET,
+                changed=True,
+                status=status,
+                detail="password set, MUST_CHANGE, with CHECK_POLICY and CHECK_EXPIRATION on",
+            ),
+            AccountChange(
+                ROLLOVER_FINISH,
+                changed=False,
+                status=status,
+                detail="SQL Server has no rollover window",
+            ),
+        )
 
     def expire_password(self, account: str) -> NoReturn:
         """Refused by capability (#1538, decision 2): ``MUST_CHANGE`` is taken

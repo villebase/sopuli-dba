@@ -35,7 +35,7 @@ import pyodbc
 
 from sopuli.config.model import ExpandedTarget, Runtime
 from sopuli.config.targets import MSSQL_STRICT
-from sopuli.driver.mssql import accounts
+from sopuli.driver.mssql import accounts, groups
 from sopuli.driver.mssql.admin import Assessment, Catalog, assess, read_catalog
 from sopuli.driver.mssql.client import client_lines
 from sopuli.driver.mssql.connection import connection_string
@@ -90,6 +90,11 @@ class MssqlSession(ClosesConnection):
     identity_caveat: str | None = field(default=None, init=False, repr=False)
     #: Guardrail 9's catalog, read on first use (:meth:`admin_assessment`).
     _catalog: Catalog | None = field(default=None, init=False, repr=False)
+    #: The Availability Group reads (:mod:`~sopuli.driver.mssql.groups`),
+    #: read on first use.
+    _replicas: tuple[str, ...] | None = field(default=None, init=False, repr=False)
+    _contained_master: str | None = field(default=None, init=False, repr=False)
+    _master_read: bool = field(default=False, init=False, repr=False)
 
     def scope(self) -> Scope:
         """What this session is: a server, read-write or not, and its
@@ -153,6 +158,9 @@ class MssqlSession(ClosesConnection):
         )
         if login is None:
             return None
+        master = self.contained_master()
+        if master is not None:
+            raise groups.ContainedGroupLoginError(login.name, master, target=self.target.name)
         assessment = self.admin_assessment(login.principal_id)
         return accounts.state_of(
             login,
@@ -160,6 +168,22 @@ class MssqlSession(ClosesConnection):
             admin_unread=assessment.unread,
             global_privileges=assessment.grants,
         )
+
+    def availability_replicas(self) -> tuple[str, ...]:
+        """The names of the replicas of every Availability Group the instance
+        is in, itself among them, or none (:mod:`~sopuli.driver.mssql.groups`).
+        Read once and cached."""
+        if self._replicas is None:
+            self._replicas = self._read(groups.replicas)
+        return self._replicas
+
+    def contained_master(self) -> str | None:
+        """The contained Availability Group's master the session is in, or
+        ``None`` where it is in the instance's own. Read once and cached."""
+        if not self._master_read:
+            self._contained_master = self._read(groups.contained_master)
+            self._master_read = True
+        return self._contained_master
 
     #: The words for two targets that are one instance
     #: (:class:`~sopuli.driver.clusters.ClusterIdentity`). Not fields.

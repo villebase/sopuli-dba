@@ -113,8 +113,8 @@ connect without it, and *unknown* under `optional`.
 The driver also reads what the target can do: the host's operating system,
 whether the server takes a `0x0300` value, and the Availability Group the
 instance is in (§4). `ALTER ANY LOGIN` alone tells whether the server takes
-a `0x0300` value (§6.2). Which grant the Availability Group reads need is not
-measured (open: #1550).
+a `0x0300` value (§6.2), and reads what the driver reads of the Availability
+Group (§4, `14_availability_group_reads_probe.py`).
 
 **A tool login that changes passwords also needs this grant**, for guardrail
 9 (§5):
@@ -174,7 +174,7 @@ refused to all of them, `229` (RP6). The reports do not read the error log.
 | `securityadmin` | it grants most server permissions. Microsoft's documentation says to treat it as equal to `sysadmin` |
 | `ALTER ANY SERVER ROLE` | it adds a login to a server role, and so reaches `CONTROL SERVER` (GR4) |
 | `IMPERSONATE ANY LOGIN`, or `IMPERSONATE` or `CONTROL` on a login | it lets the tool login act as another login, with that login's permissions |
-| `VIEW SERVER STATE` | it shows every session (RP5). Microsoft documents it as the grant that reads `sys.dm_hadr_availability_replica_states` (§4), and #1550 measures what the tool login reads of a group without it. It stays off this list only if that read needs it and no narrower grant serves |
+| `VIEW SERVER STATE`, and `VIEW SERVER PERFORMANCE STATE` (2022 and later) | each shows every session (RP5; `14_availability_group_reads_probe.py`, AR2 and AR3). Each also reads the replica's role in an Availability Group, which the driver does not read: what it reads of a group needs neither (§4) |
 | a database user in `msdb` | no operation of the tool needs one, and `msdb` holds the SQL Server Agent jobs, which may run as an administrator |
 
 ---
@@ -199,7 +199,7 @@ password (decision 1):
 | a Windows login or group, or an Entra login or group | it has no password on the server | by its `type` in `sys.server_principals` |
 | a login mapped to a certificate or an asymmetric key | it has no password | by its `type` |
 | a contained user | `ALTER ANY LOGIN` cannot open its database, `18456`, and it has no `HASHED` form, `102` (ID3) | the tool login does not see it, so the name reads as no login |
-| a login in a contained Availability Group's own `master` | the group copies it to every replica, so two declared replicas would be one account (below) | not built (open: #1550) |
+| a login in a contained Availability Group's own `master` | the group copies it to every replica, so two declared replicas would be one account (below) | by the `physical_database_name` of the session's database (below) |
 
 A login's state comes from one read (`accounts.py`). `is_disabled` is a lock
 a person set, `ALTER LOGIN … DISABLE`, and `LOGINPROPERTY`'s `IsLocked` a
@@ -243,18 +243,26 @@ in a group whose other replicas the config does not declare (open: #1550).
 **No group formed on 16.0.4325.4 in the matrix, so none of this is measured
 on 2022** (unverified: mssql-ag-2022).
 
-The probe read the group as `sa`. Which of these reads the tool login can
-make is not measured: Microsoft documents `VIEW SERVER STATE` as the grant
-for `sys.dm_hadr_availability_replica_states` (§3). Where the tool login
-cannot tell whether a target is in a group, the group is unknown, not absent:
-`doctor` says the check could not be made, and does not report the target as
-outside a group (open: #1550).
+**With `ALTER ANY LOGIN` alone the tool login reads the replicas' names,
+and not the group's row or its own role** (`14_availability_group_reads_probe.py`,
+AR1, on 15.0.4510.2 and 17.0.5065.9). `sys.availability_replicas` gives every
+replica of every group the instance is in, itself among them, and the driver
+reads their names. `sys.availability_groups` gives a row only with `VIEW ANY
+DEFINITION`, and the replica's role, PRIMARY or SECONDARY, needs `VIEW SERVER
+STATE` or `VIEW SERVER PERFORMANCE STATE`, both of which show every session
+(AR2, AR3, §3). So the driver reads neither, and needs no grant beyond
+§2.1's for these reads.
 
 A contained group, 2022 and later, has a `master` of its own, which it copies
 to every replica: on 17.0.5065.9, a login made there on the primary, and a
-password set there, log in on the secondary (AG5). The tool refuses such a
-login. How a session tells that it is in a contained group's `master` is not
-measured (open: #1550).
+password set there, log in on the secondary (AG5). **The tool refuses such a
+login**, before anything is changed, as a configuration fault: `config`,
+exit 9. A session in the group's `master` reads `DB_NAME()` as `master`
+(AR5), and its database's `physical_database_name` in `sys.databases` as the
+group's master, such as `acme_cag_master`, where the instance's `master`
+reads `master` on 2019, 2022 and 2025 (AR6). The driver reads it once per
+session, and refuses every login of a session whose database is not the
+instance's `master`, or whose name it cannot read.
 
 ---
 

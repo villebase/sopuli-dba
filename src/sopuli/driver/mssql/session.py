@@ -706,6 +706,16 @@ class MssqlSession(ClosesConnection):
         LOG.debug("%s: set the policy flags of %s back", self.target.name, account)
         return True
 
+    def _login_to_change(self, account: str) -> tuple[accounts.Login, str]:
+        """The login a verb changes, and its status, read before anything is
+        sent. A name with no login is refused (:func:`_no_login`)."""
+        login = self._read(
+            lambda cursor: accounts.read_one(cursor, account, target=self.target.name)
+        )
+        if login is None:
+            raise _no_login(account, target=self.target.name)
+        return login, accounts.login_status(login)
+
     def suspend_account(self, account: str) -> AccountChange:
         """``ALTER LOGIN … DISABLE``, or report that the login is already
         disabled (#1554, ``02-mssql-privileges.md`` §6.3).
@@ -718,16 +728,7 @@ class MssqlSession(ClosesConnection):
         require_read_write(
             self.scope(), target=self.target.name, hint="a suspension is a write to master"
         )
-        login = self._read(
-            lambda cursor: accounts.read_one(cursor, account, target=self.target.name)
-        )
-        if login is None:
-            raise _no_login(account, target=self.target.name)
-        status = accounts.status(
-            disabled=login.disabled,
-            locked_out=login.locked_out,
-            expired=login.expired or login.must_change,
-        )
+        login, status = self._login_to_change(account)
         if login.disabled:
             return AccountChange(
                 ACCOUNT_LOCK,
@@ -781,17 +782,7 @@ class MssqlSession(ClosesConnection):
         require_read_write(
             self.scope(), target=self.target.name, hint="a password reset is a write to master"
         )
-        login = self._read(
-            lambda cursor: accounts.read_one(cursor, account, target=self.target.name)
-        )
-        if login is None:
-            raise _no_login(account, target=self.target.name)
-        # A pending MUST_CHANGE reads as expired, as `describe_user` reads it.
-        status = accounts.status(
-            disabled=login.disabled,
-            locked_out=login.locked_out,
-            expired=login.expired or login.must_change,
-        )
+        login, status = self._login_to_change(account)
         if login.disabled:
             raise DriverError(
                 f'login "{login.name}" on target "{self.target.name}" is disabled, and a reset '
@@ -802,7 +793,7 @@ class MssqlSession(ClosesConnection):
                     "LOGIN … ENABLE first if that is what you mean (H4)"
                 ),
             )
-        statement = MustChange(statements.quoted_name(login.name), secret, unlock=login.locked_out)
+        statement = MustChange(login.name, secret, unlock=login.locked_out)
         with self._cursor() as cursor:
             try:
                 statement.send(cursor)

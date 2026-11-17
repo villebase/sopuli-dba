@@ -275,7 +275,11 @@ def test_the_seen_reset_leaves_its_password_nowhere_on_the_server(
 
     Also from a login with both flags off, as ``CREATE LOGIN`` leaves
     ``CHECK_EXPIRATION`` and a stopped UC-1 change can leave ``CHECK_POLICY``:
-    the one statement turns both on with ``MUST_CHANGE``."""
+    the one statement turns both on with ``MUST_CHANGE``.
+
+    The password holds ODBC's escape characters, ``{`` ``}`` and ``?``, a
+    ``'``, and a character outside the Basic Multilingual Plane, so the test
+    shows the statement parses as sent with them in the literal."""
     import pyodbc
 
     session, recorder, sent = recorded
@@ -288,7 +292,7 @@ def test_the_seen_reset_leaves_its_password_nowhere_on_the_server(
         finally:
             admin.close()
     secret_part = uuid.uuid4().hex[:12]
-    password = f"Acme-np-{secret_part}'q"
+    password = f"Acme-np-{secret_part}'q{{fn x}}?{{call y}}\U0001f600"
     session.reset_password(LOGIN, Secret(password), expire=True)
 
     doubled = password.replace("'", "''")
@@ -300,6 +304,21 @@ def test_the_seen_reset_leaves_its_password_nowhere_on_the_server(
     with pytest.raises(pyodbc.Error) as answered:
         live_mssql.connect_as(LOGIN, password)
     assert "18488" in str(answered.value), "the login must change its password"
+
+    admin = live_mssql.connect()
+    try:
+        policy, expiration = (
+            admin.cursor()
+            .execute(
+                "SELECT is_policy_checked, is_expiration_checked FROM sys.sql_logins "
+                "WHERE name = ?",
+                LOGIN,
+            )
+            .fetchone()
+        )
+    finally:
+        admin.close()
+    assert (policy, expiration) == (True, True), "the reset leaves both flags on"
 
     kept = recorder.kept(mark(session.connection))
     for place, text in kept.items():

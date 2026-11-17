@@ -150,14 +150,19 @@ class MustChange:
     ``MUST_CHANGE`` needs (LK5). With ``CHECK_POLICY`` on, the server checks
     the password against the host's policy.
 
-    ``quoted_login`` is the login as :func:`~.statements.quoted_name` gives
-    it. :meth:`send` sends the statement as a batch of its own, never inside
+    ``login`` is the login's name, which this quotes, so that no caller can
+    put an unquoted name into the one statement that carries a password.
+    :meth:`send` sends the statement as a batch of its own, never inside
     ``EXEC``.
     """
 
     __slots__ = ("_forms", "_sql", "redacted")
 
-    def __init__(self, quoted_login: str, secret: Secret, *, unlock: bool) -> None:
+    def __init__(self, login: str, secret: Secret, *, unlock: bool) -> None:
+        # Imported here: `statements` imports this module for `hex_literal`.
+        from sopuli.driver.mssql.statements import quoted_name
+
+        quoted_login = quoted_name(login)
         admit(secret)
         text = secret.reveal()
         doubled = text.replace("'", "''")

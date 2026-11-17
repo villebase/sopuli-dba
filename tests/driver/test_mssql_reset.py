@@ -114,13 +114,38 @@ class Recorded:
 
 def test_a_quote_in_the_password_is_doubled() -> None:
     cursor = Recorded()
-    password.MustChange("[acme_jdoe]", Secret("Ab1'x"), unlock=False).send(cursor)
+    password.MustChange("acme_jdoe", Secret("Ab1'x"), unlock=False).send(cursor)
     assert "PASSWORD = N'Ab1''x' MUST_CHANGE" in cursor.sent[0]
+
+
+def test_the_statement_quotes_the_login_itself() -> None:
+    """No caller can put an unquoted name into the one statement that
+    carries a password (#1599 review)."""
+    cursor = Recorded()
+    password.MustChange("acme]jdoe", Secret(PASSWORD), unlock=False).send(cursor)
+    assert cursor.sent[0].startswith("ALTER LOGIN [acme]]jdoe] WITH PASSWORD = N'")
+
+
+def test_a_password_the_host_refuses_is_a_policy_error_with_a_hint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """33064, measured on the 2022 Linux image (#1599)."""
+    refused = (
+        "[42000] [Microsoft][ODBC Driver 18 for SQL Server][SQL Server]Password validation "
+        "failed. The password does not meet SQL Server password policy requirements because "
+        "it is not complex enough. (33064) (SQLExecDirectW)"
+    )
+    one = opened(monkeypatch, login(), pyodbc.ProgrammingError("42000", refused))
+    with pytest.raises(DriverError) as caught:
+        one.reset_password("acme_jdoe", Secret(PASSWORD), expire=True)
+    assert caught.value.category == "policy"
+    assert caught.value.hint is not None
+    assert "policy" in caught.value.hint
 
 
 def test_the_statement_never_renders_its_password() -> None:
     """Invariant 2: redaction is in the type, not at each call site."""
-    statement = password.MustChange("[acme_jdoe]", Secret(PASSWORD), unlock=True)
+    statement = password.MustChange("acme_jdoe", Secret(PASSWORD), unlock=True)
     for shown in (str(statement), repr(statement), f"{statement}", statement.redacted):
         assert PASSWORD not in shown
         assert "N'***' MUST_CHANGE UNLOCK" in shown
@@ -128,7 +153,7 @@ def test_the_statement_never_renders_its_password() -> None:
 
 def test_a_control_character_is_refused_before_a_statement_is_built() -> None:
     with pytest.raises(password.PasswordNotAdmissibleError, match="control characters"):
-        password.MustChange("[acme_jdoe]", Secret("Ab1\nx"), unlock=False)
+        password.MustChange("acme_jdoe", Secret("Ab1\nx"), unlock=False)
 
 
 def test_a_pending_must_change_reads_as_expired(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -185,7 +210,7 @@ def test_a_refusal_keeps_no_password(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_the_scrub_removes_the_doubled_form() -> None:
-    statement = password.MustChange("[acme_jdoe]", Secret("Ab1'x"), unlock=False)
+    statement = password.MustChange("acme_jdoe", Secret("Ab1'x"), unlock=False)
     assert statement.scrub("near 'Ab1''x' and Ab1'x") == "near '***' and ***"
 
 

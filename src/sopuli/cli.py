@@ -180,6 +180,7 @@ from sopuli.diagnostics import (
     install_diagnostics,
     lock_broken,
     lock_diagnostics,
+    lockout_ended,
     no_reset_journal,
     no_reset_record,
     notification_unsent,
@@ -9329,6 +9330,7 @@ def creds_apply(
     unchecked = _guardrail_caveats(applied)
     document.diagnostics.extend(unchecked)
     _warn_rollover_caveats(applied, document)
+    _warn_lockouts_ended(applied, document)
     clear = _encryption_notices(applied)
     document.diagnostics.extend(clear)
     # A (target, profile) the pre-flight already warned about is not warned about
@@ -9502,6 +9504,10 @@ class _Applied:
     #: What the old password a confirmed change kept will not do, from the
     #: driver (#1271): `SOPULI-W064` at the end of the run.
     rollover_caveat: str | None = None
+    #: The status of the lockout this run's change ended, such as
+    #: ``LOCKED(TIMED)`` on SQL Server on Windows (#1551): `SOPULI-W077` at
+    #: the end of the run. ``None`` on every other row.
+    lockout_ended: str | None = None
     #: The encryption of the connection this account's new password was sent
     #: over; ``None`` where no password was sent. Reported once per target at the
     #: end of the run (SOPULI-W031/W032).
@@ -11066,6 +11072,7 @@ def _apply_one(
     outcome: check_states.Outcome | None = None
     after_user: UserState | None = None
     kept_caveat: str | None = None
+    lockout: str | None = None
 
     def changed_row(
         final: check_states.Outcome, now: UserState, *, error: Error | None = None
@@ -11090,6 +11097,7 @@ def _apply_one(
             reuse=reuse,
             encryption=sent,
             rollover_caveat=kept_caveat,
+            lockout_ended=lockout,
         )
 
     try:
@@ -11134,11 +11142,15 @@ def _apply_one(
             # skips for, so it skipped the password on every target (#1180). A
             # missing account is not this case, and is reported as missing.
             return _refused_row(binding, source, held, selection=selection)
+        # SQL Server on a host that is not Linux (#1551): the change itself
+        # ends a lockout after failed logins, so such a login goes ahead, and
+        # the row names the lock it ended (`SOPULI-W077`).
+        lockout = _lockout_the_change_ends(session, user)
         settled = apply_states.settled_before_acting(
             user,
             source,
             requested=requested,
-            unlock=attributes.unlock,
+            unlock=attributes.unlock or lockout is not None,
             unlockable=unlockable,
             expiry_cleared=expiry_cleared,
         )
@@ -11263,11 +11275,14 @@ def _apply_one(
             # Asked again, and this time with no permission to unlock. The first
             # call let the run *reach* the attribute pass; this one is about the
             # state that pass left behind, and an account still locked here is one
-            # whose password must not be changed after all.
+            # whose password must not be changed after all. A lockout the change
+            # itself ends is the exception, asked again of the state read now.
+            lockout = _lockout_the_change_ends(session, user)
             blocked = apply_states.settled_before_acting(
                 user,
                 source,
                 requested=requested,
+                unlock=lockout is not None,
                 unlockable=unlockable,
                 expiry_cleared=expiry_cleared,
             )
@@ -11525,9 +11540,28 @@ def _apply_one(
             refused=refused,
             reuse=reuse,
             encryption=sent if issued or _carried(error) else None,
+            # The statement that ends the lockout was accepted, whatever failed
+            # after it.
+            lockout_ended=lockout if issued else None,
         )
 
     return changed_row(_with_regime(outcome, regime, after_user), after_user)
+
+
+def _lockout_the_change_ends(session: Any, user: UserState | None) -> str | None:
+    """The status of a lockout that a change ends on this target, or ``None``.
+
+    SQL Server on a host that is not Linux (``change_ends_lockout``, #1551):
+    a login locked out after failed logins, and not disabled by a person,
+    goes ahead with the change, because the change turns ``CHECK_POLICY``
+    off, which ends the lockout (``02-mssql-privileges.md`` §6.2, WP4).
+    Every other driver, and a lock somebody set, keeps
+    :func:`apply_states.settled_before_acting`'s ``LOCKED``."""
+    if user is None or not user.locked or user.deliberately_locked:
+        return None
+    if not getattr(session, "change_ends_lockout", False):
+        return None
+    return user.status
 
 
 def _attribute_intent(config: Config) -> list[str]:
@@ -13800,6 +13834,17 @@ def _warn_rollover_caveats(
             )
 
 
+def _warn_lockouts_ended(applied: Sequence[_Applied], document: RunDocument) -> None:
+    """`SOPULI-W077` for each account whose lockout this run's change ended
+    (#1551), in the JSON and under the text: the lockout is the server's
+    record that somebody tried wrong passwords, and the change erased it."""
+    for record in applied:
+        if record.lockout_ended:
+            document.warn_in_text(
+                lockout_ended(record.binding.target, record.binding.account, record.lockout_ended)
+            )
+
+
 def _guardrail_caveats(applied: Sequence[_Applied]) -> list[Diagnostic]:
     """§4's checks that could not be run, as this run's warnings.
 
@@ -14706,6 +14751,7 @@ def creds_rotate(
     unchecked = _guardrail_caveats(sequence.applied)
     document.diagnostics.extend(unchecked)
     _warn_rollover_caveats(sequence.applied, document, closing=sequence.closing)
+    _warn_lockouts_ended(sequence.applied, document)
     clear = _encryption_notices(sequence.applied)
     document.diagnostics.extend(clear)
     # The invocation that repairs this run, for SOPULI-W033 and the repair line

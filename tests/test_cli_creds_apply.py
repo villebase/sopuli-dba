@@ -44,6 +44,7 @@ from sopuli.config.targets import EXTERNAL
 from sopuli.diagnostics import (
     CHANGED_NOT_PROMOTED,
     LOCK_TAKEN_OVER,
+    LOCKOUT_ENDED,
     PRIVILEGE_AUDIT_UNREAD,
     PROFILE_UNREAD,
     PROMOTION_FAILED,
@@ -1094,6 +1095,128 @@ def test_without_a_login_first_a_current_is_left_alone(
     assert (row["state"], row["changed"]) == ("SKIPPED", False)
     assert row["actions"][0]["kind"] == "none"
     assert "creds rotate" in row["actions"][0]["detail"]
+
+
+# ------------------------------------- SQL Server: a lockout the change ends ---
+
+LOCKED_OUT = user(status="LOCKED(TIMED)", locked=True)
+DISABLED = user(status="LOCKED", locked=True, deliberately_locked=True)
+
+
+@pytest.mark.parametrize(("locked", "changes"), [(LOCKED_OUT, True), (DISABLED, False)])
+def test_a_change_ends_a_lockout_and_says_so(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    validator: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    locked: UserState,
+    changes: bool,
+) -> None:
+    """#1551, SQL Server on a host that is not Linux: the change turns the
+    policy off, which ends a lockout after failed logins (WP4), so such a
+    login is changed and the run warns `SOPULI-W077`. A login a person
+    disabled is `LOCKED` and left alone, with no warning."""
+    monkeypatch.setattr(FakeSession, "verifies_before_change", False, raising=False)
+    monkeypatch.setattr(FakeSession, "change_ends_lockout", True, raising=False)
+
+    def unlocked_by_the_change(harness: dict[str, Any], event: str) -> None:
+        if event == "set_password":
+            harness["sessions"][-1].users["ACME_WEB_USER"] = user()
+
+    harness = estate(
+        documents={
+            "apps/acme/appdb-alpha": {
+                "DB_CREDENTIALS": {"acme_web_user": LIVE},
+                "pending": {"acme_web_user": STAGED},
+            }
+        },
+        users={"ACME_WEB_USER": locked},
+        answers={"ACME_WEB_USER": passes(1)},
+        on_call=unlocked_by_the_change,
+    )
+    result = run(runner, write_config(CONFIG), "--select", "tenant=alpha", "--output", "json")
+
+    body = document(result)
+    validator.validate(body)
+    warned = [one for one in body.get("diagnostics", []) if one.get("code") == LOCKOUT_ENDED]
+    changed = [change for session in harness["sessions"] for change in session.changed]
+    row = body["results"][0]
+    if changes:
+        assert changed == [("ACME_WEB_USER", STAGED)]
+        assert row["state"] == check.IN_SYNC, row
+        assert [(one["target"], one["account"]) for one in warned] == [
+            ("appdb-alpha", "acme_web_user")
+        ]
+        assert "LOCKED(TIMED)" in warned[0]["message"]
+        assert "failed-login count to 0" in warned[0]["message"]
+    else:
+        assert changed == []
+        assert row["state"] == check.LOCKED
+        assert warned == []
+
+
+def test_a_lockout_is_kept_where_the_change_would_not_end_it(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every other driver, and SQL Server on Linux: a locked account is not
+    changed at all (UC-1 §5)."""
+    monkeypatch.setattr(FakeSession, "verifies_before_change", False, raising=False)
+    harness = estate(
+        documents={
+            "apps/acme/appdb-alpha": {
+                "DB_CREDENTIALS": {"acme_web_user": LIVE},
+                "pending": {"acme_web_user": STAGED},
+            }
+        },
+        users={"ACME_WEB_USER": LOCKED_OUT},
+    )
+    result = run(runner, write_config(CONFIG), "--select", "tenant=alpha", "--output", "json")
+
+    body = document(result)
+    assert [change for session in harness["sessions"] for change in session.changed] == []
+    assert body["results"][0]["state"] == check.LOCKED
+    assert not any(one.get("code") == LOCKOUT_ENDED for one in body.get("diagnostics", []))
+
+
+def test_a_lockout_the_change_ended_is_named_when_the_login_after_fails(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The statement that ends the lockout was accepted, so the warning
+    stands whatever fails after it."""
+    monkeypatch.setattr(FakeSession, "verifies_before_change", False, raising=False)
+    monkeypatch.setattr(FakeSession, "change_ends_lockout", True, raising=False)
+
+    def broken_after(self: FakeSession, account: str, *args: Any, **kwargs: Any) -> VerifyResult:
+        raise DriverError("the connection dropped")
+
+    harness = estate(
+        documents={
+            "apps/acme/appdb-alpha": {
+                "DB_CREDENTIALS": {"acme_web_user": LIVE},
+                "pending": {"acme_web_user": STAGED},
+            }
+        },
+        users={"ACME_WEB_USER": LOCKED_OUT},
+    )
+    monkeypatch.setattr(FakeSession, "verify_password", broken_after)
+    result = run(runner, write_config(CONFIG), "--select", "tenant=alpha", "--output", "json")
+
+    body = document(result)
+    row = body["results"][0]
+    assert [change for session in harness["sessions"] for change in session.changed] == [
+        ("ACME_WEB_USER", STAGED)
+    ]
+    assert (row["state"], row["changed"]) == (check.ERROR, True)
+    assert [one["account"] for one in body["diagnostics"] if one.get("code") == LOCKOUT_ENDED] == [
+        "acme_web_user"
+    ]
 
 
 # ------------------------------------------- MariaDB's reaching login (#1316) ---

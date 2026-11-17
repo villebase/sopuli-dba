@@ -532,9 +532,12 @@ capability (§7):
   an exception to invariant 9 that ends when the rotation completes. The
   login of step 3 is the only one, and it runs while the policy is off.
   `creds check` makes no login there. A login that `IsLocked` reports
-  locked is reported `LOCKED` and not changed. Changing it all the same,
-  which ends the lockout, with a warning code that names the lock it ended,
-  is not built (open: #1551). Under a domain's policy, whether a failed
+  locked out, `LOCKED(TIMED)`, is changed all the same: step 2's
+  `CHECK_POLICY = OFF` unlocks it and sets its count to 0, and step 4
+  keeps it unlocked (WP4). The run warns `SOPULI-W077`, naming the lockout
+  it ended, because the server then no longer shows that somebody tried
+  wrong passwords. A login a person disabled, `LOCKED`, is not changed.
+  Under a domain's policy, whether a failed
   login while the policy is off counts is not measured (unverified:
   mssql-domain-policy).
 

@@ -6401,7 +6401,9 @@ the register.
 
   5. A Windows or Entra login on a server that has a Windows or Entra
      group login is *not checked* in the privilege report, with its own
-     reason, and every other account keeps its state.
+     reason, and every other account keeps its state. The review of #1591
+     found that a database can hold a group user with no group login on
+     the server, so the same applies where a database read has one.
 - **Why:**
   1. UC-5 §3 and [#1376](#1376) make a capability a target lacks *not
      checked*, and [#1549](#1549) already reads the reset as the

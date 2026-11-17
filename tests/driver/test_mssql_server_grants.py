@@ -165,7 +165,7 @@ class FakeCursor:
 
 
 VIEWS = (
-    [(APP, "acme_app_user", "S", 0), (READERS, "acme_readers", "R", 0)],
+    [(APP, "acme_app_user", "S", 0, b"\x82\x01"), (READERS, "acme_readers", "R", 0, None)],
     [(READERS, APP)],
     [(READERS, "VIEW SERVER STATE", 100, "SERVER", 0, "G ", None)],
 )
@@ -213,13 +213,17 @@ def test_a_windows_login_on_a_server_with_a_windows_group_names_the_gap() -> Non
         public=False,
     )
 
-    assert found.gaps == (("EXAMPLE\\acme_svc", GROUP_MEMBERS),)
+    assert found.gaps() == (("EXAMPLE\\acme_svc", GROUP_MEMBERS),)
     assert found.system is not None
-    assert survey(public=False).gaps == ()
+    assert survey(public=False).gaps() == ()
     without_group = server_grants.survey(
         PRINCIPALS, MEMBERSHIPS, PERMISSIONS, ("EXAMPLE\\acme_svc",), public=False
     )
-    assert without_group.gaps == ()
+    assert without_group.gaps() == ()
+    # A group user in a database reaches a Windows login there too, with no
+    # group login on the server (#1591 review).
+    assert without_group.gaps(database_groups=True) == (("EXAMPLE\\acme_svc", GROUP_MEMBERS),)
+    assert survey(public=False).gaps(database_groups=True) == ()
 
 
 def test_an_entra_login_on_a_server_with_an_entra_group_names_the_gap() -> None:
@@ -233,7 +237,7 @@ def test_an_entra_login_on_a_server_with_an_entra_group_names_the_gap() -> None:
         entra, MEMBERSHIPS, PERMISSIONS, ("acme_ops@example.com",), public=False
     )
 
-    assert found.gaps == (("acme_ops@example.com", GROUP_MEMBERS),)
+    assert found.gaps() == (("acme_ops@example.com", GROUP_MEMBERS),)
 
 
 def test_read_with_the_grant_reads_the_paths() -> None:
@@ -242,6 +246,8 @@ def test_read_with_the_grant_reads_the_paths() -> None:
 
     assert found.unread is None
     assert privileges(found.system) == {("acme_app_user", "VIEW SERVER STATE", ("acme_readers",))}
+    # The SIDs come from the same read, for the database level (#1591 review).
+    assert found.login_sids == (("acme_app_user", b"\x82\x01"),)
     assert cursor.sent[1:] == [
         server_grants.PRINCIPALS,
         server_grants.MEMBERSHIPS,

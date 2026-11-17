@@ -146,3 +146,18 @@ def test_without_connect_any_database_each_refusing_database_is_named(made: Any)
     # master is the session's own database, and is read.
     assert "master," not in refused[0]
     assert found.schemas is not None
+
+
+def test_a_role_hidden_by_a_deny_makes_its_database_not_checked(made: Any) -> None:
+    """The DENY hides the role's row and not the membership naming it, so
+    the read is partial, and the database is named, never read as complete
+    (#1591 review)."""
+    _sa(made, f"CREATE USER [{FULL}] FOR LOGIN [{FULL}]", database=DB)
+    _sa(made, f"DENY VIEW DEFINITION ON ROLE::acme_outer TO [{FULL}]", database=DB)
+
+    found = _survey(made, FULL)
+
+    assert any(reason.startswith(f"the database {DB}:") for reason in found.unreadable)
+    assert DB not in {row.owner for row in found.schemas or ()}
+    # The other databases are still read.
+    assert found.schemas is not None

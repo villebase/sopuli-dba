@@ -100,11 +100,13 @@ READ_PARTIAL = (
     "again (02-mssql-privileges.md §2.2)"
 )
 #: What the parts cannot show where a Windows or Entra login is surveyed on a
-#: server that has a group login: the server keeps no record of a group's
-#: members, which Windows or Entra ID answers at login.
+#: server that has a group login, or a database that has a group user: the
+#: server keeps no record of a group's members, which Windows or Entra ID
+#: answers at login.
 GROUP_MEMBERS = (
-    "the server-level privileges a Windows or Entra login holds through a group login: "
-    "the server keeps no record of which logins are in a group, so they are not listed"
+    "the privileges a Windows or Entra login holds through a group, as a group login "
+    "or as a group user in a database: the server keeps no record of which logins are "
+    "in a group, so they are not listed"
 )
 
 #: ``sys.server_principals.type`` of a Windows and an Entra login, which a
@@ -112,7 +114,7 @@ GROUP_MEMBERS = (
 GROUP_MEMBER_TYPES = frozenset({"U", "E"})
 GROUP_TYPES = frozenset({"G", "X"})
 
-PRINCIPALS = "SELECT principal_id, name, type, is_fixed_role FROM sys.server_principals"
+PRINCIPALS = "SELECT principal_id, name, type, is_fixed_role, sid FROM sys.server_principals"
 MEMBERSHIPS = "SELECT role_principal_id, member_principal_id FROM sys.server_role_members"
 #: Every server-level grant, with the endpoint's name where the row is on one.
 PERMISSIONS = (
@@ -131,6 +133,8 @@ class Principal:
     name: str
     type: str
     fixed: bool = False
+    #: The login's SID, which finds its user in each database.
+    sid: bytes | None = None
 
     @property
     def is_role(self) -> bool:
@@ -157,16 +161,31 @@ class ServerGrants:
 
     ``system`` and ``objects`` are ``None`` where the read was not complete,
     and ``unread`` then says why; ``roles`` then holds the memberships the
-    tool login could see. ``gaps`` is ``(account, reason)`` for what complete
-    parts cannot show about one account, such as a Windows or Entra login's
-    privileges through a group login (#1555, Q5).
+    tool login could see.
+
+    ``group_members`` are the surveyed Windows and Entra logins, which a group
+    can hold, and ``server_groups`` whether the server has a group login.
+    :meth:`gaps` names the gap for each such login (#1555, Q5).
+    ``login_sids`` is ``(name, sid)`` per login, from the same read, for the
+    database level.
     """
 
     roles: tuple[RoleGrant, ...]
     system: tuple[GrantRow, ...] | None
     objects: tuple[GrantRow, ...] | None
     unread: str | None = None
-    gaps: tuple[tuple[str, str], ...] = ()
+    group_members: tuple[str, ...] = ()
+    server_groups: bool = False
+    login_sids: tuple[tuple[str, bytes], ...] = ()
+
+    def gaps(self, *, database_groups: bool = False) -> tuple[tuple[str, str], ...]:
+        """``(account, reason)`` for each Windows or Entra login a group may
+        give more than the parts show: where the server has a group login, or
+        a database read has a group user (``database_groups``). A SQL login
+        cannot be in a group, so it keeps its state."""
+        if not (self.server_groups or database_groups):
+            return ()
+        return tuple((name, GROUP_MEMBERS) for name in self.group_members)
 
 
 def read(cursor: Cursor, accounts: Sequence[str], *, public: bool) -> ServerGrants:
@@ -202,8 +221,10 @@ def read(cursor: Cursor, accounts: Sequence[str], *, public: bool) -> ServerGran
 def _read_members(cursor: Cursor) -> tuple[list[Principal], list[tuple[int, int]]]:
     cursor.execute(PRINCIPALS)
     principals = [
-        Principal(int(pid), str(name), str(kind).strip(), bool(fixed))
-        for pid, name, kind, fixed in cursor.fetchall()
+        Principal(
+            int(pid), str(name), str(kind).strip(), bool(fixed), None if sid is None else bytes(sid)
+        )
+        for pid, name, kind, fixed, sid in cursor.fetchall()
     ]
     cursor.execute(MEMBERSHIPS)
     memberships = [(int(role), int(member)) for role, member in cursor.fetchall()]
@@ -289,19 +310,19 @@ def survey(
                 _grant(PUBLIC_GRANTEE, row, (), by_id)
                 for row in granted.get(everyone.principal_id, ())
             )
-    # Only a Windows or Entra login can be in a group login; a SQL login
-    # keeps its state (#1555, Q5).
-    groups = any(p.type in GROUP_TYPES for p in by_id.values())
-    gaps = tuple(
-        (name, GROUP_MEMBERS)
-        for name in dict.fromkeys(accounts)
-        if groups and name in by_name and by_name[name].type in GROUP_MEMBER_TYPES
-    )
+    # Only a Windows or Entra login can be in a group; a SQL login keeps its
+    # state (#1555, Q5).
     return ServerGrants(
         roles=roles,
         system=tuple(row for row in found if row.kind == SYSTEM),
         objects=tuple(row for row in found if row.kind == OBJECT),
-        gaps=gaps,
+        group_members=tuple(
+            name
+            for name in dict.fromkeys(accounts)
+            if name in by_name and by_name[name].type in GROUP_MEMBER_TYPES
+        ),
+        server_groups=any(p.type in GROUP_TYPES for p in by_id.values()),
+        login_sids=tuple((p.name, p.sid) for p in by_name.values() if p.sid is not None),
     )
 
 

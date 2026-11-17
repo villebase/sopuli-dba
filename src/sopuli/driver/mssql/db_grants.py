@@ -58,8 +58,19 @@ ONLINE = "ONLINE"
 
 #: Every database, with its state and its owner's SID.
 DATABASES = "SELECT name, state_desc, owner_sid FROM sys.databases ORDER BY name"
-#: Every login's SID, to find its user in each database.
-LOGIN_SIDS = "SELECT name, sid FROM sys.server_principals WHERE type <> 'R'"
+
+#: ``sys.database_principals.type`` of a Windows group user and an Entra
+#: group user, through which a Windows or Entra login reaches a database
+#: (#1555, Q5).
+GROUP_USER_TYPES = frozenset({"G", "X"})
+
+#: Errors a database that is ``ONLINE`` in ``sys.databases`` can still answer
+#: to a read: an Availability Group secondary that takes no reads (976), one
+#: in single-user use (924), one dropped or taken offline since (911, 942),
+#: or in recovery (922, 952). Each names that database as not checked, with
+#: the server's message, and the others are still read. Not measured; by
+#: Microsoft's documentation of the numbers.
+UNREADABLE_DATABASE = frozenset({"911", "922", "924", "942", "952", "976"})
 
 
 def principals_query(database: str) -> str:
@@ -88,11 +99,13 @@ def permissions_query(database: str) -> str:
         "SELECT p.grantee_principal_id, p.permission_name, p.class, p.class_desc, "
         "p.major_id, p.minor_id, p.state, o.name, s.name, o.type_desc, c.name "
         f"FROM {db}.sys.database_permissions AS p "
-        f"LEFT JOIN {db}.sys.objects AS o ON p.class = {OBJECT_CLASS} "
+        # all_objects and all_columns: a grant on a system object, such as
+        # public's in master, has a negative id that sys.objects leaves out.
+        f"LEFT JOIN {db}.sys.all_objects AS o ON p.class = {OBJECT_CLASS} "
         "AND o.object_id = p.major_id "
         f"LEFT JOIN {db}.sys.schemas AS s ON s.schema_id = "
         f"CASE WHEN p.class = {SCHEMA_CLASS} THEN p.major_id ELSE o.schema_id END "
-        f"LEFT JOIN {db}.sys.columns AS c ON p.class = {OBJECT_CLASS} AND p.minor_id > 0 "
+        f"LEFT JOIN {db}.sys.all_columns AS c ON p.class = {OBJECT_CLASS} AND p.minor_id > 0 "
         "AND c.object_id = p.major_id AND c.column_id = p.minor_id"
     )
 
@@ -148,6 +161,26 @@ class Catalog:
     #: ``(schema name, owner principal id)`` per schema.
     schemas: tuple[tuple[str, int], ...] = ()
 
+    @property
+    def group_users(self) -> bool:
+        """Whether the database has a Windows or Entra group user, through
+        which a Windows or Entra login may reach it."""
+        return any(p.type in GROUP_USER_TYPES for p in self.principals)
+
+    @property
+    def complete(self) -> bool:
+        """Whether every principal a membership, a grant or a schema names
+        has a row. A denial hides a principal's row and not the rows that
+        name it, as on the server (``13_fixed_roles_probe.py``, FR5), so a
+        hidden role would drop its members' paths unseen."""
+        known = {p.principal_id for p in self.principals}
+        named = {
+            *(id_ for pair in self.memberships for id_ in pair),
+            *(row.grantee_id for row in self.permissions if row.state in GRANTED),
+            *(owner for _, owner in self.schemas),
+        }
+        return named <= known
+
 
 @dataclass(frozen=True)
 class DatabaseGrants:
@@ -163,11 +196,6 @@ def read_databases(cursor: Cursor) -> list[Database]:
         Database(str(name), str(state), None if sid is None else bytes(sid))
         for name, state, sid in cursor.fetchall()
     ]
-
-
-def read_login_sids(cursor: Cursor) -> dict[str, bytes]:
-    cursor.execute(LOGIN_SIDS)
-    return {str(name): bytes(sid) for name, sid in cursor.fetchall() if sid is not None}
 
 
 def read_catalog(cursor: Cursor, database: str) -> Catalog:
@@ -294,6 +322,21 @@ REFUSED = (
 )
 #: Why a database that is not online is not checked.
 NOT_ONLINE = "they are not online, so their catalogs cannot be read"
+#: Why a database whose read names a principal it has no row for is not
+#: checked: a hidden role would drop its members' paths unseen.
+PARTIAL = (
+    "the read names a database principal the tool login has no row for, one a DENY of "
+    "VIEW DEFINITION hides or one made during the read; revoke any such DENY to the "
+    "tool login, and run the report again (02-mssql-privileges.md §2.2)"
+)
+
+
+def unreadable_reason(database: str, message: str) -> str:
+    """Why one database that answered a read with an error is not checked,
+    in the server's own words."""
+    return f"the database {database}: {message}"
+
+
 #: Why no database is read where the server level was not.
 SERVER_NOT_READ = (
     "database-level privileges in every database: the server's principals were not "

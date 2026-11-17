@@ -215,9 +215,7 @@ def _one(target: str, account: str, kind: str, survey: GrantSurvey) -> AccountPr
         objects=part(survey.objects),
         columns=part(survey.columns),
         schemas=part(survey.schemas),
-        unreadable=tuple(
-            reason for account, reason in survey.account_unreadable if account == name
-        ),
+        unreadable=tuple(reason for who, reason in survey.account_unreadable if who == name),
     )
 
 

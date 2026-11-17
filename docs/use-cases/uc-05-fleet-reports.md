@@ -505,11 +505,17 @@ are *not checked*, with the reason, and the run exits 4:
   reason says it may be short. The same where `VIEW ANY SECURITY DEFINITION`
   is denied, or where the read names a principal it has no row for;
 - **each database that refuses the tool login**, `916`, without `CONNECT ANY
-  DATABASE`, and each that is not online, by name;
-- **a Windows or Entra login, where the server has a group login**: the
-  login also holds what each group it is in holds, and the server keeps no
-  record of a group's members. That login alone is not checked; a SQL login,
-  which no group can hold, keeps its state (#1555, Q5).
+  DATABASE`, and each that is not online, by name. So is a database that
+  answers another refusal or cannot be read just then, such as an
+  Availability Group secondary that takes no reads, with the server's
+  message, and one whose read names a principal it has no row for, as a
+  `DENY` of `VIEW DEFINITION` on a role makes it. The other databases are
+  still read;
+- **a Windows or Entra login, where the server has a group login or a
+  database read has a group user**: the login also holds what each group it
+  is in holds, and the server keeps no record of a group's members. That
+  login alone is not checked; a SQL login, which no group can hold, keeps
+  its state (#1555, Q5).
 
 ---
 

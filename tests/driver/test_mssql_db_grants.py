@@ -199,6 +199,44 @@ def test_guest_without_connect_gives_nothing() -> None:
     assert not any(row.path == ("acme.guest",) for row in found.rows)
 
 
+def test_a_principal_the_read_names_without_a_row_makes_the_database_partial() -> None:
+    """A DENY of VIEW DEFINITION on a role hides its row, not the
+    memberships naming it, so its members' paths would drop unseen (#1591
+    review)."""
+    assert CATALOG.complete
+    hidden = Catalog(
+        tuple(p for p in CATALOG.principals if p.principal_id != OUTER),
+        CATALOG.memberships,
+        CATALOG.permissions,
+        CATALOG.schemas,
+    )
+
+    assert not hidden.complete
+
+
+def test_a_group_user_is_seen() -> None:
+    """A Windows or Entra login reaches a database through a group user
+    (#1591 review)."""
+    assert not CATALOG.group_users
+    with_group = Catalog(
+        (*CATALOG.principals, Principal(9, "EXAMPLE\\acme_dbas", "G", b"\x01\x05")),
+        CATALOG.memberships,
+        CATALOG.permissions,
+        CATALOG.schemas,
+    )
+
+    assert with_group.group_users
+
+
+def test_system_objects_are_named_through_all_objects() -> None:
+    """A grant on a system object has a negative id, which sys.objects
+    leaves out (#1591 review)."""
+    query = db_grants.permissions_query("master")
+
+    assert ".sys.all_objects AS o" in query
+    assert ".sys.all_columns AS c" in query
+
+
 def test_a_database_name_is_bracketed_in_every_read() -> None:
     name = "acme]x"
     for query in (

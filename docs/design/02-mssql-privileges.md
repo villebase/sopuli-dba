@@ -166,15 +166,19 @@ DEFINITION` it reads them all (RP4). Neither reads a hash.
   16.0.4325.4, #1555);
 - each online database, with three-part names:
   `[database].sys.database_principals`, `sys.database_role_members`,
-  `sys.schemas` and `sys.database_permissions`, joined to `sys.objects` and
-  `sys.columns` for names. With both grants each database is read; without
+  `sys.schemas` and `sys.database_permissions`, joined to `sys.all_objects`
+  and `sys.all_columns` for names, so a grant on a system object is named
+  too. With both grants each database is read; without
   `CONNECT ANY DATABASE` each one but `master`, `tempdb` and `msdb`, where
   `guest` lets the tool login in, refuses it, `916`, and is named as not
   checked (measured on 16.0.4325.4).
 
-The server keeps no record of which Windows or Entra logins are in a group
-login, so a Windows or Entra login on a server with a group login is not
-checked in the privilege report (#1555, Q5).
+The server keeps no record of which Windows or Entra logins are in a group,
+so a Windows or Entra login on a server with a group login, or where a
+database read has a group user, is not checked in the privilege report
+(#1555, Q5). A `DENY` of `VIEW DEFINITION` on a database role hides the
+role's row and not the membership naming it (measured on 16.0.4325.4), so
+a database whose read names a principal it has no row for is not checked.
 
 **No source measured gives a login's last good login.** No catalog view has a
 column for it. At the images' login auditing level, 2, the error log records

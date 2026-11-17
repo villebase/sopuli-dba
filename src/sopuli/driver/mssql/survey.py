@@ -27,7 +27,11 @@ Nothing is bound, and no hash column is read. The decisions are #1555's:
   On Linux it is unknown: it does not count past 1 there (LK2).
 
 A login with no password has no lifetime, limit or count, and each is
-``None`` with the reason that it has no password.
+``None`` with the reason that it has no password. Its lock is
+``is_disabled`` alone. A login mapped to a certificate or a key cannot
+connect, so it is ``no_authentication`` and meets a rule's ``login:
+refused``. A SQL login whose ``IsLocked`` reads NULL has its lock ``None``,
+never unlocked.
 """
 
 from __future__ import annotations
@@ -66,6 +70,11 @@ LIMIT_FROM_POLICY = (
 )
 COUNT_ON_LINUX = "BadPasswordCount does not count past 1 on a Linux host"
 NO_COUNT = "LOGINPROPERTY gave no BadPasswordCount for this login"
+NO_LOCK = "LOGINPROPERTY gave no IsLocked for this login"
+
+#: ``sys.server_principals.type`` of a login mapped to a certificate or an
+#: asymmetric key. Such a login is for signing code, and cannot connect.
+NO_CONNECT_KINDS = frozenset({"C", "K"})
 NO_FLAGS = "the login has no row in sys.sql_logins that the tool login can read"
 
 
@@ -88,30 +97,42 @@ def survey(cursor: Any, *, platform: str | None) -> tuple[SurveyedAccount, ...]:
 def _login(row: Sequence[Any], *, linux: bool) -> SurveyedAccount:
     name, kind, disabled, policy, expiration, locked_out, expired, must_change, bad = row
     name, kind = str(name), str(kind).strip()
-    disabled, locked_out = bool(disabled), bool(locked_out)
+    disabled = bool(disabled)
     lifetime: Limit
     limit: Limit
     count: int | None
+    locked: bool | None = disabled
+    lock_reason = None
     if kind != SQL_LOGIN:
+        # No password, so no lockout: is_disabled is the whole lock.
         none = f"{OTHER_KINDS.get(kind, f'a server principal of type {kind}')} has no password"
         lifetime, limit, count = None, None, None
         unreadable: tuple[str, ...] = (none, none, none)
+        locked_out = False
     else:
+        if locked_out is None and not disabled:
+            # Never read as unlocked without the server saying so.
+            locked, lock_reason = None, NO_LOCK
+        else:
+            locked = disabled or bool(locked_out)
+        locked_out = bool(locked_out)
         lifetime, lifetime_reason = _lifetime(expiration)
         limit, limit_reason = _limit(policy, linux=linux)
         count = None if linux or bad is None else int(bad)
         count_reason = COUNT_ON_LINUX if linux else (NO_COUNT if count is None else None)
         unreadable = tuple(
-            reason for reason in (lifetime_reason, limit_reason, count_reason) if reason
+            reason
+            for reason in (lock_reason, lifetime_reason, limit_reason, count_reason)
+            if reason
         )
     return SurveyedAccount(
         name=name,
         status=status(
             disabled=disabled, locked_out=locked_out, expired=bool(expired) or bool(must_change)
         ),
-        locked=disabled or locked_out,
+        locked=locked,
         # A person sends ALTER LOGIN ... DISABLE; a lockout ends by itself.
-        deliberately_locked=disabled,
+        deliberately_locked=None if locked is None else disabled,
         profile="",
         common=False,
         vendor_maintained=product_owned(name),
@@ -119,6 +140,9 @@ def _login(row: Sequence[Any], *, linux: bool) -> SurveyedAccount:
         failed_login_limit=limit,
         failed_logins=count,
         unreadable=unreadable,
+        # A login mapped to a certificate or a key cannot connect: nobody logs
+        # in to it, whatever its lock, so it meets a rule's `login: refused`.
+        no_authentication=kind in NO_CONNECT_KINDS,
     )
 
 
@@ -131,8 +155,11 @@ def _lifetime(expiration: Any) -> tuple[Limit, str | None]:
 
 
 def _limit(policy: Any, *, linux: bool) -> tuple[Limit, str | None]:
+    # No login locks on Linux, whatever its flags (LK2).
+    if linux:
+        return "unlimited", None
     if policy is None:
         return None, NO_FLAGS
-    if not policy or linux:
+    if not policy:
         return "unlimited", None
     return None, LIMIT_FROM_POLICY

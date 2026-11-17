@@ -174,6 +174,34 @@ def test_a_sql_login_whose_flags_were_not_read_is_not_guessed() -> None:
     assert account.unreadable == (NO_FLAGS, NO_FLAGS)
 
 
+def test_a_null_lock_on_a_sql_login_is_not_read_as_unlocked() -> None:
+    """`bool(None)` would say unlocked without proof (#1587 review)."""
+    account = one(locked_out=None)
+
+    assert account.locked is None
+    assert account.deliberately_locked is None
+    assert account.unreadable[0] == survey.NO_LOCK
+    assert one(locked_out=None, disabled=True).locked is True
+
+
+def test_a_certificate_login_cannot_connect_so_it_meets_login_refused() -> None:
+    """It is for signing code (#1587 review)."""
+    cert = one(name="acme_sign_user", type="C", policy=None, locked_out=None, bad=None)
+
+    assert cert.no_authentication is True
+    assert cert.locked is False
+    assert one(name="EXAMPLE\\acme_ops", type="U", policy=None).no_authentication is False
+    assert one().no_authentication is False
+
+
+def test_on_linux_no_flags_read_still_means_no_lockout() -> None:
+    """No login locks on Linux, whatever its flags (LK2, #1587 review)."""
+    account = one("Linux", policy=None, expiration=None)
+
+    assert account.failed_login_limit == "unlimited"
+    assert account.password_lifetime is None
+
+
 def test_the_products_own_logins_are_left_out_unless_named_and_sa_is_listed() -> None:
     assert one(name="##MS_PolicyEventProcessingLogin##").vendor_maintained is True
     assert one(name="##MS_SQLResourceSigningCertificate##", type="C").vendor_maintained

@@ -379,6 +379,11 @@ class MssqlSession(ClosesConnection):
                 "a personal_accounts: rule's role: is not resolved on SQL Server yet: UC-2 "
                 "is not written for it (#1554)"
             ),
+            # SOPULI-W075 words its fix from this, not from the hint.
+            remedy=(
+                "No grant gives it: UC-2, which resolves a role, is not written for SQL "
+                "Server yet (#1554)."
+            ),
         )
 
     def accounts_matching(self, *args: Any, **kwargs: Any) -> NoReturn:

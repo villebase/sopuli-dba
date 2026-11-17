@@ -31,7 +31,9 @@ exit code. It runs on Oracle, PostgreSQL, MySQL, MariaDB and SQL Server. On
 MariaDB the lock and the lifetime come from the optional view
 `sopuli.account_state`, and are not checked where the view is absent or
 cannot be used. On SQL Server a login's password lifetime is not checked
-where `CHECK_EXPIRATION` is on, because the host's policy sets it.
+where `CHECK_EXPIRATION` is on, and on Windows its failed-login limit is
+not checked where `CHECK_POLICY` is on, because the host's policy sets
+both.
 
 Options:
 

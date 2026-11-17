@@ -157,6 +157,8 @@ def test_a_personal_role_is_refused_as_role_lookup_missing() -> None:
 
     assert caught.value.capability == "role_lookup"
     assert "#1554" in (caught.value.hint or "")
+    # SOPULI-W075 words its fix from the remedy alone (#1587 review).
+    assert "#1554" in (caught.value.remedy or "")
 
 
 def test_client_report_names_pyodbc() -> None:

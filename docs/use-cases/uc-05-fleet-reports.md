@@ -310,7 +310,9 @@ release is `SERVERPROPERTY('ProductVersion')`.
   on Linux, where it does not count past 1.
 - **A login with no password**, such as a Windows login, has no lifetime,
   limit or count: where a rule sets one of them, the check is *not checked*,
-  with that reason.
+  with that reason. A login mapped to a certificate or a key cannot connect,
+  so it meets `login: refused`, as a `NO AUTHENTICATION` account does on
+  Oracle.
 - **A rule's `oracle.profile` and `postgresql.valid_until` are *not
   applicable*.**
 - **A personal rule's `role:` is not resolved** until UC-2 is built on SQL

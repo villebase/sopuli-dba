@@ -893,6 +893,52 @@ def test_a_target_that_refuses_the_value_is_refused_at_plan_time(
     assert all(session.changed == [] for session in harness["sessions"])
 
 
+@pytest.mark.parametrize("dry_run", [True, False])
+def test_a_connection_refused_as_a_capability_refuses_at_plan_time(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+    dry_run: bool,
+) -> None:
+    """#1551: SQL Server's reset under `encrypt: strict` is exit 5 before
+    anything is sent, not an error on the target's rows. The fake is
+    Oracle-shaped, so its targets are made such targets here."""
+    monkeypatch.setattr("sopuli.cli._refused_at_connect", lambda expanded: True)
+    estate(connect_error=UnsupportedCapabilityError("strict_encryption", target="appdb-alpha"))
+    flags = ["--dry-run"] if dry_run else []
+    result = run(runner, write_config(CONFIG), "--select", "tenant=alpha", *flags)
+
+    assert getattr(result.exception, "exit_code", None) == ExitCode.UNSUPPORTED_CAPABILITY
+    assert "strict_encryption" in str(result.exception)
+
+
+def test_the_dry_run_names_each_target_s_password_value(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+    validator: Draft202012Validator,
+) -> None:
+    """#1564: in the text's notes and as an `info` diagnostic."""
+    monkeypatch.setattr("sopuli.cli.VALUE_CHECK_TYPES", frozenset({"oracle"}))
+    monkeypatch.setattr(FakeSession, "hash_version", lambda self: 0x0300, raising=False)
+    estate()
+    note = 'target "appdb-alpha" takes a 0x0300 password value (PBKDF2-HMAC-SHA512)'
+
+    text = run(runner, write_config(CONFIG), "--select", "tenant=alpha", "--dry-run")
+    assert text.exit_code == ExitCode.SUCCESS, text.output
+    assert note in text.output
+
+    result = run(
+        runner, write_config(CONFIG), "--select", "tenant=alpha", "--dry-run", "--output", "json"
+    )
+    body = document(result)
+    assert not list(validator.iter_errors(body))
+    (info,) = [one for one in body["diagnostics"] if one["level"] == "info"]
+    assert (info["target"], info["message"].startswith(note)) == ("appdb-alpha", True)
+
+
 @pytest.mark.parametrize(
     ("mark", "strategy", "expected"),
     [

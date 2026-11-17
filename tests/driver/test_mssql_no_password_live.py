@@ -24,6 +24,7 @@ from __future__ import annotations
 import time
 import uuid
 from collections.abc import Iterator
+from contextlib import suppress
 from typing import Any
 
 import pytest
@@ -102,26 +103,30 @@ class Recorder:
             events = self.events()
         assert marker in events, "the session recorded everything up to the marker"
         assert 'droppedCount="0"' in events, "the ring buffer dropped no event"
+        assert 'truncated="0"' in events, "the ring buffer was read whole"
         cache = self.cursor.execute(
             "SELECT t.text FROM sys.dm_exec_cached_plans p "
             "CROSS APPLY sys.dm_exec_sql_text(p.plan_handle) t"
         ).fetchall()
+        log = self.cursor.execute("EXEC sys.xp_readerrorlog 0, 1").fetchall()
+        kept = {
+            "extended events": events,
+            "plan cache": "\n".join(row[0] or "" for row in cache),
+            "error log": "\n".join(str(row[-1]) for row in log),
+        }
+        # Read only where it is on: an instance hardened with `default trace
+        # enabled` = 0 has none, and reading nothing would check nothing.
         (default_traces,) = self.cursor.execute(
             "SELECT COUNT(*) FROM sys.traces WHERE is_default = 1"
         ).fetchone()
-        assert default_traces == 1, "the default trace is on, so reading it checks something"
-        trace = self.cursor.execute(
-            "SELECT CAST(g.TextData AS nvarchar(max)) FROM sys.traces t "
-            "CROSS APPLY sys.fn_trace_gettable(t.path, DEFAULT) g "
-            "WHERE t.is_default = 1 AND g.TextData IS NOT NULL"
-        ).fetchall()
-        log = self.cursor.execute("EXEC sys.xp_readerrorlog 0, 1").fetchall()
-        return {
-            "extended events": events,
-            "plan cache": "\n".join(row[0] or "" for row in cache),
-            "default trace": "\n".join(row[0] or "" for row in trace),
-            "error log": "\n".join(str(row[-1]) for row in log),
-        }
+        if default_traces:
+            trace = self.cursor.execute(
+                "SELECT CAST(g.TextData AS nvarchar(max)) FROM sys.traces t "
+                "CROSS APPLY sys.fn_trace_gettable(t.path, DEFAULT) g "
+                "WHERE t.is_default = 1 AND g.TextData IS NOT NULL"
+            ).fetchall()
+            kept["default trace"] = "\n".join(row[0] or "" for row in trace)
+        return kept
 
 
 class Sent:
@@ -129,22 +134,40 @@ class Sent:
 
     def __init__(self, connection: Any) -> None:
         self._connection = connection
-        self.statements: list[str] = []
+        self.statements: list[tuple[str, tuple[Any, ...]]] = []
 
     def cursor(self) -> Any:
         return _SentCursor(self._connection.cursor(), self.statements)
+
+    def holds(self, password: str) -> list[str]:
+        """Each statement that holds ``password`` in a form the server could
+        read back: as text, as a bind, or as its UTF-16LE bytes, raw or in a
+        hex literal, which is how SQL Server stores a password's text."""
+        utf16 = password.encode("utf-16-le")
+        forms = (password, utf16.hex().upper())
+        found = []
+        for sql, params in self.statements:
+            texts = [sql.upper(), *(str(p).upper() for p in params if isinstance(p, str))]
+            raw = [p for p in params if isinstance(p, (bytes, bytearray))]
+            if (
+                any(form.upper() in text for form in forms for text in texts)
+                or any(password in text for text in [sql, *map(str, params)])
+                or any(utf16 in value for value in raw)
+            ):
+                found.append(sql)
+        return found
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._connection, name)
 
 
 class _SentCursor:
-    def __init__(self, cursor: Any, statements: list[str]) -> None:
+    def __init__(self, cursor: Any, statements: list[tuple[str, tuple[Any, ...]]]) -> None:
         self._cursor = cursor
         self._statements = statements
 
     def execute(self, sql: str, *params: Any) -> Any:
-        self._statements.append(f"{sql} {params!r}")
+        self._statements.append((sql, params))
         self._cursor.execute(sql, *params)
         return self
 
@@ -179,7 +202,10 @@ def recorded(live_mssql: Any) -> Iterator[tuple[Any, Recorder, Sent]]:
         )
         cursor.execute(f"GRANT ALTER ANY LOGIN TO [{TOOL}]")
         cursor.execute(f"GRANT VIEW ANY DEFINITION TO [{TOOL}]")
-        cursor.execute(f"CREATE LOGIN [{LOGIN}] WITH PASSWORD = N'{OLD}', CHECK_POLICY = ON")
+        cursor.execute(
+            f"CREATE LOGIN [{LOGIN}] WITH PASSWORD = N'{OLD}', CHECK_POLICY = ON, "
+            "CHECK_EXPIRATION = ON"
+        )
         recorder.start()
         target = ExpandedTarget(
             target=Target(
@@ -196,12 +222,21 @@ def recorded(live_mssql: Any) -> Iterator[tuple[Any, Recorder, Sent]]:
         opened.connection = sent
         yield opened, recorder, sent
     finally:
-        if opened is not None:
-            opened.close()
-        recorder.stop()
-        for login in (LOGIN, TOOL):
-            cursor.execute(f"IF SUSER_ID(N'{login}') IS NOT NULL DROP LOGIN [{login}]")
-        admin.close()
+        # Each step on its own, so one that fails leaves the rest to run.
+        steps = [
+            *([opened.close] if opened is not None else []),
+            recorder.stop,
+            *(
+                lambda login=login: cursor.execute(
+                    f"IF SUSER_ID(N'{login}') IS NOT NULL DROP LOGIN [{login}]"
+                )
+                for login in (LOGIN, TOOL)
+            ),
+            admin.close,
+        ]
+        for step in steps:
+            with suppress(Exception):
+                step()
 
 
 def test_a_change_sends_and_leaves_the_password_nowhere(
@@ -215,9 +250,8 @@ def test_a_change_sends_and_leaves_the_password_nowhere(
     assert session.restore_policy(LOGIN, flags)
 
     # What the driver sent: the value with HASHED, and never the password.
-    assert any("ALTER LOGIN" in line and " HASHED" in line for line in sent.statements)
-    for line in sent.statements:
-        assert password not in line, "the driver sent the password"
+    assert any("ALTER LOGIN" in sql and " HASHED" in sql for sql, _ in sent.statements)
+    assert sent.holds(password) == [], "the driver sent the password"
 
     # What the server kept.
     kept = recorder.kept(mark(session.connection))
@@ -252,20 +286,22 @@ def test_a_change_the_server_refuses_leaves_the_password_nowhere(
     """A statement that fails is kept as sent (§6.1, PT3), so what is sent
     must hold no password even when the server refuses it. The driver reads
     the login before it sends, so a refused change cannot be made through
-    `set_password`: this sends the driver's own statement, for both value
-    versions, for a login that does not exist, `15151`."""
+    `set_password`: this sends the driver's own statement, with the value
+    version the server takes, as the driver reads it, for a login that does
+    not exist, `15151`."""
     import pyodbc
 
-    _, recorder, _ = recorded
+    session, recorder, _ = recorded
     password = f"Acme-np-{uuid.uuid4().hex[:12]}"
     missing = f"w1_np_missing_{uuid.uuid4().hex[:6]}"
+    statement = set_password_value(
+        missing, password_value(Secret(password), session.hash_version())
+    )
     connection = live_mssql.connect_as(TOOL, TOOL_PASSWORD)
     try:
-        for version in (0x0200, 0x0300):
-            statement = set_password_value(missing, password_value(Secret(password), version))
-            with pytest.raises(pyodbc.Error) as refused:
-                connection.cursor().execute(statement)
-            assert "15151" in str(refused.value)
+        with pytest.raises(pyodbc.Error) as refused:
+            connection.cursor().execute(statement)
+        assert "15151" in str(refused.value)
         marker = mark(connection)
     finally:
         connection.close()

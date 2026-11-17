@@ -20,20 +20,18 @@ it meets the list itself, or through a role it is a member of, so the rule is
 a fixed point: a role that owns a refused role is refused, and so is a role
 that holds ``ALTER`` on that one.
 
-**Only a catalog read with ``VIEW ANY DEFINITION`` is complete.** With
-``ALTER ANY LOGIN`` alone, the tool login sees no user-defined server role's
-row, so no owner, and no role's membership of another role
-(``12_guardrail_paths_probe.py``, PA2). No login can then be shown to own no
-refused role, so :func:`assess` refuses every login and names the missing
-grant (#1567). :func:`read_catalog` reads the catalog only when the tool
-login holds the grant, and otherwise returns an empty :class:`Catalog` with
-``complete`` false. It is the module's one read; everything else is tier 0.
+**Only a complete read is assessed.** With ``ALTER ANY LOGIN`` alone, the
+tool login sees no user-defined server role's row, so no owner, and no role's
+membership of another role (``12_guardrail_paths_probe.py``, PA2). No login
+can then be shown to own no refused role, so :func:`assess` refuses every
+login and names the missing grant (#1567). A denial hides rows from a tool
+login that holds the grant (``13_fixed_roles_probe.py``, FR5), so
+:class:`Catalog` checks that every id its rows name has a principal row, and
+refuses every login where one does not. :func:`read_catalog` is the module's
+one read; everything else is tier 0.
 
-**Two rules keep the answer on the safe side.** A ``DENY`` row is not read:
-a member of ``sysadmin`` ignores it, and counting only grants refuses more,
-never less. A grant on a principal the catalog has no row for counts as a
-grant on a refused one, and a membership of such a principal as a membership
-of a refused role.
+A ``DENY`` row is not read for the list: a member of ``sysadmin`` ignores it,
+and counting only grants refuses more, never less.
 
 Each finding is spelled as ``GRANT`` names it, such as ``CONTROL SERVER`` or
 ``ALTER ON SERVER ROLE::[acme_ops]``, with `` through [<role>]`` where a role
@@ -86,7 +84,7 @@ LOGIN_PERMISSIONS = frozenset({"CONTROL", "ALTER", "IMPERSONATE"})
 #: Permissions on one server role the list refuses, where the role is refused.
 ROLE_PERMISSIONS = frozenset({"CONTROL", "ALTER", "TAKE OWNERSHIP"})
 
-#: Guardrail 9's reason on every login when the catalog is not complete.
+#: Guardrail 9's reason on every login when the tool login lacks the grant.
 MISSING_GRANT = (
     "the tool login does not hold VIEW ANY DEFINITION, so the tool cannot see "
     "which server roles this login owns or reaches; grant it to the tool login "
@@ -94,8 +92,9 @@ MISSING_GRANT = (
 )
 
 #: Guardrail 9's reason on every login when the tool login is denied
-#: ``VIEW ANY SECURITY DEFINITION`` (2022 and later), which hides a server
-#: role's row and its grants although ``VIEW ANY DEFINITION`` is held.
+#: ``VIEW ANY SECURITY DEFINITION`` (2022 and later), which hides every
+#: principal, grant and membership row although ``VIEW ANY DEFINITION`` is
+#: held (``13_fixed_roles_probe.py``, FR5).
 DENIED_SECURITY = (
     "the tool login is denied VIEW ANY SECURITY DEFINITION, so the tool cannot "
     "see which server roles this login owns or reaches; revoke the denial "
@@ -104,7 +103,7 @@ DENIED_SECURITY = (
 
 #: Guardrail 9's reason on every login when the read has an id with no
 #: principal row: one a DENY hides from the tool login, or one made while the
-#: three statements ran.
+#: statements ran, twice.
 PARTIAL_READ = (
     "the tool's read of the server's principals names a principal it has no "
     "row for, one a DENY hides from the tool login or one made during the "
@@ -113,10 +112,14 @@ PARTIAL_READ = (
     "command again (02-mssql-privileges.md §5)"
 )
 
-#: Guardrail 9's reason when a complete read has no row for the login.
+#: Guardrail 9's reason when a complete read has no row for the login: a
+#: DENY of VIEW DEFINITION on the login hides it, or it was made or dropped
+#: since the tool read its id.
 MISSING_LOGIN = (
     "the tool's read of the server's principals has no row for this login, so "
-    "the tool cannot see what it holds; run the command again"
+    "the tool cannot see what it holds; revoke any DENY of VIEW DEFINITION on "
+    "the login to the tool login, and run the command again "
+    "(02-mssql-privileges.md §5)"
 )
 
 #: Guardrail 9's reason when a complete read has no row for ``public``.
@@ -165,18 +168,21 @@ class Permission:
 class Catalog:
     """What the tool login read of the server's principals.
 
-    ``complete`` says that the read saw every principal its rows name. Where
-    it is false, the catalog has no rows, ``unread`` says why, and
-    :func:`assess` refuses every login with it.
+    ``unread`` is ``None`` for a complete read. Otherwise it says why the
+    read is not complete, the catalog has no rows, and :func:`assess`
+    refuses every login with it.
     """
 
-    complete: bool
-    unread: str = MISSING_GRANT
+    unread: str | None = None
     principals: Mapping[int, Principal] = field(default_factory=dict)
     #: ``sys.server_role_members`` as ``(role_principal_id,
     #: member_principal_id)``.
     memberships: frozenset[tuple[int, int]] = frozenset()
     permissions: tuple[Permission, ...] = ()
+
+    @property
+    def complete(self) -> bool:
+        return self.unread is None
 
     @classmethod
     def read(
@@ -185,13 +191,30 @@ class Catalog:
         memberships: Iterable[tuple[int, int]],
         permissions: Iterable[Permission],
     ) -> Catalog:
-        """A complete catalog, from the rows the session read."""
-        return cls(
-            complete=True,
-            principals={p.principal_id: p for p in principals},
-            memberships=frozenset(memberships),
-            permissions=tuple(permissions),
-        )
+        """The catalog of these rows, or one not complete, with
+        :data:`PARTIAL_READ`, where a membership, a grant or an owner names an
+        id with no principal row.
+
+        A denial hides a principal's row and not the rows that name it
+        (``13_fixed_roles_probe.py``, FR5), so this is how a hidden principal
+        shows. Denials are left out: they are not read for the list.
+        """
+        by_id = {p.principal_id: p for p in principals}
+        pairs = frozenset(memberships)
+        rows = tuple(permissions)
+        named = {
+            *(id_ for pair in pairs for id_ in pair),
+            *(p.owner_id for p in by_id.values() if p.owner_id is not None),
+            *(row.grantee_id for row in rows if row.state in GRANTED),
+            *(
+                row.major_id
+                for row in rows
+                if row.state in GRANTED and row.class_ == PRINCIPAL_CLASS
+            ),
+        }
+        if not named <= by_id.keys():
+            return cls(unread=PARTIAL_READ)
+        return cls(principals=by_id, memberships=pairs, permissions=rows)
 
     # Indexes, built once per catalog: a target has one, and every managed
     # login on it is assessed against it.
@@ -248,8 +271,7 @@ class Catalog:
                 if role_id in refused:
                     continue
                 if _own(self, role_id, refused) or any(
-                    parent in refused or parent not in self.principals
-                    for parent in self.parents.get(role_id, ())
+                    parent in refused for parent in self.parents.get(role_id, ())
                 ):
                     refused.add(role_id)
                     grew = True
@@ -288,6 +310,11 @@ PERMISSIONS = (
     f"FROM sys.server_permissions WHERE class IN ({SERVER_CLASS}, {PRINCIPAL_CLASS})"
 )
 
+#: How many times :func:`read_catalog` reads the three views before it takes
+#: :data:`PARTIAL_READ` as the answer. A principal made during one read is
+#: seen by the next; a denial hides it every time.
+READS = 2
+
 
 def read_catalog(cursor: Cursor) -> Catalog:
     """What guardrail 9 reads, as the tool login.
@@ -297,23 +324,28 @@ def read_catalog(cursor: Cursor) -> Catalog:
     complete: a partial read would pass a login whose role it cannot see
     (PA2, #1567).
 
-    **The read checks itself.** ``HAS_PERMS_BY_NAME`` answers for the server,
-    and a narrower ``DENY VIEW DEFINITION ON SERVER ROLE::`` still hides that
-    role's row, and ``DENY VIEW ANY SECURITY DEFINITION`` hides it and its
-    grants (``13_fixed_roles_probe.py``, FR5). So a membership, a grant or an owner that
-    names an id with no principal row makes the catalog not complete, with
-    :data:`PARTIAL_READ`. That also catches a principal made between the
-    three statements, which are not one snapshot: the principals are read
-    first, so a principal made later is named only by the rows read after.
+    **The read checks itself** (:meth:`Catalog.read`). The three statements
+    are not one snapshot, and the principals are read first, so a principal
+    made later is named only by the rows read after it, and the check sees
+    it. Such a read is made again, once.
 
     Each statement goes without parameters: pyodbc binds a ``None`` as one.
     """
     cursor.execute(VIEW_DEFINITIONS)
     row = cursor.fetchone()
     if row is None or row[0] != 1:
-        return Catalog(complete=False)
+        return Catalog(unread=MISSING_GRANT)
     if row[1] == 0:
-        return Catalog(complete=False, unread=DENIED_SECURITY)
+        return Catalog(unread=DENIED_SECURITY)
+    read = Catalog(unread=PARTIAL_READ)
+    for _ in range(READS):
+        read = _read_views(cursor)
+        if read.unread != PARTIAL_READ:
+            break
+    return read
+
+
+def _read_views(cursor: Cursor) -> Catalog:
     cursor.execute(PRINCIPALS)
     principals = [
         Principal(
@@ -332,14 +364,6 @@ def read_catalog(cursor: Cursor) -> Catalog:
         Permission(int(grantee), str(name), int(class_), int(major), str(state).strip())
         for grantee, name, class_, major, state in cursor.fetchall()
     ]
-    known = {p.principal_id for p in principals}
-    named = {
-        *(row.grantee_id for row in permissions),
-        *(id_ for pair in memberships for id_ in pair),
-        *(p.owner_id for p in principals if p.owner_id is not None),
-    }
-    if not named <= known:
-        return Catalog(complete=False, unread=PARTIAL_READ)
     return Catalog.read(principals, memberships, permissions)
 
 
@@ -366,21 +390,19 @@ def _roles_of(catalog: Catalog, principal_id: int) -> list[int]:
 def _own(catalog: Catalog, holder_id: int, refused: Set[int]) -> list[str]:
     """What ``holder_id`` holds on the list itself, not through a role.
 
-    ``refused`` is the set of roles known so far to be refused.
+    ``refused`` is the set of roles known so far to be refused. Every id a
+    grant names has a principal row: :meth:`Catalog.read` checks it.
     """
     found: list[str] = []
-    holder = catalog.principals.get(holder_id)
-    if holder is not None and holder.is_role and holder.name in ADMIN_ROLES:
+    holder = catalog.principals[holder_id]
+    if holder.is_role and holder.name in ADMIN_ROLES:
         found.append(holder.name)
     for row in catalog.granted.get(holder_id, ()):
         if row.class_ == SERVER_CLASS and row.permission in SERVER_PERMISSIONS:
             found.append(row.permission)
         elif row.class_ == PRINCIPAL_CLASS:
-            on = catalog.principals.get(row.major_id)
-            if on is None:
-                if row.permission in LOGIN_PERMISSIONS | ROLE_PERMISSIONS:
-                    found.append(f"{row.permission} ON principal #{row.major_id}")
-            elif not on.is_role and row.permission in LOGIN_PERMISSIONS:
+            on = catalog.principals[row.major_id]
+            if not on.is_role and row.permission in LOGIN_PERMISSIONS:
                 found.append(f"{row.permission} ON LOGIN::{bracketed(on.name)}")
             elif on.is_role and row.permission in ROLE_PERMISSIONS and on.principal_id in refused:
                 found.append(f"{row.permission} ON SERVER ROLE::{bracketed(on.name)}")
@@ -398,12 +420,12 @@ def refused_roles(catalog: Catalog) -> frozenset[int]:
 def assess(principal_id: int, catalog: Catalog) -> Assessment:
     """Guardrail 9's findings for the login ``principal_id``.
 
-    Without a complete catalog, every login is refused with the catalog's
+    Where the catalog is not complete, every login is refused with its
     ``unread``. A complete one that has no row for the login, or none for
     ``public``, refuses it too, with :data:`MISSING_LOGIN` or
     :data:`MISSING_PUBLIC`: a path the read did not see never passes.
     """
-    if not catalog.complete:
+    if catalog.unread is not None:
         return Assessment(unread=catalog.unread)
     if principal_id not in catalog.principals:
         return Assessment(unread=MISSING_LOGIN)
@@ -417,13 +439,7 @@ def assess(principal_id: int, catalog: Catalog) -> Assessment:
     if public_id not in holders:
         holders.append(public_id)
     for role_id in holders:
-        role = catalog.principals.get(role_id)
-        if role is None:
-            # A membership row names a role the catalog has no row for. It
-            # counts as a refused one.
-            found.add(f"membership of principal #{role_id}")
-            continue
-        through = f" through {bracketed(role.name)}"
+        through = f" through {bracketed(catalog.principals[role_id].name)}"
         for grant in _own(catalog, role_id, refused):
             # A fixed role names itself: "sysadmin", not "sysadmin through
             # [sysadmin]".

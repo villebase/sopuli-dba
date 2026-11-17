@@ -260,18 +260,22 @@ members of other server roles. Every login is a member of the server role
 reads `public`'s grants as every login's: a grant of `ALTER ANY SERVER ROLE`
 to `public` refuses every managed login. The guardrail reads grants, with or
 without `WITH GRANT OPTION`, and not denials: a login is refused for a grant
-whatever it is denied. A grant on a principal the read has no row for, and a
-membership of one, count as a grant on and a membership of a refused role.
-A read with no row for the login, or none for `public`, refuses the login.
+whatever it is denied. A read with no row for the login, or none for
+`public`, refuses the login.
 
 **The read checks itself.** `HAS_PERMS_BY_NAME` answers 1 for `VIEW ANY
 DEFINITION` while a narrower denial still hides rows. `DENY VIEW DEFINITION
-ON SERVER ROLE::` hides that role's row and not its grants. `DENY VIEW ANY
-SECURITY DEFINITION`, 2022 and later, hides a role's row and its grants
-(`13_fixed_roles_probe.py`, FR5). So the guardrail refuses every login where
-the tool login is denied `VIEW ANY SECURITY DEFINITION`, or where a
-membership, a grant or an owner in the read names a principal the read has no
-row for. That also covers a principal made while the read runs.
+ON SERVER ROLE::` hides that role's row, and not its grants or its
+membership rows. `DENY VIEW DEFINITION ON LOGIN::` does the same for a
+login. `DENY VIEW ANY SECURITY DEFINITION`, 2022 and later, hides every row
+the read makes: principals, grants and memberships
+(`13_fixed_roles_probe.py`, FR5). So the guardrail refuses
+every login where the tool login is denied `VIEW ANY SECURITY DEFINITION`, or
+where a membership, a grant, the object of a grant, or an owner in the read
+names a principal the read has no row for. A principal made while the read
+runs shows the same way, so such a read is made again, once, before every
+login is refused.
+
 The guardrail applies to the password verbs, and the tool's own login is
 exempt, as on MySQL ([#1222](../decisions/log.md#1222)).
 

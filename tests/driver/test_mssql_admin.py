@@ -8,6 +8,8 @@ Each path of probe 12 (`12_guardrail_paths_probe.py`) as rows of
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from sopuli.driver.guardrails import GLOBAL_PRIVILEGE, review, server_refusal
@@ -21,6 +23,7 @@ from sopuli.driver.mssql.admin import (
     PERMISSIONS,
     PRINCIPAL_CLASS,
     PRINCIPALS,
+    READS,
     SERVER_CLASS,
     VIEW_DEFINITIONS,
     Assessment,
@@ -222,13 +225,30 @@ def test_paths_compose_to_a_fixed_point() -> None:
     assert grants_of(read, OTHER) == set()
 
 
-def test_a_principal_the_catalog_has_no_row_for_counts_as_refused() -> None:
-    read = catalog(
-        members=((999, APP.principal_id),),
-        grants=(Permission(OTHER.principal_id, "ALTER", PRINCIPAL_CLASS, 998),),
-    )
-    assert grants_of(read) == {"membership of principal #999"}
-    assert grants_of(read, OTHER) == {"ALTER ON principal #998"}
+@pytest.mark.parametrize(
+    ("members", "grants"),
+    [
+        (((999, APP.principal_id),), ()),
+        (((OPS.principal_id, 999),), ()),
+        ((), (Permission(999, "CONTROL SERVER", SERVER_CLASS, 0),)),
+        ((), (Permission(OTHER.principal_id, "ALTER", PRINCIPAL_CLASS, 999),)),
+    ],
+    ids=["role", "member", "grantee", "object"],
+)
+def test_an_id_with_no_principal_row_makes_the_read_partial(
+    members: tuple[tuple[int, int], ...], grants: tuple[Permission, ...]
+) -> None:
+    """A denial hides a row and not the rows that name it (FR5), so every
+    login is refused, not only the one the row is about."""
+    read = catalog(OPS, members=members, grants=grants)
+    assert read == Catalog(unread=PARTIAL_READ)
+    assert assess(SA.principal_id, read).unread == PARTIAL_READ
+
+
+def test_a_denial_naming_a_principal_with_no_row_is_not_read() -> None:
+    """Denials are not read for the list, so they do not make the read partial."""
+    read = catalog(grants=(Permission(999, "CONTROL SERVER", SERVER_CLASS, 0, state="D"),))
+    assert read.complete
 
 
 def test_a_name_with_a_bracket_is_quoted() -> None:
@@ -243,7 +263,9 @@ def test_a_name_with_a_bracket_is_quoted() -> None:
 
 def test_without_view_any_definition_every_login_is_refused() -> None:
     """#1567: the tool cannot see which roles a login owns."""
-    assert assess(APP.principal_id, Catalog(complete=False)) == Assessment(unread=MISSING_GRANT)
+    assert assess(APP.principal_id, Catalog(unread=MISSING_GRANT)) == Assessment(
+        unread=MISSING_GRANT
+    )
     assert "VIEW ANY DEFINITION" in MISSING_GRANT
 
 
@@ -301,14 +323,20 @@ def test_a_member_of_login_manager_is_refused() -> None:
 class FakeCursor:
     """Answers each of `read_catalog`'s statements, and records them."""
 
-    def __init__(self, answers: dict[str, list[tuple[object, ...]]]) -> None:
+    def __init__(self, answers: dict[str, list[Any]]) -> None:
         self.answers = answers
         self.sent: list[tuple[object, ...]] = []
         self.rows: list[tuple[object, ...]] = []
 
     def execute(self, *args: object) -> None:
         self.sent.append(args)
-        self.rows = self.answers[str(args[0])]
+        answer = self.answers[str(args[0])]
+        # A list of answers, one per call, stands for a server that changes
+        # between reads; the last is kept.
+        if answer and isinstance(answer[0], list):
+            self.rows = answer.pop(0) if len(answer) > 1 else answer[0]
+        else:
+            self.rows = answer
 
     def fetchone(self) -> object:
         return self.rows[0] if self.rows else None
@@ -320,16 +348,16 @@ class FakeCursor:
 @pytest.mark.parametrize("answer", [0, None])
 def test_read_catalog_stops_without_view_any_definition(answer: int | None) -> None:
     cursor = FakeCursor({VIEW_DEFINITIONS: [(answer, 1)]})
-    assert read_catalog(cursor) == Catalog(complete=False)
+    assert read_catalog(cursor) == Catalog(unread=MISSING_GRANT)
     assert cursor.sent == [(VIEW_DEFINITIONS,)]
     assert assess(APP.principal_id, read_catalog(cursor)).unread == MISSING_GRANT
 
 
 def test_read_catalog_stops_where_view_any_security_definition_is_denied() -> None:
-    """2022+: the denial hides a role's row and its grants (#1553)."""
+    """2022+: the denial hides every row the read makes (FR5)."""
     cursor = FakeCursor({VIEW_DEFINITIONS: [(1, 0)]})
     read = read_catalog(cursor)
-    assert read == Catalog(complete=False, unread=DENIED_SECURITY)
+    assert read == Catalog(unread=DENIED_SECURITY)
     assert assess(APP.principal_id, read).unread == DENIED_SECURITY
 
 
@@ -395,5 +423,25 @@ def test_an_id_with_no_principal_row_refuses_every_login(
     cursor = FakeCursor({VIEW_DEFINITIONS: [(1, 1)], **SERVER_ROWS, **hidden})
     read = read_catalog(cursor)
 
-    assert read == Catalog(complete=False, unread=PARTIAL_READ)
+    assert read == Catalog(unread=PARTIAL_READ)
     assert assess(1, read).unread == PARTIAL_READ
+    # Read twice: a denial hides the row both times.
+    assert cursor.sent.count((PRINCIPALS,)) == READS
+
+
+def test_a_principal_made_during_the_read_is_seen_by_the_second() -> None:
+    """The first read names role 401 in a membership but has no row for it;
+    the second read has the row."""
+    made = [*SERVER_ROWS[PRINCIPALS], (401, "acme_new", "R ", 1, False)]
+    cursor = FakeCursor(
+        {
+            VIEW_DEFINITIONS: [(1, 1)],
+            PRINCIPALS: [SERVER_ROWS[PRINCIPALS], made],
+            MEMBERSHIPS: [(3, 1), (401, 300)],
+            PERMISSIONS: SERVER_ROWS[PERMISSIONS],
+        }
+    )
+    read = read_catalog(cursor)
+
+    assert read.complete
+    assert 401 in read.principals

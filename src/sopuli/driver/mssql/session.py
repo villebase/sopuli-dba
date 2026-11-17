@@ -96,7 +96,7 @@ class MssqlSession(ClosesConnection):
             LOG.debug(
                 "%s guardrail catalog: %s",
                 self.target.name,
-                "complete" if self._catalog.complete else "without VIEW ANY DEFINITION",
+                self._catalog.unread or "complete",
             )
         return assess(principal_id, self._catalog)
 

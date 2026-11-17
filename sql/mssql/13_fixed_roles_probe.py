@@ -19,15 +19,17 @@ login sopuli_probe_f is made its only new member, and then:
        only (`#id`), or not at all (`-`)
 
 Then, with VIEW ANY DEFINITION granted to the tool login, and a server role
-sopuli_probe_fr that holds CONTROL SERVER:
+sopuli_probe_fr that holds CONTROL SERVER and has sopuli_probe_f as member:
 
   FR5  what the tool login reads under no denial, under DENY VIEW
-       DEFINITION ON SERVER ROLE:: the role, and under DENY VIEW ANY
-       SECURITY DEFINITION, each revoked before the next: HAS_PERMS_BY_NAME
-       of VIEW ANY DEFINITION and of VIEW ANY SECURITY DEFINITION (`null`
-       where the server answers NULL), the role's row in
-       sys.server_principals, and its grant rows in sys.server_permissions,
-       as `v,s|row|grants`
+       DEFINITION ON SERVER ROLE:: the role, under DENY VIEW DEFINITION ON
+       LOGIN:: sopuli_probe_f, and under DENY VIEW ANY SECURITY DEFINITION,
+       each revoked before the next: HAS_PERMS_BY_NAME of VIEW ANY
+       DEFINITION and of VIEW ANY SECURITY DEFINITION (`null` where the
+       server answers NULL), the role's row in sys.server_principals, its
+       grant rows in sys.server_permissions, the membership row of
+       sopuli_probe_f in it, and sopuli_probe_f's row, as
+       `v,s|role|grants|membership|login`
 
 THROWAWAY SERVERS ONLY. It creates the logins sopuli_probe_tool,
 sopuli_probe_hash (02's setup makes them) and sopuli_probe_f, adds
@@ -58,13 +60,16 @@ RESULTS -- the same on every release unless named
   on the 'Linux' platform". 16.0.4325.4 and 17.0.5065.9 add one.
   FR5  **HAS_PERMS_BY_NAME answers 1 for VIEW ANY DEFINITION under either
        denial, and the denial still hides rows**. DENY VIEW DEFINITION on
-       the role hides its row and not its grant (`1,1|0|1`). DENY VIEW ANY
-       SECURITY DEFINITION hides the row and the grant, and HAS_PERMS_BY_NAME
-       of that permission answers 0 (`1,0|0|0`). With no denial the tool
-       reads both (`1,1|1|1`). 15.0.4510.2 answers NULL for VIEW ANY
-       SECURITY DEFINITION, as for a permission it does not have, and the
-       DENY of it is a syntax error, 102; the denial on the role is as on
-       the others (`1,null|0|1`)
+       the role hides its row, and not its grant or its membership row
+       (`1,1|0|1|1|1`). DENY VIEW DEFINITION on the login hides the login's
+       row, and not the membership row (`1,1|1|1|1|0`). **DENY VIEW ANY
+       SECURITY DEFINITION hides every row read: the role's, its grant, the
+       membership and the login's**, and HAS_PERMS_BY_NAME of that
+       permission answers 0 (`1,0|0|0|0|0`). With no denial the tool reads every row
+       (`1,1|1|1|1|1`). 15.0.4510.2 answers NULL for VIEW ANY SECURITY
+       DEFINITION, as for a permission it does not have, and the DENY of it
+       is a syntax error, 102; the denials on the role and the login are as
+       on the others
 
 HOW TO RUN, against the matrix (test/README.md), from the repo root:
 
@@ -190,36 +195,46 @@ def once(service: str, role: str) -> tuple[str, str, str, str]:
 #: FR5's role, which holds CONTROL SERVER.
 HIDDEN = "sopuli_probe_fr"
 
-#: What the tool login reads, as `v,s | r | g`: HAS_PERMS_BY_NAME of VIEW ANY
-#: DEFINITION and VIEW ANY SECURITY DEFINITION, the role's rows in
-#: sys.server_principals, and its grant rows in sys.server_permissions.
+#: What the tool login reads, as `v,s|r|g|m|l`: HAS_PERMS_BY_NAME of VIEW
+#: ANY DEFINITION and VIEW ANY SECURITY DEFINITION, the role's rows in
+#: sys.server_principals, its grant rows in sys.server_permissions, the
+#: membership rows that name sopuli_probe_f in the role, and sopuli_probe_f's
+#: rows in sys.server_principals.
 HIDDEN_VIEW = (
     "SELECT ISNULL(CAST(HAS_PERMS_BY_NAME(NULL, NULL, 'VIEW ANY DEFINITION') AS varchar(4)), "
     "'null') + ',' + ISNULL(CAST(HAS_PERMS_BY_NAME(NULL, NULL, "
     "'VIEW ANY SECURITY DEFINITION') AS varchar(4)), 'null') + ' | ' "
     f"+ (SELECT CAST(COUNT(*) AS varchar(4)) FROM sys.server_principals WHERE name = '{HIDDEN}') "
     "+ ' | ' + (SELECT CAST(COUNT(*) AS varchar(4)) FROM sys.server_permissions "
-    f"WHERE grantee_principal_id = SUSER_ID('{HIDDEN}'))"
+    f"WHERE grantee_principal_id = SUSER_ID('{HIDDEN}')) "
+    "+ ' | ' + (SELECT CAST(COUNT(*) AS varchar(4)) FROM sys.server_role_members "
+    f"WHERE role_principal_id = SUSER_ID('{HIDDEN}') "
+    f"AND member_principal_id = SUSER_ID('{MEMBER}')) "
+    "+ ' | ' + (SELECT CAST(COUNT(*) AS varchar(4)) FROM sys.server_principals "
+    f"WHERE name = '{MEMBER}')"
 )
 
 #: FR5's denials, each made and revoked in turn.
 DENIALS = {
     "none": "",
     "deny on the role": f"VIEW DEFINITION ON SERVER ROLE::[{HIDDEN}]",
+    "deny on the login": f"VIEW DEFINITION ON LOGIN::[{MEMBER}]",
     "deny security definition": "VIEW ANY SECURITY DEFINITION",
 }
 
 #: FR5's results: what the tool reads under each denial.
 #: sqlcmd's column separator is `|`, and each cell is stripped.
 RECORDED_FR5: dict[str, str] = {
-    "none": "1,1|1|1",
-    "deny on the role": "1,1|0|1",
-    "deny security definition": "1,0|0|0",
+    "none": "1,1|1|1|1|1",
+    "deny on the role": "1,1|0|1|1|1",
+    "deny on the login": "1,1|1|1|1|0",
+    "deny security definition": "1,0|0|0|0|0",
 }
 RECORDED_FR5_BY: dict[str, dict[str, str]] = {
     "15": {
-        "none": "1,null|1|1",
-        "deny on the role": "1,null|0|1",
+        "none": "1,null|1|1|1|1",
+        "deny on the role": "1,null|0|1|1|1",
+        "deny on the login": "1,null|1|1|1|0",
         "deny security definition": "not denied: 102",
     },
 }
@@ -228,7 +243,11 @@ RECORDED_FR5_BY: dict[str, dict[str, str]] = {
 def hidden(service: str, major: str) -> None:
     """FR5: what a DENY hides from a tool login that holds VIEW ANY DEFINITION."""
     ch.sa(service, f"GRANT VIEW ANY DEFINITION TO [{ch.TOOL}]")
-    ch.sa(service, f"CREATE SERVER ROLE [{HIDDEN}]; GRANT CONTROL SERVER TO [{HIDDEN}]")
+    ch.sa(
+        service,
+        f"CREATE SERVER ROLE [{HIDDEN}]; GRANT CONTROL SERVER TO [{HIDDEN}]; "
+        f"ALTER SERVER ROLE [{HIDDEN}] ADD MEMBER [{MEMBER}]",
+    )
     for label, what in DENIALS.items():
         if what:
             _, errors = ch.client(service, "sa", ch.SA_PASSWORD, f"DENY {what} TO [{ch.TOOL}]")
@@ -245,7 +264,15 @@ def hidden(service: str, major: str) -> None:
 
 
 def drop_hidden(service: str) -> None:
-    ch.sa(service, f"IF SUSER_ID('{HIDDEN}') IS NOT NULL DROP SERVER ROLE [{HIDDEN}]")
+    ch.sa(
+        service,
+        f"IF SUSER_ID('{HIDDEN}') IS NOT NULL BEGIN "
+        "IF EXISTS (SELECT 1 FROM sys.server_role_members "
+        f"WHERE role_principal_id = SUSER_ID('{HIDDEN}') "
+        f"AND member_principal_id = SUSER_ID('{MEMBER}')) "
+        f"ALTER SERVER ROLE [{HIDDEN}] DROP MEMBER [{MEMBER}]; "
+        f"DROP SERVER ROLE [{HIDDEN}] END",
+    )
 
 
 def probe(service: str) -> None:

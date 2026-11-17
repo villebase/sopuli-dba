@@ -210,7 +210,7 @@ def test_a_deny_on_one_role_refuses_every_login(
         finally:
             sa.cursor().execute(deny.replace("DENY", "REVOKE", 1))
 
-    assert read == Catalog(complete=False, unread=PARTIAL_READ)
+    assert read == Catalog(unread=PARTIAL_READ)
     assert assess(_id(sa, paths.plain), read).unread == PARTIAL_READ
 
 

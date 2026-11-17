@@ -6150,8 +6150,10 @@ def report_privileges_command(
     when a part could not be read, such as without the optional grant on
     Oracle's privilege views, or another database of a PostgreSQL cluster,
     which a target cannot see into and no other declared target connects to
-    at the same host and port, or MariaDB's global level. Oracle,
-    PostgreSQL, MySQL and MariaDB can run this report.
+    at the same host and port, MariaDB's global level, or on SQL Server a
+    database the tool login cannot open, or a Windows login on a server with
+    a group login. Oracle, PostgreSQL, MySQL, MariaDB and SQL Server can run
+    this report.
     """
     document = run.document
     selection = selected(selectors, targets, (), groups, ())

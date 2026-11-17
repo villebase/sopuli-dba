@@ -43,7 +43,8 @@ refused the same way, as guardrail 9's is (:mod:`~sopuli.driver.mssql.admin`).
 it is in holds, a Windows group or an Entra group, and the server keeps no
 record of a group's members: Windows or Entra ID answers that at login. Where
 such a login is surveyed on a server that has a group login, the parts are
-read and that gap is named.
+read and that gap is named for that login alone, which is then not checked.
+A SQL login cannot be in a group, so it keeps its state (#1555, Q5).
 """
 
 from __future__ import annotations
@@ -156,15 +157,16 @@ class ServerGrants:
 
     ``system`` and ``objects`` are ``None`` where the read was not complete,
     and ``unread`` then says why; ``roles`` then holds the memberships the
-    tool login could see. ``gaps`` says what complete parts cannot show, such
-    as a Windows or Entra login's privileges through a group login.
+    tool login could see. ``gaps`` is ``(account, reason)`` for what complete
+    parts cannot show about one account, such as a Windows or Entra login's
+    privileges through a group login (#1555, Q5).
     """
 
     roles: tuple[RoleGrant, ...]
     system: tuple[GrantRow, ...] | None
     objects: tuple[GrantRow, ...] | None
     unread: str | None = None
-    gaps: tuple[str, ...] = ()
+    gaps: tuple[tuple[str, str], ...] = ()
 
 
 def read(cursor: Cursor, accounts: Sequence[str], *, public: bool) -> ServerGrants:
@@ -287,14 +289,19 @@ def survey(
                 _grant(PUBLIC_GRANTEE, row, (), by_id)
                 for row in granted.get(everyone.principal_id, ())
             )
-    surveyed = [by_name[name] for name in accounts if name in by_name]
+    # Only a Windows or Entra login can be in a group login; a SQL login
+    # keeps its state (#1555, Q5).
     groups = any(p.type in GROUP_TYPES for p in by_id.values())
-    members = any(p.type in GROUP_MEMBER_TYPES for p in surveyed)
+    gaps = tuple(
+        (name, GROUP_MEMBERS)
+        for name in dict.fromkeys(accounts)
+        if groups and name in by_name and by_name[name].type in GROUP_MEMBER_TYPES
+    )
     return ServerGrants(
         roles=roles,
         system=tuple(row for row in found if row.kind == SYSTEM),
         objects=tuple(row for row in found if row.kind == OBJECT),
-        gaps=(GROUP_MEMBERS,) if groups and members else (),
+        gaps=gaps,
     )
 
 

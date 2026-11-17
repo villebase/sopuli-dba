@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Sequence
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -547,6 +548,36 @@ def test_a_driver_without_a_privilege_survey_is_not_supported(
     result = report(write_config)
     assert "not supported: " in click.unstyle(result.output)
     assert "cannot survey its privileges" in result.output
+
+
+def test_a_reason_about_one_account_makes_only_that_account_not_checked(
+    write_config: WriteConfig, session: dict[str, Any]
+) -> None:
+    """Such as a SQL Server Windows login's privileges through a group
+    login: that account is not checked, the others keep their state, and the
+    run exits 4 (#1555, Q5)."""
+
+    class TwoAccounts(FakeSession):
+        def survey_accounts(self) -> tuple[SurveyedAccount, ...]:
+            other = SurveyedAccount(
+                "ACME_RR_OPS", "OPEN", False, "DEFAULT", False, False, 180, 10, 0
+            )
+            return (*super().survey_accounts(), other)
+
+    reason = "the privileges held through a group login are not listed"
+    session["session"] = TwoAccounts(replace(GRANTS, account_unreadable=(("ACME_RR_OPS", reason),)))
+    result = report(write_config)
+
+    assert result.exit_code == ExitCode.PARTIAL, result.output
+    text = click.unstyle(result.output)
+    ops = text.split("ACME_RR_OPS")[1]
+    assert f"not checked: {reason}" in ops
+    assert f"not checked: {reason}" not in text.split("ACME_RR_OPS")[0]
+    document = json_run(write_config)
+    states = {row["account"]: row["state"] for row in document["results"]}
+    assert states == {APP: "REPORT_OK", "ACME_RR_OPS": "NOT_CHECKED"}
+    ops_row = next(row for row in document["results"] if row["account"] == "ACME_RR_OPS")
+    assert ops_row["privileges"]["unreadable"] == [reason]
 
 
 def test_a_capability_refused_at_connect_is_not_checked_exit_4(

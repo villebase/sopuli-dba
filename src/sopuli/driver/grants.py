@@ -124,6 +124,11 @@ class GrantSurvey:
     #: :func:`other_databases_reason`'s words, so a reader that does not call
     #: :meth:`not_checked` still shows them as not checked.
     other_databases: tuple[str, ...] = ()
+    #: ``(account, reason)`` for what the parts cannot show about one account
+    #: alone, such as a SQL Server Windows login's privileges through a group
+    #: login (#1555, Q5). That account is not checked, and the others keep
+    #: their state.
+    account_unreadable: tuple[tuple[str, str], ...] = ()
 
     def not_checked(self, covered: Collection[str]) -> tuple[str, ...]:
         """:attr:`unreadable`, with the other databases in ``covered`` left out

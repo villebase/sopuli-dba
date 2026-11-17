@@ -202,13 +202,18 @@ def test_without_the_grant_a_zero_for_security_definition_is_not_a_denial() -> N
 
 
 def test_a_windows_login_on_a_server_with_a_windows_group_names_the_gap() -> None:
-    """The server keeps no record of a group's members (#1589 review)."""
+    """The server keeps no record of a group's members (#1589 review). The
+    gap is the Windows login's alone: a SQL login keeps its state (Q5)."""
     group = Principal(273, "EXAMPLE\\acme_admins", "G")
     found = server_grants.survey(
-        [*PRINCIPALS, group], MEMBERSHIPS, PERMISSIONS, ("EXAMPLE\\acme_svc",), public=False
+        [*PRINCIPALS, group],
+        MEMBERSHIPS,
+        PERMISSIONS,
+        ("EXAMPLE\\acme_svc", "acme_app_user"),
+        public=False,
     )
 
-    assert found.gaps == (GROUP_MEMBERS,)
+    assert found.gaps == (("EXAMPLE\\acme_svc", GROUP_MEMBERS),)
     assert found.system is not None
     assert survey(public=False).gaps == ()
     without_group = server_grants.survey(
@@ -228,7 +233,7 @@ def test_an_entra_login_on_a_server_with_an_entra_group_names_the_gap() -> None:
         entra, MEMBERSHIPS, PERMISSIONS, ("acme_ops@example.com",), public=False
     )
 
-    assert found.gaps == (GROUP_MEMBERS,)
+    assert found.gaps == (("acme_ops@example.com", GROUP_MEMBERS),)
 
 
 def test_read_with_the_grant_reads_the_paths() -> None:

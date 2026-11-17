@@ -71,11 +71,16 @@ class AccountPrivileges:
     #: Schema privileges (23ai), each with its schema as ``owner``. ``()`` on a
     #: release that has none.
     schemas: tuple[Privilege, ...] | None
+    #: Why this account alone is not checked, where the parts were read but
+    #: cannot show all it holds (:attr:`GrantSurvey.account_unreadable`).
+    unreadable: tuple[str, ...] = ()
 
     @property
     def complete(self) -> bool:
-        """Whether every part was read."""
-        return None not in (self.system, self.objects, self.columns, self.schemas)
+        """Whether every part was read, and nothing about this account alone
+        is missing from them."""
+        parts = None not in (self.system, self.objects, self.columns, self.schemas)
+        return parts and not self.unreadable
 
 
 def collapse(rows: Sequence[GrantRow]) -> tuple[Privilege, ...]:
@@ -210,6 +215,9 @@ def _one(target: str, account: str, kind: str, survey: GrantSurvey) -> AccountPr
         objects=part(survey.objects),
         columns=part(survey.columns),
         schemas=part(survey.schemas),
+        unreadable=tuple(
+            reason for account, reason in survey.account_unreadable if account == name
+        ),
     )
 
 

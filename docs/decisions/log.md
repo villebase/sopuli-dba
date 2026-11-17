@@ -6392,7 +6392,16 @@ the register.
      login. `--public` lists `public`'s grants, and `guest`'s where it is
      enabled. Without `CONNECT ANY DATABASE` and `VIEW ANY DEFINITION`,
      every database but `master` is *not checked*, by name, as is one that
-     is offline or refuses the tool login.
+     is offline or refuses the tool login. The build later found that
+     `guest` also lets the tool login into `tempdb` and `msdb`, so those
+     are read too (measured on 16.0.4325.4).
+
+  A live run of the privilege report raised a fifth question, which the
+  maintainer decided on 2026-11-17 (Q5 on #1555):
+
+  5. A Windows or Entra login on a server that has a Windows or Entra
+     group login is *not checked* in the privilege report, with its own
+     reason, and every other account keeps its state.
 - **Why:**
   1. UC-5 §3 and [#1376](#1376) make a capability a target lacks *not
      checked*, and [#1549](#1549) already reads the reset as the
@@ -6409,6 +6418,11 @@ the register.
      ([#1482](#1482), [#1483](#1483)). A fixed role's permissions are in no
      catalog row (`13_fixed_roles_probe.py`), so it is named as
      PostgreSQL's `pg_*` roles are.
+  5. The server keeps no record of a group's members: Windows or Entra ID
+     answers that at login. So such a login's privileges may be fewer in the
+     report than it holds, and UC-5 §3 forbids calling it OK. A SQL login
+     cannot be in a group. The 2022 image has a Windows group login,
+     `BUILTIN\Administrators`, as most Windows estates have one.
 - **Rejected:**
   1. Unreachable, exit 1: every report run on a 2019 or 2022 target under
      `strict` would exit 1, though nothing is down. The cost accepted: a
@@ -6422,3 +6436,7 @@ the register.
      `password_lifetime: unlimited` on a login whose expiry is on reads *not
      checked*, not as a problem.
   4. No other mapping was proposed.
+  5. The gap as one reason for the whole target: on such a server every
+     account, SQL logins too, read *not checked*, and every run exited 4.
+     The gap as a note only: a Windows login whose privileges may be short
+     would read OK.

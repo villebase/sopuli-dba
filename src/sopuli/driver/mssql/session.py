@@ -191,6 +191,9 @@ def _grant_survey(
         columns=tuple(row for row in rows if row.kind == COLUMN) if databases_read else None,
         schemas=tuple(row for row in rows if row.kind == SCHEMA) if databases_read else None,
         unreadable=tuple(unreadable),
+        # A Windows or Entra login on a server with a group login: that
+        # login alone is not checked (#1555, Q5).
+        account_unreadable=server.gaps,
     )
 
 
@@ -440,7 +443,7 @@ class MssqlSession(ClosesConnection):
         Any other failure fails the target."""
         self.scope()
         server = self._read(lambda cursor: server_grants.read(cursor, accounts, public=public))
-        unreadable = [reason for reason in (server.unread, *server.gaps) if reason]
+        unreadable = [server.unread] if server.unread else []
         roles = list(server.roles)
         rows: list[GrantRow] = []
         if server.unread is not None:

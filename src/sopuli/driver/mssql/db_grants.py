@@ -35,7 +35,7 @@ database and sees no row of another user (``07_report_reads_probe.py``, RP4).
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from sopuli.driver.grants import COLUMN, OBJECT, SCHEMA, GrantRow, RoleGrant
 from sopuli.driver.mssql.admin import GRANTED, bracketed
@@ -155,7 +155,6 @@ class DatabaseGrants:
 
     roles: tuple[RoleGrant, ...] = ()
     rows: tuple[GrantRow, ...] = ()
-    gaps: tuple[str, ...] = field(default_factory=tuple)
 
 
 def read_databases(cursor: Cursor) -> list[Database]:

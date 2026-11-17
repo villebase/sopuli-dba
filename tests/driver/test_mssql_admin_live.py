@@ -12,12 +12,19 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any
 
 import pytest
 
 from sopuli.config.model import ExpandedTarget, Target, TargetMssql
-from sopuli.driver.mssql.admin import MISSING_GRANT, Catalog, assess, read_catalog
+from sopuli.driver.mssql.admin import (
+    MISSING_GRANT,
+    PARTIAL_READ,
+    Catalog,
+    assess,
+    read_catalog,
+)
 from sopuli.driver.protocol import Credential
 from sopuli.secrets import Secret
 
@@ -42,18 +49,6 @@ class Paths:
 
     def holder(self, path: str) -> str:
         return f"acme_t1_{path}_{self.tag}"
-
-
-def _tool(live_mssql: Any) -> Any:
-    pyodbc.pooling = False
-    return pyodbc.connect(
-        "Driver={ODBC Driver 18 for SQL Server};"
-        f"Server={{tcp:{live_mssql.host},{live_mssql.port}}};Database=master;Encrypt=yes;"
-        f"TrustServerCertificate=yes;UID={live_mssql.tool_user};"
-        f"PWD={{{live_mssql.tool_password}}};",
-        autocommit=True,
-        timeout=15,
-    )
 
 
 #: Each path: the statements `sa` runs for it, with `{h}` the holder, and the
@@ -132,7 +127,6 @@ def server(live_mssql: Any) -> Iterator[tuple[Any, Paths, bool]]:
             )
         yield sa, paths, manager
     finally:
-        cursor.execute(f"REVOKE VIEW ANY DEFINITION FROM [{live_mssql.tool_user}]")
         # Logins own roles and sit in them, so the roles go first.
         for role in (paths.nest, paths.ctl, paths.owned, paths.other):
             cursor.execute(
@@ -154,11 +148,33 @@ def server(live_mssql: Any) -> Iterator[tuple[Any, Paths, bool]]:
 
 
 def _read(live_mssql: Any) -> Catalog:
-    tool = _tool(live_mssql)
+    tool = live_mssql.connect_as(live_mssql.tool_user, live_mssql.tool_password)
     try:
         return read_catalog(tool.cursor())
     finally:
         tool.close()
+
+
+@contextmanager
+def _view_definitions(sa: Any, tool_user: str, *, held: bool) -> Iterator[None]:
+    """The tool login with `VIEW ANY DEFINITION` or without it, and then as
+    it was before: another module may have granted it."""
+    cursor = sa.cursor()
+    cursor.execute(
+        "SELECT COUNT(*) FROM sys.server_permissions WHERE class = 100 "
+        "AND permission_name = 'VIEW ANY DEFINITION' AND state IN ('G', 'W') "
+        "AND grantee_principal_id = SUSER_ID(?)",
+        tool_user,
+    )
+    before = cursor.fetchone()[0] > 0
+    grant = f"GRANT VIEW ANY DEFINITION TO [{tool_user}]"
+    revoke = f"REVOKE VIEW ANY DEFINITION FROM [{tool_user}]"
+    cursor.execute(grant if held else revoke)
+    try:
+        yield
+    finally:
+        if before != held:
+            cursor.execute(grant if before else revoke)
 
 
 def _id(sa: Any, name: str) -> int:
@@ -172,11 +188,30 @@ def test_without_view_any_definition_the_read_refuses_every_login(
 ) -> None:
     """#1567: the tool login of §2.1 alone reads nothing for the guardrail."""
     sa, paths, _ = server
-    sa.cursor().execute(f"REVOKE VIEW ANY DEFINITION FROM [{live_mssql.tool_user}]")
-    read = _read(live_mssql)
+    with _view_definitions(sa, live_mssql.tool_user, held=False):
+        read = _read(live_mssql)
 
     assert not read.complete
     assert assess(_id(sa, paths.plain), read).unread == MISSING_GRANT
+
+
+def test_a_deny_on_one_role_refuses_every_login(
+    live_mssql: Any, server: tuple[Any, Paths, bool]
+) -> None:
+    """The review of #1573: the denial hides the role's row while
+    HAS_PERMS_BY_NAME still answers 1, and its grant rows name an id the read
+    has no row for."""
+    sa, paths, _ = server
+    deny = f"DENY VIEW DEFINITION ON SERVER ROLE::[{paths.ctl}] TO [{live_mssql.tool_user}]"
+    with _view_definitions(sa, live_mssql.tool_user, held=True):
+        sa.cursor().execute(deny)
+        try:
+            read = _read(live_mssql)
+        finally:
+            sa.cursor().execute(deny.replace("DENY", "REVOKE", 1))
+
+    assert read == Catalog(complete=False, unread=PARTIAL_READ)
+    assert assess(_id(sa, paths.plain), read).unread == PARTIAL_READ
 
 
 def test_with_view_any_definition_every_path_is_seen(
@@ -185,11 +220,8 @@ def test_with_view_any_definition_every_path_is_seen(
     """PA4: with the grant, the read sees each role, its owner, and a role
     nested in another, and the guardrail finds every path."""
     sa, paths, manager = server
-    sa.cursor().execute(f"GRANT VIEW ANY DEFINITION TO [{live_mssql.tool_user}]")
-    try:
+    with _view_definitions(sa, live_mssql.tool_user, held=True):
         read = _read(live_mssql)
-    finally:
-        sa.cursor().execute(f"REVOKE VIEW ANY DEFINITION FROM [{live_mssql.tool_user}]")
 
     assert read.complete
     got = {path: assess(_id(sa, paths.holder(path)), read) for path in PATHS}
@@ -222,8 +254,7 @@ def test_the_session_reads_the_catalog_once(
         )
     )
     credential = Credential(username=live_mssql.tool_user, secret=Secret(live_mssql.tool_password))
-    sa.cursor().execute(f"GRANT VIEW ANY DEFINITION TO [{live_mssql.tool_user}]")
-    try:
+    with _view_definitions(sa, live_mssql.tool_user, held=True):
         session = session_module.MssqlDriver(correlation_id="t1-1553").connect(target, credential)
         try:
             server_found = session.admin_assessment(_id(sa, paths.holder("server")))
@@ -232,8 +263,6 @@ def test_the_session_reads_the_catalog_once(
             assert session._catalog is catalog
         finally:
             session.close()
-    finally:
-        sa.cursor().execute(f"REVOKE VIEW ANY DEFINITION FROM [{live_mssql.tool_user}]")
 
     assert server_found.grants == frozenset({"CONTROL SERVER"})
     assert plain.grants == frozenset()
@@ -245,10 +274,7 @@ def test_the_tool_login_reads_its_own_grant(
     """The tool login holds ALTER ANY LOGIN; check 9 exempts it as the
     session's own login (#1222), and the read still reports it."""
     sa, _, _ = server
-    sa.cursor().execute(f"GRANT VIEW ANY DEFINITION TO [{live_mssql.tool_user}]")
-    try:
+    with _view_definitions(sa, live_mssql.tool_user, held=True):
         read = _read(live_mssql)
-    finally:
-        sa.cursor().execute(f"REVOKE VIEW ANY DEFINITION FROM [{live_mssql.tool_user}]")
 
     assert "ALTER ANY LOGIN" in assess(_id(sa, live_mssql.tool_user), read).grants

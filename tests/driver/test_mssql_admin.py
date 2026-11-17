@@ -12,10 +12,12 @@ import pytest
 
 from sopuli.driver.guardrails import GLOBAL_PRIVILEGE, review, server_refusal
 from sopuli.driver.mssql.admin import (
+    DENIED_SECURITY,
     MEMBERSHIPS,
     MISSING_GRANT,
     MISSING_LOGIN,
     MISSING_PUBLIC,
+    PARTIAL_READ,
     PERMISSIONS,
     PRINCIPAL_CLASS,
     PRINCIPALS,
@@ -315,28 +317,83 @@ class FakeCursor:
         return self.rows
 
 
-def test_read_catalog_stops_without_view_any_definition() -> None:
-    cursor = FakeCursor({VIEW_DEFINITIONS: [(0,)]})
+@pytest.mark.parametrize("answer", [0, None])
+def test_read_catalog_stops_without_view_any_definition(answer: int | None) -> None:
+    cursor = FakeCursor({VIEW_DEFINITIONS: [(answer, 1)]})
     assert read_catalog(cursor) == Catalog(complete=False)
     assert cursor.sent == [(VIEW_DEFINITIONS,)]
+    assert assess(APP.principal_id, read_catalog(cursor)).unread == MISSING_GRANT
+
+
+def test_read_catalog_stops_where_view_any_security_definition_is_denied() -> None:
+    """2022+: the denial hides a role's row and its grants (#1553)."""
+    cursor = FakeCursor({VIEW_DEFINITIONS: [(1, 0)]})
+    read = read_catalog(cursor)
+    assert read == Catalog(complete=False, unread=DENIED_SECURITY)
+    assert assess(APP.principal_id, read).unread == DENIED_SECURITY
+
+
+#: The rows of a small server: public owned by sa, a fixed role owned by sa,
+#: a login, and a user-defined role it owns.
+SERVER_ROWS: dict[str, list[tuple[object, ...]]] = {
+    PRINCIPALS: [
+        (1, "sa", "S ", None, False),
+        (2, "public", "R ", 1, False),
+        (3, "sysadmin", "R ", 1, True),
+        (300, "acme_app_user", "S ", None, False),
+        (400, "acme_ops", "R ", 300, False),
+    ],
+    MEMBERSHIPS: [(3, 1)],
+    PERMISSIONS: [(300, "CONTROL SERVER", 100, 0, "G ")],
+}
 
 
 def test_read_catalog_reads_the_three_views_without_parameters() -> None:
-    """pyodbc binds a `None` as a parameter, so none is passed."""
-    cursor = FakeCursor(
-        {
-            VIEW_DEFINITIONS: [(1,)],
-            PRINCIPALS: [(2, "public", "R ", 1), (300, "acme_app_user", "S ", None)],
-            MEMBERSHIPS: [(2, 300)],
-            PERMISSIONS: [(300, "CONTROL SERVER", 100, 0, "G ")],
-        }
-    )
+    """pyodbc binds a `None` as a parameter, so none is passed. 2019 answers
+    `NULL` for VIEW ANY SECURITY DEFINITION, which it does not have."""
+    cursor = FakeCursor({VIEW_DEFINITIONS: [(1, None)], **SERVER_ROWS})
     read = read_catalog(cursor)
 
     assert cursor.sent == [(VIEW_DEFINITIONS,), (PRINCIPALS,), (MEMBERSHIPS,), (PERMISSIONS,)]
     assert read == Catalog.read(
-        [Principal(2, "public", "R", 1), Principal(300, "acme_app_user", "S")],
-        [(2, 300)],
+        [
+            Principal(1, "sa", "S"),
+            # sa "owns" public and the fixed roles; the read leaves it out.
+            Principal(2, "public", "R"),
+            Principal(3, "sysadmin", "R"),
+            Principal(300, "acme_app_user", "S"),
+            Principal(400, "acme_ops", "R", owner_id=300),
+        ],
+        [(3, 1)],
         [Permission(300, "CONTROL SERVER", 100, 0, "G")],
     )
     assert assess(300, read).grants == frozenset({"CONTROL SERVER"})
+    assert assess(1, read).grants == frozenset({"sysadmin"})
+
+
+@pytest.mark.parametrize(
+    "hidden",
+    [
+        {MEMBERSHIPS: [(3, 1), (401, 300)]},
+        {PERMISSIONS: [(401, "CONTROL SERVER", 100, 0, "G")]},
+        {
+            PRINCIPALS: [
+                *SERVER_ROWS[PRINCIPALS],
+                (402, "acme_owned", "R ", 401, False),
+            ]
+        },
+    ],
+    ids=["membership", "grantee", "owner"],
+)
+def test_an_id_with_no_principal_row_refuses_every_login(
+    hidden: dict[str, list[tuple[object, ...]]],
+) -> None:
+    """A DENY VIEW DEFINITION on one role hides its row from a tool that holds
+    VIEW ANY DEFINITION (`13_fixed_roles_probe.py`, FR5), and a role made between the
+    three statements has no row either. Either way the read cannot be
+    trusted, whatever login it is asked about."""
+    cursor = FakeCursor({VIEW_DEFINITIONS: [(1, 1)], **SERVER_ROWS, **hidden})
+    read = read_catalog(cursor)
+
+    assert read == Catalog(complete=False, unread=PARTIAL_READ)
+    assert assess(1, read).unread == PARTIAL_READ

@@ -93,6 +93,26 @@ MISSING_GRANT = (
     "(02-mssql-privileges.md §2.1)"
 )
 
+#: Guardrail 9's reason on every login when the tool login is denied
+#: ``VIEW ANY SECURITY DEFINITION`` (2022 and later), which hides a server
+#: role's row and its grants although ``VIEW ANY DEFINITION`` is held.
+DENIED_SECURITY = (
+    "the tool login is denied VIEW ANY SECURITY DEFINITION, so the tool cannot "
+    "see which server roles this login owns or reaches; revoke the denial "
+    "(02-mssql-privileges.md §5)"
+)
+
+#: Guardrail 9's reason on every login when the read has an id with no
+#: principal row: one a DENY hides from the tool login, or one made while the
+#: three statements ran.
+PARTIAL_READ = (
+    "the tool's read of the server's principals names a principal it has no "
+    "row for, one a DENY hides from the tool login or one made during the "
+    "read, so the tool cannot see every path to an administrative grant; "
+    "revoke any DENY of VIEW DEFINITION to the tool login, and run the "
+    "command again (02-mssql-privileges.md §5)"
+)
+
 #: Guardrail 9's reason when a complete read has no row for the login.
 MISSING_LOGIN = (
     "the tool's read of the server's principals has no row for this login, so "
@@ -114,8 +134,10 @@ class Principal:
     name: str
     #: ``type``: :data:`ROLE_TYPE` for a server role.
     type: str
-    #: ``owning_principal_id``: the owner of a user-defined server role, and
-    #: ``None`` for a login and a fixed role.
+    #: The owner of a user-defined server role, and ``None`` for a login, a
+    #: fixed role and ``public``. The server names ``sa`` as the owner of the
+    #: fixed roles and ``public``, and :func:`read_catalog` leaves that out:
+    #: ``sa`` is a member of ``sysadmin`` anyway.
     owner_id: int | None = None
 
     @property
@@ -143,12 +165,13 @@ class Permission:
 class Catalog:
     """What the tool login read of the server's principals.
 
-    ``complete`` says that the read was made with ``VIEW ANY DEFINITION``.
-    Without it, the session passes no rows, and :func:`assess` refuses every
-    login.
+    ``complete`` says that the read saw every principal its rows name. Where
+    it is false, the catalog has no rows, ``unread`` says why, and
+    :func:`assess` refuses every login with it.
     """
 
     complete: bool
+    unread: str = MISSING_GRANT
     principals: Mapping[int, Principal] = field(default_factory=dict)
     #: ``sys.server_role_members`` as ``(role_principal_id,
     #: member_principal_id)``.
@@ -246,12 +269,19 @@ class Assessment:
 
 
 #: Whether the tool login holds ``VIEW ANY DEFINITION``, itself, through a
-#: role, or through ``CONTROL SERVER``.
-VIEW_DEFINITIONS = "SELECT HAS_PERMS_BY_NAME(NULL, NULL, 'VIEW ANY DEFINITION')"
+#: role, or through ``CONTROL SERVER``; and whether it is denied ``VIEW ANY
+#: SECURITY DEFINITION``, 0, which 2022 added. 2019 answers ``NULL`` for a
+#: permission it does not have (``13_fixed_roles_probe.py``, FR5).
+VIEW_DEFINITIONS = (
+    "SELECT HAS_PERMS_BY_NAME(NULL, NULL, 'VIEW ANY DEFINITION'), "
+    "HAS_PERMS_BY_NAME(NULL, NULL, 'VIEW ANY SECURITY DEFINITION')"
+)
 
 #: The three reads of §5's table. Only the two classes the list names are
 #: read from ``sys.server_permissions``.
-PRINCIPALS = "SELECT principal_id, name, type, owning_principal_id FROM sys.server_principals"
+PRINCIPALS = (
+    "SELECT principal_id, name, type, owning_principal_id, is_fixed_role FROM sys.server_principals"
+)
 MEMBERSHIPS = "SELECT role_principal_id, member_principal_id FROM sys.server_role_members"
 PERMISSIONS = (
     "SELECT grantee_principal_id, permission_name, class, major_id, state "
@@ -262,19 +292,38 @@ PERMISSIONS = (
 def read_catalog(cursor: Cursor) -> Catalog:
     """What guardrail 9 reads, as the tool login.
 
-    Without ``VIEW ANY DEFINITION``, nothing more is read, and the catalog is
-    not complete: a partial read would pass a login whose role it cannot see
-    (PA2, #1567). Each statement goes without parameters: pyodbc binds a
-    ``None`` as one.
+    Without ``VIEW ANY DEFINITION``, or where ``VIEW ANY SECURITY
+    DEFINITION`` is denied, nothing more is read, and the catalog is not
+    complete: a partial read would pass a login whose role it cannot see
+    (PA2, #1567).
+
+    **The read checks itself.** ``HAS_PERMS_BY_NAME`` answers for the server,
+    and a narrower ``DENY VIEW DEFINITION ON SERVER ROLE::`` still hides that
+    role's row, and ``DENY VIEW ANY SECURITY DEFINITION`` hides it and its
+    grants (``13_fixed_roles_probe.py``, FR5). So a membership, a grant or an owner that
+    names an id with no principal row makes the catalog not complete, with
+    :data:`PARTIAL_READ`. That also catches a principal made between the
+    three statements, which are not one snapshot: the principals are read
+    first, so a principal made later is named only by the rows read after.
+
+    Each statement goes without parameters: pyodbc binds a ``None`` as one.
     """
     cursor.execute(VIEW_DEFINITIONS)
     row = cursor.fetchone()
     if row is None or row[0] != 1:
         return Catalog(complete=False)
+    if row[1] == 0:
+        return Catalog(complete=False, unread=DENIED_SECURITY)
     cursor.execute(PRINCIPALS)
     principals = [
-        Principal(int(pid), str(name), str(kind).strip(), None if owner is None else int(owner))
-        for pid, name, kind, owner in cursor.fetchall()
+        Principal(
+            int(pid),
+            str(name),
+            str(kind).strip(),
+            # sa "owns" the fixed roles and public, which hands it nothing.
+            None if owner is None or fixed or name == PUBLIC else int(owner),
+        )
+        for pid, name, kind, owner, fixed in cursor.fetchall()
     ]
     cursor.execute(MEMBERSHIPS)
     memberships = [(int(role), int(member)) for role, member in cursor.fetchall()]
@@ -283,6 +332,14 @@ def read_catalog(cursor: Cursor) -> Catalog:
         Permission(int(grantee), str(name), int(class_), int(major), str(state).strip())
         for grantee, name, class_, major, state in cursor.fetchall()
     ]
+    known = {p.principal_id for p in principals}
+    named = {
+        *(row.grantee_id for row in permissions),
+        *(id_ for pair in memberships for id_ in pair),
+        *(p.owner_id for p in principals if p.owner_id is not None),
+    }
+    if not named <= known:
+        return Catalog(complete=False, unread=PARTIAL_READ)
     return Catalog.read(principals, memberships, permissions)
 
 
@@ -341,13 +398,13 @@ def refused_roles(catalog: Catalog) -> frozenset[int]:
 def assess(principal_id: int, catalog: Catalog) -> Assessment:
     """Guardrail 9's findings for the login ``principal_id``.
 
-    Without a complete catalog, every login is refused with
-    :data:`MISSING_GRANT`. A complete one that has no row for the login, or
-    none for ``public``, refuses it too, with :data:`MISSING_LOGIN` or
+    Without a complete catalog, every login is refused with the catalog's
+    ``unread``. A complete one that has no row for the login, or none for
+    ``public``, refuses it too, with :data:`MISSING_LOGIN` or
     :data:`MISSING_PUBLIC`: a path the read did not see never passes.
     """
     if not catalog.complete:
-        return Assessment(unread=MISSING_GRANT)
+        return Assessment(unread=catalog.unread)
     if principal_id not in catalog.principals:
         return Assessment(unread=MISSING_LOGIN)
     public_id = catalog.public_id

@@ -657,7 +657,11 @@ class MssqlStack:
         return f"{self.host}:{self.port}"
 
     def connect(self, timeout: int = 15) -> Any:
-        """A connection as `sa`, encrypted without a certificate check: the
+        """A connection as `sa`."""
+        return self.connect_as("sa", self.password, timeout=timeout)
+
+    def connect_as(self, user: str, password: str, timeout: int = 15) -> Any:
+        """A connection as `user`, encrypted without a certificate check: the
         image's certificate is self-signed."""
         import pyodbc
 
@@ -665,7 +669,7 @@ class MssqlStack:
         return pyodbc.connect(
             "Driver={ODBC Driver 18 for SQL Server};"
             f"Server={{tcp:{self.host},{self.port}}};Database=master;Encrypt=yes;"
-            f"TrustServerCertificate=yes;UID=sa;PWD={{{self.password}}};",
+            f"TrustServerCertificate=yes;UID={user};PWD={{{password}}};",
             autocommit=True,
             timeout=timeout,
         )

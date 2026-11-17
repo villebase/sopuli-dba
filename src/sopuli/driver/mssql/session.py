@@ -77,20 +77,19 @@ from sopuli.driver.mssql.errors import (
     server_error,
 )
 from sopuli.driver.mssql.limits import LIMIT
-from sopuli.driver.mssql.password import (
-    must_change_statement,
-    password_scrubber,
-    password_value,
-)
+from sopuli.driver.mssql.password import MustChange, password_value
 from sopuli.driver.mssql.scope import observe
 from sopuli.driver.protocol import (
+    ACCOUNT_LOCK,
     ACCOUNT_UNLOCK,
+    EXPIRE_PASSWORD,
     FAIL,
     OFFLINE_VERIFY,
     OLD_DISCARD,
     PASS,
     PASSWORD_ROLLOVER,
     PASSWORD_SET,
+    PROFILE_MANAGEMENT,
     ROLE_LOOKUP,
     ROLLOVER_FINISH,
     UNAVAILABLE,
@@ -158,6 +157,17 @@ MUST_CHANGE = str(server_errors.MUST_CHANGE)
 #: is refused there at plan time (#1538, decision 3; #1552).
 LOCKOUT_THRESHOLD = "lockout_threshold"
 
+#: Why `account expire-password` is refused on SQL Server. The generic hint
+#: points to an unseen reset, which SQL Server does not run yet (#1554).
+NO_EXPIRY = (
+    "SQL Server takes MUST_CHANGE only with a new password, so it cannot expire the "
+    "password a login has; end the account with `account suspend`"
+)
+
+#: Why a `profile:` predicate is refused on SQL Server, which has no
+#: profiles (#1554).
+NO_PROFILES = "SQL Server has no profiles; declare these logins by name with `accounts:`"
+
 #: The host platform this build changes passwords on.
 LINUX = "Linux"
 
@@ -219,6 +229,16 @@ def _grant_survey(
         # database with a group user: that login alone is not checked
         # (#1555, Q5).
         account_unreadable=server.gaps(database_groups=group_users),
+    )
+
+
+def _no_login(account: str, *, target: str) -> DriverError:
+    """The refusal of a verb that changes a login the name finds no row for,
+    made before anything is sent. The command decides on a missing account
+    before it calls, so this is the guard if it did not."""
+    return DriverError(
+        f'there is no login "{account}" on target "{target}"',
+        hint="create the login, or check the account's name in the config",
     )
 
 
@@ -403,8 +423,8 @@ class MssqlSession(ClosesConnection):
             product="a SQL Server instance",
             what=what,
             hint=(
-                "the SQL Server driver connects and reports the instance for `doctor`, "
-                "and the rest of it is not written yet (#1550 to #1555)"
+                "the SQL Server driver serves `doctor`, the `creds` commands, the reports, "
+                "`account list` and `account suspend`; this is not written yet (#1554)"
             ),
         )
 
@@ -568,7 +588,10 @@ class MssqlSession(ClosesConnection):
     def password_constraints(self, account: str) -> None:
         """Nothing beyond the length, read without a round trip: the server's
         policy does not apply to a value (§6.2). Not on the protocol: ``creds
-        generate`` asks it of a driver that has it."""
+        generate`` asks it of a driver that has it. UC-2's seen reset sends the
+        password in clear with ``CHECK_POLICY`` on, so the host's policy does
+        apply to it, and a password it refuses fails that account during the
+        run (§6.3)."""
 
     @property
     def verifies_before_change(self) -> bool:
@@ -620,10 +643,7 @@ class MssqlSession(ClosesConnection):
         """
         login = self._changeable_login(account)
         if login is None:
-            raise DriverError(
-                f'there is no login "{account}" on target "{self.target.name}"',
-                hint="create the login, or check the account's name in the config",
-            )
+            raise _no_login(account, target=self.target.name)
         # The value's version, asked here so that a server that takes neither,
         # or a tool login the check refuses, stops the change before the
         # command writes the record (#1564).
@@ -686,8 +706,53 @@ class MssqlSession(ClosesConnection):
         LOG.debug("%s: set the policy flags of %s back", self.target.name, account)
         return True
 
-    def suspend_account(self, account: str) -> NoReturn:
-        self._not_written("suspend a login")
+    def suspend_account(self, account: str) -> AccountChange:
+        """``ALTER LOGIN … DISABLE``, or report that the login is already
+        disabled (#1554, ``02-mssql-privileges.md`` §6.3).
+
+        ``is_disabled`` is the lock a person sets, which a reset refuses (H4).
+        A lockout after failed logins (``IsLocked``) is not a suspension, and
+        does not count. **The state is read first** (invariant 9), and read
+        back after: a login whose ``is_disabled`` does not then read 1 is an
+        error, never a suspension reported on trust."""
+        require_read_write(
+            self.scope(), target=self.target.name, hint="a suspension is a write to master"
+        )
+        login = self._read(
+            lambda cursor: accounts.read_one(cursor, account, target=self.target.name)
+        )
+        if login is None:
+            raise _no_login(account, target=self.target.name)
+        status = accounts.status(
+            disabled=login.disabled,
+            locked_out=login.locked_out,
+            expired=login.expired or login.must_change,
+        )
+        if login.disabled:
+            return AccountChange(
+                ACCOUNT_LOCK,
+                changed=False,
+                status=status,
+                detail="the login is already disabled (ALTER LOGIN … DISABLE)",
+            )
+        self._read(lambda cursor: cursor.execute(statements.disable(login.name)))
+        LOG.debug("DISABLE for %s on %s", login.name, self.target.name)
+        after = self._read(
+            lambda cursor: accounts.read_one(cursor, account, target=self.target.name)
+        )
+        if after is None or not after.disabled:
+            seen = "has no row" if after is None else "does not read is_disabled 1"
+            raise DriverError(
+                f'login "{login.name}" on target "{self.target.name}" was sent ALTER LOGIN … '
+                f"DISABLE, and on the read back it {seen}",
+                hint="check the login by hand; nothing else was changed",
+            )
+        return AccountChange(
+            ACCOUNT_LOCK,
+            changed=True,
+            status=status,
+            detail=f"login was {status.lower()}; sent ALTER LOGIN … DISABLE",
+        )
 
     def reset_password(
         self, account: str, secret: Secret, *, expire: bool, keep_rollover: bool = False
@@ -697,16 +762,22 @@ class MssqlSession(ClosesConnection):
         (``02-mssql-privileges.md`` §6.3; #1554, decision 3).
 
         The password goes in clear, the exception to invariant 15 that #1538's
-        decision 2 accepts (:func:`~.password.must_change_statement`). A
-        disabled login is refused before anything is sent: `account suspend`
-        set it, and a reset does not undo that (H4).
+        decision 2 accepts (:class:`~.password.MustChange`). A disabled login
+        is refused before anything is sent: `account suspend` set it, and a
+        reset does not undo that (H4). The tool's own login is refused by the
+        guardrails, from :meth:`describe_user`, as on every driver.
 
         The unseen path, which sends a value with the policy off, is not
-        written: where it records the flags is open (#1554, Q7). SQL Server has
-        no rollover window, so the third row never sends anything.
+        written: where it records the flags is open (#1554, Q7). Which
+        capability lets the seen path through the command's plan-time gate is
+        open too (#1554, Q8), so the command does not reach this yet. SQL
+        Server has no rollover window: ``keep_rollover`` is refused by
+        capability, and the third row never sends anything.
         """
         if not expire:
             self._not_written("reset a password on the unseen path")
+        if keep_rollover:
+            self.require_rollover(account)
         require_read_write(
             self.scope(), target=self.target.name, hint="a password reset is a write to master"
         )
@@ -714,12 +785,12 @@ class MssqlSession(ClosesConnection):
             lambda cursor: accounts.read_one(cursor, account, target=self.target.name)
         )
         if login is None:
-            raise DriverError(
-                f'there is no login "{account}" on target "{self.target.name}"',
-                hint="create the login, or check the account's name in the config",
-            )
+            raise _no_login(account, target=self.target.name)
+        # A pending MUST_CHANGE reads as expired, as `describe_user` reads it.
         status = accounts.status(
-            disabled=login.disabled, locked_out=login.locked_out, expired=login.expired
+            disabled=login.disabled,
+            locked_out=login.locked_out,
+            expired=login.expired or login.must_change,
         )
         if login.disabled:
             raise DriverError(
@@ -731,14 +802,12 @@ class MssqlSession(ClosesConnection):
                     "LOGIN … ENABLE first if that is what you mean (H4)"
                 ),
             )
-        statement = must_change_statement(
-            statements.quoted_name(login.name), secret, unlock=login.locked_out
-        )
+        statement = MustChange(statements.quoted_name(login.name), secret, unlock=login.locked_out)
         with self._cursor() as cursor:
             try:
-                cursor.execute(statement)
+                statement.send(cursor)
             except pyodbc.Error as error:
-                failure = from_error(error, scrub=password_scrubber(secret)).as_error()
+                failure = from_error(error, scrub=statement.scrub).as_error()
                 failure.password_sent = True
                 raise failure from None
         LOG.debug("%s: reset the password of %s, MUST_CHANGE", self.target.name, login.name)
@@ -768,7 +837,13 @@ class MssqlSession(ClosesConnection):
         )
 
     def expire_password(self, account: str) -> NoReturn:
-        self._not_written("expire a password")
+        """Refused by capability (#1538, decision 2): ``MUST_CHANGE`` is taken
+        only with a new password, so the server cannot expire a password and
+        keep it. The command refuses at plan time, because the scope does not
+        report ``expire_password``; this is the guard for a caller that did not
+        ask."""
+        require_capability(self.scope(), EXPIRE_PASSWORD, target=self.target.name, hint=NO_EXPIRY)
+        raise AssertionError("unreachable: the scope never reports expire_password")
 
     def audit_coverage(self, account: str) -> AuditCoverage:
         """Never raises, as the protocol promises: the answer is unknown."""
@@ -780,29 +855,42 @@ class MssqlSession(ClosesConnection):
         self._not_written("apply login attributes")
 
     def resolve_profile(self, profile: str) -> NoReturn:
-        self._not_written("resolve a profile")
+        """Refused by capability: SQL Server has no profiles, so a `profile:`
+        predicate names nothing on an instance, as on PostgreSQL."""
+        require_capability(
+            self.scope(), PROFILE_MANAGEMENT, target=self.target.name, hint=NO_PROFILES
+        )
+        raise AssertionError("unreachable: the scope never reports profile_management")
 
     def resolve_role(self, role: str) -> NoReturn:
-        """Refused as ``role_lookup`` missing: a personal rule's `role:` is
-        UC-2's, which is not written for SQL Server yet (#1554). `report
-        accounts` then shows the role's members as undeclared and warns with
-        `SOPULI-W075`, rather than failing the target (UC-5 §4)."""
+        """Refused as ``role_lookup`` missing: SQL Server has server roles and
+        database roles, and which one a personal rule's `role:` names is not
+        decided (#1554, Q6). `report accounts` then shows the role's members
+        as undeclared and warns with `SOPULI-W075`, rather than failing the
+        target (UC-5 §4)."""
         raise UnsupportedCapabilityError(
             ROLE_LOOKUP,
             target=self.target.name,
             hint=(
-                "a personal_accounts: rule's role: is not resolved on SQL Server yet: UC-2 "
-                "is not written for it (#1554)"
+                "a personal_accounts: rule's role: is not resolved on SQL Server: whether it "
+                "names a server role or a database role is not decided yet (#1554); name the "
+                "logins with `accounts:` instead"
             ),
             # SOPULI-W075 words its fix from this, not from the hint.
             remedy=(
-                "No grant gives it: UC-2, which resolves a role, is not written for SQL "
-                "Server yet (#1554)."
+                "No grant gives it: what a role: means on SQL Server is not decided yet (#1554)."
             ),
         )
 
-    def accounts_matching(self, *args: Any, **kwargs: Any) -> NoReturn:
-        self._not_written("list logins")
+    def accounts_matching(self, *, profile: str | None = None, role: str | None = None) -> NoReturn:
+        """Refused as :meth:`resolve_profile` and :meth:`resolve_role` refuse:
+        SQL Server has no profiles, and what a `role:` means here is open
+        (#1554, Q6). A rule that names logins needs neither."""
+        if (profile is None) == (role is None):
+            raise ValueError("accounts_matching takes exactly one of `profile` and `role`")
+        if profile is not None:
+            self.resolve_profile(profile)
+        self.resolve_role(role or "")
 
     def verify_password(
         self,

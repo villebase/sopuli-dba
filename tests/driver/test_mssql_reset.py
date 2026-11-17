@@ -14,6 +14,7 @@ from sopuli.driver.protocol import (
     ROLLOVER_FINISH,
     DriverError,
     Scope,
+    UnsupportedCapabilityError,
 )
 from sopuli.driver.registry import NotWrittenError
 from sopuli.secrets import Secret
@@ -103,14 +104,45 @@ def test_a_lockout_is_ended_with_unlock(monkeypatch: pytest.MonkeyPatch) -> None
     assert changes[0].changed
 
 
+class Recorded:
+    def __init__(self) -> None:
+        self.sent: list[str] = []
+
+    def execute(self, statement: str) -> None:
+        self.sent.append(statement)
+
+
 def test_a_quote_in_the_password_is_doubled() -> None:
-    statement = password.must_change_statement("[acme_jdoe]", Secret("Ab1'x"), unlock=False)
-    assert "PASSWORD = N'Ab1''x' MUST_CHANGE" in statement
+    cursor = Recorded()
+    password.MustChange("[acme_jdoe]", Secret("Ab1'x"), unlock=False).send(cursor)
+    assert "PASSWORD = N'Ab1''x' MUST_CHANGE" in cursor.sent[0]
+
+
+def test_the_statement_never_renders_its_password() -> None:
+    """Invariant 2: redaction is in the type, not at each call site."""
+    statement = password.MustChange("[acme_jdoe]", Secret(PASSWORD), unlock=True)
+    for shown in (str(statement), repr(statement), f"{statement}", statement.redacted):
+        assert PASSWORD not in shown
+        assert "N'***' MUST_CHANGE UNLOCK" in shown
 
 
 def test_a_control_character_is_refused_before_a_statement_is_built() -> None:
     with pytest.raises(password.PasswordNotAdmissibleError, match="control characters"):
-        password.must_change_statement("[acme_jdoe]", Secret("Ab1\nx"), unlock=False)
+        password.MustChange("[acme_jdoe]", Secret("Ab1\nx"), unlock=False)
+
+
+def test_a_pending_must_change_reads_as_expired(monkeypatch: pytest.MonkeyPatch) -> None:
+    """As `describe_user` reads it (#1599 review)."""
+    one = opened(monkeypatch, login(must_change=True))
+    changes = one.reset_password("acme_jdoe", Secret(PASSWORD), expire=True)
+    assert {change.status for change in changes} == {"EXPIRED"}
+
+
+def test_keep_rollover_is_refused_by_capability(monkeypatch: pytest.MonkeyPatch) -> None:
+    one = opened(monkeypatch, login())
+    with pytest.raises(UnsupportedCapabilityError, match="password_rollover"):
+        one.reset_password("acme_jdoe", Secret(PASSWORD), expire=True, keep_rollover=True)
+    assert one.connection.sent == []
 
 
 def test_a_disabled_login_is_refused_and_nothing_is_sent(
@@ -148,15 +180,13 @@ def test_a_refusal_keeps_no_password(monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(DriverError) as caught:
         one.reset_password("acme_jdoe", Secret(PASSWORD), expire=True)
     assert PASSWORD not in str(caught.value)
-    assert password.PASSWORD_REMOVED in str(caught.value)
+    assert "N'***' MUST_CHANGE" in str(caught.value)
     assert caught.value.password_sent
 
 
 def test_the_scrub_removes_the_doubled_form() -> None:
-    scrub = password.password_scrubber(Secret("Ab1'x"))
-    assert scrub("near 'Ab1''x' and Ab1'x") == (
-        f"near '{password.PASSWORD_REMOVED}' and {password.PASSWORD_REMOVED}"
-    )
+    statement = password.MustChange("[acme_jdoe]", Secret("Ab1'x"), unlock=False)
+    assert statement.scrub("near 'Ab1''x' and Ab1'x") == "near '***' and ***"
 
 
 def test_a_read_only_target_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:

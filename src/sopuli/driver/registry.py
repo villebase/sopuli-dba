@@ -358,9 +358,14 @@ DRIVERS: dict[str, DatabaseDriver] = {
         refuses=frozenset({CONTROL, ENCODING, BYTE_LENGTH}),
         fixed_limit=MSSQL_LIMIT,
         # UC-1's change (#1551), `creds check` by login on a Linux host
-        # (#1552), and UC-5's reports (#1555). The `account` verbs are #1554.
+        # (#1552), UC-5's reports (#1555), and UC-2's `account list`,
+        # `suspend` and `expire-password`, the last refused at plan time by
+        # capability (#1554). `account reset-password` is #1554's next part.
         commands=frozenset(
             {
+                "account.list",
+                "account.suspend",
+                "account.expire-password",
                 "creds.check",
                 "creds.apply",
                 "creds.rotate",

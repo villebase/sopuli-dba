@@ -31,7 +31,7 @@ password before it computes anything.
 The statement that carries the value is built elsewhere: this module renders
 the value as the hex literal it goes in. One statement is built here, because
 it carries the password itself: UC-2's seen reset, the exception to invariant
-15 that #1538's decision 2 accepts (:func:`must_change_statement`).
+15 that #1538's decision 2 accepts (:class:`MustChange`).
 """
 
 from __future__ import annotations
@@ -41,12 +41,12 @@ import hashlib
 # `csprng`, not `random`: the salt must come from the system's random source,
 # and a name that reads like the `random` module invites the wrong swap.
 import secrets as csprng
-from collections.abc import Callable
+from typing import Any
 
 from sopuli.config import charsets
 from sopuli.driver.mssql.limits import LIMIT, MAX_PASSWORD_CHARACTERS
 from sopuli.driver.protocol import DriverError
-from sopuli.secrets import Secret
+from sopuli.secrets import REDACTED, Secret
 
 #: SHA-512 of the password and the salt.
 SHA512 = 0x0200
@@ -132,9 +132,12 @@ def hex_literal(value: bytes) -> str:
     return "0x" + value.hex().upper()
 
 
-def must_change_statement(quoted_login: str, secret: Secret, *, unlock: bool) -> str:
+class MustChange:
     """UC-2's seen reset: the one statement that sends a password in clear
-    (#1538, decision 2; ``02-mssql-privileges.md`` §6.3).
+    (#1538, decision 2; ``02-mssql-privileges.md`` §6.3). It refuses to
+    render itself, as Oracle's :class:`~sopuli.driver.oracle.statements.Statement`
+    does: its text is as sensitive as the password, so every
+    stringification is :attr:`redacted` (invariant 2).
 
     ``MUST_CHANGE`` has no ``HASHED`` form (CH5), so the password goes as a
     Unicode literal with each ``'`` doubled, in a statement that always
@@ -144,35 +147,40 @@ def must_change_statement(quoted_login: str, secret: Secret, *, unlock: bool) ->
     the literal's line, is refused before anything is built. ``UNLOCK`` ends
     a lockout after failed logins, which a new password alone leaves in
     place, and is accepted with ``MUST_CHANGE`` (WP4). Both flags go on, as
-    ``MUST_CHANGE`` needs (LK5).
+    ``MUST_CHANGE`` needs (LK5). With ``CHECK_POLICY`` on, the server checks
+    the password against the host's policy.
 
     ``quoted_login`` is the login as :func:`~.statements.quoted_name` gives
-    it. The caller sends the statement as a batch of its own, never inside
-    ``EXEC``, and keeps the text out of every message (invariant 2).
+    it. :meth:`send` sends the statement as a batch of its own, never inside
+    ``EXEC``.
     """
-    admit(secret)
-    literal = "N'" + secret.reveal().replace("'", "''") + "'"
-    options = "MUST_CHANGE UNLOCK" if unlock else "MUST_CHANGE"
-    return (
-        f"ALTER LOGIN {quoted_login} WITH PASSWORD = {literal} {options}, "
-        "CHECK_POLICY = ON, CHECK_EXPIRATION = ON"
-    )
 
+    __slots__ = ("_forms", "_sql", "redacted")
 
-#: What a message keeps where the password was.
-PASSWORD_REMOVED = "<password removed>"
+    def __init__(self, quoted_login: str, secret: Secret, *, unlock: bool) -> None:
+        admit(secret)
+        text = secret.reveal()
+        doubled = text.replace("'", "''")
+        options = "MUST_CHANGE UNLOCK" if unlock else "MUST_CHANGE"
+        tail = f" {options}, CHECK_POLICY = ON, CHECK_EXPIRATION = ON"
+        self._sql = f"ALTER LOGIN {quoted_login} WITH PASSWORD = N'{doubled}'{tail}"
+        self.redacted = f"ALTER LOGIN {quoted_login} WITH PASSWORD = N'{REDACTED}'{tail}"
+        self._forms = tuple(sorted({text, doubled}, key=len, reverse=True))
 
+    def send(self, cursor: Any) -> None:
+        """Execute the statement on ``cursor``: the driver call."""
+        cursor.execute(self._sql)
 
-def password_scrubber(secret: Secret) -> Callable[[str], str]:
-    """A scrub for the server's answer to :func:`must_change_statement`: the
-    password, as typed and with each ``'`` doubled, removed. No answer
-    measured echoes it, and this is the guard if one did (#786)."""
-    text = secret.reveal()
-    forms = sorted({text, text.replace("'", "''")}, key=len, reverse=True)
-
-    def scrub(message: str) -> str:
-        for form in forms:
-            message = message.replace(form, PASSWORD_REMOVED)
+    def scrub(self, message: str) -> str:
+        """``message`` with the password, as typed and with each ``'``
+        doubled, replaced by ``***``. No answer measured echoes it, and this
+        is the guard if one did (#786)."""
+        for form in self._forms:
+            message = message.replace(form, REDACTED)
         return message
 
-    return scrub
+    def __str__(self) -> str:
+        return self.redacted
+
+    def __repr__(self) -> str:
+        return f"MustChange({self.redacted!r})"

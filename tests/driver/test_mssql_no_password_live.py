@@ -263,18 +263,32 @@ def test_a_change_sends_and_leaves_the_password_nowhere(
         assert password not in text, f"the password is in the {place}"
 
 
+@pytest.mark.parametrize("flags", ["on", "off"])
 def test_the_seen_reset_leaves_its_password_nowhere_on_the_server(
-    recorded: tuple[Any, Recorder, Sent], live_mssql: Any
+    recorded: tuple[Any, Recorder, Sent], live_mssql: Any, flags: str
 ) -> None:
     """Invariant 15's SQL Server exception (#1554): the seen reset sends the
     password in clear, with ``MUST_CHANGE``, which has no value form. The
     statement always parses, so the server keeps it with the password left
     out or masked (§6.1, PT0 to PT2), and the owner's login then answers
-    ``18488``, must change."""
+    ``18488``, must change.
+
+    Also from a login with both flags off, as ``CREATE LOGIN`` leaves
+    ``CHECK_EXPIRATION`` and a stopped UC-1 change can leave ``CHECK_POLICY``:
+    the one statement turns both on with ``MUST_CHANGE``."""
     import pyodbc
 
     session, recorder, sent = recorded
-    password = f"Acme-np-{uuid.uuid4().hex[:12]}'q"
+    if flags == "off":
+        admin = live_mssql.connect()
+        try:
+            admin.cursor().execute(
+                f"ALTER LOGIN [{LOGIN}] WITH CHECK_EXPIRATION = OFF, CHECK_POLICY = OFF"
+            )
+        finally:
+            admin.close()
+    secret_part = uuid.uuid4().hex[:12]
+    password = f"Acme-np-{secret_part}'q"
     session.reset_password(LOGIN, Secret(password), expire=True)
 
     doubled = password.replace("'", "''")
@@ -289,8 +303,8 @@ def test_the_seen_reset_leaves_its_password_nowhere_on_the_server(
 
     kept = recorder.kept(mark(session.connection))
     for place, text in kept.items():
-        assert password not in text, f"the password is in the {place}"
-        assert doubled not in text, f"the password is in the {place}"
+        # The random part alone, so a record cut at the quote is caught too.
+        assert secret_part not in text, f"the password's random part is in the {place}"
 
 
 def test_the_recorder_finds_a_password_sent_in_clear(

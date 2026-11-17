@@ -614,7 +614,11 @@ sends it, and `account reset-password` does not run on SQL Server until the
 seen path's expiry gate is decided (open: #1554).
 
 `MUST_CHANGE` needs `CHECK_POLICY` and `CHECK_EXPIRATION` on, and neither can
-be turned off while it is pending (LK5). So the seen reset leaves both on. On
+be turned off while it is pending (LK5). So the seen reset leaves both on,
+also on a login where they were off, which the tier-1 test checks. With
+`CHECK_POLICY` on, the server checks the password against the host's policy,
+which the tool cannot read: a password the host refuses fails that account
+during the run. On
 the Linux images a new password then expires after 90 days (LK6).
 
 The unseen path sends a value with steps 1, 2 and 4 of §6.2, which also ends
@@ -646,7 +650,15 @@ only with a new password, so the server cannot expire a password and keep it.
 The verb would replace the password the owner knows.
 
 `account suspend` sends `ALTER LOGIN … DISABLE`, where `is_disabled` is 0
-(LK1). It carries no password.
+(LK1), and reads `is_disabled` back. It carries no password. By
+Microsoft's documentation, and not measured here, `DISABLE` refuses new
+logins and does not end the login's open sessions; an offboarding that must
+end them does so by hand, with `KILL`. A login that
+is already disabled is reported unchanged; one that `IsLocked` reports
+locked out is not a suspension, and is disabled. `account list` serves a
+rule that names logins. A `profile:` predicate is refused, because SQL
+Server has no profiles, and a `role:` predicate by `role_lookup`, until
+what a role means here is decided (open: #1554).
 
 ### 6.4 Names in a statement
 

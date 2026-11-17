@@ -11974,11 +11974,12 @@ def _value_versions(
     as an ``info`` diagnostic per target (#1564).
 
     The caller passes the targets with something to send. Each gets one
-    login and the rolled-back value check, which refuses a target whose
-    answer is neither ``ok`` nor ``15021``, exit 5, as the run would. A
-    target this cannot reach, or whose check fails another way, such as for
-    a missing grant, gets a note that says so, with the error: the run would
-    stop on that target.
+    login and the rolled-back value check. A target whose answer is neither
+    ``ok`` nor ``15021``, one this cannot reach, or one whose check fails
+    another way, such as for a missing grant, gets a note that says so, with
+    the error: the run would refuse that target and go on to the others
+    (#1551). A capability refused at connect, such as ``strict_encryption``,
+    still refuses the whole run, as it does at plan time.
     """
     named: list[Diagnostic] = []
     for expanded in targets:
@@ -11995,9 +11996,7 @@ def _value_versions(
             if not isinstance(session, _ValueChecked):
                 continue
             version = session.hash_version()
-        except UnsupportedCapabilityError:
-            raise
-        except Exception as error:  # noqa: BLE001 -- likewise
+        except Exception as error:  # noqa: BLE001 -- likewise, a refused value included
             named.append(_unanswered(expanded.name, error))
             continue
         finally:

@@ -289,8 +289,11 @@ and `finish-rollover`, which change a password on a Linux host (#1551). Every
 other command refuses a SQL Server target (open: #1552, #1554, #1555). What
 PostgreSQL lacks, such as a rollover window, a profile, or a forced password
 change at next login, is refused at plan time by capability, not by product. A libpq older than 16 is a property of the client,
-not of the target, and is refused per account during the run: the one accepted
-exception to invariant 4 ([#1076](../decisions/log.md#1076)). The driver, store
+not of the target, and is refused per account during the run: an accepted
+exception to invariant 4 ([#1076](../decisions/log.md#1076)). The others
+are UC-5's reports ([#1376](../decisions/log.md#1376)) and a SQL Server
+password value the server refuses, which is refused per target during the
+run ([#1551](../decisions/log.md#1551)). The driver, store
 and notify registries share `sopuli/extras.py`, which finds a module without
 importing it and reads a `ModuleNotFoundError` three ways. That logic is subtle,
 so it has one copy. The error messages stay separate: a store is named by

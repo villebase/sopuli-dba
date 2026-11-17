@@ -173,7 +173,13 @@ def status(*, disabled: bool, locked_out: bool, expired: bool) -> str:
     return locked_status(locked=disabled, expired=expired)
 
 
-def state_of(login: Login, *, now: datetime, admin_unread: str | None) -> UserState:
+def state_of(
+    login: Login,
+    *,
+    now: datetime,
+    admin_unread: str | None,
+    global_privileges: frozenset[str] = frozenset(),
+) -> UserState:
     """One login as a :class:`~sopuli.driver.protocol.UserState`.
 
     The password has stopped working where ``IsExpired`` says so, or where
@@ -187,8 +193,9 @@ def state_of(login: Login, *, now: datetime, admin_unread: str | None) -> UserSt
     count past 1 on the Linux images (LK2), and no lockout threshold is
     readable on any host (``09_windows_policy_probe.py``).
 
-    ``admin_unread`` is guardrail 9's: why the paths to an administrative
-    grant were not read (:attr:`~sopuli.driver.protocol.UserState.admin_unread`).
+    ``admin_unread`` and ``global_privileges`` are guardrail 9's: why the
+    paths to an administrative grant were not read, and the grants they reach
+    (:class:`~sopuli.driver.mssql.admin.Assessment`).
     """
     expired = login.expired or login.must_change
     expires_at = None
@@ -208,5 +215,6 @@ def state_of(login: Login, *, now: datetime, admin_unread: str | None) -> UserSt
         vendor_maintained=login.principal_id == SA_PRINCIPAL_ID,
         password_file_member=False,
         admin_unread=admin_unread,
+        global_privileges=global_privileges,
         session_account=login.session_login,
     )

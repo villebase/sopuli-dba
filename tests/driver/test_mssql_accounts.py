@@ -108,7 +108,10 @@ def test_every_principal_but_a_sql_login_is_refused(kind: str, words: str) -> No
 
 
 def test_an_open_login() -> None:
-    state = accounts.state_of(login(), now=NOW, admin_unread=None)
+    state = accounts.state_of(
+        login(), now=NOW, admin_unread=None, global_privileges=frozenset({"CONTROL SERVER"})
+    )
+    assert state.global_privileges == frozenset({"CONTROL SERVER"})
     assert state.status == OPEN
     assert (state.locked, state.deliberately_locked, state.expired) == (False, False, False)
     assert state.password_changed_at == CHANGED.replace(tzinfo=UTC)

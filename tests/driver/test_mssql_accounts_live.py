@@ -21,6 +21,7 @@ from sopuli.driver.mssql.accounts import (  # noqa: E402
     OPEN,
     NotAPasswordLoginError,
 )
+from sopuli.driver.mssql.admin import MISSING_GRANT  # noqa: E402
 from sopuli.driver.protocol import Credential  # noqa: E402
 from sopuli.secrets import Secret  # noqa: E402
 
@@ -90,7 +91,9 @@ def test_a_sql_login_is_read_in_the_server_s_spelling(tool_session: Any) -> None
     assert state.name == "w1_acme_app"
     assert state.status == OPEN
     assert state.password_changed_at is not None
-    assert state.admin_unread is not None
+    # The tool login holds ALTER ANY LOGIN alone, so guardrail 9 refuses
+    # every login on the password verbs (#1567).
+    assert state.admin_unread == MISSING_GRANT
 
 
 def test_a_disabled_login_is_locked(tool_session: Any) -> None:

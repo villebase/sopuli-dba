@@ -36,6 +36,7 @@ import pyodbc
 from sopuli.config.model import ExpandedTarget, Runtime
 from sopuli.config.targets import MSSQL_STRICT
 from sopuli.driver.mssql import accounts
+from sopuli.driver.mssql.admin import Assessment, Catalog, assess, read_catalog
 from sopuli.driver.mssql.client import client_lines
 from sopuli.driver.mssql.connection import connection_string
 from sopuli.driver.mssql.errors import from_error
@@ -59,12 +60,6 @@ pyodbc.pooling = False
 
 T = TypeVar("T")
 
-#: ``UserState.admin_unread`` until guardrail 9's read is written (#1553).
-GUARDRAIL_NOT_READ = (
-    "this build does not read the paths from a SQL Server login to an administrative "
-    "grant yet (#1553)"
-)
-
 
 def _server_name(cursor: Cursor) -> str | None:
     """``SERVERPROPERTY('ServerName')``, or ``None`` where the server gives
@@ -87,6 +82,8 @@ class MssqlSession(ClosesConnection):
     #: :class:`~sopuli.driver.clusters.ClusterIdentity`'s: nothing is claimed
     #: less than it could be, so always ``None``.
     identity_caveat: str | None = field(default=None, init=False, repr=False)
+    #: Guardrail 9's catalog, read on first use (:meth:`admin_assessment`).
+    _catalog: Catalog | None = field(default=None, init=False, repr=False)
 
     def scope(self) -> Scope:
         """What this session is: a server, read-write or not, and its
@@ -105,6 +102,21 @@ class MssqlSession(ClosesConnection):
                     self._scope.encryption.method,
                 )
         return self._scope
+
+    def admin_assessment(self, principal_id: int) -> Assessment:
+        """Guardrail 9's input for the login ``principal_id``
+        (`02-mssql-privileges.md` §5): the grants it reaches, or why they
+        could not be read. The catalog is read on the first call and cached
+        for the session, so every managed login on the target is assessed
+        against one read."""
+        if self._catalog is None:
+            self._catalog = self._read(read_catalog)
+            LOG.debug(
+                "%s guardrail catalog: %s",
+                self.target.name,
+                self._catalog.unread or "complete",
+            )
+        return assess(principal_id, self._catalog)
 
     def _not_written(self, what: str) -> NoReturn:
         raise NotWrittenError(
@@ -135,11 +147,13 @@ class MssqlSession(ClosesConnection):
         )
         if login is None:
             return None
-        # Guardrail 9's paths (#1553): `admin_assessment(login.principal_id)`
-        # gives `global_privileges` and `admin_unread` when it is written.
-        # Until then the paths are unread, so check 9 refuses the login rather
-        # than read an empty set as "none held".
-        return accounts.state_of(login, now=datetime.now(UTC), admin_unread=GUARDRAIL_NOT_READ)
+        assessment = self.admin_assessment(login.principal_id)
+        return accounts.state_of(
+            login,
+            now=datetime.now(UTC),
+            admin_unread=assessment.unread,
+            global_privileges=assessment.grants,
+        )
 
     #: The words for two targets that are one instance
     #: (:class:`~sopuli.driver.clusters.ClusterIdentity`). Not fields.

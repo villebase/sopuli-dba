@@ -17,6 +17,10 @@ neither is enough alone:
 
 The login made with the password in step 3 is a login, not a statement, and
 carries it as every login does.
+
+UC-2's seen reset is the exception invariant 15 accepts (#1554): it sends
+the password in clear, with ``MUST_CHANGE``. Its test checks that the
+statement parses and so leaves the password in none of the same places.
 """
 
 from __future__ import annotations
@@ -257,6 +261,36 @@ def test_a_change_sends_and_leaves_the_password_nowhere(
     kept = recorder.kept(mark(session.connection))
     for place, text in kept.items():
         assert password not in text, f"the password is in the {place}"
+
+
+def test_the_seen_reset_leaves_its_password_nowhere_on_the_server(
+    recorded: tuple[Any, Recorder, Sent], live_mssql: Any
+) -> None:
+    """Invariant 15's SQL Server exception (#1554): the seen reset sends the
+    password in clear, with ``MUST_CHANGE``, which has no value form. The
+    statement always parses, so the server keeps it with the password left
+    out or masked (§6.1, PT0 to PT2), and the owner's login then answers
+    ``18488``, must change."""
+    import pyodbc
+
+    session, recorder, sent = recorded
+    password = f"Acme-np-{uuid.uuid4().hex[:12]}'q"
+    session.reset_password(LOGIN, Secret(password), expire=True)
+
+    doubled = password.replace("'", "''")
+    assert [sql for sql, _ in sent.statements if doubled in sql] == [
+        f"ALTER LOGIN [{LOGIN}] WITH PASSWORD = N'{doubled}' MUST_CHANGE, "
+        "CHECK_POLICY = ON, CHECK_EXPIRATION = ON"
+    ], "the seen reset is the one statement with the password"
+
+    with pytest.raises(pyodbc.Error) as answered:
+        live_mssql.connect_as(LOGIN, password)
+    assert "18488" in str(answered.value), "the login must change its password"
+
+    kept = recorder.kept(mark(session.connection))
+    for place, text in kept.items():
+        assert password not in text, f"the password is in the {place}"
+        assert doubled not in text, f"the password is in the {place}"
 
 
 def test_the_recorder_finds_a_password_sent_in_clear(

@@ -62,7 +62,9 @@ PERMITTED = {
     ),
     "driver/mssql/password.py": (
         "the driver call, for SQL Server: the password is hashed on this machine into the "
-        "value `ALTER LOGIN … HASHED` carries (#1551). The password itself is not sent"
+        "value `ALTER LOGIN … HASHED` carries (#1551), and UC-2's seen reset sends it in "
+        "clear with `MUST_CHANGE`, which has no value form: invariant 15's SQL Server "
+        "exception (#1554)"
     ),
     "output/policy_view.py": "`policy sample --reveal` -- the third; a sample is not a credential",
     "output/reset_view.py": (

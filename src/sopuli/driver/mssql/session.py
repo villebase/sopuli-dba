@@ -77,19 +77,27 @@ from sopuli.driver.mssql.errors import (
     server_error,
 )
 from sopuli.driver.mssql.limits import LIMIT
-from sopuli.driver.mssql.password import password_value
+from sopuli.driver.mssql.password import (
+    must_change_statement,
+    password_scrubber,
+    password_value,
+)
 from sopuli.driver.mssql.scope import observe
 from sopuli.driver.protocol import (
+    ACCOUNT_UNLOCK,
     FAIL,
     OFFLINE_VERIFY,
     OLD_DISCARD,
     PASS,
     PASSWORD_ROLLOVER,
+    PASSWORD_SET,
     ROLE_LOOKUP,
+    ROLLOVER_FINISH,
     UNAVAILABLE,
     VERIFY_BOTH,
     VERIFY_HASH,
     VERIFY_LOGIN,
+    AccountChange,
     AuditCoverage,
     ChangeResult,
     ClosesConnection,
@@ -681,8 +689,83 @@ class MssqlSession(ClosesConnection):
     def suspend_account(self, account: str) -> NoReturn:
         self._not_written("suspend a login")
 
-    def reset_password(self, *args: Any, **kwargs: Any) -> NoReturn:
-        self._not_written("reset a password")
+    def reset_password(
+        self, account: str, secret: Secret, *, expire: bool, keep_rollover: bool = False
+    ) -> tuple[AccountChange, ...]:
+        """UC-2 §4.1's seen path on SQL Server: one statement, with
+        ``MUST_CHANGE``, and ``UNLOCK`` where a lockout is in place
+        (``02-mssql-privileges.md`` §6.3; #1554, decision 3).
+
+        The password goes in clear, the exception to invariant 15 that #1538's
+        decision 2 accepts (:func:`~.password.must_change_statement`). A
+        disabled login is refused before anything is sent: `account suspend`
+        set it, and a reset does not undo that (H4).
+
+        The unseen path, which sends a value with the policy off, is not
+        written: where it records the flags is open (#1554, Q7). SQL Server has
+        no rollover window, so the third row never sends anything.
+        """
+        if not expire:
+            self._not_written("reset a password on the unseen path")
+        require_read_write(
+            self.scope(), target=self.target.name, hint="a password reset is a write to master"
+        )
+        login = self._read(
+            lambda cursor: accounts.read_one(cursor, account, target=self.target.name)
+        )
+        if login is None:
+            raise DriverError(
+                f'there is no login "{account}" on target "{self.target.name}"',
+                hint="create the login, or check the account's name in the config",
+            )
+        status = accounts.status(
+            disabled=login.disabled, locked_out=login.locked_out, expired=login.expired
+        )
+        if login.disabled:
+            raise DriverError(
+                f'login "{login.name}" on target "{self.target.name}" is disabled, and a reset '
+                "does not change that",
+                hint=(
+                    "a disabled login is somebody's decision -- `account suspend`, usually -- "
+                    "and handing it a working password would undo it silently. Run ALTER "
+                    "LOGIN … ENABLE first if that is what you mean (H4)"
+                ),
+            )
+        statement = must_change_statement(
+            statements.quoted_name(login.name), secret, unlock=login.locked_out
+        )
+        with self._cursor() as cursor:
+            try:
+                cursor.execute(statement)
+            except pyodbc.Error as error:
+                failure = from_error(error, scrub=password_scrubber(secret)).as_error()
+                failure.password_sent = True
+                raise failure from None
+        LOG.debug("%s: reset the password of %s, MUST_CHANGE", self.target.name, login.name)
+        return (
+            AccountChange(
+                ACCOUNT_UNLOCK,
+                changed=login.locked_out,
+                status=status,
+                detail=(
+                    "the login was locked out after failed logins; sent UNLOCK with the password"
+                    if login.locked_out
+                    else "the login was not locked out"
+                ),
+            ),
+            AccountChange(
+                PASSWORD_SET,
+                changed=True,
+                status=status,
+                detail="password set, MUST_CHANGE, with CHECK_POLICY and CHECK_EXPIRATION on",
+            ),
+            AccountChange(
+                ROLLOVER_FINISH,
+                changed=False,
+                status=status,
+                detail="SQL Server has no rollover window",
+            ),
+        )
 
     def expire_password(self, account: str) -> NoReturn:
         self._not_written("expire a password")

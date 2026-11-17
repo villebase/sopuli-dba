@@ -6004,7 +6004,10 @@ the register.
      changes a password adds SQL Server to invariant 15, with this
      exception. The tool sends `0x0300` where the server takes it, and
      decides that from a capability, not from the release. How to read that
-     capability is not known yet (unverified: mssql-hash-version).
+     capability is not known yet (`mssql-hash-version`). #1550 later
+     measured it: a `CREATE LOGIN` with a `0x0300` value, rolled back,
+     answers `15021` where the server refuses `0x0300`, and leaves no login.
+     Which way the driver reads it is #1564.
   3. `creds check` logs in. Where the host has a lockout the tool cannot
      read, on Windows until `mssql-windows-policy` is measured, the check is
      refused. The tool never reads `password_hash`. #1557 later measured it
@@ -6070,7 +6073,13 @@ the register.
      alter, control, take or own one such role, or one privileged login, has
      the same path through one object. Each of these is a server permission
      or an owner the tool account reads in the server-level views; only
-     `ALTER ANY SERVER ROLE` is measured.
+     `ALTER ANY SERVER ROLE` is measured. #1553 later measured the others
+     (`12_guardrail_paths_probe.py`): each path on a role reaches `CONTROL
+     SERVER`, and `CONTROL` or `IMPERSONATE` on a login reaches that login's
+     power. With `ALTER ANY LOGIN` alone, the tool account does not see a
+     user-defined role's row, so not its owner, nor a role's membership of
+     another role. `ALTER` on a login reached no power, and `TAKE OWNERSHIP`
+     on a login cannot be granted. What follows from these is #1567.
   6. Only pyodbc with ODBC Driver 18 gives the server's number for a wrong
      password, a disabled login and a login that must change its password,
      `18456`, `18470` and `18488`. Errors carry the vendor code.

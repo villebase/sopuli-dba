@@ -101,8 +101,9 @@ hash (§7).
 
 The driver also reads what the target can do: the host's operating system,
 whether the server takes a `0x0300` value, and the Availability Group the
-instance is in (§4). Which grant these reads need is not measured
-(open: #1550).
+instance is in (§4). `ALTER ANY LOGIN` alone tells whether the server takes
+a `0x0300` value (§6.2). Which grant the Availability Group reads need is not
+measured (open: #1550).
 
 Give the login no other permission, no server role, and no database user.
 
@@ -111,7 +112,10 @@ Give the login no other permission, no server role, and no database user.
 UC-5's reports run as the tool login (open: #1555). With §2.1's grant alone
 they read every login, its policy flags, its dates, and its server roles and
 permissions (RP1 to RP3). `VIEW ANY DEFINITION` alone reads the same, and so
-does `securityadmin`.
+does `securityadmin`. With §2.1's grant alone, a user-defined server role is
+read by its id only, and one role's membership of another not at all
+(`12_guardrail_paths_probe.py`, PA2). With `VIEW ANY DEFINITION` as well,
+both are read (PA4).
 
 Two grants are optional:
 
@@ -217,7 +221,7 @@ measured (open: #1550).
 ## 5. Guardrail 9: a managed login with administrative grants
 
 The tool refuses to manage a login that, itself or through a server role
-(decision 5, open: #1553):
+(decision 5, open: #1567):
 
 - is a member of `sysadmin` or `securityadmin`;
 - holds `CONTROL SERVER`, `ALTER ANY LOGIN`, `IMPERSONATE ANY LOGIN` or `ALTER
@@ -239,9 +243,19 @@ The server already refuses the password of a member of `sysadmin`,
 holds `CONTROL SERVER`, `ALTER ANY LOGIN` or `IMPERSONATE ANY LOGIN`, `15151`
 (GR1). The guardrail refuses them at plan time instead (invariant 4). The
 server does not refuse a login that holds `ALTER ANY SERVER ROLE`, which is
-the measured gap (§1, GR4). The grants on one object give the same path
-through one login or one role; they are from the documentation and not
-measured.
+the measured gap (§1, GR4). The grants on one object are gaps too: the
+server lets the tool set the password of a login that holds one of them
+(`12_guardrail_paths_probe.py`, PA1). `CONTROL` or `IMPERSONATE` on a login
+reaches that login's power through `EXECUTE AS`. `CONTROL` or `ALTER` on a
+server role that holds `CONTROL SERVER`, and ownership of one, each let the
+holder add itself to the role. `TAKE OWNERSHIP` on such a role does not, at
+first, `15151`, but it lets the holder take the role with `ALTER
+AUTHORIZATION`, and then add itself (PA3). `ALTER` on a login reached no
+power: `EXECUTE AS`, the password and `DISABLE` are refused, and renaming
+the login is not measured. `TAKE OWNERSHIP` on a login cannot be granted:
+the `GRANT` is a syntax error (PA3). Whether the list keeps these two is
+open (open: #1567). The server refuses the password of a member of a role
+nested in a role that holds `CONTROL SERVER`, `15151` (PA1).
 
 | Where | What it shows |
 |---|---|
@@ -249,8 +263,15 @@ measured.
 | `sys.server_permissions` | server permissions, and permissions on one login or one server role, with `class` and `major_id` naming the object |
 | `sys.server_principals.owning_principal_id` | the owner of a user-defined server role |
 
-The tool login reads the first two (GR3). Its read of the third is not
-measured (open: #1553). The guardrail does not read database
+With `ALTER ANY LOGIN` alone, the tool login reads less than the table shows
+(PA2). It does not see a user-defined server role's row in
+`sys.server_principals`, so it reads neither the role's name nor its
+`owning_principal_id`. It does not see a membership row whose member is a
+role, so it cannot follow one role nested in another. It reads a login's own
+grants and memberships, with a role named by its id, and that role's grants
+by the id. With `VIEW ANY DEFINITION` as well, it reads every row the table
+names (PA4). What the tool login must hold, and what the guardrail does
+where it cannot see a path, is open (open: #1567). The guardrail does not read database
 paths, such as `db_owner` in `msdb` or a `TRUSTWORTHY` database owned by a
 member of `sysadmin`: they are database-level reads, and none was measured.
 
@@ -285,9 +306,16 @@ digest of the password in UTF-16LE followed by the salt:
   2025 stores it itself. 2019 refuses it, `15021`.
 
 The driver's value agrees with the server's own for the same password and salt
-(CH1). The driver sends `0x0300` where the server takes it. How the driver
-reads that capability before a change is not measured
-(unverified: mssql-hash-version).
+(CH1). The driver sends `0x0300` where the server takes it. A login with
+only `ALTER ANY LOGIN` can tell before a change. `CREATE LOGIN` with a
+`0x0300` value, inside a transaction that is rolled back, answers `15021`
+where the server refuses `0x0300`, and `ok` where it takes it, and leaves no
+login. `15021` also answers a value of the wrong length, so the check means
+this only for a value the driver computed. Where the name is taken, 2022
+and 2025 answer `15025` first. A refused `0x0300` change changes nothing
+(`11_hash_version_probe.py`, HV3, HV6 to HV8). What an audit keeps of the
+rolled-back statement is not measured. Which of these the driver uses is
+open (open: #1564).
 
 `HASHED` is refused on a login with `CHECK_POLICY = ON`, `33020` (CH4). So a
 change runs in this order, on every host:

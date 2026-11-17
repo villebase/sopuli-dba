@@ -120,6 +120,32 @@ def test_a_failed_read_is_a_note_not_the_targets_failure() -> None:
     assert run.replicas == {}
 
 
+def test_a_peer_whose_read_failed_still_counts_as_reached() -> None:
+    """The second review of #1583: B was reached, so A must not call it
+    unreached because B's own read failed."""
+    run = _run({"SQLAG1": "mssql-ag1", "SQLAG2": "mssql-ag2"})
+    _read(run, "mssql-ag1", ("SQLAG1", "SQLAG2"))
+    (note,) = _read_replicas(Replicas(error=DriverError("lost", hint=None)), "mssql-ag2", run)
+    assert "could not be read" in note
+    assert _replicas_unreached(run) == []
+
+
+def test_a_peer_whose_name_did_not_match_still_counts_as_reached() -> None:
+    run = _run({"SQLAG1": "mssql-ag1", "SQLAG2": "mssql-ag2"})
+    _read(run, "mssql-ag1", ("SQLAG1", "SQLAG2"))
+    (note,) = _read(run, "mssql-ag2", ("OLDNAME", "SQLAG1"))
+    assert "not among" in note
+    assert _replicas_unreached(run) == []
+
+
+def test_a_failed_reads_note_carries_no_server_text() -> None:
+    run = _run({"SQLAG1": "mssql-ag1"})
+    failed = Replicas(error=DriverError("the server said something long", hint=None))
+    (note,) = _read_replicas(failed, "mssql-ag1", run)
+    assert "the server said" not in note
+    assert note.endswith("SOPULI-W076 was not checked: DriverError")
+
+
 def test_the_message_asks_for_every_replica_reached() -> None:
     """A declared target that was down, or left out by --select, is named
     too, so the message asks for both."""

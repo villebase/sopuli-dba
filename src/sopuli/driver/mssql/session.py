@@ -15,8 +15,11 @@ SQL login, and names the instance by ``SERVERPROPERTY('ServerName')``
 ``SOPULI-20006``, and the registry lists no command but `doctor`: the first
 verbs come with the password change (#1551) and the login check (#1552).
 It reads the host's platform and the password value's version as
-capabilities (:mod:`~sopuli.driver.mssql.capabilities`, #1550); the
-Availability Group reads are #1550's next part.
+capabilities (:mod:`~sopuli.driver.mssql.capabilities`, #1550), and what
+it can of the Availability Groups the instance is in
+(:mod:`~sopuli.driver.mssql.groups`): the replicas' names, for `doctor`'s
+``SOPULI-W076``, and whether its database is a contained group's master,
+which the scope refuses.
 
 **pyodbc's pooling is off for the process.** A pooled connection is kept open
 after ``close()``, and the next ``connect()`` with the same string reuses it

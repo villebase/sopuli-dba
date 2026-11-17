@@ -1086,23 +1086,28 @@ def _read_replicas(session: AvailabilityReplicas, target: str, run: Invocation) 
     target's failure. The target's own ``ServerName``, which
     :func:`~sopuli.driver.clusters.claim` kept in ``run.clusters``, has to be
     among its replicas' names: a server renamed after its group was made, or
-    one whose name was not read, would otherwise count itself as missing."""
+    one whose name was not read, would otherwise count itself as missing.
+
+    The target was reached either way, so its own name is recorded first,
+    before the read: a peer that lists it must not call it unreached because
+    this target's own read failed or did not match."""
+    own = next((name for name, claimed in run.clusters.items() if claimed == target), None)
+    if own is not None:
+        run.instance_names[target] = own
     try:
         names = session.availability_replicas()
     except DriverError as error:
+        # The number or the kind alone, never the server's words, as W073.
         return (
             f"{target}: its Availability Group replicas could not be read, so "
-            f"SOPULI-W076 was not checked: {error.code or error}",
+            f"SOPULI-W076 was not checked: {error.code or type(error).__name__}",
         )
-    own = next((name for name, claimed in run.clusters.items() if claimed == target), None)
     if names and (own is None or own.upper() not in {name.upper() for name in names}):
         return (
             f"{target}: its ServerName is not among its Availability Group's replicas "
             f"({', '.join(names)}), so SOPULI-W076 was not checked",
         )
     run.replicas[target] = names
-    if own is not None:
-        run.instance_names[target] = own
     return ()
 
 

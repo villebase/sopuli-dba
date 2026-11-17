@@ -76,6 +76,9 @@ class TargetAnswer(Protocol):
     @property
     def refused(self) -> bool: ...
 
+    @property
+    def read_failed(self) -> bool: ...
+
 
 def target_counts(reports: Sequence[TargetAnswer]) -> tuple[int, int, int]:
     """How many targets gave no answer, how many are of another product, and
@@ -90,13 +93,13 @@ def target_counts(reports: Sequence[TargetAnswer]) -> tuple[int, int, int]:
     return unanswered, unsupported, refused
 
 
-def not_answered_word(answer: TargetAnswer, *, read_failed: bool) -> str:
+def not_answered_word(answer: TargetAnswer) -> str:
     """What a target with an error says before the error, in every report."""
     if answer.unsupported:
         return "not supported"
     if answer.refused:
         return "not checked"
-    return "could not read" if read_failed else "could not connect"
+    return "could not read" if answer.read_failed else "could not connect"
 
 
 def render(reports: Sequence[TargetReport], *, show_all: bool) -> str:
@@ -109,7 +112,7 @@ def render(reports: Sequence[TargetReport], *, show_all: bool) -> str:
 
 def _section(report: TargetReport, *, show_all: bool) -> list[str]:
     if report.error is not None:
-        what = not_answered_word(report, read_failed=report.read_failed)
+        what = not_answered_word(report)
         return [f"{paint(report.target, Role.HEADING)}  {what}: {report.error.message}"]
     lines = [f"{paint(report.target, Role.HEADING)}  ({_head(report)})"]
     lines.extend(

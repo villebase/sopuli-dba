@@ -84,7 +84,7 @@ def render(reports: Sequence[TargetPrivileges], *, detail: bool) -> str:
 def _section(report: TargetPrivileges, *, detail: bool) -> list[str]:
     heading = paint(report.target, Role.HEADING)
     if report.error is not None:
-        what = report_view.not_answered_word(report, read_failed=report.read_failed)
+        what = report_view.not_answered_word(report)
         return [f"{heading}  {what}: {report.error.message}"]
     # PUBLIC is not an account, so the head line does not count it.
     real = sum(1 for one in report.accounts if one.kind != PUBLIC_KIND)

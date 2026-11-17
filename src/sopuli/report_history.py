@@ -43,6 +43,7 @@ __all__ = [
     "GENERATED",
     "HISTORY_FIELDS",
     "NATIVE_NOTE",
+    "DATABASE_NOT_READ",
     "NOT_MANAGED",
     "NO_RESET_RECORDS",
     "UNDECLARED",

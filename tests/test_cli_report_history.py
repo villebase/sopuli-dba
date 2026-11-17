@@ -21,6 +21,7 @@ from jsonschema import Draft202012Validator
 from conftest import WriteConfig
 from native_estate import OCI_VAULT, seed, staging_store
 from sopuli import cli as cli_module
+from sopuli import report_history as history_states
 from sopuli.admin import Resolved
 from sopuli.cli import cli
 from sopuli.config.model import Vault
@@ -801,3 +802,46 @@ def test_a_capability_refused_at_connect_is_not_checked_and_keeps_the_store_hist
     Draft202012Validator(RUN_SCHEMA).validate(document)
     ghost = next(row for row in document["results"] if row["account"] == "acme_ghost")
     assert ghost["state"] == "NOT_CHECKED"
+
+
+def test_a_personal_account_with_no_reset_records_is_not_checked_when_not_read(
+    write_config: WriteConfig, mssql_estate: MemoryStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With no `reset_records:` store, the database's date is all a personal
+    account has. Where it was not read, the account is not checked, never
+    REPORT_OK (#1586 second review)."""
+
+    class RefusingDriver:
+        def __init__(self, context: Any) -> None:
+            pass
+
+        def connect(self, target: Any, credential: Any) -> FakeSession:
+            raise UnsupportedCapabilityError("strict_encryption", target="mssql-dev")
+
+    monkeypatch.setattr("sopuli.cli.driver_for", lambda target, context: RefusingDriver(context))
+    path = write_config(MSSQL_CONFIG + "personal_accounts:\n  - accounts: [jdoe]\n")
+    result = CliRunner().invoke(
+        cli, ["--config", str(path), "--output", "json", "report", "history"]
+    )
+    document = json.loads(result.output)
+
+    Draft202012Validator(RUN_SCHEMA).validate(document)
+    states = {row["account"]: row["state"] for row in document["results"]}
+    assert states["jdoe"] == "NOT_CHECKED"
+    assert states["acme_app"] == "REPORT_OK"
+
+
+def test_a_date_read_before_the_target_failed_is_kept_with_no_reason() -> None:
+    """A read failure after the dates were read leaves them as read (#1586
+    second review)."""
+    read = history_states.AccountHistory(
+        "mssql-dev",
+        "acme_ops",
+        history_states.UNDECLARED,
+        note=history_states.NOT_MANAGED,
+        db_changed_at=CHANGED,
+    )
+    unread = replace(read, db_changed_at=None)
+
+    assert cli_module._database_not_read(read) == read
+    assert cli_module._database_not_read(unread).not_checked == (history_states.DATABASE_NOT_READ,)

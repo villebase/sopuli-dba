@@ -79,7 +79,7 @@ def _section(report: TargetHistory) -> list[str]:
         f"{count} account{'' if count == 1 else 's'})"
     ]
     if report.error is not None:
-        what = report_view.not_answered_word(report, read_failed=report.read_failed)
+        what = report_view.not_answered_word(report)
         lines.append(f"  {what}: {report.error.message}; database dates not read")
     if report.absent is not None:
         lines.append(f"  no managed account {report.absent} on this target")

@@ -6005,6 +6005,43 @@ def _personal_role_members(session: Any, config: Config, target: ExpandedTarget)
     return _RoleMembers(tuple(members), tuple(unresolved))
 
 
+#: :attr:`_ReportSession.why` for a product the report is not written for.
+_UNSUPPORTED = "unsupported"
+#: :attr:`_ReportSession.why` for a target that refused the connection for a
+#: capability it lacks, such as SQL Server's `strict_encryption` (#1555).
+_REFUSED = "refused"
+
+
+@dataclass(frozen=True)
+class _ReportSession:
+    """A report's session on one target, or why there is none.
+
+    ``why`` is :data:`_UNSUPPORTED` or :data:`_REFUSED` for a target that is
+    *not checked* rather than unreachable (UC-5 §3), and ``None`` for a
+    session, or for a target that could not be reached."""
+
+    session: Session | None
+    error: Error | None = None
+    why: str | None = None
+
+
+def _open_report_session(target: ExpandedTarget, run: Invocation, config: Config) -> _ReportSession:
+    """:func:`_open_session` for a `report` command. The one place a failure
+    to open is sorted into another product, a capability the target lacks,
+    or a target that could not be reached, so the three reports cannot
+    disagree about it (#1586 review)."""
+    try:
+        return _ReportSession(_open_session(target, run, config))
+    except (DriverNotImplementedError, NotWrittenError) as error:
+        # Another product: refused before connecting.
+        return _ReportSession(None, _finding(error), _UNSUPPORTED)
+    except UnsupportedCapabilityError as error:
+        # Such as SQL Server's `strict_encryption` on 2019 and 2022.
+        return _ReportSession(None, _finding(error), _REFUSED)
+    except Exception as error:  # noqa: BLE001 -- a per-target finding
+        return _ReportSession(None, _finding(error))
+
+
 def _report_target(
     target: ExpandedTarget, run: Invocation, config: Config
 ) -> report_view.TargetReport:
@@ -6018,20 +6055,15 @@ def _report_target(
     """
     session = None
     try:
-        try:
-            session = _open_session(target, run, config)
-        except (DriverNotImplementedError, NotWrittenError) as error:
-            # Another product: refused before connecting. Not checked on this
-            # target, rather than unreachable (UC-5 §3).
+        opened = _open_report_session(target, run, config)
+        if opened.session is None:
             return report_view.TargetReport(
-                target=target.name, error=_finding(error), unsupported=True
+                target=target.name,
+                error=opened.error,
+                unsupported=opened.why == _UNSUPPORTED,
+                refused=opened.why == _REFUSED,
             )
-        except UnsupportedCapabilityError as error:
-            # A capability the connection needs, such as SQL Server's
-            # `strict_encryption` on 2019 and 2022: not checked (#1555).
-            return report_view.TargetReport(target=target.name, error=_finding(error), refused=True)
-        except Exception as error:  # noqa: BLE001 -- a per-target finding
-            return report_view.TargetReport(target=target.name, error=_finding(error))
+        session = opened.session
         if not isinstance(session, AccountSurvey):
             # The registry lets a product reach this command only once its
             # session implements the survey. One that does not anyway is not
@@ -6170,19 +6202,15 @@ def _privileges_target(
     """One target: survey its accounts, then their privileges, on one connection."""
     session = None
     try:
-        try:
-            session = _open_session(target, run, config)
-        except (DriverNotImplementedError, NotWrittenError) as error:
+        opened = _open_report_session(target, run, config)
+        if opened.session is None:
             return privileges_view.TargetPrivileges(
-                target=target.name, error=_finding(error), unsupported=True
+                target=target.name,
+                error=opened.error,
+                unsupported=opened.why == _UNSUPPORTED,
+                refused=opened.why == _REFUSED,
             )
-        except UnsupportedCapabilityError as error:
-            # Such as SQL Server's `strict_encryption`: not checked (#1555).
-            return privileges_view.TargetPrivileges(
-                target=target.name, error=_finding(error), refused=True
-            )
-        except Exception as error:  # noqa: BLE001 -- a per-target finding
-            return privileges_view.TargetPrivileges(target=target.name, error=_finding(error))
+        session = opened.session
         if not isinstance(session, AccountSurvey) or not isinstance(session, PrivilegeSurvey):
             missing = DriverError(f"{target.name}: this driver cannot survey its privileges")
             return privileges_view.TargetPrivileges(
@@ -6501,18 +6529,15 @@ def _history_target(
     read_failed = refused_capability = False
     try:
         if found:
-            try:
-                session = _open_session(target, run, config)
-            except (DriverNotImplementedError, NotWrittenError) as refused:
+            opened = _open_report_session(target, run, config)
+            if opened.why == _UNSUPPORTED:
                 return history_view.TargetHistory(
-                    target=target.name, error=_finding(refused), unsupported=True
+                    target=target.name, error=opened.error, unsupported=True
                 )
-            except UnsupportedCapabilityError as lacking:
-                # Such as SQL Server's `strict_encryption` (#1555): not checked,
-                # with the store's histories still shown (UC-5 §3).
-                error, refused_capability = _finding(lacking), True
-            except Exception as failed:  # noqa: BLE001 -- a per-target finding
-                error = _finding(failed)
+            # A refused target, such as SQL Server's under `strict_encryption`,
+            # is not checked, and its store histories are still shown (#1555).
+            session, error = opened.session, opened.error
+            refused_capability = opened.why == _REFUSED
 
         release = None
         if session is not None:
@@ -6523,14 +6548,7 @@ def _history_target(
             except Exception as failed:  # noqa: BLE001 -- a per-target finding
                 error, read_failed = _finding(failed), True
         if error is not None:
-            # An account the tool does not manage has only the database's
-            # date, which was not read: never REPORT_OK (#1586 review).
-            found = [
-                replace(one, not_checked=(*one.not_checked, history_states.DATABASE_NOT_READ))
-                if one.kind == history_states.UNDECLARED
-                else one
-                for one in found
-            ]
+            found = [_database_not_read(one) for one in found]
         absent = None
         if any(_missing_unmanaged(one) for one in found):
             found, absent = [one for one in found if not _missing_unmanaged(one)], wanted
@@ -6605,6 +6623,20 @@ def _with_view_date(session: Any, user: UserState | None) -> UserState | None:
         return user
     when, why = session.report_changed_at(user)
     return replace(user, password_changed_at=when, password_changed_unknown=why)
+
+
+def _database_not_read(one: history_states.AccountHistory) -> history_states.AccountHistory:
+    """``one``, *not checked* where the database's date is all it could have
+    and that date was not read: never REPORT_OK (#1586 review).
+
+    That is an account the tool does not manage, and a personal account with
+    no `reset_records:` store, whose resets are not recorded. A row whose date
+    was read before the target failed keeps it, with no reason added."""
+    only_the_database = one.note in (history_states.NOT_MANAGED, history_states.NO_RESET_RECORDS)
+    read = one.db_changed_at is not None or one.db_unknown is not None
+    if not only_the_database or one.events or read:
+        return one
+    return replace(one, not_checked=(*one.not_checked, history_states.DATABASE_NOT_READ))
 
 
 def _missing_unmanaged(one: history_states.AccountHistory) -> bool:

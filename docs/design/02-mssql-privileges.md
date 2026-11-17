@@ -430,15 +430,18 @@ and 2025 answer `15025` first. A refused `0x0300` change changes nothing
 **The driver reads it once per session, before a change, with the
 rolled-back `CREATE LOGIN`, under a random name, and caches the answer as a
 capability** ([#1564](../decisions/log.md#1564)). `ok` means the
-server takes `0x0300`, and `15021` that it does not. Any other answer fails
-the check at plan time, `15025` among them: the tool cannot see every name
-a login would clash with, such as a user-defined role's, and an answer to a
-clash says nothing about the value on a release that checks the name first.
-The check runs in a session that changes a password, before anything is
-written for the login. It also runs in the `--dry-run` of `creds apply`
-and `creds rotate`, on each target with something to send, and the plan
-names the value, such as `0x0300 password value (PBKDF2-HMAC-SHA512)`, or
-the error where the check gave no answer. A target the run only reads, or
+server takes `0x0300`, and `15021` that it does not. Any other answer,
+`15025` among them, refuses the change on that target: the tool cannot see
+every name a login would clash with, such as a user-defined role's, and an
+answer to a clash says nothing about the value on a release that checks the
+name first. The check runs in a session that changes a password, before
+anything is written for the login, so the refusal comes after any target
+the run changed before it, and after `creds rotate` has written `pending`
+([#1551](../decisions/log.md#1551)). It also runs in the `--dry-run` of
+`creds apply` and `creds rotate`, on each target with something to send,
+and the plan names the value, such as `0x0300 password value
+(PBKDF2-HMAC-SHA512)`, or the error where the check gave no answer or a
+refusal, so the plan shows each refused target as the run would. A target the run only reads, or
 one that is `readonly`, never gets it. The rolled-back statement changes
 nothing, but what a server audit or Extended Events keep of it is not
 measured (unverified: mssql-hash-check-audit).

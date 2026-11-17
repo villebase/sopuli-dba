@@ -127,11 +127,17 @@ def test_the_dry_run_names_the_value(monkeypatch: pytest.MonkeyPatch) -> None:
     assert session.closed
 
 
-def test_a_value_the_check_refuses_refuses_the_dry_run(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_value_the_check_refuses_is_a_note(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The run refuses that target and goes on, so the plan says so (#1551)."""
     session = Session(UnsupportedCapabilityError("password_value", target="mssql-dev"))
     opening(monkeypatch, session)
-    with pytest.raises(UnsupportedCapabilityError, match="password_value"):
-        versions([target()], None, None)
+    (named,) = versions([target()], None, None)
+    assert (named.level, named.target) == ("info", "mssql-dev")
+    assert named.message.startswith(
+        'target "mssql-dev" did not say which password value it takes, and a change '
+        "would stop there:"
+    )
+    assert "password_value" in named.message
     assert session.closed
 
 

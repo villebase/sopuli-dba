@@ -107,7 +107,11 @@ detail.
    `report` commands: a check that a target lacks the capability for is
    reported as not checked on that target, and the command fails at plan time
    only when no target can run the check
-   ([#1376](docs/decisions/log.md#1376)).
+   ([#1376](docs/decisions/log.md#1376)). A third is accepted on SQL Server:
+   the password value's check runs once, in the session that changes the
+   login, so a check whose answer is neither `ok` nor `15021` refuses that
+   target during the run, after earlier targets may have changed
+   ([#1551](docs/decisions/log.md#1551)).
 
 5. **The config is the whitelist for changes.** The tool never changes an
    account the config does not declare. Selectors filter the declared set; they

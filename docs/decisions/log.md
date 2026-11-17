@@ -6288,6 +6288,18 @@ the register.
   session that changes a password and in its `--dry-run`, never on a target
   the run only reads or a `readonly` one. What an audit keeps of the
   statement is measured next (`mssql-hash-check-audit`, #1569).
+  [#1551](#1551) later decided, by the maintainer's choice on 2026-11-17,
+  that the two halves cannot both hold, and kept the second: the check runs
+  once, in the session that changes the login, and any other answer refuses
+  that target before anything is sent for the login, not the run at plan
+  time. A target changed earlier in the run keeps its change, and `creds
+  rotate` has already written `pending`. A plan-time check would add the
+  rolled-back `CREATE LOGIN` on every target a scheduled `creds apply`
+  reads but does not change, and a second one on each target it changes,
+  with the statement's audit footprint unmeasured. `--dry-run` already
+  sends it once to each target with something to send, and names a
+  refused target as the run would. This is a third exception to
+  invariant 4.
 - **Why:** it is the only option that reads a capability (P1), known at plan
   time (invariant 4), and touches no managed login. Probe 11 measured it on
   15.0.4510.2, 16.0.4325.4 and 17.0.5065.9 (HV6 to HV8): it leaves no login,

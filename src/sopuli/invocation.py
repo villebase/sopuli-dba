@@ -324,6 +324,9 @@ class Invocation:
     #: target, as `doctor` read them, for `SOPULI-W076` (#1550). Empty for a
     #: target in no group, and absent for a target `doctor` did not read.
     replicas: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    #: Each SQL Server target's ``SERVERPROPERTY('ServerName')``, by target,
+    #: for the same check: the names a replica is compared with.
+    instance_names: dict[str, str] = field(default_factory=dict)
     #: The configuration, read by the boundary before the verb ran.
     #:
     #: ``None`` only where no file has been read: an :class:`Invocation` built

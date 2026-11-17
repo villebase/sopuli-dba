@@ -179,7 +179,7 @@ from sopuli.diagnostics import (
     promotion_unconfirmed,
     promotion_withheld,
     refusing_targets,
-    replicas_undeclared,
+    replicas_unreached,
     reset_journal_unread,
     reset_record_unwritten,
     role_not_resolved,
@@ -195,7 +195,12 @@ from sopuli.diagnostics import (
     worse_encryption,
 )
 from sopuli.driver import guardrails
-from sopuli.driver.clusters import ClusterIdentity, covered_databases, scope_and_claim
+from sopuli.driver.clusters import (
+    AvailabilityReplicas,
+    ClusterIdentity,
+    covered_databases,
+    scope_and_claim,
+)
 from sopuli.driver.grants import PrivilegeSurvey, PrivilegeViewState
 from sopuli.driver.mariadb.roles import PublicRoleError
 from sopuli.driver.mysql.roles import MandatoryRoleError
@@ -1043,7 +1048,7 @@ def doctor(
         for target in config.expanded_targets
     ]
     entries = [entry for entry, _ in examined]
-    for warning in _replicas_undeclared(run):
+    for warning in _replicas_unreached(run):
         run.document.warn_in_text(warning)
 
     document.targets = entries
@@ -1072,23 +1077,52 @@ def doctor(
     )
 
 
-def _replicas_undeclared(run: Invocation) -> list[Diagnostic]:
+def _read_replicas(session: AvailabilityReplicas, target: str, run: Invocation) -> tuple[str, ...]:
+    """Read a SQL Server target's Availability Group replicas into
+    ``run.replicas``, for :func:`_replicas_unreached` (#1550). Returns a note
+    for the target where nothing can be compared, and none otherwise.
+
+    The read feeds a warning only, so a failed read is a note, never the
+    target's failure. The target's own ``ServerName``, which
+    :func:`~sopuli.driver.clusters.claim` kept in ``run.clusters``, has to be
+    among its replicas' names: a server renamed after its group was made, or
+    one whose name was not read, would otherwise count itself as missing."""
+    try:
+        names = session.availability_replicas()
+    except DriverError as error:
+        return (
+            f"{target}: its Availability Group replicas could not be read, so "
+            f"SOPULI-W076 was not checked: {error.code or error}",
+        )
+    own = next((name for name, claimed in run.clusters.items() if claimed == target), None)
+    if names and (own is None or own.upper() not in {name.upper() for name in names}):
+        return (
+            f"{target}: its ServerName is not among its Availability Group's replicas "
+            f"({', '.join(names)}), so SOPULI-W076 was not checked",
+        )
+    run.replicas[target] = names
+    if own is not None:
+        run.instance_names[target] = own
+    return ()
+
+
+def _replicas_unreached(run: Invocation) -> list[Diagnostic]:
     """`SOPULI-W076` for each SQL Server target that is a replica of an
     Availability Group with a replica no target of this run reached (#1538,
     decision 4; #1550).
 
     A replica's name, from ``sys.availability_replicas``, is the server's
-    name, and :func:`~sopuli.driver.clusters.claim` keeps each reached
-    target's ``SERVERPROPERTY('ServerName')`` in ``run.clusters``. The two are
-    compared without case, as SQL Server compares server names. The target's
-    own name is among its replicas and among the claimed names, so it never
-    counts as missing."""
-    reached = {name.lower() for name in run.clusters}
+    name, compared with each reached SQL Server target's
+    ``SERVERPROPERTY('ServerName')``, folded by ``upper()`` (invariant 5).
+    Only SQL Server targets' names count: another product's identity is not
+    a server name. The target's own name is among its replicas, checked when
+    it was read (:func:`_read_replicas`), so it never counts as missing."""
+    reached = {name.upper() for name in run.instance_names.values()}
     found: list[Diagnostic] = []
     for target, names in run.replicas.items():
-        missing = [name for name in names if name.lower() not in reached]
+        missing = [name for name in names if name.upper() not in reached]
         if missing:
-            found.append(replicas_undeclared(target, missing))
+            found.append(replicas_unreached(target, missing))
     return found
 
 
@@ -1320,11 +1354,8 @@ def _examine(
             scope, caveats = _claim(session, target.name, run, in_text=False)
             found = scope
             warnings += caveats
-            # A SQL Server target's Availability Group replicas, for
-            # SOPULI-W076 once every target is read (#1550).
-            read_replicas = getattr(session, "availability_replicas", None)
-            if callable(read_replicas):
-                run.replicas[target.name] = tuple(read_replicas())
+            if isinstance(session, AvailabilityReplicas):
+                warnings += _read_replicas(session, target.name, run)
             if privileges:
                 audit = session.privileges(accounts=_declared_on(config.bindings, target.name))
                 # Folded into the scope the entry already carries rather than

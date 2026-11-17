@@ -39,10 +39,11 @@ may be short. A denial of ``VIEW ANY SECURITY DEFINITION`` hides every row,
 so nothing is read; a read that names a principal it has no row for is
 refused the same way, as guardrail 9's is (:mod:`~sopuli.driver.mssql.admin`).
 
-**A Windows group.** A Windows login also holds what each Windows group login
-it is in holds, and the server keeps no record of a group's members: Windows
-answers that at login. Where a Windows login is surveyed on a server that has
-a Windows group login, the parts are read and that gap is named.
+**A group login.** A Windows or Entra login also holds what each group login
+it is in holds, a Windows group or an Entra group, and the server keeps no
+record of a group's members: Windows or Entra ID answers that at login. Where
+such a login is surveyed on a server that has a group login, the parts are
+read and that gap is named.
 """
 
 from __future__ import annotations
@@ -83,7 +84,7 @@ NO_DEFINITIONS = (
 #: Why the server level is not checked where ``VIEW ANY SECURITY
 #: DEFINITION`` is denied (2022 and later), which hides every principal,
 #: membership and grant (``13_fixed_roles_probe.py``, FR5).
-DENIED_SECURITY = (
+SECURITY_DENIED = (
     "server-level privileges and server roles: the tool login is denied VIEW ANY "
     "SECURITY DEFINITION, which hides every principal, membership and grant; revoke "
     "the denial (02-mssql-privileges.md §2.2)"
@@ -91,23 +92,24 @@ DENIED_SECURITY = (
 #: Why the server level is not checked where the read names a principal it
 #: has no row for: a denial hides a principal's row and not the rows that
 #: name it (FR5), or the principal was made during the read, twice.
-PARTIAL_READ = (
+READ_PARTIAL = (
     "server-level privileges and server roles: the read names a server principal "
     "the tool login has no row for, one a DENY of VIEW DEFINITION hides or one made "
     "during the read; revoke any such DENY to the tool login, and run the report "
     "again (02-mssql-privileges.md §2.2)"
 )
-#: What the parts cannot show where a Windows login is surveyed on a server
-#: that has a Windows group login: SQL Server keeps no record of a group's
-#: members, which Windows answers at login.
-WINDOWS_GROUPS = (
-    "the server-level privileges a Windows login holds through a Windows group login: "
-    "the server keeps no record of which Windows logins are in a group, so they are not "
-    "listed"
+#: What the parts cannot show where a Windows or Entra login is surveyed on a
+#: server that has a group login: the server keeps no record of a group's
+#: members, which Windows or Entra ID answers at login.
+GROUP_MEMBERS = (
+    "the server-level privileges a Windows or Entra login holds through a group login: "
+    "the server keeps no record of which logins are in a group, so they are not listed"
 )
 
-#: ``sys.server_principals.type`` of a Windows login, and of a Windows group.
-WINDOWS_LOGIN, WINDOWS_GROUP = "U", "G"
+#: ``sys.server_principals.type`` of a Windows and an Entra login, which a
+#: group can hold, and of a Windows and an Entra group.
+GROUP_MEMBER_TYPES = frozenset({"U", "E"})
+GROUP_TYPES = frozenset({"G", "X"})
 
 PRINCIPALS = "SELECT principal_id, name, type, is_fixed_role FROM sys.server_principals"
 MEMBERSHIPS = "SELECT role_principal_id, member_principal_id FROM sys.server_role_members"
@@ -155,7 +157,7 @@ class ServerGrants:
     ``system`` and ``objects`` are ``None`` where the read was not complete,
     and ``unread`` then says why; ``roles`` then holds the memberships the
     tool login could see. ``gaps`` says what complete parts cannot show, such
-    as a Windows login's privileges through a Windows group.
+    as a Windows or Entra login's privileges through a group login.
     """
 
     roles: tuple[RoleGrant, ...]
@@ -179,17 +181,18 @@ def read(cursor: Cursor, accounts: Sequence[str], *, public: bool) -> ServerGran
     # 0 for VIEW ANY SECURITY DEFINITION is a denial only where VIEW ANY
     # DEFINITION, which implies it, is held: without that, 0 means it is not
     # held at all (measured on 16.0.4325.4, #1578 and #1589).
+    # `row is not None` follows from `not missing`; it is there for mypy.
     if not missing and row is not None and row[1] == 0:
-        return ServerGrants(roles=(), system=None, objects=None, unread=DENIED_SECURITY)
+        return ServerGrants(roles=(), system=None, objects=None, unread=SECURITY_DENIED)
     if missing:
         principals, memberships = _read_members(cursor)
         return survey(principals, memberships, (), accounts, public=public, unread=NO_DEFINITIONS)
-    found = ServerGrants(roles=(), system=None, objects=None, unread=PARTIAL_READ)
+    found = ServerGrants(roles=(), system=None, objects=None, unread=READ_PARTIAL)
     for _ in range(READS):
         principals, memberships = _read_members(cursor)
         permissions = _read_permissions(cursor)
         found = survey(principals, memberships, permissions, accounts, public=public)
-        if found.unread != PARTIAL_READ:
+        if found.unread != READ_PARTIAL:
             break
     return found
 
@@ -240,7 +243,7 @@ def survey(
     # spelling, so they are matched exactly (PrivilegeSurvey).
     by_name = {p.name: p for p in by_id.values() if not p.is_role}
     if unread is None and not _names_known(by_id, pairs, rows):
-        unread = PARTIAL_READ
+        unread = READ_PARTIAL
     parents: dict[int, list[int]] = {}
     for role_id, member_id in pairs:
         parents.setdefault(member_id, []).append(role_id)
@@ -285,13 +288,13 @@ def survey(
                 for row in granted.get(everyone.principal_id, ())
             )
     surveyed = [by_name[name] for name in accounts if name in by_name]
-    groups = any(p.type == WINDOWS_GROUP for p in by_id.values())
-    windows = any(p.type == WINDOWS_LOGIN for p in surveyed)
+    groups = any(p.type in GROUP_TYPES for p in by_id.values())
+    members = any(p.type in GROUP_MEMBER_TYPES for p in surveyed)
     return ServerGrants(
         roles=roles,
         system=tuple(row for row in found if row.kind == SYSTEM),
         objects=tuple(row for row in found if row.kind == OBJECT),
-        gaps=(WINDOWS_GROUPS,) if groups and windows else (),
+        gaps=(GROUP_MEMBERS,) if groups and members else (),
     )
 
 
@@ -319,7 +322,8 @@ def _paths(start: int, parents: Mapping[int, list[int]]) -> list[tuple[int, ...]
         stack.extend(
             (*path, role)
             for role in sorted(parents.get(path[-1], ()))
-            if role not in path and role != start
+            # A login is never a role's member's role, so `start` never recurs.
+            if role not in path
         )
     return found
 

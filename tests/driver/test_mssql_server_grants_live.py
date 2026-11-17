@@ -43,8 +43,12 @@ def _sa(live_mssql: Any, *statements: str) -> None:
 def _drop(live_mssql: Any) -> None:
     _sa(
         live_mssql,
+        # sys.server_role_members, not IS_SRVROLEMEMBER, which takes a login
+        # as its second argument and so does not answer for a role in a role.
         *(
-            f"IF SUSER_ID(N'{role}') IS NOT NULL AND IS_SRVROLEMEMBER(N'{role}', N'{member}') = 1 "
+            "IF EXISTS (SELECT 1 FROM sys.server_role_members "
+            f"WHERE role_principal_id = SUSER_ID(N'{role}') "
+            f"AND member_principal_id = SUSER_ID(N'{member}')) "
             f"ALTER SERVER ROLE [{role}] DROP MEMBER [{member}]"
             for role, member in ((INNER, SUBJECT), (OUTER, INNER), ("processadmin", SUBJECT))
         ),

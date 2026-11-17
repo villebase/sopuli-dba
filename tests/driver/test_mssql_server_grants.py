@@ -9,13 +9,13 @@ from sopuli.driver.grants import OBJECT, GrantRow
 from sopuli.driver.mssql import server_grants
 from sopuli.driver.mssql.admin import VIEW_DEFINITIONS
 from sopuli.driver.mssql.server_grants import (
-    DENIED_SECURITY,
     FIXED_ROLE_LEVEL,
+    GROUP_MEMBERS,
     NO_DEFINITIONS,
-    PARTIAL_READ,
     PUBLIC_GRANTEE,
+    READ_PARTIAL,
+    SECURITY_DENIED,
     SERVER_LEVEL,
-    WINDOWS_GROUPS,
     Permission,
     Principal,
 )
@@ -142,7 +142,7 @@ def test_a_principal_with_no_row_makes_the_read_partial() -> None:
     hidden = [p for p in PRINCIPALS if p.principal_id != MONITORS]
     found = server_grants.survey(hidden, MEMBERSHIPS, PERMISSIONS, ("acme_app_user",), public=False)
 
-    assert found.unread == PARTIAL_READ
+    assert found.unread == READ_PARTIAL
     assert found.system is None
 
 
@@ -187,7 +187,7 @@ def test_read_with_a_denied_security_definition_reads_nothing_more() -> None:
     cursor = FakeCursor((1, 0), *VIEWS)
     found = server_grants.read(cursor, ["acme_app_user"], public=False)
 
-    assert found.unread == DENIED_SECURITY
+    assert found.unread == SECURITY_DENIED
     assert found.roles == ()
     assert cursor.sent == [VIEW_DEFINITIONS]
 
@@ -208,13 +208,27 @@ def test_a_windows_login_on_a_server_with_a_windows_group_names_the_gap() -> Non
         [*PRINCIPALS, group], MEMBERSHIPS, PERMISSIONS, ("EXAMPLE\\acme_svc",), public=False
     )
 
-    assert found.gaps == (WINDOWS_GROUPS,)
+    assert found.gaps == (GROUP_MEMBERS,)
     assert found.system is not None
     assert survey(public=False).gaps == ()
     without_group = server_grants.survey(
         PRINCIPALS, MEMBERSHIPS, PERMISSIONS, ("EXAMPLE\\acme_svc",), public=False
     )
     assert without_group.gaps == ()
+
+
+def test_an_entra_login_on_a_server_with_an_entra_group_names_the_gap() -> None:
+    """Entra ID answers a group's members at login too (#1589 second review)."""
+    entra = [
+        *PRINCIPALS,
+        Principal(274, "acme_ops@example.com", "E"),
+        Principal(275, "acme_admins", "X"),
+    ]
+    found = server_grants.survey(
+        entra, MEMBERSHIPS, PERMISSIONS, ("acme_ops@example.com",), public=False
+    )
+
+    assert found.gaps == (GROUP_MEMBERS,)
 
 
 def test_read_with_the_grant_reads_the_paths() -> None:

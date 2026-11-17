@@ -350,11 +350,14 @@ def test_only_uc1_and_uc5_are_written() -> None:
     assert DRIVERS["mssql"].not_applicable == frozenset({"profile", "valid_until"})
     assert DRIVERS["mssql"].extra == "mssql"
     assert DRIVERS["mssql"].provides == frozenset({"pyodbc"})
-    # Only SQL Server's targets are asked before a login check (#1552).
+    # Only SQL Server's targets are asked before a login check (#1552), and
+    # its session has the method the flag promises.
     assert DRIVERS["mssql"].login_check_preflight is True
     assert not any(
         driver.login_check_preflight for name, driver in DRIVERS.items() if name != "mssql"
     )
+    session = pytest.importorskip("sopuli.driver.mssql.session")
+    assert callable(getattr(session.MssqlSession, "require_login_check", None))
     require_command(target, "doctor")
     require_command(target, "report.history")
     require_command(target, "creds.check")

@@ -972,16 +972,16 @@ def test_a_target_that_cannot_log_in_safely_is_refused_before_anything_is_checke
     assert "lockout_threshold" in body["error"]["message"]
 
 
-def test_the_refusal_comes_before_the_host_check_that_opening_makes(
+def test_the_host_check_of_other_commands_does_not_hide_the_refusal(
     runner: CliRunner,
     write_config: Callable[[str], Path],
     estate: Harness,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """As SQL Server's session is today: opening it for any other command
-    refuses a Windows host as not written. For `creds check` the capability
-    refusal comes first, so the run ends at plan time with exit 5, never
-    with ERROR rows (#1592 review)."""
+    refuses a Windows host as not written. `creds check` skips that host
+    check and refuses by its own capability, so the run ends at plan time
+    with exit 5, never with ERROR rows (#1592 reviews)."""
     monkeypatch.setitem(
         DRIVERS, "oracle", dataclasses.replace(DRIVERS["oracle"], login_check_preflight=True)
     )
@@ -1011,14 +1011,40 @@ def test_a_flagged_product_whose_session_lacks_the_method_never_passes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The registry's flag is the one gate: a session without the method
-    fails the target, never checks it unasked (#1592 review)."""
+    stops the run, never checks it unasked (#1592 review). The registry test
+    holds that every flagged product's session has it."""
     monkeypatch.setitem(
         DRIVERS, "oracle", dataclasses.replace(DRIVERS["oracle"], login_check_preflight=True)
     )
     harness = estate()
     result = run(runner, write_config(CONFIG))
 
-    assert result.exit_code == ExitCode.FAILURE, result.output
+    assert isinstance(result.exception, AttributeError)
+    assert all(session.attempts == [] for session in harness["sessions"])
+
+
+def test_a_hash_check_is_not_asked_whether_it_may_log_in(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`--method hash` makes no login, so the lockout question is not asked,
+    and the hash refusal is the one that names the capability (#1592
+    second review)."""
+    monkeypatch.setitem(
+        DRIVERS, "oracle", dataclasses.replace(DRIVERS["oracle"], login_check_preflight=True)
+    )
+
+    def never(self: FakeSession) -> None:
+        raise AssertionError("a hash check makes no login")
+
+    monkeypatch.setattr(FakeSession, "require_login_check", never, raising=False)
+    harness = estate(refusal=UnsupportedCapabilityError("offline_verify", target="appdb-alpha"))
+    result = run(runner, write_config(CONFIG), "--method", "hash")
+
+    assert isinstance(result.exception, UnsupportedCapabilityError)
+    assert result.exception.capability == "offline_verify"
     assert all(session.attempts == [] for session in harness["sessions"])
 
 

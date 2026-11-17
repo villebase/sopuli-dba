@@ -2056,10 +2056,11 @@ before any account is checked, and one that does not run on Linux ends the
 run at plan time with exit 5, naming `lockout_threshold`. A host that names no
 platform counts as Windows. A disabled login reads `LOCKED`, and one that must
 change its password `EXPIRED`, from the state read first, with no login, as
-above. The server answers `18470` and `18488` only to the right password, so
-a login disabled or made to change its password between that read and the
-login says the password is right. `--method hash` and `both` are refused at
-plan time: the tool login reads no hash.
+above. A login disabled or made to change its password between that read
+and the login reads `UNVERIFIABLE`, never `IN_SYNC`, because the application
+cannot log in with it; the server answers `18470` and `18488` only to the
+right password, so the row says the password is right. `--method hash` and
+`both` are refused at plan time: the tool login reads no hash.
 
 ### `--method hash`: verification without a login attempt
 

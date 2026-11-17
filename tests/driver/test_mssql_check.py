@@ -11,7 +11,6 @@ import pytest
 from sopuli.config.model import ExpandedTarget, Target
 from sopuli.driver.protocol import (
     FAIL,
-    PASS,
     UNAVAILABLE,
     UnsupportedCapabilityError,
     UserState,
@@ -55,13 +54,14 @@ def test_for_check_18470_and_18488_say_the_password_is_right(
     monkeypatch: pytest.MonkeyPatch, message: str, code: str
 ) -> None:
     """Each is answered only to the right password; a wrong one is 18456
-    (15_login_answers_probe.py, LA2 to LA4)."""
+    (15_login_answers_probe.py, LA2 to LA4). Still never a pass: the login
+    cannot use it, so the check must not call it in sync (#1592 review)."""
     refused_with(monkeypatch, message)
 
     verified = opened().verify_password("acme_app", Secret(PASSWORD), for_check=True)
 
-    assert verified.result == PASS
-    assert f"the password is right, and the login was refused ({code})" in (verified.detail or "")
+    assert verified.result == UNAVAILABLE
+    assert f"the password is right, but the login was refused ({code})" in (verified.detail or "")
 
 
 @pytest.mark.parametrize("message", [DISABLED, MUST], ids=["disabled", "must-change"])

@@ -749,26 +749,23 @@ class MssqlSession(ClosesConnection):
                     detail="the server refused the password (18456)",
                 )
             if failure.code in (LOGIN_DISABLED, MUST_CHANGE):
-                if for_check:
-                    # Answered only to the right password (LA2 to LA4). `creds
-                    # check` reports the login's state, read first, and this
-                    # rides after it as what the password showed.
-                    return VerifyResult(
-                        method=VERIFY_LOGIN,
-                        result=PASS,
-                        latency_ms=_ms(started),
-                        detail=(
-                            f"the password is right, and the login was refused "
-                            f"({failure.code}): {failure.message}"
-                        ),
-                    )
-                # After a change, a login that cannot log in has not verified
-                # the password it was given: never a pass that promotes it.
+                # Never a pass: the login cannot use the password, so after a
+                # change it must not be promoted, and a check must not call
+                # the login in sync. `creds check` reads the state first, so
+                # it meets these only where the login was disabled or made to
+                # change its password since; they are answered only to the
+                # right password (LA2 to LA4), which its detail says.
+                detail = (
+                    f"the password is right, but the login was refused ({failure.code}): "
+                    f"{failure.message}"
+                    if for_check
+                    else f"{failure.message}: the login cannot use the password"
+                )
                 return VerifyResult(
                     method=VERIFY_LOGIN,
                     result=UNAVAILABLE,
                     latency_ms=_ms(started),
-                    detail=f"{failure.message}: the login cannot use the password",
+                    detail=detail,
                 )
             raise failure.as_error() from None
         latency = _ms(started)

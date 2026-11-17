@@ -670,10 +670,10 @@ password (`15_login_answers_probe.py`, LA2 to LA4, on 15.0.4510.2,
 16.0.4325.4 and 17.0.5065.9). `creds check` reads the login's state first
 and reports a disabled login `LOCKED` and a must-change one `EXPIRED`,
 with no login. Where the state changes between that read and the login,
-`18470` and `18488` say the password is right, and the row says so. After a
-change, the login of `creds apply` and `creds rotate` reads them as
-`unavailable`, never as a pass: a login that cannot use the password has not
-confirmed it.
+`18470` or `18488` makes the row `UNVERIFIABLE`, never `IN_SYNC`, and its
+detail says the password is right. The login of `creds apply` and `creds
+rotate` after a change reads them as `unavailable` too, never as a pass: a
+login that cannot use the password has not confirmed it.
 
 **No login locks on the Linux images.** With `CHECK_POLICY = ON`, 30 wrong
 passwords in a row leave `IsLocked` 0, and the right password then logs in.

@@ -7024,11 +7024,14 @@ def _refuse_unsafe_logins(
     Only a product whose registry entry sets ``login_check_preflight`` is
     asked, with one more connection per target: SQL Server, where on a
     Windows host a wrong password counts toward a lockout threshold the tool
-    cannot read (#1552). :func:`_open_session` asks the session, for `creds
-    check`, before anything else can refuse the host. The first target that
-    refuses ends the run with exit 5, naming the capability. A target that
-    cannot be reached, or fails another way, is passed over, as
+    cannot read (#1552). Asked only when the method makes a login. The first
+    target that refuses ends the run with exit 5, naming the capability. A
+    target that cannot be opened is passed over, as
     :func:`_refuse_uncomparable` passes it: the run reports it per target.
+
+    The registry's flag is the one gate: a flagged product's session has the
+    method, which a registry test holds, so a session without it raises
+    rather than being checked unasked.
     """
     for target_name in _grouped(config.bindings):
         target = by_target[target_name]
@@ -7036,12 +7039,13 @@ def _refuse_unsafe_logins(
             continue
         try:
             session = _open_session(target, run, config)
-        except UnsupportedCapabilityError:
-            raise
         except Exception:  # noqa: BLE001 -- the run reports it, per target
             continue
-        with suppress(Exception):
-            session.close()
+        try:
+            session.require_login_check()  # type: ignore[attr-defined]
+        finally:
+            with suppress(Exception):
+                session.close()
 
 
 def _refuse_uncomparable(
@@ -11813,14 +11817,11 @@ def _open_session(
     try:
         if isinstance(session, ClusterIdentity):
             _claim(session, target.name, run, in_text=True)
-        driver_entry = DRIVERS[target.target.type]
-        if run.document.command == "creds.check" and driver_entry.login_check_preflight:
-            # SQL Server (#1552): a host whose lockout the tool cannot read is
-            # refused for a login check by capability, before the host check
-            # below refuses it as a command not written. The registry's flag
-            # is the one gate, so a session without the method fails closed.
-            session.require_login_check()  # type: ignore[attr-defined]
-        if host_check is not None:
+        # `creds check` refuses a host by its own capabilities, by method, in
+        # its plan-time steps: `require_login_check` for a login and
+        # `require_verifier` for a hash (#1552). So the host check that
+        # refuses every other command is not made for it.
+        if host_check is not None and run.document.command != "creds.check":
             # SQL Server (#1551): after the scope and the claim, a host this
             # build changes no password on is refused, before a pre-flight
             # passes it or `rotate` stages.

@@ -7024,29 +7024,24 @@ def _refuse_unsafe_logins(
     Only a product whose registry entry sets ``login_check_preflight`` is
     asked, with one more connection per target: SQL Server, where on a
     Windows host a wrong password counts toward a lockout threshold the tool
-    cannot read (#1552). The first target that refuses ends the run with exit
-    5, naming the capability. A target that cannot be reached is passed over,
-    as :func:`_refuse_uncomparable` passes it: the run reports it per target.
+    cannot read (#1552). :func:`_open_session` asks the session, for `creds
+    check`, before anything else can refuse the host. The first target that
+    refuses ends the run with exit 5, naming the capability. A target that
+    cannot be reached, or fails another way, is passed over, as
+    :func:`_refuse_uncomparable` passes it: the run reports it per target.
     """
     for target_name in _grouped(config.bindings):
         target = by_target[target_name]
         if not DRIVERS[target.target.type].login_check_preflight:
             continue
-        session = None
         try:
-            try:
-                session = _open_session(target, run, config)
-            except Exception:  # noqa: BLE001 -- the run reports it, per target
-                continue
-            # Not on the Session protocol: only a product whose registry entry
-            # sets the flag has it.
-            require = getattr(session, "require_login_check", None)
-            if require is not None:
-                require()
-        finally:
-            if session is not None:
-                with suppress(Exception):
-                    session.close()
+            session = _open_session(target, run, config)
+        except UnsupportedCapabilityError:
+            raise
+        except Exception:  # noqa: BLE001 -- the run reports it, per target
+            continue
+        with suppress(Exception):
+            session.close()
 
 
 def _refuse_uncomparable(
@@ -11818,6 +11813,13 @@ def _open_session(
     try:
         if isinstance(session, ClusterIdentity):
             _claim(session, target.name, run, in_text=True)
+        driver_entry = DRIVERS[target.target.type]
+        if run.document.command == "creds.check" and driver_entry.login_check_preflight:
+            # SQL Server (#1552): a host whose lockout the tool cannot read is
+            # refused for a login check by capability, before the host check
+            # below refuses it as a command not written. The registry's flag
+            # is the one gate, so a session without the method fails closed.
+            session.require_login_check()  # type: ignore[attr-defined]
         if host_check is not None:
             # SQL Server (#1551): after the scope and the claim, a host this
             # build changes no password on is refused, before a pre-flight

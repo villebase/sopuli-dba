@@ -54,8 +54,10 @@ the SQL in `sql/oracle/` by hand. The PostgreSQL tool role is created by hand in
 role change its password at its next login. A MySQL target and a MariaDB target
 each run `doctor`, the `creds` commands (§7) and the `account` commands (§9).
 A SQL Server target runs `doctor`, the three `report` commands, `creds
-generate`, `creds apply`, `creds rotate` and `creds finish-rollover`, and on
-a Linux host `creds check` (§7).
+generate`, `creds apply`, `creds rotate` and `creds finish-rollover`, on a
+Linux host `creds check` (§7), and `account list` and `account suspend`
+(§9). It refuses `account expire-password`, because SQL Server takes
+`MUST_CHANGE` only with a new password.
 
 ---
 
@@ -2457,6 +2459,47 @@ suspended acme_dev_bob@localhost on 1 of 1 targets
 A second run reports `the account is already locked (ACCOUNT LOCK)`, and
 `account reset-password` now skips `acme_dev_bob@localhost`. Run `ALTER USER
 'acme_dev_bob'@'localhost' ACCOUNT UNLOCK` to undo the suspension.
+
+### `account list` and `account suspend` on SQL Server
+
+On the instance of §7, with a login `acme_jdoe` made as `sa`, and this
+block added to `mssql.yaml`:
+
+```yaml
+personal_accounts:
+  - accounts: [acme_jdoe]
+```
+
+```
+$ sopuli --config mssql.yaml account list
+ACCOUNT    TARGET     DECLARED BY  STATUS  DB_PW_CHANGED  RESET_AT
+acme_jdoe  mssql-dev  names        OPEN    2026-11-17     -
+1 declared account, 1 on the selected targets
+...
+
+$ sopuli --config mssql.yaml account suspend --account acme_jdoe
+Plan: 1 account x 1 target = 1 account   [dev]
+
+ACCOUNT    TARGET     INTENT        SECRET
+acme_jdoe  mssql-dev  account_lock  -
+
+ACCOUNT    TARGET     STATE   STATUS  DETAIL
+acme_jdoe  mssql-dev  LOCKED  OPEN    login was open; sent ALTER LOGIN … DISABLE
+
+suspended acme_jdoe on 1 of 1 targets
+...
+```
+
+A second run reports `the login is already disabled (ALTER LOGIN …
+DISABLE)`. Run `ALTER LOGIN [acme_jdoe] ENABLE` to undo the suspension.
+`account expire-password` is refused with exit 5, because SQL Server takes
+`MUST_CHANGE` only with a new password:
+
+```
+$ sopuli --config mssql.yaml account expire-password --account acme_jdoe
+...
+sopuli: target "mssql-dev" does not support expire_password
+```
 
 ### Personal accounts on MariaDB
 

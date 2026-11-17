@@ -97,5 +97,11 @@ def restore_policy(login: str, *, policy: bool, expiration: bool) -> str:
     )
 
 
+def disable(login: str) -> str:
+    """`account suspend`'s statement: the lock a person sets, which a reset
+    refuses (H4, #1554). It carries no password (LK1)."""
+    return f"ALTER LOGIN {quoted_name(login)} DISABLE"
+
+
 def _on(flag: bool) -> str:
     return "ON" if flag else "OFF"

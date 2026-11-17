@@ -80,16 +80,21 @@ from sopuli.driver.mssql.limits import LIMIT
 from sopuli.driver.mssql.password import password_value
 from sopuli.driver.mssql.scope import observe
 from sopuli.driver.protocol import (
+    ACCOUNT_LOCK,
+    EXPIRE_PASSWORD,
+    EXPIRY_UNAVAILABLE,
     FAIL,
     OFFLINE_VERIFY,
     OLD_DISCARD,
     PASS,
     PASSWORD_ROLLOVER,
+    PROFILE_MANAGEMENT,
     ROLE_LOOKUP,
     UNAVAILABLE,
     VERIFY_BOTH,
     VERIFY_HASH,
     VERIFY_LOGIN,
+    AccountChange,
     AuditCoverage,
     ChangeResult,
     ClosesConnection,
@@ -149,6 +154,10 @@ MUST_CHANGE = str(server_errors.MUST_CHANGE)
 #: (LK2); on Windows ``LOGINPROPERTY`` gives no threshold (WP1), so the check
 #: is refused there at plan time (#1538, decision 3; #1552).
 LOCKOUT_THRESHOLD = "lockout_threshold"
+
+#: Why a `profile:` predicate is refused on SQL Server, which has no
+#: profiles (#1554).
+NO_PROFILES = "SQL Server has no profiles; declare these logins by name with `accounts:`"
 
 #: The host platform this build changes passwords on.
 LINUX = "Linux"
@@ -678,14 +687,73 @@ class MssqlSession(ClosesConnection):
         LOG.debug("%s: set the policy flags of %s back", self.target.name, account)
         return True
 
-    def suspend_account(self, account: str) -> NoReturn:
-        self._not_written("suspend a login")
+    def suspend_account(self, account: str) -> AccountChange:
+        """``ALTER LOGIN … DISABLE``, or report that the login is already
+        disabled (#1554, ``02-mssql-privileges.md`` §6.3).
+
+        ``is_disabled`` is the lock a person sets, which a reset refuses (H4).
+        A lockout after failed logins (``IsLocked``) is not a suspension, and
+        does not count. **The state is read first** (invariant 9), and read
+        back after: a login whose ``is_disabled`` does not then read 1 is an
+        error, never a suspension reported on trust."""
+        require_read_write(
+            self.scope(), target=self.target.name, hint="a suspension is a write to master"
+        )
+        login = self._login_to_change(account, what="suspended")
+        status = accounts.status(
+            disabled=login.disabled,
+            locked_out=login.locked_out,
+            expired=login.expired or login.must_change,
+        )
+        if login.disabled:
+            return AccountChange(
+                ACCOUNT_LOCK,
+                changed=False,
+                status=status,
+                detail="the login is already disabled (ALTER LOGIN … DISABLE)",
+            )
+        self._read(lambda cursor: cursor.execute(statements.disable(login.name)))
+        LOG.debug("DISABLE for %s on %s", login.name, self.target.name)
+        after = self._login_to_change(account, what="read back after DISABLE")
+        if not after.disabled:
+            raise DriverError(
+                f'login "{login.name}" on target "{self.target.name}" was sent DISABLE, '
+                "and is_disabled does not read 1",
+                hint="check the login by hand; nothing else was changed",
+            )
+        return AccountChange(
+            ACCOUNT_LOCK,
+            changed=True,
+            status=status,
+            detail=f"login was {status.lower()}; sent ALTER LOGIN … DISABLE",
+        )
+
+    def _login_to_change(self, account: str, *, what: str) -> accounts.Login:
+        """The login's row, for a verb that changes it. A name with no login is
+        refused before anything is sent: the command decides on a missing
+        account before it calls, so this is the guard if it did not."""
+        login = self._read(
+            lambda cursor: accounts.read_one(cursor, account, target=self.target.name)
+        )
+        if login is None:
+            raise DriverError(
+                f'there is no login "{account}" on target "{self.target.name}" to be {what}'
+            )
+        return login
 
     def reset_password(self, *args: Any, **kwargs: Any) -> NoReturn:
         self._not_written("reset a password")
 
     def expire_password(self, account: str) -> NoReturn:
-        self._not_written("expire a password")
+        """Refused by capability (#1538, decision 2): ``MUST_CHANGE`` is taken
+        only with a new password, so the server cannot expire a password and
+        keep it. The command refuses at plan time, because the scope does not
+        report ``expire_password``; this is the guard for a caller that did not
+        ask."""
+        require_capability(
+            self.scope(), EXPIRE_PASSWORD, target=self.target.name, hint=EXPIRY_UNAVAILABLE
+        )
+        raise AssertionError("unreachable: the scope never reports expire_password")
 
     def audit_coverage(self, account: str) -> AuditCoverage:
         """Never raises, as the protocol promises: the answer is unknown."""
@@ -697,7 +765,12 @@ class MssqlSession(ClosesConnection):
         self._not_written("apply login attributes")
 
     def resolve_profile(self, profile: str) -> NoReturn:
-        self._not_written("resolve a profile")
+        """Refused by capability: SQL Server has no profiles, so a `profile:`
+        predicate names nothing on an instance, as on PostgreSQL."""
+        require_capability(
+            self.scope(), PROFILE_MANAGEMENT, target=self.target.name, hint=NO_PROFILES
+        )
+        raise AssertionError("unreachable: the scope never reports profile_management")
 
     def resolve_role(self, role: str) -> NoReturn:
         """Refused as ``role_lookup`` missing: a personal rule's `role:` is
@@ -718,8 +791,15 @@ class MssqlSession(ClosesConnection):
             ),
         )
 
-    def accounts_matching(self, *args: Any, **kwargs: Any) -> NoReturn:
-        self._not_written("list logins")
+    def accounts_matching(self, *, profile: str | None = None, role: str | None = None) -> NoReturn:
+        """Refused as :meth:`resolve_profile` and :meth:`resolve_role` refuse:
+        SQL Server has no profiles, and what a `role:` means here is open
+        (#1554, Q6). A rule that names logins needs neither."""
+        if (profile is None) == (role is None):
+            raise ValueError("accounts_matching takes exactly one of `profile` and `role`")
+        if profile is not None:
+            self.resolve_profile(profile)
+        self.resolve_role(role or "")
 
     def verify_password(
         self,

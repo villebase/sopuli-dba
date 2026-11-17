@@ -632,7 +632,12 @@ only with a new password, so the server cannot expire a password and keep it.
 The verb would replace the password the owner knows.
 
 `account suspend` sends `ALTER LOGIN … DISABLE`, where `is_disabled` is 0
-(LK1). It carries no password.
+(LK1), and reads `is_disabled` back. It carries no password. A login that
+is already disabled is reported unchanged; one that `IsLocked` reports
+locked out is not a suspension, and is disabled. `account list` serves a
+rule that names logins. A `profile:` predicate is refused, because SQL
+Server has no profiles, and a `role:` predicate by `role_lookup`, until
+what a role means here is decided (open: #1554).
 
 ### 6.4 Names in a statement
 

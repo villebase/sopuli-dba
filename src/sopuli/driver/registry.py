@@ -134,7 +134,9 @@ class DatabaseDriver:
     #: (``require_login_check``), at the cost of one more connection per
     #: target. SQL Server's: on a Windows host a login can lock at a
     #: threshold the tool cannot read, so the check is refused there at plan
-    #: time (invariant 4, #1552).
+    #: time (invariant 4, #1552). A flag rather than a method found by
+    #: ``getattr``, because the command must know before it connects which
+    #: products need that extra connection; every other product makes none.
     login_check_preflight: bool = False
     #: The system package the client loads when it is imported, where it has
     #: one, as a hint: pyodbc loads unixODBC's ``libodbc`` on Linux and macOS.

@@ -61,7 +61,11 @@ def test_for_check_18470_and_18488_say_the_password_is_right(
     verified = opened().verify_password("acme_app", Secret(PASSWORD), for_check=True)
 
     assert verified.result == UNAVAILABLE
-    assert f"the password is right, but the login was refused ({code})" in (verified.detail or "")
+    detail = verified.detail or ""
+    assert detail.startswith(f"the password is right, but the login was refused ({code}): ")
+    # The number once: the error module keeps the server's words without it
+    # (#1592 third review).
+    assert detail.count(code) == 1
 
 
 @pytest.mark.parametrize("message", [DISABLED, MUST], ids=["disabled", "must-change"])

@@ -7038,11 +7038,17 @@ def _refuse_unsafe_logins(
         if not DRIVERS[target.target.type].login_check_preflight:
             continue
         try:
-            session = _open_session(target, run, config)
+            session = _open_session(target, run, config, check_host=False)
         except Exception:  # noqa: BLE001 -- the run reports it, per target
             continue
         try:
             session.require_login_check()  # type: ignore[attr-defined]
+        except UnsupportedCapabilityError:
+            raise
+        except DriverError:
+            # The host could not be read, such as a dropped connection: the
+            # run reports the target, as it does one it cannot open.
+            continue
         finally:
             with suppress(Exception):
                 session.close()
@@ -7082,7 +7088,7 @@ def _refuse_uncomparable(
         session = None
         try:
             try:
-                session = _open_session(target, run, config)
+                session = _open_session(target, run, config, check_host=False)
             except Exception:  # noqa: BLE001 -- the run reports it, per target
                 continue
             for binding in bindings:
@@ -7137,7 +7143,7 @@ def _check_target(
     session = None
     try:
         try:
-            session = _open_session(target, run, config)
+            session = _open_session(target, run, config, check_host=False)
         except Exception as error:  # noqa: BLE001 -- a per-target finding
             return _unreachable(bindings, error, results, duration=_elapsed(started))
 
@@ -11783,9 +11789,20 @@ def _admin_notices(run: Invocation) -> list[str]:
 
 
 def _open_session(
-    target: ExpandedTarget, run: Invocation, config: Config, *, scope_only: bool = False
+    target: ExpandedTarget,
+    run: Invocation,
+    config: Config,
+    *,
+    scope_only: bool = False,
+    check_host: bool = True,
 ) -> Session:
     """One connection to one target, with the admin credential P2 resolves.
+
+    ``check_host`` is false for `creds check`, which refuses a host by its
+    own capabilities, by method, in its plan-time steps:
+    ``require_login_check`` for a login and ``require_verifier`` for a hash
+    (#1552). The host check SQL Server makes for every other command is then
+    not made.
 
     Extracted because two passes need it: the pre-flight that refuses a strategy
     the estate cannot honour, and the run that applies. Identical in both, which
@@ -11817,11 +11834,7 @@ def _open_session(
     try:
         if isinstance(session, ClusterIdentity):
             _claim(session, target.name, run, in_text=True)
-        # `creds check` refuses a host by its own capabilities, by method, in
-        # its plan-time steps: `require_login_check` for a login and
-        # `require_verifier` for a hash (#1552). So the host check that
-        # refuses every other command is not made for it.
-        if host_check is not None and run.document.command != "creds.check":
+        if host_check is not None and check_host:
             # SQL Server (#1551): after the scope and the claim, a host this
             # build changes no password on is refused, before a pre-flight
             # passes it or `rotate` stages.

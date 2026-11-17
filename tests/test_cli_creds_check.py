@@ -39,6 +39,7 @@ from sopuli.driver.protocol import (
     SKIPPED,
     VERIFY_LOGIN,
     Credential,
+    DriverError,
     Scope,
     UnsupportedCapabilityError,
     UserState,
@@ -941,6 +942,36 @@ def test_an_uncomparable_target_is_refused_before_anything_is_checked(
     assert not list(validator.iter_errors(body))
     assert body["error"]["category"] == "capability"
     assert "appdb-alpha" in body["error"]["message"]
+
+
+def test_a_host_read_that_fails_in_the_plan_step_is_left_to_the_run(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A dropped connection while the host is read is the target's
+    finding, reported by the run, not the whole run's end (#1592 third
+    review)."""
+    monkeypatch.setitem(
+        DRIVERS, "oracle", dataclasses.replace(DRIVERS["oracle"], login_check_preflight=True)
+    )
+    calls: list[str] = []
+
+    def flaky(self: FakeSession) -> None:
+        calls.append("asked")
+        if len(calls) == 1:
+            raise DriverError("the connection was lost")
+
+    monkeypatch.setattr(FakeSession, "require_login_check", flaky, raising=False)
+    harness = estate()
+    result = run(runner, write_config(CONFIG))
+
+    # The plan step passed the first target over and asked the second; the
+    # run then checked both.
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert len(calls) == 2
+    assert sum(len(session.attempts) for session in harness["sessions"]) == 2
 
 
 def test_a_target_that_cannot_log_in_safely_is_refused_before_anything_is_checked(

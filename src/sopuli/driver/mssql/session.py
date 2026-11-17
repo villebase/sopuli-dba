@@ -59,6 +59,7 @@ from sopuli.driver.mssql import (
     statements,
     survey,
 )
+from sopuli.driver.mssql import errors as server_errors
 from sopuli.driver.mssql import privileges as tool_login
 from sopuli.driver.mssql.admin import Assessment, Catalog, assess, read_catalog
 from sopuli.driver.mssql.client import client_lines
@@ -135,9 +136,11 @@ def scrub_value(message: str) -> str:
 #: The server's answers to a login, by number (§7). ``18470`` (disabled) and
 #: ``18488`` (must change) are answered only to the right password: a wrong
 #: one is ``18456`` either way (``15_login_answers_probe.py``, LA2 to LA4).
-WRONG_PASSWORD = "18456"
-LOGIN_DISABLED = "18470"
-MUST_CHANGE = "18488"
+#: As :class:`~sopuli.driver.mssql.errors.Diagnosis` codes, which are text,
+#: from the error module's numbers, so the two cannot drift apart.
+WRONG_PASSWORD = str(server_errors.LOGIN_FAILED)
+LOGIN_DISABLED = str(server_errors.LOGIN_DISABLED)
+MUST_CHANGE = str(server_errors.MUST_CHANGE)
 
 #: The capability a `creds check` login needs on the host: a lockout
 #: threshold the tool can read, or no lockout at all. Linux has no lockout
@@ -755,6 +758,8 @@ class MssqlSession(ClosesConnection):
                 # it meets these only where the login was disabled or made to
                 # change its password since; they are answered only to the
                 # right password (LA2 to LA4), which its detail says.
+                # The error module keeps the server's words without their
+                # number, so the number is given once here.
                 detail = (
                     f"the password is right, but the login was refused ({failure.code}): "
                     f"{failure.message}"

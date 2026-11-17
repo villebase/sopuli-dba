@@ -36,6 +36,7 @@ import pyodbc
 from sopuli.config.model import ExpandedTarget, Runtime
 from sopuli.config.targets import MSSQL_STRICT
 from sopuli.driver.mssql import accounts
+from sopuli.driver.mssql import privileges as tool_login
 from sopuli.driver.mssql.admin import Assessment, Catalog, assess, read_catalog
 from sopuli.driver.mssql.client import client_lines
 from sopuli.driver.mssql.connection import connection_string
@@ -47,6 +48,7 @@ from sopuli.driver.protocol import (
     Cursor,
     DriverContext,
     DriverError,
+    PrivilegeAudit,
     Scope,
     Timeouts,
     UserState,
@@ -129,8 +131,11 @@ class MssqlSession(ClosesConnection):
             ),
         )
 
-    def privileges(self, *args: Any, **kwargs: Any) -> NoReturn:
-        self._not_written("audit the tool login's grants")
+    def privileges(self, *, accounts: tuple[str, ...] = ()) -> PrivilegeAudit:
+        """What the tool login holds, needs and should not hold
+        (:mod:`~sopuli.driver.mssql.privileges`). ``accounts`` is ignored:
+        ``ALTER ANY LOGIN`` reaches every login. Uncached: a run asks once."""
+        return self._read(tool_login.audit)
 
     def describe_user(self, account: str) -> UserState | None:
         """The login's state, ``None`` where no login has the name

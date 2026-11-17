@@ -177,6 +177,17 @@ refused to all of them, `229` (RP6). The reports do not read the error log.
 | `VIEW SERVER STATE` | it shows every session (RP5). Microsoft documents it as the grant that reads `sys.dm_hadr_availability_replica_states` (§4), and #1550 measures what the tool login reads of a group without it. It stays off this list only if that read needs it and no narrower grant serves |
 | a database user in `msdb` | no operation of the tool needs one, and `msdb` holds the SQL Server Agent jobs, which may run as an administrator |
 
+`doctor --check-privileges` reads each row as the tool login, of itself:
+`HAS_PERMS_BY_NAME` and `IS_SRVROLEMEMBER`, which answer through any role and
+through `sysadmin`, and the grants on one login held by the tool login,
+`public` or a role it is a member of. It warns, and refuses nothing. A user in
+`msdb` is read by the tool login's SID in `msdb.sys.database_principals`:
+`HAS_DBACCESS('msdb')` answers 1 for every login, because `msdb`'s `guest`
+is enabled (measured on 16.0.4325.4, #1550). The tool login sees the
+memberships of its own roles, nested ones included, with `ALTER ANY LOGIN`
+alone, where it does not see another login's (PA2; measured on 16.0.4325.4,
+#1550). So the audit needs no more than §2.1's grant.
+
 ---
 
 ## 4. Managed accounts
@@ -344,8 +355,8 @@ every path. Where it does not, the guardrail refuses every managed login at
 plan time, and names the missing grant** ([#1567](../decisions/log.md#1567)).
 Without the grant, a role the login owns is invisible, so no
 login can be shown to own none, and the guardrail never passes a path it
-could not read. `doctor` reports whether the tool login holds the grant
-(open: #1550).
+could not read. `doctor --check-privileges` reports whether the tool login
+holds the grant, and says what is refused without it.
 
 The guardrail does not read database paths, such as `db_owner` in `msdb` or
 a `TRUSTWORTHY` database owned by a member of `sysadmin`: they are

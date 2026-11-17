@@ -632,7 +632,10 @@ only with a new password, so the server cannot expire a password and keep it.
 The verb would replace the password the owner knows.
 
 `account suspend` sends `ALTER LOGIN … DISABLE`, where `is_disabled` is 0
-(LK1), and reads `is_disabled` back. It carries no password. A login that
+(LK1), and reads `is_disabled` back. It carries no password. By
+Microsoft's documentation, and not measured here, `DISABLE` refuses new
+logins and does not end the login's open sessions; an offboarding that must
+end them does so by hand, with `KILL`. A login that
 is already disabled is reported unchanged; one that `IsLocked` reports
 locked out is not a suspension, and is disabled. `account list` serves a
 rule that names logins. A `profile:` predicate is refused, because SQL

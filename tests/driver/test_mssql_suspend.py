@@ -104,7 +104,18 @@ def test_a_lockout_is_not_a_suspension(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_a_disable_that_does_not_read_back_is_an_error(monkeypatch: pytest.MonkeyPatch) -> None:
     one = opened(monkeypatch, login(), login())
 
-    with pytest.raises(DriverError, match="is_disabled does not read 1"):
+    with pytest.raises(DriverError, match="does not read is_disabled 1"):
+        one.suspend_account("acme_jdoe")
+
+
+def test_a_login_gone_on_the_read_back_says_disable_was_sent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The operator must be able to tell the statement went out (#1597
+    review)."""
+    one = opened(monkeypatch, login(), None)
+
+    with pytest.raises(DriverError, match="was sent ALTER LOGIN … DISABLE.*has no row"):
         one.suspend_account("acme_jdoe")
 
 

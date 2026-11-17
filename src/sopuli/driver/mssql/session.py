@@ -82,7 +82,6 @@ from sopuli.driver.mssql.scope import observe
 from sopuli.driver.protocol import (
     ACCOUNT_LOCK,
     EXPIRE_PASSWORD,
-    EXPIRY_UNAVAILABLE,
     FAIL,
     OFFLINE_VERIFY,
     OLD_DISCARD,
@@ -155,6 +154,13 @@ MUST_CHANGE = str(server_errors.MUST_CHANGE)
 #: is refused there at plan time (#1538, decision 3; #1552).
 LOCKOUT_THRESHOLD = "lockout_threshold"
 
+#: Why `account expire-password` is refused on SQL Server. The generic hint
+#: points to an unseen reset, which SQL Server does not run yet (#1554).
+NO_EXPIRY = (
+    "SQL Server takes MUST_CHANGE only with a new password, so it cannot expire the "
+    "password a login has; end the account with `account suspend`"
+)
+
 #: Why a `profile:` predicate is refused on SQL Server, which has no
 #: profiles (#1554).
 NO_PROFILES = "SQL Server has no profiles; declare these logins by name with `accounts:`"
@@ -220,6 +226,16 @@ def _grant_survey(
         # database with a group user: that login alone is not checked
         # (#1555, Q5).
         account_unreadable=server.gaps(database_groups=group_users),
+    )
+
+
+def _no_login(account: str, *, target: str) -> DriverError:
+    """The refusal of a verb that changes a login the name finds no row for,
+    made before anything is sent. The command decides on a missing account
+    before it calls, so this is the guard if it did not."""
+    return DriverError(
+        f'there is no login "{account}" on target "{target}"',
+        hint="create the login, or check the account's name in the config",
     )
 
 
@@ -404,8 +420,8 @@ class MssqlSession(ClosesConnection):
             product="a SQL Server instance",
             what=what,
             hint=(
-                "the SQL Server driver connects and reports the instance for `doctor`, "
-                "and the rest of it is not written yet (#1550 to #1555)"
+                "the SQL Server driver serves `doctor`, the `creds` commands, the reports, "
+                "`account list` and `account suspend`; this is not written yet (#1554)"
             ),
         )
 
@@ -621,10 +637,7 @@ class MssqlSession(ClosesConnection):
         """
         login = self._changeable_login(account)
         if login is None:
-            raise DriverError(
-                f'there is no login "{account}" on target "{self.target.name}"',
-                hint="create the login, or check the account's name in the config",
-            )
+            raise _no_login(account, target=self.target.name)
         # The value's version, asked here so that a server that takes neither,
         # or a tool login the check refuses, stops the change before the
         # command writes the record (#1564).
@@ -699,7 +712,11 @@ class MssqlSession(ClosesConnection):
         require_read_write(
             self.scope(), target=self.target.name, hint="a suspension is a write to master"
         )
-        login = self._login_to_change(account, what="suspended")
+        login = self._read(
+            lambda cursor: accounts.read_one(cursor, account, target=self.target.name)
+        )
+        if login is None:
+            raise _no_login(account, target=self.target.name)
         status = accounts.status(
             disabled=login.disabled,
             locked_out=login.locked_out,
@@ -714,11 +731,14 @@ class MssqlSession(ClosesConnection):
             )
         self._read(lambda cursor: cursor.execute(statements.disable(login.name)))
         LOG.debug("DISABLE for %s on %s", login.name, self.target.name)
-        after = self._login_to_change(account, what="read back after DISABLE")
-        if not after.disabled:
+        after = self._read(
+            lambda cursor: accounts.read_one(cursor, account, target=self.target.name)
+        )
+        if after is None or not after.disabled:
+            seen = "has no row" if after is None else "does not read is_disabled 1"
             raise DriverError(
-                f'login "{login.name}" on target "{self.target.name}" was sent DISABLE, '
-                "and is_disabled does not read 1",
+                f'login "{login.name}" on target "{self.target.name}" was sent ALTER LOGIN … '
+                f"DISABLE, and on the read back it {seen}",
                 hint="check the login by hand; nothing else was changed",
             )
         return AccountChange(
@@ -727,19 +747,6 @@ class MssqlSession(ClosesConnection):
             status=status,
             detail=f"login was {status.lower()}; sent ALTER LOGIN … DISABLE",
         )
-
-    def _login_to_change(self, account: str, *, what: str) -> accounts.Login:
-        """The login's row, for a verb that changes it. A name with no login is
-        refused before anything is sent: the command decides on a missing
-        account before it calls, so this is the guard if it did not."""
-        login = self._read(
-            lambda cursor: accounts.read_one(cursor, account, target=self.target.name)
-        )
-        if login is None:
-            raise DriverError(
-                f'there is no login "{account}" on target "{self.target.name}" to be {what}'
-            )
-        return login
 
     def reset_password(self, *args: Any, **kwargs: Any) -> NoReturn:
         self._not_written("reset a password")
@@ -750,9 +757,7 @@ class MssqlSession(ClosesConnection):
         keep it. The command refuses at plan time, because the scope does not
         report ``expire_password``; this is the guard for a caller that did not
         ask."""
-        require_capability(
-            self.scope(), EXPIRE_PASSWORD, target=self.target.name, hint=EXPIRY_UNAVAILABLE
-        )
+        require_capability(self.scope(), EXPIRE_PASSWORD, target=self.target.name, hint=NO_EXPIRY)
         raise AssertionError("unreachable: the scope never reports expire_password")
 
     def audit_coverage(self, account: str) -> AuditCoverage:
@@ -773,21 +778,22 @@ class MssqlSession(ClosesConnection):
         raise AssertionError("unreachable: the scope never reports profile_management")
 
     def resolve_role(self, role: str) -> NoReturn:
-        """Refused as ``role_lookup`` missing: a personal rule's `role:` is
-        UC-2's, which is not written for SQL Server yet (#1554). `report
-        accounts` then shows the role's members as undeclared and warns with
-        `SOPULI-W075`, rather than failing the target (UC-5 §4)."""
+        """Refused as ``role_lookup`` missing: SQL Server has server roles and
+        database roles, and which one a personal rule's `role:` names is not
+        decided (#1554, Q6). `report accounts` then shows the role's members
+        as undeclared and warns with `SOPULI-W075`, rather than failing the
+        target (UC-5 §4)."""
         raise UnsupportedCapabilityError(
             ROLE_LOOKUP,
             target=self.target.name,
             hint=(
-                "a personal_accounts: rule's role: is not resolved on SQL Server yet: UC-2 "
-                "is not written for it (#1554)"
+                "a personal_accounts: rule's role: is not resolved on SQL Server: whether it "
+                "names a server role or a database role is not decided yet (#1554); name the "
+                "logins with `accounts:` instead"
             ),
             # SOPULI-W075 words its fix from this, not from the hint.
             remedy=(
-                "No grant gives it: UC-2, which resolves a role, is not written for SQL "
-                "Server yet (#1554)."
+                "No grant gives it: what a role: means on SQL Server is not decided yet (#1554)."
             ),
         )
 

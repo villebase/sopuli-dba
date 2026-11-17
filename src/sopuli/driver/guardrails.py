@@ -57,6 +57,10 @@ the command layer applies.
    `creds finish-rollover`, `account suspend` and `account expire-password`,
    and for the last two on the session's own account too
    (:data:`GUARDED_TYPES`). `creds check` and `doctor` refuse nothing by it.
+   On SQL Server the driver reports the grants of `02-mssql-privileges.md`
+   §5, and where it could not read every path, it says why in
+   ``admin_unread``, and check 9 refuses the account with that reason
+   (#1567).
 
 ### Refused, permitted, or *could not establish*
 
@@ -112,7 +116,7 @@ function and nothing else.
 from __future__ import annotations
 
 from collections.abc import Collection
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from sopuli.config.targets import MARIADB
 from sopuli.driver.protocol import UserState
@@ -325,6 +329,11 @@ def server_reserved(state: UserState) -> bool:
     whatever the server would allow. So the pre-flight asks for no grant on such
     an account (#1117), because the guardrails skip the account anyway.
 
+    A path the driver could not read (``admin_unread``) is not one of these:
+    a grant to the tool login can change it (#1567). So it is left out here,
+    `creds generate` stages the account, and check 9 refuses it when a
+    password verb reaches it.
+
     Read from :func:`review` and :data:`NEVER_WAIVED`, not restated, so a later
     check of the same kind is included without an edit here. Check 1 is left
     out: an undeclared account never reaches the survey, so the account is
@@ -336,7 +345,7 @@ def server_reserved(state: UserState) -> bool:
 def server_refusal(state: UserState) -> Refusal | None:
     """The first refusal :func:`server_reserved` is true for, with its reason, or
     ``None``. `creds generate` reports it on the account it skips (#1174)."""
-    found = review(state, declared=(state.name,)).refusals
+    found = review(replace(state, admin_unread=None), declared=(state.name,)).refusals
     return next((refusal for refusal in found if refusal.check in UNWAIVABLE), None)
 
 
@@ -460,7 +469,11 @@ def review(
     # `every_account` ends the exemption, for MariaDB's suspend and expire
     # (#1272).
     privileges = sorted(state.global_privileges)
-    if privileges and (every_account or (sets_password and not state.session_account)):
+    check9 = every_account or (sets_password and not state.session_account)
+    if state.admin_unread and check9:
+        # A path the driver could not read never passes (#1567).
+        found.append(Refusal(GLOBAL_PRIVILEGE, name, state.admin_unread))
+    elif privileges and check9:
         named = ", ".join(privileges[:NAMED_PRIVILEGES])
         rest = len(privileges) - NAMED_PRIVILEGES
         if rest > 0:

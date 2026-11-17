@@ -947,6 +947,13 @@ class UserState:
     #: that cannot read an account's grants raises, so check 9 never passes on
     #: a read that did not happen.
     global_privileges: frozenset[str] = frozenset()
+    #: Why the driver could not read every path from this account to a
+    #: privilege that :attr:`global_privileges` would report, or ``None``
+    #: where it read them all. Guardrail 9 refuses the account with this
+    #: reason, as it refuses one that holds a global privilege. The SQL Server
+    #: driver sets it where the tool login lacks ``VIEW ANY DEFINITION``
+    #: (#1567); the other drivers raise instead of reading less.
+    admin_unread: str | None = None
     #: The account this session is connected as: the tool's own. Guardrail 7
     #: refuses it unless ``--force`` waives it (#1059). A plain ``bool``, unlike
     #: the three-valued fields above, because every driver can answer it: the

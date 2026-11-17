@@ -363,6 +363,38 @@ def test_every_account_runs_check_nine_for_a_verb_that_sets_no_password(
     assert [refusal.check for refusal in forced.refusals] == [GLOBAL_PRIVILEGE]
 
 
+def test_a_path_the_driver_could_not_read_is_refused_by_check_nine() -> None:
+    """SQL Server without `VIEW ANY DEFINITION` (#1567): the reason is the
+    driver's, `--force` waives nothing, and the exemptions are check 9's."""
+    unread = "the tool login does not hold VIEW ANY DEFINITION"
+    state = UserState(name="acme_app", status="OPEN", admin_unread=unread)
+
+    refused = review(state, declared=("acme_app",), force=True)
+    assert not refused.permitted
+    assert [(r.check, r.reason) for r in refused.refusals] == [(GLOBAL_PRIVILEGE, unread)]
+
+    assert review(state, declared=("acme_app",), sets_password=False).permitted
+    own = review(
+        UserState(name="sopuli_admin", status="OPEN", admin_unread=unread, session_account=True),
+        declared=("sopuli_admin",),
+        force=True,
+    )
+    assert own.permitted
+
+
+def test_an_unread_path_is_named_instead_of_the_grants_read() -> None:
+    """One check 9 refusal, not two."""
+    state = UserState(
+        name="acme_app",
+        status="OPEN",
+        admin_unread="unread",
+        global_privileges=frozenset({"CONTROL SERVER"}),
+    )
+
+    (refusal,) = review(state, declared=("acme_app",)).refusals
+    assert refusal.reason == "unread"
+
+
 def test_an_account_with_no_global_privilege_passes_check_nine() -> None:
     """Every driver but MySQL's leaves the field empty, so an Oracle or
     PostgreSQL account is never refused by it."""

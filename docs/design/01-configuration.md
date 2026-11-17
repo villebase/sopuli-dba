@@ -1922,10 +1922,15 @@ certificate, under `strict` only, so that is what `server_certificate` is.
 **`strict` is not the default**, because SQL Server 2019 and 2022 reset every
 strict connection in the measurements, and only 2025 accepted one (TL3,
 `mssql-client-tls`). A server that does not accept `strict` resets the
-connection, `10054`. The run then fails to connect to that target before any
-change, as for an unreachable one, with a hint to use `mandatory`. Refusing
-it at plan time with an exit code of its own, as invariant 4 asks, is not
-built (open: #1549).
+connection, `10054`, during the TLS handshake, before the login. The tool
+cannot read the server over a connection it resets, so a reset under
+`strict` while connecting is the capability missing: the driver refuses the
+target, exit 5, naming `strict_encryption` and the target, with the
+driver's message and a hint to use `mandatory` (invariant 4). A network
+fault that resets the connection reads the same, and the hint says so.
+`doctor` reports the refusal for the target. A run that changes passwords
+refuses it at plan time, before any target is changed, from the first
+SQL Server verb on (open: #1551).
 
 `optional`, and `trust_server_certificate: true`, warn with `SOPULI-W058` on
 every run, once per target: anything on the network path can then present its
@@ -3109,7 +3114,7 @@ be rotated:
 | Refused | Why |
 |---|---|
 | `apps/orders/prod/db/creds` | no field: nowhere to put `pending` and `previous`. The "single-field" reading in the table above only holds until the first rotation, which makes the document three-field |
-| `tenants/beta#pending/{account}` | the container is a key the rotation mechanism owns. `pending`, `previous`, `origin`, `rollover`, `reached`, `rotated_at`, `rotated_by`, `policy`, `targets`, `generated_at` and `generated_by` are all reserved; `current` is not, because the ref already points at it |
+| `tenants/beta#pending/{account}` | the container is a key the rotation mechanism owns. `pending`, `previous`, `origin`, `rollover`, `reached`, `policy_flags`, `rotated_at`, `rotated_by`, `policy`, `targets`, `generated_at` and `generated_by` are all reserved; `current` is not, because the ref already points at it |
 
 Both are refused **while the file is read** rather than at the first rotation —
 §1 calls this binding the safety-critical part, and invariant 4 wants a command

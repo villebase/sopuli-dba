@@ -410,7 +410,7 @@ and 2025 answer `15025` first. A refused `0x0300` change changes nothing
 
 **The driver reads it once per session, before a change, with the
 rolled-back `CREATE LOGIN`, under a random name, and caches the answer as a
-capability** ([#1564](../decisions/log.md#1564), open: #1550). `ok` means the
+capability** ([#1564](../decisions/log.md#1564)). `ok` means the
 server takes `0x0300`, and `15021` that it does not. Any other answer fails
 the check at plan time, `15025` among them: the tool cannot see every name
 a login would clash with, such as a user-defined role's, and an answer to a
@@ -438,9 +438,11 @@ change runs in this order, on every host:
 4. Set `CHECK_POLICY` and `CHECK_EXPIRATION` back to the values of step 1.
 
 A run that stops between the steps leaves the policy off. The next run reads
-the recorded values from the vault and sets them back. The record stays
-until step 4 has run, also when a new `pending` replaces the old one
-(open: #1551).
+the recorded values from the vault and sets them back (open: #1551). The
+record is `policy_flags`
+([UC-1 §3](../use-cases/uc-01-app-credential-sync.md#policy_flags-a-sql-server-logins-settings-while-its-policy-is-off)),
+and it stays until step 4 has run, also when a new `pending` replaces the old
+one.
 
 **A login whose `MUST_CHANGE` is pending cannot take a value.** While
 `IsMustChange` reads 1, the server refuses to turn `CHECK_POLICY` off,
@@ -497,7 +499,7 @@ longer one before anything is sent.
 The value still allows an offline guessing attack, so treat it as sensitive.
 On 2019 it is a single round of SHA-512. Where the server's error message
 quotes the statement, the driver replaces the value in it before the message
-is kept (open: #1549).
+is kept (open: #1551).
 
 SQL Server has no rollover window, as PostgreSQL has none. `--strategy
 rollover` is refused, exit 5, and `creds finish-rollover` finds no window to
@@ -617,5 +619,7 @@ compute a lockout margin (`09_windows_policy_probe.py`, WP1 and WP2). **A
 locked login answers its right password `18456`**, as a wrong one (WP3), so
 any login the driver makes reads `IsLocked` first, and reports a locked
 login as `unavailable` without logging in. The tool login reads the host's
-platform from `sys.dm_os_host_info` (WP0); the driver reads it as a
-capability (open: #1550).
+platform from `sys.dm_os_host_info` (WP0); the driver reads it once per
+session, and caches it as a capability. `creds check` refuses a Windows
+host by it, and treats a host that names no platform as Windows
+(open: #1552).

@@ -63,6 +63,10 @@ READ_ONLY_DATABASE = 3906
 #: STATE`` is.
 PERMISSION_DENIED = 229
 SERVER_PERMISSION_DENIED = 300
+#: ``CREATE LOGIN`` or ``ALTER LOGIN`` from a login without ``ALTER ANY
+#: LOGIN``: "User does not have permission to perform this action" (measured
+#: on 16.0.4325.4, #1550).
+NO_LOGIN_PERMISSION = 15247
 
 #: The Windows socket error a server answers a ``strict`` connection with when
 #: it does not take TDS 8: 2019 and 2022 reset it, from Windows and from Linux
@@ -150,6 +154,13 @@ RULES: dict[int, Rule] = {
     SERVER_PERMISSION_DENIED: Rule(
         "authorization", hint="the tool login lacks the server permission the message names"
     ),
+    NO_LOGIN_PERMISSION: Rule(
+        "authorization",
+        hint=(
+            "the tool login lacks the server permission the statement needs. For a change "
+            "of a login that is ALTER ANY LOGIN (02-mssql-privileges.md §2.1)"
+        ),
+    ),
 }
 
 #: A client failure while the session was being opened: nothing had run.
@@ -170,12 +181,23 @@ CERTIFICATE_HINT = (
     "certificate holds, or set `mssql.host_name_in_certificate`"
 )
 
+#: The capability a reset under ``strict`` reports missing (#1549): TDS 8,
+#: which wraps the whole connection in TLS. ``error.target_capability``.
+STRICT_ENCRYPTION = "strict_encryption"
+
 STRICT_HINT = (
     "the connection was reset under `mssql.encrypt: strict`. SQL Server 2019 and 2022 "
     "reset every strict connection in the measurements, and only 2025 took one. If "
     "this server is 2019 or 2022, it does not take `strict`: set `encrypt: mandatory`. "
     "If it is 2025, something on the network reset the connection"
 )
+
+#: :class:`~sopuli.driver.protocol.UnsupportedCapabilityError`'s ``remedy``.
+STRICT_REMEDY = "set `mssql.encrypt: mandatory` on the target"
+
+#: A :class:`Diagnosis`'s category for a capability the server lacks: the
+#: session raises it as :class:`~sopuli.driver.protocol.UnsupportedCapabilityError`.
+CAPABILITY = "capability"
 
 DRIVER_HINT = (
     "install Microsoft ODBC Driver 18 for SQL Server, Microsoft's system package: "
@@ -219,6 +241,30 @@ def records(message: str) -> tuple[Record, ...]:
     )
 
 
+#: The SQLSTATE class of a warning or a message, such as a trigger's
+#: ``PRINT``: the server sends it as a record, and it is not an error.
+INFORMATIONAL = "01"
+
+
+def server_error(found: tuple[Record, ...]) -> Record | None:
+    """The first record the server sent as an error. A message before it,
+    SQLSTATE ``01…``, is not the answer."""
+    return next(
+        (
+            record
+            for record in found
+            if record.server and not record.sqlstate.startswith(INFORMATIONAL)
+        ),
+        None,
+    )
+
+
+def raw_message(exc: Any) -> str:
+    """The pyodbc exception's text, where its records are."""
+    args: tuple[Any, ...] = getattr(exc, "args", ())
+    return str(args[1]) if len(args) > 1 else " ".join(str(arg) for arg in args)
+
+
 def unchanged(message: str) -> str:
     """The scrub that changes nothing, for a statement that carries no hash."""
     return message
@@ -234,7 +280,9 @@ def from_error(
 ) -> Diagnosis:
     """Classify a pyodbc exception, without importing pyodbc.
 
-    The first server record decides: its number is the code, and :data:`RULES`
+    The first server error decides (:func:`server_error`, which passes over
+    an informational record, as a trigger's ``PRINT`` before the refusal): its
+    number is the code, and :data:`RULES`
     gives its category, else ``database``. Without one, the failure is the
     client's: an ODBC driver that is not installed is a config error, and
     anything else a connection failure, with :data:`CERTIFICATE_HINT` for a
@@ -250,11 +298,11 @@ def from_error(
     """
     args: tuple[Any, ...] = getattr(exc, "args", ())
     sqlstate = str(args[0]) if args else ""
-    raw = scrub(str(args[1]) if len(args) > 1 else " ".join(str(arg) for arg in args))
+    raw = scrub(raw_message(exc))
     found = records(raw)
     message = " ".join(dict.fromkeys(record.text for record in found)) or raw.strip()
 
-    server = next((record for record in found if record.server), None)
+    server = server_error(found)
     if server is not None:
         rule = rules.get(server.number, Rule("database"))
         return Diagnosis(
@@ -277,8 +325,16 @@ def from_error(
     hint = _FAILED_TO_CONNECT if connecting else LOST
     if any(_CERTIFICATE.search(record.text) for record in found):
         hint = CERTIFICATE_HINT
-    elif strict and any(record.number == CONNECTION_RESET for record in found):
-        hint = STRICT_HINT
+    elif strict and connecting and any(record.number == CONNECTION_RESET for record in found):
+        # The server does not take TDS 8, as 2019 and 2022 do not (TL3). The
+        # session raises it as the capability missing (STRICT_ENCRYPTION).
+        return Diagnosis(
+            code=code,
+            category=CAPABILITY,
+            exit_code=ExitCode.UNSUPPORTED_CAPABILITY,
+            message=message,
+            hint=STRICT_HINT,
+        )
     return Diagnosis(
         code=code, category="connectivity", exit_code=ExitCode.FAILURE, message=message, hint=hint
     )

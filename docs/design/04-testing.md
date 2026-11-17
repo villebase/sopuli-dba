@@ -39,7 +39,7 @@ This is also why the matrix is keyed on capabilities, not versions (§3).
 | MySQL 8.0, 8.4 and 9 | `mysql:8.4`; `mysql:8.0`, `mysql:8.4`, `mysql:9` | the MySQL driver: tier 1 uses `mysql:8.4`, and the `mysql-matrix` profile starts all three for the probes in `sql/mysql/`, which are run by hand |
 | MariaDB 10.11 to 12.3 | `mariadb:11.8`; `mariadb:10.11`, `mariadb:11.4`, `mariadb:11.8`, `mariadb:12.3` | the MariaDB driver: tier 1 uses `mariadb:11.8`, and the `mariadb-matrix` profile starts all four for the probes in `sql/mariadb/`, which are run by hand |
 | Supabase's database | `supabase/postgres`, pinned | supautils and its `supautils.reserved_roles`, which guardrail check 8 reads; a `postgres` account that is not a superuser. Tier 1 runs it in a profile of its own, `supabase`, so that a local tier-1 stack does not pull its image (#1111) |
-| SQL Server 2019, 2022 and 2025 | `mcr.microsoft.com/mssql/server:2019-latest`, `:2022-latest`, `:2025-latest` | the `mssql-matrix` profile starts all three for the probes in `sql/mssql/`, which are run by hand. The driver's `doctor` tests use `mssql-2022` at `SOPULI_TEST_MSSQL2022_PORT`, 14322 by default, and skip without it, until #1549 adds a tier-1 service |
+| SQL Server 2019, 2022 and 2025 | `mcr.microsoft.com/mssql/server:2019-latest`, `:2022-latest`, `:2025-latest` | the SQL Server driver: its tier-1 tests use `mssql-2022`, which the `mssql` profile starts alone, at `SOPULI_TEST_MSSQL2022_PORT`, 14322 by default. The `mssql-matrix` profile starts all three for the probes in `sql/mssql/`, which are run by hand |
 | HashiCorp Vault | `hashicorp/vault` dev mode | KV v2 **and** KV v1, mounted side by side |
 | File / age backend | none needed | the non-production store. Its tests run in tier 0, on a file in a temporary directory |
 
@@ -298,7 +298,7 @@ order dependency is still there until its issue is fixed.
 | Tier | Runs | Where | Budget | Contents |
 |---|---|---|---|---|
 | 0 | every commit of a pull request that changes code | public CI (`ci.yml`) | < 60 s | unit tests; config parsing and validation; target-set expansion; precedence resolution; SecretRef parsing; password generation and charset rules; redaction; the offline commands (`config`, `target list`, `policy sample`) through `CliRunner`; `lock status` and `lock break` with the store passed in, including whether a lock is live, expired or absent; the install-shape checks in §3 |
-| 1 | every pull request that changes code | public CI (the `tier1` job in `ci.yml`) | < 10 min | Oracle 26ai Free and Vault dev: the full UC-1 happy path, idempotency, drift, locking; fault injection (§5). PostgreSQL 16 and Supabase's database: the PostgreSQL driver against a server |
+| 1 | every pull request that changes code | public CI (the `tier1` job in `ci.yml`) | < 10 min | Oracle 26ai Free and Vault dev: the full UC-1 happy path, idempotency, drift, locking; fault injection (§5). PostgreSQL 16 and Supabase's database: the PostgreSQL driver against a server. SQL Server 2022, in a job of its own (`tier1-mssql`): the SQL Server driver against a server |
 | 2 | by hand | a developer's machine, `docker compose --profile tier2` | < 30 min | 21c XE, 18c XE and 11g XE |
 | 3 | before a release | maintainer | by hand | 19c and 12.2 EE, OCI DB systems and Autonomous Database, OCI Vault, the release gates in §6 |
 
@@ -318,7 +318,10 @@ needs no account, so a fork can do exactly what the lane does, as §1 requires.
 capability skips alone. This is §3's distinction put to use. A job that exists to
 run tier 1, skips all of it and reports green is worse than no job, because
 people quote it as evidence. Everywhere else, such as a laptop or a fork with no
-stack running, the same tests skip with a reason, as §1 requires.
+stack running, the same tests skip with a reason, as §1 requires. The SQL
+Server lane does the same with `SOPULI_TEST_MSSQL=required`. The tier-1 lane
+starts no SQL Server, so there its tests skip. That lane installs Microsoft
+ODBC Driver 18, a system package like Instant Client.
 [`../maintainer-environments.md`](../maintainer-environments.md) §1 lists the
 variables the suite reads for Oracle, and their defaults.
 

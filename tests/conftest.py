@@ -253,10 +253,13 @@ class VaultStack:
 TIER1 = "SOPULI_TEST_TIER1"
 
 
-def _missing_environment(reason: str) -> NoReturn:
-    """Skip, or fail if this run was supposed to have an environment."""
-    if os.environ.get(TIER1) == "required":
-        pytest.fail(f"tier 1 required, but the environment was not there: {reason}", pytrace=False)
+def _missing_environment(reason: str, *, required_by: str = TIER1) -> NoReturn:
+    """Skip, or fail if this run was supposed to have an environment:
+    ``required_by`` set to ``required``. SQL Server's lane has its own."""
+    if os.environ.get(required_by) == "required":
+        pytest.fail(
+            f"{required_by}=required, but the environment was not there: {reason}", pytrace=False
+        )
     pytest.skip(reason)
 
 
@@ -636,9 +639,15 @@ def live_mariadb() -> MariadbStack:
 
 # ------------------------------------------------------- tier 1: SQL Server ---
 #
-# The `mssql-2022` service of `test/compose.yaml`'s `mssql-matrix` profile,
-# until #1549's stack adds one to tier 1. A freely pullable image, so a
-# missing one is a skip (§1).
+# The `mssql-2022` service of `test/compose.yaml`, which the `mssql` profile
+# starts alone. A freely pullable image, so a missing one is a skip (§1). CI
+# runs it in a lane of its own, which sets `SOPULI_TEST_MSSQL`, not in the
+# tier-1 lane: the image is amd64 only and about 2 GB.
+
+#: Set to ``required`` by CI's SQL Server lane, where a missing server or
+#: ODBC driver is a failure. The tier-1 lane starts no SQL Server, so
+#: ``SOPULI_TEST_TIER1`` alone does not make it one.
+MSSQL = "SOPULI_TEST_MSSQL"
 
 
 @dataclass(frozen=True)
@@ -700,17 +709,16 @@ def live_mssql() -> MssqlStack:
         port=int(os.environ.get("SOPULI_TEST_MSSQL2022_PORT", "14322")),
         password="Sopuli-test-1",
     )
-    # A plain skip, not `_missing_environment`: the tier-1 lane starts no SQL
-    # Server, and has no ODBC Driver 18, until #1549's stack PR adds both. That
-    # PR makes these `_missing_environment`, as the other services' are.
     try:
         import pyodbc
     except ImportError:  # pragma: no cover -- reached only in a base install
-        pytest.skip("pyodbc is not installed; `pip install -e '.[mssql]'`")
+        _missing_environment(
+            "pyodbc is not installed; `pip install -e '.[mssql]'`", required_by=MSSQL
+        )
     try:
         stack.connect(timeout=5).close()
     except pyodbc.Error as error:
-        pytest.skip(f"SQL Server not reachable at {stack.dsn}: {error}")
+        _missing_environment(f"SQL Server not reachable at {stack.dsn}: {error}", required_by=MSSQL)
     stack.tool_login()
     return stack
 

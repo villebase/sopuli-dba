@@ -311,6 +311,42 @@ write removes it, and promotion removes it with `pending`. It follows the mirror
 rule, it is a reserved root name, and under native staging it is in the PENDING
 version's content. Oracle and PostgreSQL never act on it.
 
+### `policy_flags`: a SQL Server login's settings while its policy is off
+
+SQL Server takes a password value only with `CHECK_POLICY = OFF` in the same
+statement, and turning the policy off also turns `CHECK_EXPIRATION` off
+([`02-mssql-privileges.md`](../design/02-mssql-privileges.md) §6.2). So a
+change records both flags first, and sets them back after the login has
+passed ([#1551](../decisions/log.md#1551)).
+`policy_flags` maps each target to the flags as read before the change:
+`{"mssql-dev": {"check_policy": true, "check_expiration": false}}`.
+
+It describes the login, not `pending`: the login's policy stays off until the
+flags are set back, whatever the vault stages meanwhile. So, unlike `reached`,
+no staging write and no promotion clears it. A target's entry is recorded only
+where none is there, because a second read would find the policy off. It is
+removed once that target's flags are set back. A record the tool cannot read,
+such as a flag that is not `true` or `false`, is never written over: the
+change on that target is refused and the record kept, since it may be the only
+copy of the login's settings.
+
+It follows the mirror rule and is a reserved root name, so a secret with a
+field of its own named `policy_flags` must rename that field before a ref can
+address it. A secret that changes between one account and several while it
+holds a record is refused, in either direction, as one holding a live
+`pending` is: the record would be left where the new layout does not read it.
+
+Under native staging it is in the secret's metadata, and every write keeps it.
+OCI's metadata holds about 5,100 characters in all (`oci-metadata-limits`),
+and one target's entry takes about 55. So a credential on more than about 80
+SQL Server targets cannot hold every entry at once. The write that records
+the flags then fails before the change, and that target is not changed. That
+OCI reads a `true` in metadata back as a boolean is not measured
+(unverified: oci-metadata-booleans). Until it is, a SQL Server binding under
+native staging is refused at plan time (open: #1551), because a value read
+back as a string would be refused as above, and the flags could then never
+be set back.
+
 ---
 
 ## 4. `sopuli creds generate`

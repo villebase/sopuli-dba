@@ -1,0 +1,314 @@
+"""The SQL Server driver's pure parts: the connection string, the error map,
+the scope and `doctor`'s client lines. Tier 0 (#1549).
+
+The error messages are pyodbc 5.5.0's with ODBC Driver 18 18.7.1.1, as it
+raised them against 16.0.4325.4 from Windows (#1549).
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+import pytest
+
+from sopuli.config.model import ExpandedTarget, Target, TargetMssql
+from sopuli.driver.mssql.client import client_lines
+from sopuli.driver.mssql.connection import ODBC_DRIVER, braced, connection_string
+from sopuli.driver.mssql.errors import (
+    CERTIFICATE_HINT,
+    DRIVER_HINT,
+    STRICT_HINT,
+    from_error,
+    records,
+)
+from sopuli.driver.mssql.scope import NotAnInstanceError, observe
+from sopuli.driver.protocol import (
+    ENCRYPTION_TLS,
+    SERVER,
+    UNKNOWN,
+    AuthenticationError,
+    Credential,
+)
+from sopuli.exit_codes import ExitCode
+from sopuli.secrets import Secret
+
+PASSWORD = "p}a;ss {w=rd"
+
+
+def target(**settings: Any) -> ExpandedTarget:
+    return ExpandedTarget(
+        target=Target(
+            name="mssql-dev",
+            type="mssql",
+            dsn="mssql-dev.example.com:1433",
+            mssql=TargetMssql(**settings) if settings else None,
+        )
+    )
+
+
+def credential(password: str = PASSWORD) -> Credential:
+    return Credential(username="sopuli_admin", secret=Secret(password))
+
+
+def parts(text: str) -> list[str]:
+    """The keywords of a connection string with no `;` inside braces."""
+    return [part for part in text.split(";") if part]
+
+
+# ------------------------------------------------------ connection string ---
+
+
+def test_braced_doubles_a_closing_brace() -> None:
+    assert braced("a}b{c") == "{a}}b{c}"
+
+
+def test_the_default_encrypts_and_checks_the_server() -> None:
+    text = connection_string(target(), credential(), correlation_id="run-1")
+    head = text.split(";UID=")[0]
+    assert parts(head) == [
+        f"Driver={{{ODBC_DRIVER}}}",
+        "Server={tcp:mssql-dev.example.com,1433}",
+        "Database=master",
+        "APP={sopuli run-1}",
+        "Encrypt=yes",
+    ]
+
+
+def test_the_password_and_user_are_braced_and_last() -> None:
+    text = connection_string(target(), credential(), correlation_id="run-1")
+    assert text.endswith(";UID={sopuli_admin};PWD={p}}a;ss {w=rd};")
+
+
+@pytest.mark.parametrize(
+    ("settings", "expected"),
+    [
+        ({"encrypt": "optional"}, ["Encrypt=no"]),
+        ({"encrypt": "strict"}, ["Encrypt=strict"]),
+        (
+            {"encrypt": "mandatory", "trust_server_certificate": True},
+            ["Encrypt=yes", "TrustServerCertificate=yes"],
+        ),
+        (
+            {"encrypt": "mandatory", "host_name_in_certificate": "db.example.com"},
+            ["Encrypt=yes", "HostNameInCertificate={db.example.com}"],
+        ),
+        (
+            {"encrypt": "strict", "server_certificate": "C:/certs/server}1.pem"},
+            ["Encrypt=strict", "ServerCertificate={C:/certs/server}}1.pem}"],
+        ),
+    ],
+)
+def test_each_setting_becomes_its_keyword(settings: dict[str, Any], expected: list[str]) -> None:
+    text = connection_string(target(**settings), credential(), correlation_id="run-1")
+    head = text.split(";UID=")[0]
+    found = head.split("APP={sopuli run-1};")[1]
+    assert found.split(";") == expected
+
+
+# ------------------------------------------------------------------ errors ---
+
+
+class Raised(Exception):  # noqa: N818 -- a stand-in, named for what it holds
+    """A stand-in for a pyodbc exception: `(sqlstate, message)`."""
+
+
+WRONG_PASSWORD = Raised(
+    "28000",
+    "[28000] [Microsoft][ODBC Driver 18 for SQL Server][SQL Server]Login failed for user "
+    "'sopuli_admin'. (18456) (SQLDriverConnect)",
+)
+UNTRUSTED = Raised(
+    "08001",
+    "[08001] [Microsoft][ODBC Driver 18 for SQL Server]SSL Provider: The certificate chain "
+    "was issued by an authority that is not trusted.\r\n (-2146893019) (SQLDriverConnect); "
+    "[08001] [Microsoft][ODBC Driver 18 for SQL Server]Client unable to establish "
+    "connection. For solutions related to encryption errors, see "
+    "https://go.microsoft.com/fwlink/?linkid=2226722 (-2146893019)",
+)
+RESET = Raised(
+    "08001",
+    "[08001] [Microsoft][ODBC Driver 18 for SQL Server]SSL Provider: An existing connection "
+    "was forcibly closed by the remote host.\r\n (10054) (SQLDriverConnect); [08001] "
+    "[Microsoft][ODBC Driver 18 for SQL Server]Client unable to establish connection (10054)",
+)
+UNREACHABLE = Raised(
+    "08001",
+    "[08001] [Microsoft][ODBC Driver 18 for SQL Server]TCP Provider: The wait operation "
+    "timed out.\r\n (258) (SQLDriverConnect); [08001] [Microsoft][ODBC Driver 18 for SQL "
+    "Server]Login timeout expired (0); [08001] [Microsoft][ODBC Driver 18 for SQL Server]A "
+    "network-related or instance-specific error has occurred while establishing a "
+    "connection to tcp:127.0.0.1,1. Server is not found or not accessible. (258)",
+)
+REFUSED_READ = Raised(
+    "42000",
+    "[42000] [Microsoft][ODBC Driver 18 for SQL Server][SQL Server]VIEW SERVER PERFORMANCE "
+    "STATE permission was denied on object 'server', database 'master'. (300) "
+    "(SQLExecDirectW); [42000] [Microsoft][ODBC Driver 18 for SQL Server][SQL Server]The "
+    "user does not have permission to perform this action. (297)",
+)
+NO_DRIVER = Raised(
+    "IM002",
+    "[IM002] [Microsoft][ODBC Driver Manager] Data source name not found and no default "
+    "driver specified (0) (SQLDriverConnect)",
+)
+
+
+def test_records_split_each_diagnostic() -> None:
+    found = records(REFUSED_READ.args[1])
+    assert [(one.sqlstate, one.server, one.number) for one in found] == [
+        ("42000", True, 300),
+        ("42000", True, 297),
+    ]
+
+
+def test_a_wrong_password_is_an_authentication_failure() -> None:
+    diagnosis = from_error(WRONG_PASSWORD, connecting=True)
+    assert diagnosis.code == "18456"
+    assert diagnosis.message == "Login failed for user 'sopuli_admin'."
+    error = diagnosis.as_error()
+    assert isinstance(error, AuthenticationError)
+    assert error.exit_code == ExitCode.AUTH_FAILURE
+    assert str(error).startswith("18456: Login failed for user 'sopuli_admin'.")
+
+
+@pytest.mark.parametrize(
+    ("number", "category"),
+    [
+        (18470, "authentication"),
+        (18488, "authentication"),
+        (15151, "database"),
+        (15025, "database"),
+        (15021, "database"),
+        (33020, "database"),
+        (916, "authorization"),
+        (3906, "database"),
+        (99999, "database"),
+    ],
+)
+def test_each_server_number_has_its_category(number: int, category: str) -> None:
+    raised = Raised(
+        "42000",
+        f"[42000] [Microsoft][ODBC Driver 18 for SQL Server][SQL Server]Some text. ({number}) "
+        "(SQLExecDirectW)",
+    )
+    diagnosis = from_error(raised)
+    assert (diagnosis.code, diagnosis.category) == (str(number), category)
+
+
+def test_the_first_server_record_decides() -> None:
+    diagnosis = from_error(REFUSED_READ)
+    assert (diagnosis.code, diagnosis.category) == ("300", "authorization")
+    assert "The user does not have permission" in diagnosis.message
+
+
+def test_an_untrusted_certificate_names_the_settings() -> None:
+    diagnosis = from_error(UNTRUSTED, connecting=True)
+    assert (diagnosis.code, diagnosis.category, diagnosis.hint) == (
+        "08001",
+        "connectivity",
+        CERTIFICATE_HINT,
+    )
+    assert diagnosis.message.startswith("SSL Provider: The certificate chain was issued")
+
+
+def test_a_reset_under_strict_says_strict() -> None:
+    assert from_error(RESET, connecting=True, strict=True).hint == STRICT_HINT
+    assert from_error(RESET, connecting=True).hint != STRICT_HINT
+
+
+def test_an_unreachable_server_is_a_connection_failure() -> None:
+    diagnosis = from_error(UNREACHABLE, connecting=True)
+    assert (diagnosis.code, diagnosis.category) == ("08001", "connectivity")
+    assert "before any statement ran" in (diagnosis.hint or "")
+    assert "statement in flight" in (from_error(UNREACHABLE).hint or "")
+
+
+def test_a_missing_odbc_driver_is_a_config_error() -> None:
+    diagnosis = from_error(NO_DRIVER, connecting=True)
+    assert (diagnosis.code, diagnosis.category, diagnosis.exit_code, diagnosis.hint) == (
+        "IM002",
+        "config",
+        ExitCode.CONFIG_INVALID,
+        DRIVER_HINT,
+    )
+
+
+def test_the_scrub_runs_before_the_message_is_kept() -> None:
+    diagnosis = from_error(WRONG_PASSWORD, scrub=lambda text: text.replace("sopuli_admin", "*"))
+    assert diagnosis.message == "Login failed for user '*'."
+
+
+def test_a_message_without_records_is_kept_whole() -> None:
+    diagnosis = from_error(Raised("HY000", "something odd"))
+    assert (diagnosis.code, diagnosis.message) == ("HY000", "something odd")
+
+
+# ------------------------------------------------------------------- scope ---
+
+
+class FakeCursor:
+    def __init__(self, row: tuple[Any, ...]) -> None:
+        self.row = row
+
+    def execute(self, query: Any, args: Any = None, /) -> None:
+        pass
+
+    def fetchone(self) -> Any:
+        return self.row
+
+    def fetchall(self) -> Any:
+        return [self.row]
+
+
+def test_a_server_that_takes_writes() -> None:
+    scope = observe(
+        FakeCursor(("16.0.4325.4", 3, "READ_WRITE")), target="mssql-dev", settings=TargetMssql()
+    )
+    assert (scope.type, scope.db_release, scope.open_mode, scope.read_write) == (
+        SERVER,
+        "16.0.4325.4",
+        "READ WRITE",
+        True,
+    )
+    assert scope.encryption.method == ENCRYPTION_TLS
+
+
+def test_a_read_only_master() -> None:
+    scope = observe(
+        FakeCursor(("16.0.4325.4", 3, "READ_ONLY")), target="mssql-dev", settings=TargetMssql()
+    )
+    assert (scope.open_mode, scope.read_write) == ("READ ONLY", False)
+
+
+def test_optional_encryption_is_unknown() -> None:
+    scope = observe(
+        FakeCursor(("16.0.4325.4", 3, "READ_WRITE")),
+        target="mssql-dev",
+        settings=TargetMssql(encrypt="optional"),
+    )
+    assert scope.encryption.method == UNKNOWN
+    assert "VIEW SERVER STATE" in (scope.encryption.hint or "")
+
+
+def test_azure_sql_database_is_refused() -> None:
+    with pytest.raises(NotAnInstanceError) as caught:
+        observe(FakeCursor(("12.0.2000.8", 5, "READ_WRITE")), target="az", settings=TargetMssql())
+    assert caught.value.exit_code == ExitCode.CONFIG_INVALID
+    assert 'target "az" is Azure SQL Database' in str(caught.value)
+
+
+# ------------------------------------------------------------------ client ---
+
+
+def test_the_client_lines_name_odbc_driver_18() -> None:
+    assert client_lines(pyodbc_version="5.5.0", drivers=["SQL Server", ODBC_DRIVER]) == {
+        "pyodbc": "5.5.0",
+        "odbc_driver": ODBC_DRIVER,
+    }
+
+
+def test_a_missing_odbc_driver_is_named_with_the_others() -> None:
+    lines = client_lines(pyodbc_version="5.5.0", drivers=["SQL Server"])
+    assert lines["odbc_driver"].startswith("not installed: install Microsoft ODBC Driver 18")
+    assert lines["odbc_driver"].endswith("The ODBC drivers listed: SQL Server")
+    assert client_lines(pyodbc_version="5.5.0", drivers=[])["odbc_driver"].endswith(": none")

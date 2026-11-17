@@ -44,6 +44,7 @@ PERMITTED = {
     "driver/oracle/client.py": "the driver call -- invariant 2's second exception",
     "driver/postgres/connection.py": "the driver call, for PostgreSQL",
     "driver/mysql_family/connection.py": "the driver call, for a PyMySQL connection",
+    "driver/mssql/connection.py": "the driver call, for an ODBC connection to SQL Server",
     "driver/postgres/password.py": (
         "the driver call, for PostgreSQL: the password goes to libpq on this machine, "
         "which computes the SCRAM verifier the statement carries (invariant 15). The "

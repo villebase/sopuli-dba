@@ -4,8 +4,8 @@ Depends on: `00-principles.md`, `01-configuration.md`
 
 This document says what the tool login is granted on a SQL Server instance,
 what it reads, and what it must not hold. It is the specification for the SQL
-Server driver. The driver is not built yet: each part names the issue that
-builds it. The decisions are in the decision log
+Server driver. The driver connects and serves `doctor`; each part not built
+yet names the issue that builds it. The decisions are in the decision log
 ([#1538](../decisions/log.md#1538)), and the probes are in `sql/mssql/`.
 
 The supported releases are 2019 and later (decision 7). Each probe ran on
@@ -16,8 +16,9 @@ so. Azure SQL Managed Instance has no image and is not tested. Azure SQL
 Database is refused (decision 1): it is not an instance with logins in its
 own `master` that the tool can manage. The driver reads the edition from
 `SERVERPROPERTY('EngineEdition')`, where Azure SQL Database answers 5 by
-Microsoft's documentation, and refuses the target at plan time
-(open: #1549).
+Microsoft's documentation, and refuses the target when it first connects,
+before any change. No image of Azure SQL Database exists, so the refusal is
+not measured.
 
 A SQL Server target is one instance, `type: mssql`, with the connection
 settings of [`01-configuration.md`](01-configuration.md) §*`mssql:` on a
@@ -98,6 +99,14 @@ Store the password where the target's `admin.auth` reads it
 **The tool login reads `NULL` for every login's hash**, from `LOGINPROPERTY`
 and from `sys.sql_logins.password_hash` (CH7, RP1). So it can never compare a
 hash (§7).
+
+When it connects, the driver reads the release, the engine edition and
+whether `master` takes writes, which `ALTER ANY LOGIN` alone reads (measured
+on 16.0.4325.4, #1549). It does not read whether its own connection is
+encrypted: `sys.dm_exec_connections` needs `VIEW SERVER STATE`, and the read
+is refused, `300`. `doctor` reports the encryption that ODBC Driver 18
+enforces: TLS under `encrypt: mandatory` and `strict`, which refuse to
+connect without it, and *unknown* under `optional`.
 
 The driver also reads what the target can do: the host's operating system,
 whether the server takes a `0x0300` value, and the Availability Group the

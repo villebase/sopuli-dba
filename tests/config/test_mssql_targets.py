@@ -23,7 +23,6 @@ from sopuli.driver.registry import (
     DRIVERS,
     DriverNotImplementedError,
     require_command,
-    resolve,
 )
 from sopuli.output.config_view import build_section
 
@@ -330,9 +329,9 @@ def test_two_spellings_of_one_login_are_refused() -> None:
 # ------------------------------------------------------------- the driver ---
 
 
-def test_the_driver_is_not_written_yet() -> None:
-    """Every command, `doctor` aside, is refused before anything connects, and
-    resolving the driver says it is not written (#1549)."""
+def test_only_doctor_is_written() -> None:
+    """Every command, `doctor` aside, is refused before anything connects
+    (#1549)."""
     target = loaded(targets=[SERVER]).expanded_targets[0].target
 
     assert DRIVERS["mssql"].commands == frozenset()
@@ -342,6 +341,3 @@ def test_the_driver_is_not_written_yet() -> None:
     with pytest.raises(DriverNotImplementedError) as caught:
         require_command(target, "creds.check")
     assert caught.value.code == DRIVER_NOT_IMPLEMENTED
-    with pytest.raises(DriverNotImplementedError) as resolving:
-        resolve(target)
-    assert "this build has no mssql driver yet" in str(resolving.value)

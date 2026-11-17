@@ -670,9 +670,10 @@ def _warn_about_unverified_transport(config: Config) -> tuple[ConfigWarning, ...
 
 
 def _warn_about_unverified_databases(config: Config) -> tuple[ConfigWarning, ...]:
-    """§2: a PostgreSQL target whose ``sslmode``, or a MySQL target whose
-    ``ssl_mode``, does not verify the server says so on every run, once per
-    target (#1058, #1221).
+    """§2: a PostgreSQL target whose ``sslmode``, a MySQL or MariaDB target whose
+    ``ssl_mode``, or a SQL Server target whose ``encrypt`` or
+    ``trust_server_certificate`` does not verify the server says so on every
+    run, once per target (#1058, #1221, #1549).
 
     The database counterpart of ``SOPULI-W004``, for the same reason: the
     weakening is one line in a file, and it applies to every password a run
@@ -693,8 +694,7 @@ def _warn_about_unverified_databases(config: Config) -> tuple[ConfigWarning, ...
                 hint=(
                     "anything between this run and the server can present its own "
                     f"certificate and read the password a run sets. Use `{tls.key}: "
-                    f"{tls.default}` (the default), with `{tls.ca}` naming the CA that "
-                    "issued the server's certificate"
+                    f"{tls.default}` (the default), {tls.remedy}"
                 ),
                 code=UNVERIFIED_DATABASE,
             )

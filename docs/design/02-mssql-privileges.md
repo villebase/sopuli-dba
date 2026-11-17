@@ -19,7 +19,9 @@ own `master` that the tool can manage. The driver reads the edition from
 Microsoft's documentation, and refuses the target at plan time
 (open: #1549).
 
-A SQL Server target is one instance (open: #1549). An account is a SQL
+A SQL Server target is one instance, `type: mssql`, with the connection
+settings of [`01-configuration.md`](01-configuration.md) §*`mssql:` on a
+target*. An account is a SQL
 Server login on that instance: a row of `sys.server_principals` of type `S`.
 A *contained user*, a user with a password of its own inside a contained
 database, is not an account (§4).

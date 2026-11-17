@@ -11,7 +11,7 @@ Put the binding keys at the top level and the file reads like a straightforward
 target list. This is the shape most users will ever need.
 
 ```yaml
-# yaml-language-server: $schema=./sopuli-config-5.2.schema.json
+# yaml-language-server: $schema=./sopuli-config-5.3.schema.json
 version: 1
 
 vaults: {}          # named secret stores
@@ -487,7 +487,7 @@ PDB per tenant across three environments, HashiCorp Vault as master. It needs no
 `applications:` section.
 
 ```yaml
-# yaml-language-server: $schema=./sopuli-config-5.2.schema.json
+# yaml-language-server: $schema=./sopuli-config-5.3.schema.json
 version: 1
 
 runtime:
@@ -1877,15 +1877,86 @@ targets on nodes of one cluster are refused as one
 ([`02-mariadb-privileges.md`](02-mariadb-privileges.md) §2.3). Declare one
 target for the cluster.
 
+### `mssql:` on a target — how to connect to an instance
+
+A SQL Server target is the **instance**. A login belongs to the whole instance,
+so there is no database to name. The client is pyodbc with Microsoft ODBC
+Driver 18, which is a system package, as Oracle's Instant Client is
+([#1538](../decisions/log.md#1538), decision 6). The tool cannot run commands
+against a SQL Server target yet: every command but `doctor` refuses one, and
+`doctor` reports the driver as not written (open: #1549).
+
+```yaml
+targets:
+  - name: mssql-prod
+    type: mssql
+    dsn: mssql-prod.example.com:1433
+    environment: prod
+```
+
+| Key | Default | Meaning |
+|---|---|---|
+| `encrypt` | `mandatory` | how the connection is encrypted, as ODBC Driver 18's `Encrypt`: `optional` (`no`), `mandatory` (`yes`) or `strict` (TDS 8) |
+| `trust_server_certificate` | `false` | `true` encrypts without checking the server's certificate. Only with `encrypt: mandatory` |
+| `host_name_in_certificate` | none | the name the server's certificate holds, where the `dsn` names the server another way, such as by its address. Only with `encrypt: mandatory` |
+| `server_certificate` | none | the server's own certificate, which the connection then accepts and no other. Only with `encrypt: strict` |
+
+These are settings, and the block is optional. The `dsn` is `host:port`, by
+the rule for PostgreSQL above.
+
+**`mandatory` checks the server's certificate against the operating system's
+trust store.** A connection is refused when the CA that issued the certificate
+is not trusted, from Windows and from Linux (`sql/mssql/10_client_tls_probe.py`,
+TL1). On Linux it connects once that CA is in the system store that OpenSSL
+reads, and is refused when the certificate does not hold the name the `dsn`
+uses (TL2, TL4). Put the CA in the operating system's store on the machine that
+runs the tool. A CA in the Windows certificate store, and the name check on
+Windows, are not measured: the probe does not change that store
+(`mssql-client-tls`).
+
+**There is no key for a CA file.** ODBC Driver 18's `ServerCertificate`, the
+only file it takes, never connected when it named a CA, under any `Encrypt`
+value or release (TL6). It does connect when it names the server's own
+certificate, under `strict` only, so that is what `server_certificate` is.
+
+**`strict` is not the default**, because SQL Server 2019 and 2022 reset every
+strict connection in the measurements, and only 2025 accepted one (TL3,
+`mssql-client-tls`). A server that does not accept `strict` is refused at
+plan time, naming the target, rather than failing partway through a run
+(invariant 4; open: #1549).
+
+`optional`, and `trust_server_certificate: true`, warn with `SOPULI-W058` on
+every run, once per target: anything on the network path can then present its
+own certificate and read the password a run sets. Under `require_encryption`,
+`optional` is refused before any connection. A key under a mode where it does
+nothing is refused, naming the target and the key: `trust_server_certificate`
+under `strict`, where it changes nothing (TL7), or under `optional`;
+`server_certificate` under anything but `strict`; and
+`host_name_in_certificate` under anything but `mandatory`, the one mode whose
+name check was measured, or beside `trust_server_certificate: true`, where no
+name is checked. Where a target set's template writes the key and an override
+changes `encrypt`, the refusal names the override's `encrypt` line, because an
+override cannot remove a key its template writes.
+
+**An account on a SQL Server target is a login name**, written as it is:
+`acme_app`. It has no host part. The config compares two names by `upper()`,
+as for every product, so it refuses `acme_app` and `ACME_APP` declared on one
+target (invariant 5). That matches the server under its default collation,
+which compares login names without case
+([`02-mssql-privileges.md`](02-mssql-privileges.md) §4).
+
+Keeping the key for an unchecked connection was the maintainer's choice
+([#1549](../decisions/log.md#1549)).
+
 **Each product's keys stay on its own targets.** These are refused, each
 naming the target and the key:
 
 - a block of one product's keys on another product's target: `oracle:`,
-  `postgres:`, `mysql:` or `mariadb:` anywhere but on its own type;
-- `admin.auth: external` on a PostgreSQL, MySQL or MariaDB target, because
-  external authentication is an Oracle wallet;
+  `postgres:`, `mysql:`, `mariadb:` or `mssql:` anywhere but on its own type;
+- `admin.auth: external` on a PostgreSQL, MySQL, MariaDB or SQL Server target,
+  because external authentication is an Oracle wallet;
 - an application's `oracle: container_clause`, or an override's, where it
-  binds to a PostgreSQL, MySQL or MariaDB target.
+  binds to a PostgreSQL, MySQL, MariaDB or SQL Server target.
 
 They are checked once the estate is expanded, since an `overrides:` patch can
 change a generated target's `type` or add a block. A patch cannot remove a
@@ -2187,7 +2258,8 @@ a connection would. The hint names the key that required encryption and the
 decides for them, as for every other mode. The setting does not ask for a
 verified server: `require` passes it, and warns with `SOPULI-W058`. A MySQL
 target under `ssl_mode: DISABLED` is refused the same way (#1221), and
-`PREFERRED` is left to the connection.
+`PREFERRED` is left to the connection. So is a SQL Server target under
+`encrypt: optional` (#1549).
 
 Here `encrypted.yaml` sets `defaults.safety.require_encryption: true`, and the
 target's connection has no NNE:
@@ -3844,7 +3916,7 @@ error message for a file this long.
 ## 9b. The published schema
 
 P3 requires a published JSON Schema. It is
-[`docs/schemas/sopuli-config-5.2.schema.json`](../schemas/sopuli-config-5.2.schema.json),
+[`docs/schemas/sopuli-config-5.3.schema.json`](../schemas/sopuli-config-5.3.schema.json),
 Draft 2020-12, and it exists for the editor rather than for the tool: pointed at
 from a YAML language server, it gives completion and inline errors while somebody
 is editing a 130-line file, which is worth more than the validation itself.
@@ -3855,7 +3927,7 @@ the same constants the builders validate with — `TARGET_KEYS`, `VAULT_TYPES`,
 a section's keys and its type table disagree. Regenerate with:
 
 ```
-python -m sopuli.config.schema > docs/schemas/sopuli-config-5.2.schema.json
+python -m sopuli.config.schema > docs/schemas/sopuli-config-5.3.schema.json
 ```
 
 `tests/config/test_schema.py` fails when the committed file is not what the model
@@ -3940,7 +4012,7 @@ A schema nothing is pointed at is a file in a directory. The association is made
 from the config file itself, with a comment on the first line:
 
 ```yaml
-# yaml-language-server: $schema=./sopuli-config-5.2.schema.json
+# yaml-language-server: $schema=./sopuli-config-5.3.schema.json
 version: 1
 ```
 
@@ -3951,7 +4023,7 @@ description the generator wrote for it, and an unknown key is underlined where i
 was typed.
 
 **The path is relative to the YAML file**, not to the repository. Copy the schema
-next to the config, or point at it where it lives — `$schema=../sopuli-dba/docs/schemas/sopuli-config-5.2.schema.json`
+next to the config, or point at it where it lives — `$schema=../sopuli-dba/docs/schemas/sopuli-config-5.3.schema.json`
 is as valid as the form above.
 
 **The `$id` inside the schema is an identifier, not an address.** It reads like a

@@ -30,6 +30,7 @@ from sopuli.config.errors import ROOT, ConfigError, KeyPath
 from sopuli.config.fields import (
     choice,
     mapping,
+    optional_bool,
     optional_string,
     pairs,
     reject_unknown_keys,
@@ -39,7 +40,9 @@ from sopuli.config.fields import (
 from sopuli.config.model import (
     AdminAuth,
     AdminCredential,
+    MssqlPatch,
     Target,
+    TargetMssql,
     TargetMysql,
     TargetOracle,
     TargetPostgres,
@@ -58,6 +61,7 @@ TARGET_KEYS = (
     "postgres",
     "mysql",
     "mariadb",
+    "mssql",
     "labels",
     "safety",
 )
@@ -66,13 +70,14 @@ ORACLE = "oracle"
 POSTGRESQL = "postgresql"
 MYSQL = "mysql"
 MARIADB = "mariadb"
+MSSQL = "mssql"
 
 #: The driver selector (P1). Any other value is refused here, which is
 #: invariant 4 applied to config: a target the tool cannot drive should fail
 #: while the file is being written, not at the first connection. A PostgreSQL
-#: target is the cluster, not one database in it, and a MySQL or MariaDB
-#: target is the server.
-TARGET_TYPES = (ORACLE, POSTGRESQL, MYSQL, MARIADB)
+#: target is the cluster, not one database in it, a MySQL or MariaDB target is
+#: the server, and a SQL Server target is the instance.
+TARGET_TYPES = (ORACLE, POSTGRESQL, MYSQL, MARIADB, MSSQL)
 
 #: The products whose account is a user name and a host, written in the
 #: account's name as `user@host`, and compared as MySQL compares them
@@ -154,6 +159,32 @@ MYSQL_VERIFYING_SSL_MODES = ("VERIFY_CA", "VERIFY_IDENTITY")
 #: The one `ssl_mode` certain to connect without encryption.
 MYSQL_UNENCRYPTED_SSL_MODE = "DISABLED"
 
+MSSQL_KEYS = (
+    "encrypt",
+    "trust_server_certificate",
+    "host_name_in_certificate",
+    "server_certificate",
+)
+
+#: The three `encrypt` values: ODBC Driver 18's `Encrypt=no`, `yes` and
+#: `strict`, named as the decision on #1549 names them. `TargetMssql`'s default
+#: is written out there, because the model cannot import this module.
+MSSQL_OPTIONAL = "optional"
+MSSQL_MANDATORY = "mandatory"
+MSSQL_STRICT = "strict"
+
+#: How the connection is encrypted, from weakest to strongest. `optional` is
+#: accepted for the reason :data:`POSTGRES_SSLMODES` gives.
+MSSQL_ENCRYPT_MODES = (MSSQL_OPTIONAL, MSSQL_MANDATORY, MSSQL_STRICT)
+
+#: The `encrypt` values under which the server's certificate is checked:
+#: `mandatory` unless `trust_server_certificate` is set, and `strict` always
+#: (`sql/mssql/10_client_tls_probe.py`, TL1 to TL7).
+MSSQL_VERIFYING_ENCRYPT_MODES = (MSSQL_MANDATORY, MSSQL_STRICT)
+
+#: The one `encrypt` value certain to connect without encryption.
+MSSQL_UNENCRYPTED_ENCRYPT_MODE = MSSQL_OPTIONAL
+
 
 def build_targets(document: dict[str, Any]) -> tuple[Target, ...]:
     """Read ``targets:`` -- the explicitly listed endpoints (§2)."""
@@ -192,8 +223,8 @@ def read_target(entry: dict[str, Any], *, at: KeyPath) -> Target:
             "dsn",
             at=at,
             hint=(
-                "Oracle: host:port/service, or a TNS alias; PostgreSQL, MySQL and "
-                "MariaDB: host:port"
+                "Oracle: host:port/service, or a TNS alias; PostgreSQL, MySQL, "
+                "MariaDB and SQL Server: host:port"
             ),
         ),
         environment=optional_string(entry, "environment", at=at),
@@ -216,6 +247,11 @@ def read_target(entry: dict[str, Any], *, at: KeyPath) -> Target:
             else TargetMysql(
                 **read_mysql(entry["mariadb"], at=at.key("mariadb"), block_name="mariadb")
             )
+        ),
+        mssql=(
+            None
+            if "mssql" not in entry
+            else mssql_with(TargetMssql(), read_mssql(entry["mssql"], at=at.key("mssql")))
         ),
         labels=() if "labels" not in entry else pairs(entry["labels"], at=at.key("labels")),
         safety=read_safety(entry, at=at),
@@ -362,6 +398,51 @@ def read_mysql(raw: Any, *, at: KeyPath, block_name: str = "mysql") -> dict[str,
     if ssl_mode is not None:
         choice(ssl_mode, allowed=MYSQL_SSL_MODES, at=at.key("ssl_mode"), noun="ssl_mode")
     return {key: value for key, value in written.items() if value is not None}
+
+
+def read_mssql(raw: Any, *, at: KeyPath) -> MssqlPatch:
+    """``mssql:`` on a target -- the keys it writes, and nothing else.
+
+    Returned as a patch, ``None`` for a key not written, for the reason
+    :func:`read_postgres` gives; :func:`mssql_with` applies it. How the keys
+    combine (``trust_server_certificate`` only with ``mandatory``,
+    ``server_certificate`` only with ``strict``) is decided after expansion
+    (:mod:`sopuli.config.products`), since an override may change one of them.
+    """
+    options = mapping(raw, at=at)
+    reject_unknown_keys(options, allowed=MSSQL_KEYS, at=at)
+    _reject_empty(options, at=at, block_name="mssql")
+    encrypt = optional_string(options, "encrypt", at=at)
+    if encrypt is not None:
+        choice(encrypt, allowed=MSSQL_ENCRYPT_MODES, at=at.key("encrypt"), noun="encrypt")
+    return MssqlPatch(
+        encrypt=encrypt,
+        trust_server_certificate=optional_bool(options, "trust_server_certificate", at=at),
+        host_name_in_certificate=optional_string(options, "host_name_in_certificate", at=at),
+        server_certificate=optional_string(options, "server_certificate", at=at),
+    )
+
+
+def mssql_with(base: TargetMssql, patch: MssqlPatch) -> TargetMssql:
+    """``base`` with each key ``patch`` writes, key by key, as ``postgres:``."""
+    return TargetMssql(
+        encrypt=base.encrypt if patch.encrypt is None else patch.encrypt,
+        trust_server_certificate=(
+            base.trust_server_certificate
+            if patch.trust_server_certificate is None
+            else patch.trust_server_certificate
+        ),
+        host_name_in_certificate=(
+            base.host_name_in_certificate
+            if patch.host_name_in_certificate is None
+            else patch.host_name_in_certificate
+        ),
+        server_certificate=(
+            base.server_certificate
+            if patch.server_certificate is None
+            else patch.server_certificate
+        ),
+    )
 
 
 def _reject_empty(block: dict[str, Any], *, at: KeyPath, block_name: str) -> None:

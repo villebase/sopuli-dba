@@ -52,6 +52,7 @@ from sopuli.config.targets import (
     TARGET_KEYS,
     TARGET_TYPES,
     read_admin,
+    read_mssql,
     read_mysql,
     read_oracle,
     read_postgres,
@@ -284,6 +285,7 @@ def _build_patch(raw: Any, *, at: KeyPath) -> TargetPatch:
                 **read_mysql(patch["mariadb"], at=at.key("mariadb"), block_name="mariadb")
             )
         ),
+        mssql=(None if "mssql" not in patch else read_mssql(patch["mssql"], at=at.key("mssql"))),
         labels=_patch_labels(patch, at=at),
         safety=read_safety(patch, at=at),
     )

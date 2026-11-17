@@ -43,6 +43,7 @@ from sopuli.config.model import Target
 # The limits modules import no vendor client, so naming them here keeps the
 # registry importable on a machine with no driver installed.
 from sopuli.driver.mariadb.limits import LIMIT as MARIADB_LIMIT
+from sopuli.driver.mssql.limits import LIMIT as MSSQL_LIMIT
 from sopuli.driver.mysql.limits import LIMIT as MYSQL_LIMIT
 from sopuli.driver.postgres.limits import LIMIT as POSTGRES_LIMIT
 from sopuli.driver.protocol import Driver, DriverContext, DriverError
@@ -326,6 +327,23 @@ DRIVERS: dict[str, DatabaseDriver] = {
                 "report.history",
             }
         ),
+    ),
+    # Declared before its session exists (#1549): until it is written the type
+    # resolves to `DriverNotImplementedError`. Every command but `doctor`
+    # refuses a SQL Server target with SOPULI-20006, and `doctor` reports the
+    # driver as not written. The client is pyodbc with Microsoft ODBC
+    # Driver 18, a system package like Oracle's Instant Client (#1538, decision
+    # 6). No command is written for it yet.
+    "mssql": DatabaseDriver(
+        module="sopuli.driver.mssql.session",
+        extra="mssql",
+        provides=frozenset({"pyodbc"}),
+        # Bytes of UTF-16, which is how the server counts: 128 characters. The
+        # help says so, because `--encoding` defaults to UTF-8.
+        password_limit=f"{MSSQL_LIMIT.max_bytes} as UTF-16",
+        refuses=frozenset({CONTROL, ENCODING, BYTE_LENGTH}),
+        fixed_limit=MSSQL_LIMIT,
+        commands=frozenset(),
     ),
 }
 

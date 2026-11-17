@@ -590,6 +590,38 @@ class MysqlPatch:
 
 
 @dataclass(frozen=True)
+class TargetMssql:
+    """``mssql:`` on a target -- how the tool connects to a SQL Server instance.
+
+    Settings, like :class:`TargetMysql`. A login belongs to the whole instance,
+    so there is no database to name. There is no CA file: ODBC Driver 18 checks
+    the server against the operating system's trust store, and pointing its
+    ``ServerCertificate`` at a CA never connected (`mssql-client-tls`).
+    ``Target.mssql`` is ``None`` where the file wrote no block, and
+    ``Target.mssql_settings`` reads these defaults.
+    """
+
+    #: One of :data:`~sopuli.config.targets.MSSQL_ENCRYPT_MODES`.
+    encrypt: str = "mandatory"
+    #: Encrypt without checking the server's certificate. Only with ``mandatory``.
+    trust_server_certificate: bool = False
+    #: The name the certificate must hold, where the ``dsn`` names another.
+    host_name_in_certificate: str | None = None
+    #: The server's own certificate, pinned. Only with ``strict``.
+    server_certificate: str | None = None
+
+
+@dataclass(frozen=True)
+class MssqlPatch:
+    """``mssql:`` in an ``overrides:`` patch. ``None`` is a key it does not change."""
+
+    encrypt: str | None = None
+    trust_server_certificate: bool | None = None
+    host_name_in_certificate: str | None = None
+    server_certificate: str | None = None
+
+
+@dataclass(frozen=True)
 class Target:
     """One database endpoint.
 
@@ -610,6 +642,7 @@ class Target:
     postgres: TargetPostgres | None = None
     mysql: TargetMysql | None = None
     mariadb: TargetMysql | None = None
+    mssql: TargetMssql | None = None
     labels: Pairs = ()
     safety: Safety | None = None
 
@@ -631,6 +664,12 @@ class Target:
         the defaults where it wrote none."""
         return self.mariadb if self.mariadb is not None else TargetMysql()
 
+    @property
+    def mssql_settings(self) -> TargetMssql:
+        """How to connect to this SQL Server target: the block the file wrote,
+        or the defaults where it wrote none."""
+        return self.mssql if self.mssql is not None else TargetMssql()
+
 
 @dataclass(frozen=True)
 class TargetPatch:
@@ -651,6 +690,7 @@ class TargetPatch:
     postgres: PostgresPatch | None = None
     mysql: MysqlPatch | None = None
     mariadb: MysqlPatch | None = None
+    mssql: MssqlPatch | None = None
     labels: Pairs = ()
     safety: Safety | None = None
 

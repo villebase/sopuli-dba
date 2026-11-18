@@ -181,6 +181,38 @@ def declared_on(
     return admitting[0]
 
 
+def policy_of(config: Config, rule: PersonalAccountRule | None) -> str | None:
+    """The policy a reset draws from where ``rule`` admits the account: its
+    own ``policy:``, else `defaults.policy`. ``rule`` is what
+    :func:`declared_on` returned."""
+    return (rule.policy if rule is not None else None) or config.defaults.policy
+
+
+def policies_possible(config: Config, account: str, target: str) -> tuple[str, ...]:
+    """Every policy a reset of ``account`` on ``target`` could draw from, read
+    from the file alone, in file order and once each (#1601).
+
+    :func:`declared_on` returns the first rule in file order that admits the
+    account, and only the database says whether a predicate does. So each
+    predicate rule counts until an enumerated rule that names the account,
+    which admits it for certain and so ends the list: no later rule can come
+    first. Where no rule names it, every predicate rule counts. Each is read
+    by :func:`policy_of`.
+    """
+    same = account_matcher(_product(config, target))
+    found: list[str] = []
+    for rule in rules_for(config, target):
+        names = not rule.is_predicate and admits(rule, account, same=same)
+        if not rule.is_predicate and not names:
+            continue
+        name = policy_of(config, rule)
+        if name is not None and name not in found:
+            found.append(name)
+        if names:
+            break
+    return tuple(found)
+
+
 def bound_by_application(config: Config, account: str, target: str) -> str | None:
     """Why a mutating `account` verb refuses ``account`` on ``target`` because
     an application binds it there, or ``None`` where none does (#1056).

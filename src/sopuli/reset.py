@@ -38,8 +38,7 @@ from dataclasses import dataclass
 from sopuli.config.charsets import alphabet
 from sopuli.config.delivery import IMPLEMENTED, MANUAL
 from sopuli.config.errors import ArgumentError
-from sopuli.config.model import Config, Delivery, ExpandedTarget
-from sopuli.config.products import account_matcher
+from sopuli.config.model import Config, Delivery, ExpandedTarget, PasswordPolicy
 from sopuli.config.targets import MARIADB, MYSQL
 from sopuli.driver.guardrails import Review, review
 from sopuli.driver.oracle.accounts import deliberately_locked
@@ -57,7 +56,7 @@ from sopuli.driver.protocol import (
 )
 from sopuli.driver.registry import DRIVERS
 from sopuli.exit_codes import ExitCode
-from sopuli.personal import bound_by_application, declared_on, rules_for
+from sopuli.personal import bound_by_application, declared_on, policies_possible
 from sopuli.safety import RefusedError
 
 #: ``results[].state`` words this verb uses, all already in the run schema's
@@ -228,63 +227,46 @@ def refuse_unmasked_seen_password(
     ends the run. Under ``--dry-run`` too, for :func:`refuse_kept_window`'s
     reason.
 
-    Knowable from the file, so it needs no connection. Where an enumerated
-    rule names the account, its policy is the one drawn. Where none does, a
-    predicate rule admits it, and which one only the database says, so every
-    predicate rule's policy on the target is checked
-    (:func:`_policies_admitting`). A rule with no policy names
-    `defaults.policy`.
+    Knowable from the file, so it needs no connection. It checks every policy
+    the reset could draw from, :func:`~sopuli.personal.policies_possible`:
+    the run picks the first rule in file order that admits the account, and
+    only the database says whether a predicate does.
+    :func:`refuse_unmasked_policy` checks the one policy picked again, at run
+    time, before a password is drawn.
     """
     if not delivery.is_seen:
         return
     policies = {policy.name: policy.password for policy in config.policies}
     for expanded in targets:
-        entry = DRIVERS[expanded.target.type]
-        unmasked = entry.seen_reset_unmasked
-        if not unmasked:
-            continue
-        for name in _policies_admitting(config, account, expanded):
+        for name in policies_possible(config, account, expanded.name):
             policy = policies.get(name)
-            if policy is None:
+            if policy is not None:
                 # A dangling name is refused where the policy is read.
-                continue
-            held = sorted(set(unmasked) & set(alphabet(policy)))
-            if held:
-                characters = " ".join(f"`{one}`" for one in held)
-                raise UnsupportedCapabilityError(
-                    SEEN_RESET_QUOTE,
-                    target=expanded.name,
-                    hint=(
-                        f"policy {name!r} can draw {characters}: "
-                        f"{entry.seen_reset_unmasked_why}. Use a charset without it, "
-                        "such as `alnum_safe`, or an unseen delivery method"
-                    ),
-                )
+                refuse_unmasked_policy(delivery, name, policy, expanded)
 
 
-def _policies_admitting(config: Config, account: str, target: ExpandedTarget) -> list[str]:
-    """The policy names the reset on ``target`` could draw from, in file order
-    and once each. A rule with no policy names `defaults.policy`.
-
-    An enumerated rule that names the account, by the product's comparison,
-    gives the one policy: a predicate that also admits it with another policy
-    is refused as two rules, two policies, before any password is drawn
-    (UC-2 §2). Only where no enumerated rule names it does every predicate
-    rule's policy count, because only the database says which admits it.
-    """
-    same = account_matcher(target.target.type)
-    rules = rules_for(config, target.name)
-    named = [
-        rule
-        for rule in rules
-        if not rule.is_predicate and any(same(name, account) for name in rule.accounts)
-    ]
-    found: list[str] = []
-    for rule in named or [rule for rule in rules if rule.is_predicate]:
-        name = rule.policy or config.defaults.policy
-        if name is not None and name not in found:
-            found.append(name)
-    return found
+def refuse_unmasked_policy(
+    delivery: Delivery, name: str, policy: PasswordPolicy, target: ExpandedTarget
+) -> None:
+    """Refuse a seen reset on ``target`` from ``policy`` where it can draw a
+    character the product's server keeps in clear (#1601). Called at plan
+    time for each policy the reset could draw from, and at run time for the
+    one the admitting rule names."""
+    if not delivery.is_seen:
+        return
+    entry = DRIVERS[target.target.type]
+    held = sorted(set(entry.seen_reset_unmasked) & set(alphabet(policy)))
+    if not held:
+        return
+    characters = " ".join(f"`{one}`" for one in held)
+    raise UnsupportedCapabilityError(
+        SEEN_RESET_QUOTE,
+        target=target.name,
+        hint=(
+            f"policy {name!r} can draw {characters}: {entry.seen_reset_unmasked_why}. "
+            "Use a charset without it, such as `alnum_safe`, or an unseen delivery method"
+        ),
+    )
 
 
 def refuse_seen_path(

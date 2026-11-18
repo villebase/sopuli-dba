@@ -653,10 +653,14 @@ one character of the password's end for each `'` in it. So **the tool
 refuses, at plan time, a seen reset on SQL Server whose policy's alphabet
 holds `'`**, with exit 5, naming the target and the policy
 ([#1601](../decisions/log.md#1601)). The refusal needs no connection, and the
-capability it names is `seen_reset_quote`. It reads the policy of the rule
-that names the account on that target. Where no rule names it, it reads
-every `role:` rule's policy there, because only the server says which role
-admits the login. A rule with no policy of its own uses `defaults.policy`.
+capability it names is `seen_reset_quote`. A reset draws from the policy of the
+first rule, in file order, that admits the account on that target, and only
+the server says whether a `profile:` or `role:` rule does. So the check
+reads the policy of every such rule written before the rule that names the
+account, and of that rule. Where no rule names it, it reads every `profile:`
+and `role:` rule's policy there. A rule with no policy of its own uses
+`defaults.policy`. The run checks the one policy drawn again, before it
+draws a password.
 The default charset, `alnum_safe`, holds no `'`, and `printable_ascii`
 does. The seen
 reset is an exception to invariant 15, which decision 2 accepts, and the

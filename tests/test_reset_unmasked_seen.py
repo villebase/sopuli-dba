@@ -22,7 +22,7 @@ from sopuli.config.model import Config, Delivery, ManualDelivery, WrappedDeliver
 from sopuli.driver.protocol import SEEN_RESET_QUOTE, UnsupportedCapabilityError
 from sopuli.driver.registry import DRIVERS
 from sopuli.exit_codes import ExitCode
-from sopuli.reset import refuse_unmasked_seen_password
+from sopuli.reset import refuse_unmasked_policy, refuse_unmasked_seen_password
 
 SEEN = Delivery(method="manual", manual=ManualDelivery(force_expire=True))
 UNSEEN = Delivery(method="vault_wrapped", vault_wrapped=WrappedDelivery(ttl="15m"))
@@ -132,6 +132,58 @@ def test_a_rule_that_names_the_account_decides_over_a_predicate() -> None:
         ]
     )
     refused(found)
+
+
+@pytest.mark.parametrize(
+    ("rules", "default"),
+    [
+        pytest.param(
+            [{"role": "acme_dev_role", "policy": "wide"}, {"accounts": ["acme_jdoe"]}],
+            "plain",
+            id="predicate-first-with-its-own-policy",
+        ),
+        pytest.param(
+            [{"role": "acme_dev_role"}, {"accounts": ["acme_jdoe"], "policy": "plain"}],
+            "wide",
+            id="predicate-first-with-the-default",
+        ),
+    ],
+)
+def test_a_predicate_before_the_naming_rule_counts(
+    rules: list[dict[str, Any]], default: str
+) -> None:
+    """The run takes the first rule in file order that admits the account, so
+    a predicate written before the naming rule may be the one, and its policy
+    may be drawn: the explicit policies do not differ, so nothing refuses the
+    pair."""
+    with pytest.raises(UnsupportedCapabilityError) as caught:
+        refused(config(rules, default=default))
+
+    assert "'wide'" in str(caught.value.hint)
+
+
+def test_a_predicate_after_the_naming_rule_does_not_count() -> None:
+    """The naming rule admits the account for certain, so it is the first, and
+    a later predicate's default policy is never drawn."""
+    found = config(
+        [{"accounts": ["acme_jdoe"], "policy": "plain"}, {"role": "acme_dev_role"}],
+        default="wide",
+    )
+    refused(found)
+
+
+def test_the_run_checks_the_policy_the_admitting_rule_names() -> None:
+    """`refuse_unmasked_policy` is what the run asks of the one policy
+    `_reset_policy` picked, before a password is drawn."""
+    found = config([{"accounts": ["acme_jdoe"], "policy": "plain"}])
+    mssql = next(one for one in found.expanded_targets if one.name == "mssql-dev")
+    wide = next(policy.password for policy in found.policies if policy.name == "wide")
+    oracle = next(one for one in found.expanded_targets if one.name == "ora-dev")
+
+    with pytest.raises(UnsupportedCapabilityError):
+        refuse_unmasked_policy(SEEN, "wide", wide, mssql)
+    refuse_unmasked_policy(SEEN, "wide", wide, oracle)
+    refuse_unmasked_policy(UNSEEN, "wide", wide, mssql)
 
 
 def test_an_account_no_rule_names_counts_every_predicate_policy() -> None:

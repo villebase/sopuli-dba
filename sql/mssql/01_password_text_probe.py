@@ -41,9 +41,9 @@ Query Store can capture it. Each is read back from:
 
 Each row about a case is labelled with the case and with what it holds: `PT1
 clear`, PT1's password; `PT5 hash`, PT5's value; `PT5 hash, last 70 of 140
-hex digits`, the end of PT5's value, 4 hex digits or more, where the rest is
-replaced; `PT1 masked`, PT1's statement with the password replaced; `PT2
-message`, an error message that holds none.
+hex digits`, the end of PT5's value, 4 hex digits or more right after
+`0x******`, where the rest is replaced; `PT1 masked`, PT1's statement with
+the password replaced; `PT2 message`, an error message that holds none.
 A case with no marker is told by the rest of its text (SHAPES). Any other row
 is labelled with its first characters, as SQL Server wrote it.
 
@@ -112,6 +112,7 @@ them. The control's marker stays in the error log until it is cycled.
 from __future__ import annotations
 
 import importlib.util
+import re
 import subprocess
 import sys
 from collections.abc import Callable
@@ -207,15 +208,21 @@ def ours(text: str) -> bool:
 
 
 def hash_tail(text: str) -> int:
-    """How many of the last hex digits of PT5's value `text` holds: 0, or 4
-    or more. A server that masks only part of the value leaves its end."""
+    """How many of the last hex digits of PT5's value `text` holds: all of
+    them, or 4 or more right after the mask, `0x******`, where a server that
+    masks only part of the value leaves its end; else 0. Four digits alone
+    could be in any row by chance."""
     lowered = text.lower()
-    found = 0
-    for size in range(4, len(SEED_HASH) + 1):
-        if SEED_HASH[-size:].lower() not in lowered:
-            break
-        found = size
-    return found
+    if SEED_HASH.lower() in lowered:
+        return len(SEED_HASH)
+    start = lowered.find("0x******")
+    while start >= 0:
+        digits = re.match(r"[0-9a-f]*", lowered[start + 8 :])
+        kept = digits[0] if digits else ""
+        if len(kept) >= 4 and SEED_HASH.lower().endswith(kept):
+            return len(kept)
+        start = lowered.find("0x******", start + 8)
+    return 0
 
 
 def label(text: str) -> str:

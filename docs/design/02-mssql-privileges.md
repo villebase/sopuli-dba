@@ -651,9 +651,9 @@ parses. The server then keeps it with the password left out or masked
 (§6.1), but for one thing. A server audit's `BATCH_COMPLETED_GROUP` keeps
 one character of the password's end for each `'` in it. So **the tool
 refuses, at plan time, a seen reset on SQL Server whose policy's alphabet
-holds `'`**, with exit 5, naming the target and the policy, as invariant 11
-refuses `"` ([#1601](../decisions/log.md#1601)). The refusal is not built
-yet (open: #1601). The default charset, `alnum_safe`, holds no `'`. The seen
+holds `'`**, with exit 5, naming the target and the policy
+([#1601](../decisions/log.md#1601)). The refusal is not built yet
+(open: #1601). The default charset, `alnum_safe`, holds no `'`. The seen
 reset is an exception to invariant 15, which decision 2 accepts, and the
 server masks the password only because of this refusal. A
 tier-1 test sends it through the driver, with a `'`, ODBC's escape

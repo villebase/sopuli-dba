@@ -41,11 +41,13 @@ The event session and the audit start after the driver's session has read
 what it reads on its first call (its scope), so each tool row in them is a
 case's. Each row is shown with the check's login name as `<name>`. A value or
 a password in a row is shown by what of it is there: `<check value>` for
-the whole of HC1's value, `<change value: last 70 of 140 hex digits>` for its
-end after `******`, and `<pw1: last 1 of 33 characters>` for the end of HC3's
-second literal. Any other run of 4 or more of its characters adds `[PART OF
-<what>]` to the row. The probe draws every password and value, and prints
-none of them.
+the whole of HC1's value, `<change value: last 70 of 140>` for the last 70
+of HC2's 140 hex digits after `******`, and `<pw1: last 1 of 33>` for the
+last character of HC3's second literal after `******`. The three passwords
+end in different characters, in any case, so such an end names one of them.
+Any other run of 8 or more of a literal's characters adds `[PART OF
+<what>]` to the row; a shorter run could be other words by chance. The
+probe draws every password and value, and prints none of them.
 
 The probe checks each result against the one RESULTS below records. A
 difference, or a step that fails, makes it exit 1.
@@ -194,9 +196,11 @@ class _RecordingCursor:
         return getattr(self._cursor, name)
 
 
-def draw(quotes: int) -> str:
+def draw(quotes: int, endings: set[str]) -> str:
     """A password of LENGTH characters, with `quotes` copies of `'` inside
-    it, not at its end, that the Linux images' policy takes."""
+    it, not at its end, that the Linux images' policy takes. Its last
+    character, in any case, is none of `endings`, so that the end an audit
+    keeps names one password only."""
     while True:
         chars = [secrets.choice(ALPHABET) for _ in range(LENGTH)]
         for i in range(quotes):
@@ -206,7 +210,9 @@ def draw(quotes: int) -> str:
             any(c.islower() for c in password)
             and any(c.isupper() for c in password)
             and any(c.isdigit() for c in password)
+            and password[-1].lower() not in endings
         ):
+            endings.add(password[-1].lower())
             return password
 
 
@@ -237,22 +243,26 @@ class Shown:
         parts = []
         for label, literal, prefix, suffix in self.literals:
             flat = re.sub(re.escape(literal), f"<{label}>", flat, flags=re.IGNORECASE)
-            # The end of the literal after the mask, as the audit leaves it.
-            lowered = flat.lower()
-            for size in range(len(literal) - 1, 0, -1):
-                tail = prefix + literal[-size:].lower() + suffix
-                at = lowered.find(tail)
-                if at >= 0:
-                    start = at + len(prefix)
-                    flat = (
-                        flat[:start]
-                        + f"<{label}: last {size} of {len(literal)}>"
-                        + flat[start + size :]
-                    )
-                    break
+            flat = masked_tail(flat, label, literal, prefix, suffix)
             if leftover(literal, flat):
                 parts.append(label)
         return flat + "".join(f" [PART OF {label}]" for label in parts)
+
+
+def masked_tail(flat: str, label: str, literal: str, prefix: str, suffix: str) -> str:
+    """`flat` with each end of `literal` that stands between its mask,
+    `prefix`, and `suffix` shown as `<label: last N of M>`. A value's hex
+    digits compare in any case; a password's characters exactly."""
+    hexed = prefix.startswith("0x")
+    start = flat.lower().find(prefix)
+    while start >= 0:
+        begin = start + len(prefix)
+        end = flat.lower().find(suffix, begin)
+        kept = flat[begin:end] if end > begin else ""
+        if kept and (literal.lower().endswith(kept.lower()) if hexed else literal.endswith(kept)):
+            flat = flat[:begin] + f"<{label}: last {len(kept)} of {len(literal)}>" + flat[end:]
+        start = flat.lower().find(prefix, begin)
+    return flat
 
 
 def flattened(text: str) -> str:
@@ -262,13 +272,11 @@ def flattened(text: str) -> str:
 
 
 def leftover(literal: str, text: str) -> bool:
-    """Whether `text` still holds a part of `literal`: its last 4 characters
-    or more, or any 8 in a row. A shorter run could be other words by
+    """Whether `text` still holds 8 characters of `literal` in a row, outside
+    the end :func:`masked_tail` shows. A shorter run could be other words by
     chance."""
     lowered, literal = text.lower(), literal.lower()
-    return literal[-4:] in lowered or any(
-        literal[i : i + 8] in lowered for i in range(len(literal) - 7)
-    )
+    return any(literal[i : i + 8] in lowered for i in range(len(literal) - 7))
 
 
 def port(service: str) -> int:
@@ -467,8 +475,9 @@ def send(service: str, session: Any, major: str, shown: Shown) -> None:
     cursor.execute(change)
     print("HC2 the change: ok")
 
+    endings: set[str] = set()
     for i, quotes in enumerate(QUOTES):
-        password = draw(quotes)
+        password = draw(quotes, endings)
         shown.password(f"pw{i}", password)
         MustChange(ch.ACCOUNT, Secret(password), unlock=False).send(session.connection.cursor())
         print(f"HC3 pw{i}, {LENGTH} characters with {quotes} of ': ok")

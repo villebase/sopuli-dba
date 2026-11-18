@@ -6472,7 +6472,7 @@ the register.
 - **Decision:** the maintainer's:
   1. A seen reset on SQL Server, `manual` delivery, whose policy's alphabet
      holds `'` is refused at plan time, with exit 5, naming the target and
-     the policy, as invariant 11 refuses `"`. Decision 2 of [#1538](#1538)
+     the policy. Decision 2 of [#1538](#1538)
      relies on the server masking the password, and that holds only because
      of this refusal. It is built with the seen reset's SQL Server wiring
      (#1554), or before it, and must be in place before `account
@@ -6484,8 +6484,8 @@ the register.
   record replaces as many characters as the value or the password has, and
   keeps the rest of the literal.
   1. The literal doubles each `'`, so `BCM` keeps one character of the
-     password's end for each `'` in it. A password with none is masked
-     whole at every length measured, 16 to 128. The default charset,
+     password's end for each `'` in it. A password of 32 characters with
+     none is masked whole. The default charset,
      `alnum_safe`, holds no `'`; `printable_ascii` and a `custom` charset
      can.
   2. A value is written as 140 hex digits for 70 bytes, so `BCM` keeps the

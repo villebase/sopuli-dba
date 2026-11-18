@@ -190,6 +190,7 @@ def state_of(
     now: datetime,
     admin_unread: str | None,
     global_privileges: frozenset[str] = frozenset(),
+    roles: frozenset[str] = frozenset(),
 ) -> UserState:
     """One login as a :class:`~sopuli.driver.protocol.UserState`.
 
@@ -206,7 +207,9 @@ def state_of(
 
     ``admin_unread`` and ``global_privileges`` are guardrail 9's: why the
     paths to an administrative grant were not read, and the grants they reach
-    (:class:`~sopuli.driver.mssql.admin.Assessment`).
+    (:class:`~sopuli.driver.mssql.admin.Assessment`). ``roles`` is every
+    server role the login holds, through nesting, which a `role:` rule is
+    compared with (#1554, Q6).
     """
     expired = login.expired or login.must_change
     expires_at = None
@@ -228,4 +231,5 @@ def state_of(
         admin_unread=admin_unread,
         global_privileges=global_privileges,
         session_account=login.session_login,
+        roles=roles,
     )

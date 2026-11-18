@@ -57,6 +57,10 @@ PRINCIPAL_CLASS = 101
 #: certificate or an asymmetric key.
 ROLE_TYPE = "R"
 
+#: ``sys.server_principals.type`` for a SQL login, the one kind with a
+#: password the tool sets (:data:`~sopuli.driver.mssql.accounts.SQL_LOGIN`).
+SQL_LOGIN_TYPE = "S"
+
 #: ``sys.server_permissions.state`` of a grant, and of a grant with
 #: ``WITH GRANT OPTION``. A ``DENY`` is ``D``, and is not read.
 GRANTED = frozenset({"G", "W"})
@@ -246,6 +250,51 @@ class Catalog:
         return {owner: tuple(roles) for owner, roles in found.items()}
 
     @cached_property
+    def children(self) -> Mapping[int, tuple[int, ...]]:
+        """Each role's members, one step down."""
+        found: dict[int, list[int]] = {}
+        for role_id, member_id in self.memberships:
+            found.setdefault(role_id, []).append(member_id)
+        return {role: tuple(members) for role, members in found.items()}
+
+    def server_roles(self, name: str) -> tuple[Principal, ...]:
+        """The server roles ``name`` names, compared by ``upper()`` as a verb
+        compares a login's roles with the rule (#1554, Q6). More than one only
+        on a case-sensitive server that holds the name in two cases, which
+        the caller refuses as ambiguous: the listing and a verb must admit
+        the same logins."""
+        wanted = name.upper()
+        return tuple(p for p in self.principals.values() if p.is_role and p.name.upper() == wanted)
+
+    def members(self, role_id: int) -> tuple[Principal, ...]:
+        """Every SQL login that holds ``role_id``, through any chain of nested
+        server roles, by name (#1554, Q6). A Windows or Entra login or group,
+        or a login mapped to a certificate, has no password the tool can set,
+        so a `role:` rule does not name it."""
+        found = (
+            self.principals[member_id]
+            for member_id in _reach(self.children, role_id)
+            if member_id in self.principals
+        )
+        return tuple(
+            sorted(
+                (p for p in found if not p.is_role and p.type == SQL_LOGIN_TYPE),
+                key=lambda p: p.name,
+            )
+        )
+
+    def roles_of(self, principal_id: int) -> frozenset[str]:
+        """Every server role ``principal_id`` holds, directly or through
+        nested roles, upper-cased as :attr:`UserState.roles
+        <sopuli.driver.protocol.UserState.roles>` holds them: what a `role:`
+        rule is compared with."""
+        return frozenset(
+            self.principals[role_id].name.upper()
+            for role_id in _roles_of(self, principal_id)
+            if role_id in self.principals
+        )
+
+    @cached_property
     def public_id(self) -> int | None:
         """The id of ``public``, or ``None`` where the read has no row for it."""
         return next(
@@ -374,16 +423,23 @@ def bracketed(name: str) -> str:
 
 def _roles_of(catalog: Catalog, principal_id: int) -> list[int]:
     """Every role ``principal_id`` is a member of, nested roles followed."""
+    return _reach(catalog.parents, principal_id)
+
+
+def _reach(edges: Mapping[int, tuple[int, ...]], start: int) -> list[int]:
+    """Every id reachable from ``start`` along ``edges``, breadth first, each
+    once and never ``start`` itself, so a cycle ends: up through
+    :attr:`Catalog.parents`, or down through :attr:`Catalog.children`."""
     seen: set[int] = set()
     order: list[int] = []
-    queue = deque(catalog.parents.get(principal_id, ()))
+    queue = deque(edges.get(start, ()))
     while queue:
-        role_id = queue.popleft()
-        if role_id in seen or role_id == principal_id:
+        found = queue.popleft()
+        if found in seen or found == start:
             continue
-        seen.add(role_id)
-        order.append(role_id)
-        queue.extend(catalog.parents.get(role_id, ()))
+        seen.add(found)
+        order.append(found)
+        queue.extend(edges.get(found, ()))
     return order
 
 

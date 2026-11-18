@@ -63,7 +63,15 @@ from sopuli.driver.mssql import (
 )
 from sopuli.driver.mssql import errors as server_errors
 from sopuli.driver.mssql import privileges as tool_login
-from sopuli.driver.mssql.admin import PUBLIC, Assessment, Catalog, assess, read_catalog
+from sopuli.driver.mssql.admin import (
+    MISSING_GRANT,
+    PUBLIC,
+    Assessment,
+    Catalog,
+    Principal,
+    assess,
+    read_catalog,
+)
 from sopuli.driver.mssql.client import client_lines
 from sopuli.driver.mssql.connection import connection_string
 from sopuli.driver.mssql.errors import (
@@ -179,7 +187,7 @@ ROLE_LOOKUP_REMEDY = (
 )
 
 
-class PublicRoleError(DriverError):
+class PublicServerRoleError(DriverError):
     """A `role:` rule names ``public``, which every login holds (#1554, Q6).
 
     ``config`` and exit 9, as MySQL's mandatory role is: the fix is in the
@@ -509,7 +517,9 @@ class MssqlSession(ClosesConnection):
             global_privileges=assessment.grants,
             # The server roles it holds, through nesting, which a `role:`
             # rule is compared with (#1554, Q6). None where the read is not
-            # complete, and guardrail 9 refuses the login then.
+            # complete: a verb's plan-time question about each `role:` rule
+            # has already refused it then, as `role_lookup` missing
+            # (`cli._refuse_mandatory_roles`).
             roles=catalog.roles_of(login.principal_id) if catalog.complete else frozenset(),
         )
 
@@ -918,7 +928,7 @@ class MssqlSession(ClosesConnection):
         complete, and this is refused as ``role_lookup`` missing, naming the
         grant. `report accounts` then shows the role's members as undeclared
         and warns with `SOPULI-W075` (UC-5 §4)."""
-        found = self._role_catalog().server_role(role)
+        found = self._one_role(self._role_catalog(), role)
         if found is None:
             return None
         self._refuse_public(found.name)
@@ -936,18 +946,32 @@ class MssqlSession(ClosesConnection):
         if profile is not None:
             self.resolve_profile(profile)
         catalog = self._role_catalog()
-        found = catalog.server_role(role or "")
+        found = self._one_role(catalog, role or "")
         if found is None:
             return ()
         self._refuse_public(found.name)
         return tuple(member.name for member in catalog.members(found.principal_id))
+
+    def _one_role(self, catalog: Catalog, role: str) -> Principal | None:
+        """The one server role ``role`` names by ``upper()``, or ``None``.
+        Two in two cases, on a case-sensitive server, are refused: a verb
+        compares by ``upper()``, so it would admit the members of both, and
+        the listing must admit the same logins."""
+        found = catalog.server_roles(role)
+        if len(found) > 1:
+            raise DriverError(
+                f'target "{self.target.name}" has {len(found)} server roles named '
+                f"{role!r} in different cases: " + ", ".join(sorted(p.name for p in found)),
+                hint="rename one of them, or list the logins under `accounts:`",
+            )
+        return found[0] if found else None
 
     def _refuse_public(self, role: str) -> None:
         """Every login holds ``public``, with no membership rows to read, so a
         rule naming it would admit every login: refused, as MySQL refuses a
         mandatory role."""
         if role == PUBLIC:
-            raise PublicRoleError(target=self.target.name)
+            raise PublicServerRoleError(target=self.target.name)
 
     def _role_catalog(self) -> Catalog:
         """:meth:`_server_catalog`, refused as ``role_lookup`` missing where the
@@ -962,8 +986,10 @@ class MssqlSession(ClosesConnection):
                     "login cannot see every server role and which roles each role holds, so "
                     "a role that admits nobody could not be told from one that does not exist"
                 ),
-                # SOPULI-W075 words its fix from this, not from the hint.
-                remedy=ROLE_LOOKUP_REMEDY,
+                # SOPULI-W075 words its fix from this, not from the hint: the
+                # grant where it is missing, else the read's own reason,
+                # which says what to do (a DENY to revoke, a read to run again).
+                remedy=ROLE_LOOKUP_REMEDY if catalog.unread == MISSING_GRANT else catalog.unread,
             )
         return catalog
 

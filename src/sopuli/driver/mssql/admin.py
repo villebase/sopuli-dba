@@ -257,37 +257,31 @@ class Catalog:
             found.setdefault(role_id, []).append(member_id)
         return {role: tuple(members) for role, members in found.items()}
 
-    def server_role(self, name: str) -> Principal | None:
-        """The server role ``name``, or ``None`` where there is none (#1554,
-        Q6). The exact spelling first, so two roles a case-sensitive server
-        tells apart are not mixed up; then by ``upper()``, as the tool
-        compares names."""
-        roles = [p for p in self.principals.values() if p.is_role]
-        exact = next((p for p in roles if p.name == name), None)
-        if exact is not None:
-            return exact
+    def server_roles(self, name: str) -> tuple[Principal, ...]:
+        """The server roles ``name`` names, compared by ``upper()`` as a verb
+        compares a login's roles with the rule (#1554, Q6). More than one only
+        on a case-sensitive server that holds the name in two cases, which
+        the caller refuses as ambiguous: the listing and a verb must admit
+        the same logins."""
         wanted = name.upper()
-        return next((p for p in roles if p.name.upper() == wanted), None)
+        return tuple(p for p in self.principals.values() if p.is_role and p.name.upper() == wanted)
 
     def members(self, role_id: int) -> tuple[Principal, ...]:
         """Every SQL login that holds ``role_id``, through any chain of nested
         server roles, by name (#1554, Q6). A Windows or Entra login or group,
         or a login mapped to a certificate, has no password the tool can set,
         so a `role:` rule does not name it."""
-        found: dict[int, Principal] = {}
-        seen = {role_id}
-        stack = [role_id]
-        while stack:
-            for member_id in self.children.get(stack.pop(), ()):
-                member = self.principals.get(member_id)
-                if member is None or member_id in seen:
-                    continue
-                seen.add(member_id)
-                if member.is_role:
-                    stack.append(member_id)
-                elif member.type == SQL_LOGIN_TYPE:
-                    found[member_id] = member
-        return tuple(sorted(found.values(), key=lambda p: p.name))
+        found = (
+            self.principals[member_id]
+            for member_id in _reach(self.children, role_id)
+            if member_id in self.principals
+        )
+        return tuple(
+            sorted(
+                (p for p in found if not p.is_role and p.type == SQL_LOGIN_TYPE),
+                key=lambda p: p.name,
+            )
+        )
 
     def roles_of(self, principal_id: int) -> frozenset[str]:
         """Every server role ``principal_id`` holds, directly or through
@@ -429,16 +423,23 @@ def bracketed(name: str) -> str:
 
 def _roles_of(catalog: Catalog, principal_id: int) -> list[int]:
     """Every role ``principal_id`` is a member of, nested roles followed."""
+    return _reach(catalog.parents, principal_id)
+
+
+def _reach(edges: Mapping[int, tuple[int, ...]], start: int) -> list[int]:
+    """Every id reachable from ``start`` along ``edges``, breadth first, each
+    once and never ``start`` itself, so a cycle ends: up through
+    :attr:`Catalog.parents`, or down through :attr:`Catalog.children`."""
     seen: set[int] = set()
     order: list[int] = []
-    queue = deque(catalog.parents.get(principal_id, ()))
+    queue = deque(edges.get(start, ()))
     while queue:
-        role_id = queue.popleft()
-        if role_id in seen or role_id == principal_id:
+        found = queue.popleft()
+        if found in seen or found == start:
             continue
-        seen.add(role_id)
-        order.append(role_id)
-        queue.extend(catalog.parents.get(role_id, ()))
+        seen.add(found)
+        order.append(found)
+        queue.extend(edges.get(found, ()))
     return order
 
 

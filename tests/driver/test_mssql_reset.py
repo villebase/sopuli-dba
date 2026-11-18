@@ -1,6 +1,6 @@
-"""UC-2's seen reset on SQL Server, with pyodbc replaced. Tier 0 where
-pyodbc is installed: nothing here opens a socket (#1554).
-``02-mssql-privileges.md`` §6.3 has the statement."""
+"""UC-2's resets on SQL Server, seen and unseen, with pyodbc replaced. Tier 0
+where pyodbc is installed: nothing here opens a socket (#1554).
+``02-mssql-privileges.md`` §6.3 has the statements."""
 
 from __future__ import annotations
 
@@ -16,7 +16,6 @@ from sopuli.driver.protocol import (
     Scope,
     UnsupportedCapabilityError,
 )
-from sopuli.driver.registry import NotWrittenError
 from sopuli.secrets import Secret
 
 pyodbc = pytest.importorskip("pyodbc")
@@ -186,12 +185,60 @@ def test_a_missing_login_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
         one.reset_password("acme_jdoe", Secret(PASSWORD), expire=True)
 
 
-def test_the_unseen_reset_is_not_written(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Where it records the flags is open (#1554, Q7)."""
-    one = opened(monkeypatch, login(name="acme_jdoe"))
-    with pytest.raises(NotWrittenError):
+def by_value(monkeypatch: pytest.MonkeyPatch, row: Any) -> Any:
+    """:func:`opened`, on a server that takes ``0x0200``."""
+    one = opened(monkeypatch, row)
+    one.hash_version = lambda: 0x0200
+    return one
+
+
+@pytest.mark.parametrize("locked_out", [False, True])
+def test_the_unseen_reset_sends_a_value_with_the_policy_off(
+    monkeypatch: pytest.MonkeyPatch, locked_out: bool
+) -> None:
+    """§6.2's step 2, which ends a lockout too: no `UNLOCK` is sent, and the
+    password never reaches the server (invariant 15). The command sets the
+    flags back."""
+    one = by_value(monkeypatch, login(name="acme_jdoe", locked_out=locked_out))
+    changes = one.reset_password("acme_jdoe", Secret(PASSWORD), expire=False)
+
+    [statement] = one.connection.sent
+    assert statement.startswith("ALTER LOGIN [acme_jdoe] WITH PASSWORD = 0x0200")
+    assert statement.endswith(" HASHED, CHECK_POLICY = OFF")
+    assert PASSWORD not in statement
+    assert [(c.action, c.changed) for c in changes] == [
+        (ACCOUNT_UNLOCK, locked_out),
+        (PASSWORD_SET, True),
+        (ROLLOVER_FINISH, False),
+    ]
+
+
+def test_the_unseen_reset_refuses_a_pending_must_change_naming_the_seen_reset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The server refuses CHECK_POLICY = OFF then, `15128` (decision 2)."""
+    one = by_value(monkeypatch, login(name="acme_jdoe", must_change=True))
+
+    with pytest.raises(session.MustChangeError) as caught:
         one.reset_password("acme_jdoe", Secret(PASSWORD), expire=False)
+
+    assert "delivery.method: manual" in str(caught.value.hint)
     assert one.connection.sent == []
+
+
+def test_the_reset_reads_the_flags_and_refuses_must_change_before_anything(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Step 1 for the command, with the reset's hint."""
+    one = by_value(monkeypatch, login(name="acme_jdoe", expiration_checked=False))
+    flags = one.reset_policy_flags("acme_jdoe")
+    assert (flags.check_policy, flags.check_expiration) == (True, False)
+
+    pending = by_value(monkeypatch, login(name="acme_jdoe", must_change=True))
+    with pytest.raises(session.MustChangeError) as caught:
+        pending.reset_policy_flags("acme_jdoe")
+    assert "delivery.method: manual" in str(caught.value.hint)
+    assert pending.connection.sent == []
 
 
 def test_a_refusal_keeps_no_password(monkeypatch: pytest.MonkeyPatch) -> None:

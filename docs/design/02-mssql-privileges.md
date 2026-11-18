@@ -694,11 +694,14 @@ UC-2 has no `pending` entry, so step 1 records the flags in the reset's
 metadata record (UC-2 §3.1), before the change. Where that record already
 holds flags that a stopped reset recorded and did not restore, the reset
 keeps them and does not read again, as UC-1's step 1 does: a second read
-would record the policy that the stopped run left off. Where no store is
-configured, neither a `reset_records:` store nor a delivery method's
-`vault:`, and the login's `CHECK_POLICY` is on, the unseen reset is refused
-at plan time: a run that stopped after step 2 would leave the policy, and
-`CHECK_EXPIRATION` with it, off for good. Where both flags are off and no
+would record the policy that the stopped run left off. The flags go under
+the record's `policy_flags` key, and the reset's own record drops them once
+they are back; where step 4 fails, the record keeps them and the row is
+`ERROR`. Where no `reset_records:` store is configured and the login's
+`CHECK_POLICY` is on, the unseen reset is refused, whatever the delivery: a
+run that stopped after step 2 would leave the policy, and `CHECK_EXPIRATION`
+with it, off for good (#1554, Q7). The run refuses it before anything is
+sent; the plan-time refusal is not built yet. Where both flags are off and no
 record holds others, there is nothing to restore, and no record is needed
 ([#1554](../decisions/log.md#1554), open: #1554).
 

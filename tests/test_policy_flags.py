@@ -96,8 +96,18 @@ def test_removing_the_last_target_leaves_no_empty_node() -> None:
         {"check_policy": 1, "check_expiration": 0},
         {"check_policy": True},
         {"check_policy": True, "check_expiration": True, "extra": True},
+        # Expiration without the policy: no login has it, and it could never
+        # be set back (#1608 review).
+        {"check_policy": False, "check_expiration": True},
     ],
-    ids=["a string", "a string flag", "integers", "one flag", "an extra key"],
+    ids=[
+        "a string",
+        "a string flag",
+        "integers",
+        "one flag",
+        "an extra key",
+        "expiration alone",
+    ],
 )
 def test_an_entry_it_cannot_read_is_refused_not_guessed(entry: Any) -> None:
     """The record may be the only copy of the login's settings, so nothing

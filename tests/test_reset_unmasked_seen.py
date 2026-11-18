@@ -144,41 +144,48 @@ def test_a_rule_that_names_the_account_decides_over_a_predicate() -> None:
 
 
 @pytest.mark.parametrize(
-    ("rules", "default"),
+    "rules",
     [
         pytest.param(
             [{"role": "acme_dev_role", "policy": "wide"}, {"accounts": ["acme_jdoe"]}],
-            "plain",
-            id="predicate-first-with-its-own-policy",
+            id="predicate-first",
         ),
         pytest.param(
-            [{"role": "acme_dev_role"}, {"accounts": ["acme_jdoe"], "policy": "plain"}],
-            "wide",
-            id="predicate-first-with-the-default",
+            [{"accounts": ["acme_jdoe"]}, {"role": "acme_dev_role", "policy": "wide"}],
+            id="predicate-after",
         ),
     ],
 )
-def test_a_predicate_before_the_naming_rule_counts(
-    rules: list[dict[str, Any]], default: str
+def test_a_predicate_policy_counts_where_the_naming_rule_names_none(
+    rules: list[dict[str, Any]],
 ) -> None:
-    """The run takes the first rule in file order that admits the account, so
-    a predicate written before the naming rule may be the one, and its policy
-    may be drawn: the explicit policies do not differ, so nothing refuses the
-    pair."""
+    """Where the role admits the account, its policy is the one named, and
+    is drawn, wherever the role is written (#1605)."""
     with pytest.raises(UnsupportedCapabilityError) as caught:
-        refused(config(rules, default=default))
+        refused(config(rules, default="plain"))
 
     assert "'wide'" in str(caught.value.hint)
 
 
-def test_a_predicate_after_the_naming_rule_does_not_count() -> None:
-    """The naming rule admits the account for certain, so it is the first, and
-    a later predicate's default policy is never drawn."""
-    found = config(
-        [{"accounts": ["acme_jdoe"], "policy": "plain"}, {"role": "acme_dev_role"}],
-        default="wide",
-    )
-    refused(found)
+@pytest.mark.parametrize(
+    "rules",
+    [
+        pytest.param(
+            [{"role": "acme_dev_role"}, {"accounts": ["acme_jdoe"], "policy": "plain"}],
+            id="predicate-first",
+        ),
+        pytest.param(
+            [{"accounts": ["acme_jdoe"], "policy": "plain"}, {"role": "acme_dev_role"}],
+            id="predicate-after",
+        ),
+    ],
+)
+def test_the_default_is_never_drawn_where_the_naming_rule_names_a_policy(
+    rules: list[dict[str, Any]],
+) -> None:
+    """The naming rule's policy is the one named, so a predicate with none
+    does not bring in `defaults.policy`, wherever it is written (#1605)."""
+    refused(config(rules, default="wide"))
 
 
 def test_the_run_checks_the_policy_the_admitting_rule_names() -> None:

@@ -17,6 +17,7 @@ from click.testing import CliRunner, Result
 
 from conftest import WriteConfig
 from sopuli.cli import cli
+from sopuli.driver.clusters import claim
 from sopuli.driver.protocol import (
     PROFILE_MANAGEMENT,
     ROLE_LOOKUP,
@@ -60,15 +61,20 @@ class FakeSession:
     role or profile names is ``acme_jdoe``, and it is open.
     """
 
-    def __init__(self, target: str, refuse: dict[str, Exception]) -> None:
+    def __init__(self, target: str, refuse: dict[str, Exception | None]) -> None:
         self.target = target
         self.refuse = refuse
         self.described: list[str] = []
 
-    def _answer(self, method: str, name: str) -> str:
-        if method in self.refuse:
-            raise self.refuse[method]
-        return name
+    def _answer(self, method: str, name: str) -> str | None:
+        """``name``, or what ``refuse`` says: an error to raise, or ``None``
+        for a role or profile the target does not have."""
+        if method not in self.refuse:
+            return name
+        answer = self.refuse[method]
+        if answer is None:
+            return None
+        raise answer
 
     def resolve_role(self, role: str) -> str | None:
         return self._answer("resolve_role", role)
@@ -77,6 +83,7 @@ class FakeSession:
         return self._answer("resolve_profile", profile)
 
     def accounts_matching(self, **_: Any) -> tuple[str, ...]:
+        self._answer("accounts_matching", "")
         return ("acme_jdoe",)
 
     def describe_user(self, account: str) -> UserState:
@@ -200,45 +207,97 @@ def test_an_enumerated_rule_makes_no_plan_time_connection(
     assert len(sessions["opened"]) == 2, "one connection per target, for the listing"
 
 
-@pytest.mark.parametrize(
-    "failure",
-    [
-        pytest.param(DriverError("connection refused"), id="not-opened"),
-        pytest.param(
-            {"resolve_role": DriverError('the session to target "dev-1" is closed')},
-            id="read-failed",
-        ),
-    ],
-)
-def test_a_target_that_fails_otherwise_is_passed_over_and_reported_per_target(
-    write_config: WriteConfig, sessions: dict[str, Any], failure: Any
+def test_a_target_that_cannot_be_opened_is_passed_over_and_reported_per_target(
+    write_config: WriteConfig, sessions: dict[str, Any]
 ) -> None:
-    """Not a capability, so not refused here: the listing reports the target as
-    it always has. The plan-time check passes the first target over; the
-    second target is still listed."""
-    calls = {"dev-1": 0}
-    real = sessions
-
-    def first_fails_once(target: Any, run: Any, config: Any) -> FakeSession:
-        if target.name == "dev-1":
-            calls["dev-1"] += 1
-            if calls["dev-1"] == 1:
-                if isinstance(failure, Exception):
-                    raise failure
-                session = FakeSession("dev-1", failure)
-                real["opened"].append(session)
-                return session
-            raise DriverError("connection refused")
-        session = FakeSession(target.name, {})
-        real["opened"].append(session)
-        return session
-
-    with pytest.MonkeyPatch.context() as patch:
-        patch.setattr("sopuli.cli._open_session", first_fails_once)
-        result = listed(write_config, "postgresql", "  - role: acme_dev_role")
+    """An unreachable target says nothing about whether it could resolve the
+    rule, so it is not refused here: the listing reports it as it always has,
+    and the other target is listed."""
+    sessions["dev-1"] = DriverError("connection refused")
+    result = listed(write_config, "postgresql", "  - role: acme_dev_role")
 
     found = document(result)
     assert found["exit_code"] == ExitCode.PARTIAL, result.output
     rows = {row["target"]: row for row in found["results"]}
     assert rows["dev-1"]["state"] == "ERROR"
     assert rows["dev-2"]["account"] == "acme_jdoe"
+
+
+class MandatoryRoleError(DriverError):
+    """As MySQL's ``MandatoryRoleError``: a refusal of the rule, ``config``."""
+
+    category = "config"
+
+
+@pytest.mark.parametrize(
+    ("method", "error"),
+    [
+        pytest.param(
+            "resolve_role", MandatoryRoleError("acme_dev_role@% is mandatory"), id="role-refused"
+        ),
+        pytest.param(
+            "accounts_matching",
+            DriverError("the server refused a read of mysql.role_edges"),
+            id="read-refused",
+        ),
+    ],
+)
+def test_any_refusal_resolving_the_rule_comes_before_anything_is_listed(
+    write_config: WriteConfig, sessions: dict[str, Any], method: str, error: DriverError
+) -> None:
+    """Not only a missing capability: the listing resolves a rule outside its
+    per-target `try`, so any refusal it met there lost the earlier rows."""
+    sessions["dev-2"] = {method: error}
+    result = listed(write_config, "mysql", "  - role: acme_dev_role@%")
+
+    assert type(result.exception) is type(error), result.output
+    assert [one.described for one in sessions["opened"]] == [[], []]
+
+
+def test_a_role_the_second_target_does_not_have_is_refused_before_anything_is_listed(
+    write_config: WriteConfig, sessions: dict[str, Any]
+) -> None:
+    sessions["dev-2"] = {"resolve_role": None}
+    result = listed(write_config, "postgresql", "  - role: acme_dev_role")
+
+    assert "target 'dev-2' has no role 'acme_dev_role'" in result.output
+    assert result.exit_code != ExitCode.SUCCESS
+    assert [one.described for one in sessions["opened"]] == [[], []]
+
+
+class OneServer(FakeSession):
+    """A session that names its server, as PostgreSQL's names its cluster."""
+
+    identity_caveat = None
+    identity_kind = "PostgreSQL cluster"
+    identity_key = "system_identifier"
+    identity_hint = "declare the cluster once"
+
+    def cluster_identity(self) -> str:
+        return "7000000000000000001"
+
+
+def test_the_check_does_not_change_which_of_two_targets_on_one_server_is_refused(
+    write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Only dev-2 has a predicate, so the check opens it first. Its claim is
+    put back, and the listing, in target order, still refuses dev-2 and
+    lists dev-1."""
+    opened: list[str] = []
+
+    def open_session(target: Any, run: Any, config: Any) -> FakeSession:
+        session = OneServer(target.name, {})
+        opened.append(target.name)
+        claim(session, target.name, run.clusters)
+        return session
+
+    monkeypatch.setattr("sopuli.cli._open_session", open_session)
+    rules = "  - accounts: [acme_jdoe]\n  - role: acme_dev_role\n    targets: [dev-2]"
+    result = listed(write_config, "postgresql", rules)
+
+    found = document(result)
+    assert opened == ["dev-2", "dev-1", "dev-2"]
+    rows = {row["target"]: row for row in found["results"]}
+    assert rows["dev-1"]["account"] == "acme_jdoe"
+    assert rows["dev-1"]["state"] != "ERROR"
+    assert rows["dev-2"]["state"] == "ERROR"

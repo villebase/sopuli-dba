@@ -371,6 +371,23 @@ def test_an_expired_account_is_left_alone_where_a_new_password_does_not_end_it()
     assert "does not end the expiry" in outcome.detail
 
 
+@pytest.mark.parametrize("expiry_cleared", [True, False])
+def test_a_pending_must_change_is_its_own_message_not_the_expiry_date(
+    expiry_cleared: bool,
+) -> None:
+    """#1594: moving an expiry date does not clear SQL Server's MUST_CHANGE,
+    so the row names MUST_CHANGE and how to clear it, whatever the target's
+    expiry is."""
+    pending = user(status="EXPIRED", expired=True, pending_must_change=True)
+
+    outcome = apply.settled_before_acting(pending, source(), expiry_cleared=expiry_cleared)
+
+    assert outcome is not None
+    assert outcome.state == check.EXPIRED
+    assert "MUST_CHANGE" in outcome.detail
+    assert "expiry date" not in outcome.detail
+
+
 def test_an_account_that_is_not_expired_is_applied_either_way() -> None:
     assert apply.settled_before_acting(user(), source(), expiry_cleared=False) is None
 

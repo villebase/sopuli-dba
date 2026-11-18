@@ -162,6 +162,20 @@ def test_a_pending_must_change_reads_as_expired(monkeypatch: pytest.MonkeyPatch)
     assert {change.status for change in changes} == {"EXPIRED"}
 
 
+def test_the_state_says_must_change_is_pending() -> None:
+    """`creds generate` and `apply` read it, not a status word (#1594)."""
+    from datetime import UTC, datetime
+
+    pending = session.accounts.state_of(
+        login(must_change=True), now=datetime.now(UTC), admin_unread=None
+    )
+    plain = session.accounts.state_of(login(), now=datetime.now(UTC), admin_unread=None)
+
+    assert pending.pending_must_change
+    assert pending.expired
+    assert not plain.pending_must_change
+
+
 def test_keep_rollover_is_refused_by_capability(monkeypatch: pytest.MonkeyPatch) -> None:
     one = opened(monkeypatch, login())
     with pytest.raises(UnsupportedCapabilityError, match="password_rollover"):

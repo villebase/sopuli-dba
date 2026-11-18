@@ -222,6 +222,7 @@ from sopuli.driver.protocol import (
     DEFAULT_MARGIN,
     EXPIRE_PASSWORD,
     FAIL,
+    MUST_CHANGE_PENDING,
     OLD_DISCARD,
     OLD_KEEP,
     OLD_RETAIN,
@@ -8477,6 +8478,10 @@ def _reserved_on(
         refusal = None if state is None else guardrails.server_refusal(state)
         if refusal is not None:
             found[(target, account)] = refusal.reason
+        elif state is not None and state.pending_must_change:
+            # SQL Server: no value can be set until the owner changes the
+            # password, so a `pending` would be applied nowhere (#1594).
+            found[(target, account)] = MUST_CHANGE_PENDING
     return found
 
 

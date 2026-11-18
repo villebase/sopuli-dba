@@ -220,6 +220,7 @@ def state_of(
         deliberately_locked=login.disabled,
         lockout_evidence=ALSO_LOCKED_OUT if login.disabled and login.locked_out else None,
         expired=expired,
+        pending_must_change=login.must_change,
         password_changed_at=login.changed_at,
         password_changed_unknown=None if login.changed_at else NO_CHANGE_DATE,
         password_expires_at=expires_at,

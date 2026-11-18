@@ -86,6 +86,7 @@ from sopuli.config.model import AccountPolicy, Binding, Config
 from sopuli.config.secret_refs import SecretRef
 from sopuli.driver.protocol import (
     FAIL,
+    MUST_CHANGE_PENDING,
     PASS,
     STORED,
     UNAVAILABLE,
@@ -495,6 +496,13 @@ def settled_before_acting(
             LOCKED,
             f"{cannot} -- declare `account: {{ unlock_if_locked: true }}` on this "
             f"account's policy to have `apply` unlock it first",
+        )
+    if user.pending_must_change:
+        # Its own words: moving an expiry date does not clear MUST_CHANGE,
+        # and a login can get it after `creds generate` staged (#1594).
+        return Outcome(
+            EXPIRED,
+            f"the password was not changed: {MUST_CHANGE_PENDING}",
         )
     if user.expired and not expiry_cleared:
         return Outcome(

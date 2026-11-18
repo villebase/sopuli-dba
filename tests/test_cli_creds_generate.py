@@ -2490,8 +2490,13 @@ def _user(name: str, **fields: Any) -> UserState:
 
 @pytest.mark.parametrize(
     "refusing",
-    [{"reserved_by": "supautils.reserved_roles"}, {"superuser": True}],
-    ids=["check-8-reserved", "check-6-superuser"],
+    [
+        {"reserved_by": "supautils.reserved_roles"},
+        {"superuser": True},
+        # #1594: SQL Server's pending MUST_CHANGE, which no value can pass.
+        {"pending_must_change": True, "expired": True},
+    ],
+    ids=["check-8-reserved", "check-6-superuser", "mssql-must-change"],
 )
 def test_an_account_no_run_could_apply_is_skipped_and_the_rest_is_staged(
     runner: CliRunner,

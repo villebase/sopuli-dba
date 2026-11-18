@@ -109,6 +109,17 @@ def test_only_a_linux_host_logs_in_before_a_change(platform: str | None, first: 
     assert opened(platform=platform).verifies_before_change is first
 
 
+@pytest.mark.parametrize(
+    ("platform", "ends"),
+    [("Linux", False), ("Windows", True), (None, True)],
+    ids=["linux", "windows", "unnamed"],
+)
+def test_a_change_ends_a_lockout_where_logins_lock(platform: str | None, ends: bool) -> None:
+    """Step 2's `CHECK_POLICY = OFF` ends a lockout (WP4), so the command
+    changes a locked-out login there. On Linux no login locks (LK2)."""
+    assert opened(platform=platform).change_ends_lockout is ends
+
+
 def test_apply_makes_no_login_before_a_change_on_windows(monkeypatch: pytest.MonkeyPatch) -> None:
     """The command reads the property, so it gets `None` and no login is made."""
 

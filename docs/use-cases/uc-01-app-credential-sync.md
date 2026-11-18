@@ -777,7 +777,10 @@ These rules decide what `apply` does with each account:
   unlock (below). The statement would succeed and the verification could never
   pass. The run would end with a database whose password is in no vault stage,
   which is the state §3's ordering exists to prevent. An *expired* account is
-  changed, as §6.4 says, because setting a password clears the expiry.
+  changed, as §6.4 says, because setting a password clears the expiry. So is
+  a SQL Server login locked out after failed logins, on a host that is not
+  Linux: the change turns its policy off, which ends the lockout, and the run
+  warns `SOPULI-W077` (`02-mssql-privileges.md` §6.2).
 - **An empty vault is a failure, not a quiet no-op.** Where neither stage holds
   anything for a declared account, the run reports `ERROR`, naming
   `creds generate`, instead of exiting 0 having changed nothing. `check` calls

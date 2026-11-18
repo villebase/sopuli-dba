@@ -603,6 +603,17 @@ class MssqlSession(ClosesConnection):
         A host that names no platform is treated as Windows."""
         return self.host_platform() == LINUX
 
+    @property
+    def change_ends_lockout(self) -> bool:
+        """Whether a change goes ahead on a login locked out after failed
+        logins, and ends the lockout (§6.2, #1551). On a host that is not
+        Linux it does: step 2 sends the value with ``CHECK_POLICY = OFF``,
+        which unlocks the login and sets its count to 0, and step 4 turning
+        the policy on again keeps it unlocked (WP4). A login a person
+        disabled is not locked out, and is not changed. On Linux no login
+        locks (LK2)."""
+        return not self.verifies_before_change
+
     #: Whether `creds check` can compare the vault with a login where
     #: `apply` makes none before a change. Read by the command for the
     #: ``SKIPPED`` row's advice. Only a non-Linux host skips, and there a

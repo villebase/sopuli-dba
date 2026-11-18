@@ -41,6 +41,7 @@ from sopuli.clock import to_rfc3339, utc_now
 from sopuli.config.model import Vault
 from sopuli.config.targets import EXTERNAL
 from sopuli.diagnostics import (
+    LOCKOUT_ENDED,
     PROMOTION_UNCONFIRMED,
     ROLLOVER_CAVEAT,
     ROLLOVER_LEFT_OPEN,
@@ -1542,6 +1543,35 @@ def test_a_rollover_s_caveat_is_warned_in_the_plan_and_the_row(
         ]
         assert len(set_details) == 2
         assert all(detail.endswith(f"; {caveat}") for detail in set_details)
+
+
+def test_a_dry_run_warns_of_a_lockout_the_rotation_would_end(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#1551, SQL Server not on Linux: the change ends a lockout after failed
+    logins, so `--dry-run` forecasts `SOPULI-W077` per locked-out login, and
+    none for one a person disabled."""
+    monkeypatch.setattr(FakeSession, "change_ends_lockout", True, raising=False)
+    estate(
+        users={
+            "ACME_WEB_USER": user(status="LOCKED(TIMED)", locked=True),
+            "ACME_BATCH_USER": user(
+                "ACME_BATCH_USER", status="LOCKED", locked=True, deliberately_locked=True
+            ),
+        }
+    )
+    result = run(runner, write_config(CONFIG), "--dry-run", "--output", "json")
+
+    warned = [
+        (one["target"], one["account"])
+        for one in document(result).get("diagnostics", [])
+        if one.get("code") == LOCKOUT_ENDED
+    ]
+    assert warned
+    assert {account for _, account in warned} == {"acme_web_user"}
 
 
 @pytest.mark.parametrize("dry_run", [False, True], ids=["run", "dry-run"])

@@ -630,6 +630,12 @@ FILE_STORE_LEFTOVER = "SOPULI-W071"
 #: decision 4; #1550).
 REPLICAS_UNREACHED = "SOPULI-W076"
 
+#: `creds apply` or `creds rotate` changed a SQL Server login that was locked
+#: out after failed logins, on a host that is not Linux, and the change ended
+#: the lockout (#1551). The lockout is the server's record that somebody tried
+#: wrong passwords.
+LOCKOUT_ENDED = "SOPULI-W077"
+
 #: The config layer's codes, such as ``SOPULI-W004`` and ``SOPULI-W072`` --
 #: imported above rather than defined here. They are raised in the config
 #: layer, which cannot import this module, so they are defined in
@@ -920,6 +926,13 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "replica's own, so a password set on one replica is not set on another: declare "
             "each replica as a target. One per target, from `doctor`, naming each replica "
             "not reached. A warning and not a refusal."
+        ),
+        LOCKOUT_ENDED: (
+            "`creds apply` or `creds rotate` changed a SQL Server login that was locked out "
+            "after failed logins, on a host that is not Linux. The change turns the policy "
+            "off, which ends the lockout and sets the failed-login count to 0, so the "
+            "server no longer shows that somebody tried wrong passwords. One per account "
+            "whose change was sent. A login a person disabled is not changed."
         ),
         CONSTRAINTS_UNREAD: (
             "`creds generate` could not read a target's password constraints, so the "
@@ -1568,6 +1581,34 @@ def rollover_caveat(target: str, account: str, caveat: str) -> Diagnostic:
         target=target,
         account=account,
         message=f"{target}: {account}: {caveat}",
+    )
+
+
+def lockout_ended(target: str, account: str, status: str, *, ended: str = "ended") -> Diagnostic:
+    """`SOPULI-W077`: this run's change ended a SQL Server login's lockout
+    after failed logins (#1551). The change sends the value with
+    ``CHECK_POLICY = OFF``, which unlocks the login and sets its failed-login
+    count to 0 (``02-mssql-privileges.md`` §6.2, WP4). ``ended`` is "ended",
+    "may have ended" for a change that failed after it was sent, or "would
+    end" in a dry run. ``status`` is the login's, such as
+    ``LOCKED(TIMED)``."""
+    after = (
+        "Find out who tried the wrong passwords before the run: after the change the "
+        "server's count no longer shows them"
+        if ended == "would end"
+        else "The server's count no longer shows the wrong passwords: look for the failed "
+        "logins in the server's error log or audit"
+    )
+    return Diagnostic(
+        level="warning",
+        code=LOCKOUT_ENDED,
+        target=target,
+        account=account,
+        message=(
+            f"{target}: {account}: the login is locked out after failed logins (status "
+            f"{status}), and the change {ended} the lockout and its failed-login count. "
+            f"{after}"
+        ),
     )
 
 

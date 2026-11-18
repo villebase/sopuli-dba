@@ -180,6 +180,7 @@ from sopuli.diagnostics import (
     install_diagnostics,
     lock_broken,
     lock_diagnostics,
+    lockout_ended,
     no_reset_journal,
     no_reset_record,
     notification_unsent,
@@ -9156,6 +9157,7 @@ def creds_apply(
         foreseen: list[tuple[str, UserState]] = []
         read: dict[tuple[str, str], UserState] = {}
         surveyed_scopes: dict[str, Scope] = {}
+        ending: set[str] = set()
         findings = _preflight(
             _surveyable(sources),
             run,
@@ -9166,6 +9168,7 @@ def creds_apply(
             reuse=foreseen,
             states=read,
             scopes=surveyed_scopes,
+            ending=ending,
         )
         document.diagnostics.extend(_preflight_diagnostics(findings))
         # The warning the run would raise after the statement, raised before it --
@@ -9203,9 +9206,27 @@ def creds_apply(
             declared=declared,
             force=force,
             selection=selection,
+            ending=ending,
         )
         document.diagnostics.extend(refused_ahead)
         repair_notes.extend(one.message for one in refused_ahead)
+        # A lockout the change would end (#1551), before it is ended. Not for an
+        # account the guardrails would skip, here or by the pass: the run
+        # changes neither.
+        refused = {(notice.target, notice.account) for notice in refused_ahead}
+        held = _refusals(shared, read, declared=declared, force=force)
+        lockouts = _lockouts_ahead(
+            (
+                (binding, _stage_of(source))
+                for binding, source in sources
+                if (binding.target, binding.account) not in refused
+                and _credential(binding) not in held
+            ),
+            read,
+            ending,
+        )
+        for notice in lockouts:
+            document.warn_in_text(notice)
         # A survey that passed with a check missing says so here as well as in
         # `diagnostics[]` (decision #606). A refusal has already printed them in its
         # table.
@@ -9329,6 +9350,7 @@ def creds_apply(
     unchecked = _guardrail_caveats(applied)
     document.diagnostics.extend(unchecked)
     _warn_rollover_caveats(applied, document)
+    _warn_lockouts_ended(applied, document)
     clear = _encryption_notices(applied)
     document.diagnostics.extend(clear)
     # A (target, profile) the pre-flight already warned about is not warned about
@@ -9502,6 +9524,12 @@ class _Applied:
     #: What the old password a confirmed change kept will not do, from the
     #: driver (#1271): `SOPULI-W064` at the end of the run.
     rollover_caveat: str | None = None
+    #: The status of the lockout this run's change ended, such as
+    #: ``LOCKED(TIMED)`` on SQL Server on Windows (#1551): `SOPULI-W077` at
+    #: the end of the run. ``None`` on every other row. On a row that is not
+    #: :attr:`changed`, the statement failed after it was sent, so it may not
+    #: have ended the lockout.
+    lockout_ended: str | None = None
     #: The encryption of the connection this account's new password was sent
     #: over; ``None`` where no password was sent. Reported once per target at the
     #: end of the run (SOPULI-W031/W032).
@@ -10204,9 +10232,14 @@ def _refused_ahead(
     declared: frozenset[str],
     force: bool,
     selection: Selection,
+    ending: Collection[str] = (),
 ) -> tuple[list[Diagnostic], int]:
     """What `creds apply`'s guardrails would refuse on an account's own target,
     as `SOPULI-W060` (#1116), and how many of those accounts were named.
+
+    ``ending`` names the targets where a change ends a lockout (#1551). The
+    run lets such a login past :func:`apply_states.settled_before_acting`, so
+    this does too.
 
     :func:`_apply_one` reviews each account before it changes it, and skips one
     a guardrail refuses, or stops on it where `--account` named it. This is that
@@ -10234,10 +10267,11 @@ def _refused_ahead(
         if state is None or scope is None:
             continue
         reserved = source is None and guardrails.server_reserved(state)
+        lockout = _ends_lockout(binding.target in ending, state, _stage_of(source))
         settled = apply_states.settled_before_acting(
             state,
             source,
-            unlock=apply_states.attributes_for(config, binding).unlock,
+            unlock=apply_states.attributes_for(config, binding).unlock or lockout is not None,
             expiry_cleared=scope.supports(EXPIRE_PASSWORD),
         )
         if settled is not None and not reserved:
@@ -11066,6 +11100,7 @@ def _apply_one(
     outcome: check_states.Outcome | None = None
     after_user: UserState | None = None
     kept_caveat: str | None = None
+    lockout: str | None = None
 
     def changed_row(
         final: check_states.Outcome, now: UserState, *, error: Error | None = None
@@ -11090,6 +11125,7 @@ def _apply_one(
             reuse=reuse,
             encryption=sent,
             rollover_caveat=kept_caveat,
+            lockout_ended=lockout,
         )
 
     try:
@@ -11134,11 +11170,15 @@ def _apply_one(
             # skips for, so it skipped the password on every target (#1180). A
             # missing account is not this case, and is reported as missing.
             return _refused_row(binding, source, held, selection=selection)
+        # SQL Server on a host that is not Linux (#1551): the change itself
+        # ends a lockout after failed logins, so such a login goes ahead, and
+        # the row names the lock it ended (`SOPULI-W077`).
+        lockout = _lockout_the_change_ends(session, user, source)
         settled = apply_states.settled_before_acting(
             user,
             source,
             requested=requested,
-            unlock=attributes.unlock,
+            unlock=attributes.unlock or lockout is not None,
             unlockable=unlockable,
             expiry_cleared=expiry_cleared,
         )
@@ -11263,11 +11303,14 @@ def _apply_one(
             # Asked again, and this time with no permission to unlock. The first
             # call let the run *reach* the attribute pass; this one is about the
             # state that pass left behind, and an account still locked here is one
-            # whose password must not be changed after all.
+            # whose password must not be changed after all. A lockout the change
+            # itself ends is the exception, asked again of the state read now.
+            lockout = _lockout_the_change_ends(session, user, source)
             blocked = apply_states.settled_before_acting(
                 user,
                 source,
                 requested=requested,
+                unlock=lockout is not None,
                 unlockable=unlockable,
                 expiry_cleared=expiry_cleared,
             )
@@ -11525,9 +11568,41 @@ def _apply_one(
             refused=refused,
             reuse=reuse,
             encryption=sent if issued or _carried(error) else None,
+            # The statement that ends the lockout was accepted, or may have
+            # been, whatever failed after it: as for `encryption`.
+            lockout_ended=lockout if issued or _carried(error) else None,
         )
 
     return changed_row(_with_regime(outcome, regime, after_user), after_user)
+
+
+def _lockout_the_change_ends(
+    session: Any, user: UserState | None, source: Source | None
+) -> str | None:
+    """:func:`_ends_lockout`, asked of this session."""
+    return _ends_lockout(getattr(session, "change_ends_lockout", False), user, _stage_of(source))
+
+
+def _stage_of(source: Source | None) -> str | None:
+    return None if source is None else source.stage
+
+
+def _ends_lockout(ends: bool, user: UserState | None, stage: str | None) -> str | None:
+    """The status of a lockout that a change ends on a target, or ``None``.
+
+    SQL Server on a host that is not Linux (``ends``, the session's
+    ``change_ends_lockout``, #1551): a login locked out after failed logins,
+    and not disabled by a person, goes ahead with the change, because the
+    change turns ``CHECK_POLICY`` off, which ends the lockout
+    (``02-mssql-privileges.md`` §6.2, WP4). Only where a change would be sent:
+    a ``current`` there is set by no change, so its lockout stays and is
+    reported ``LOCKED``. Every other driver, and a lock somebody set, keeps
+    :func:`apply_states.settled_before_acting`'s ``LOCKED``."""
+    if not ends or stage is None or stage == CURRENT:
+        return None
+    if user is None or not user.locked or user.deliberately_locked:
+        return None
+    return user.status
 
 
 def _attribute_intent(config: Config) -> list[str]:
@@ -12289,8 +12364,13 @@ def _preflight(
     scopes: dict[str, Scope] | None = None,
     rotating: bool = False,
     rollover_caveats: list[Diagnostic] | None = None,
+    ending: set[str] | None = None,
 ) -> list[Finding]:
     """UC-1 §8 step 3: ask the estate before anything is written.
+
+    ``ending`` collects the targets whose session says a change ends a
+    lockout (``change_ends_lockout``, SQL Server not on Linux, #1551), so a
+    dry run can warn `SOPULI-W077` before the change.
 
     ``rollover_caveats`` collects `SOPULI-W064` for each account a rollover is
     allowed on with a caveat (#1271). `creds rotate --dry-run` warns of the
@@ -12383,6 +12463,24 @@ def _preflight(
                     caveats=rollover_caveats,
                 )
             if full:
+                if ending is not None:
+                    try:
+                        if getattr(session, "change_ends_lockout", False):
+                            ending.add(name)
+                    except Exception as error:  # noqa: BLE001 -- a finding, not a crash
+                        # Blocking: a preview that forecast nothing here could
+                        # say the opposite of what the run then does.
+                        findings.append(
+                            Finding(
+                                target=name,
+                                check=preflight.SCOPE,
+                                message=(
+                                    "could not read whether a change ends a lockout here: "
+                                    f"{_finding(error).message}"
+                                ),
+                                hint="the connection worked; this is what it could not read",
+                            )
+                        )
                 findings.extend(
                     _preflight_target(
                         session,
@@ -13800,6 +13898,45 @@ def _warn_rollover_caveats(
             )
 
 
+def _warn_lockouts_ended(applied: Sequence[_Applied], document: RunDocument) -> None:
+    """`SOPULI-W077` for each account whose lockout this run's change ended
+    (#1551), in the JSON and under the text: the lockout is the server's
+    record that somebody tried wrong passwords, and the change erased it."""
+    for record in applied:
+        if record.lockout_ended:
+            document.warn_in_text(
+                lockout_ended(
+                    record.binding.target,
+                    record.binding.account,
+                    record.lockout_ended,
+                    # Not `changed`: the statement failed after it was sent.
+                    ended="ended" if record.changed else "may have ended",
+                )
+            )
+
+
+def _lockouts_ahead(
+    staged: Iterable[tuple[Binding, str | None]],
+    states: Mapping[tuple[str, str], UserState],
+    ending: Collection[str],
+) -> list[Diagnostic]:
+    """`SOPULI-W077` before the change, for a dry run: each login the run
+    would change while it is locked out, which ends the lockout (#1551).
+    ``staged`` is each binding the run would act on, with the stage it would
+    be set from; the caller leaves out the ones the guardrails would skip.
+    ``ending`` names the targets whose session said ``change_ends_lockout``."""
+    notices: list[Diagnostic] = []
+    for binding, stage in staged:
+        status = _ends_lockout(
+            binding.target in ending, states.get((binding.target, binding.account)), stage
+        )
+        if status is not None:
+            notices.append(
+                lockout_ended(binding.target, binding.account, status, ended="would end")
+            )
+    return notices
+
+
 def _guardrail_caveats(applied: Sequence[_Applied]) -> list[Diagnostic]:
     """§4's checks that could not be run, as this run's warnings.
 
@@ -14706,6 +14843,7 @@ def creds_rotate(
     unchecked = _guardrail_caveats(sequence.applied)
     document.diagnostics.extend(unchecked)
     _warn_rollover_caveats(sequence.applied, document, closing=sequence.closing)
+    _warn_lockouts_ended(sequence.applied, document)
     clear = _encryption_notices(sequence.applied)
     document.diagnostics.extend(clear)
     # The invocation that repairs this run, for SOPULI-W033 and the repair line
@@ -15511,6 +15649,7 @@ def _preview_rotation(
 
     read: dict[tuple[str, str], UserState] = {}
     caveats: list[Diagnostic] = []
+    ending: set[str] = set()
     findings = _preflight(
         rotating,
         run,
@@ -15520,6 +15659,7 @@ def _preview_rotation(
         states=read,
         rotating=True,
         rollover_caveats=caveats,
+        ending=ending,
     )
     document.diagnostics.extend(_preflight_diagnostics(findings))
     if preflight.refusal(findings) is not None:
@@ -15534,6 +15674,9 @@ def _preview_rotation(
     for caveat in caveats:
         if (caveat.target, caveat.account) in staged:
             document.warn_in_text(caveat)
+    # `SOPULI-W077` (#1551): a locked-out login the run would change.
+    for notice in _lockouts_ahead(((binding, PENDING) for binding in drawn), read, ending):
+        document.warn_in_text(notice)
     # After the refusal, as in `apply`: a run the survey stops never reaches the
     # pass.
     shared = _shared_among(rotating)

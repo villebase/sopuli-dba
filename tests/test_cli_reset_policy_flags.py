@@ -447,3 +447,57 @@ def test_a_connection_lost_after_the_change_went_out_keeps_the_flags(
     [record] = records(journal)
     assert record["policy_flags"] == ON.to_record()
     assert "may have been set with the login's policy off" in result.output
+
+
+#: The same estate on SQL Server, whose unseen reset keeps the login's flags
+#: (the registry's `reset_keeps_policy_flags`), with no `reset_records:`.
+MSSQL = (
+    CONFIG.replace("type: oracle", "type: mssql")
+    .replace('"192.0.2.10:1521/ALPHA"', '"192.0.2.10:1433"')
+    .replace("SOPULI_SVC", "sopuli_svc")
+)
+
+
+@pytest.mark.parametrize(("flags", "refused"), [(ON, True), (OFF, False)], ids=["on", "off"])
+def test_without_reset_records_a_login_whose_policy_is_on_is_refused_at_plan_time(
+    write_config: WriteConfig,
+    monkeypatch: pytest.MonkeyPatch,
+    journal: MemoryStore,
+    flags: PolicyFlags,
+    refused: bool,
+) -> None:
+    """#1554, Q7: nothing could keep the flags, so the run would leave the
+    policy off for good if it stopped. Refused before any password is drawn
+    or delivered, exit 9. A login whose policy is off has nothing to set
+    back, and is reset."""
+    session = opened(monkeypatch, FlagSession(flags, journal))
+
+    result = run(write_config, MSSQL)
+
+    if refused:
+        found = json.loads(result.stdout)
+        assert found["exit_code"] == ExitCode.CONFIG_INVALID, result.output
+        assert "reset_records" in found["error"]["message"]
+        assert not any(isinstance(one, tuple) for one in session.events), "nothing was sent"
+    else:
+        assert result.exit_code == ExitCode.SUCCESS, result.output
+
+
+def test_the_plan_time_check_reads_no_login_the_config_does_not_declare(
+    write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch, journal: MemoryStore
+) -> None:
+    """Invariant 5: an undeclared login's flags are nothing the check needs.
+    The run refuses the name on its own row, not the whole run, exit 9."""
+    session = opened(monkeypatch, FlagSession(ON, journal))
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--config", str(write_config(MSSQL)), "--output", "json", "account",
+            "reset-password", "--account", "acme_dev_nobody",
+        ],
+    )  # fmt: skip
+
+    found = json.loads(result.stdout)
+    assert found["exit_code"] != ExitCode.CONFIG_INVALID, result.output
+    assert "read flags" not in session.events

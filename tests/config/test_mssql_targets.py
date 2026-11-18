@@ -330,14 +330,15 @@ def test_two_spellings_of_one_login_are_refused() -> None:
 
 
 def test_the_written_commands() -> None:
-    """Every command but `doctor`, UC-1's, UC-5's three reports and UC-2's
-    list, suspend and expire-password is refused before anything connects
-    (#1549, #1551, #1552, #1554, #1555)."""
+    """Every command but `doctor`, UC-1's change and check, UC-5's three
+    reports and UC-2's four is refused before anything connects (#1549,
+    #1551, #1552, #1554, #1555)."""
     target = loaded(targets=[SERVER]).expanded_targets[0].target
 
     assert DRIVERS["mssql"].commands == frozenset(
         {
             "account.list",
+            "account.reset-password",
             "account.suspend",
             "account.expire-password",
             "creds.check",
@@ -365,6 +366,13 @@ def test_the_written_commands() -> None:
     require_command(target, "report.history")
     require_command(target, "creds.check")
     require_command(target, "account.suspend")
+    require_command(target, "account.reset-password")
     with pytest.raises(DriverNotImplementedError) as caught:
-        require_command(target, "account.reset-password")
+        require_command(target, "creds.status")
     assert caught.value.code == DRIVER_NOT_IMPLEMENTED
+    # Only SQL Server's unseen reset keeps the login's flags, so only its
+    # targets are asked about them at plan time without `reset_records:`.
+    assert DRIVERS["mssql"].reset_keeps_policy_flags is True
+    assert not any(
+        driver.reset_keeps_policy_flags for name, driver in DRIVERS.items() if name != "mssql"
+    )

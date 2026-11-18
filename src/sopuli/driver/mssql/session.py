@@ -167,8 +167,8 @@ MUST_CHANGE = str(server_errors.MUST_CHANGE)
 #: is refused there at plan time (#1538, decision 3; #1552).
 LOCKOUT_THRESHOLD = "lockout_threshold"
 
-#: Why `account expire-password` is refused on SQL Server. The generic hint
-#: points to an unseen reset, which SQL Server does not run yet (#1554).
+#: Why `account expire-password` is refused on SQL Server, pointing to
+#: `account suspend` (#1554).
 NO_EXPIRY = (
     "SQL Server takes MUST_CHANGE only with a new password, so it cannot expire the "
     "password a login has; end the account with `account suspend`"

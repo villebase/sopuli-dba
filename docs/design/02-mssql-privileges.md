@@ -719,10 +719,20 @@ Microsoft's documentation, and not measured here, `DISABLE` refuses new
 logins and does not end the login's open sessions; an offboarding that must
 end them does so by hand, with `KILL`. A login that
 is already disabled is reported unchanged; one that `IsLocked` reports
-locked out is not a suspension, and is disabled. `account list` serves a
-rule that names logins. A `profile:` predicate is refused, because SQL
-Server has no profiles, and a `role:` predicate by `role_lookup`, until
-what a role means here is decided (open: #1554).
+locked out is not a suspension, and is disabled. A `profile:` predicate is
+refused, because SQL Server has no profiles.
+
+**A `role:` predicate names a server role** ([#1554](../decisions/log.md#1554),
+Q6). Its members are the logins that hold it directly or through any chain
+of nested server roles, read from the catalog guardrail 9 reads (§5), with
+the role's name compared by `upper()` and shown as the server spells it. A
+verb compares the rule with every server role a login holds through
+nesting. Without `VIEW ANY DEFINITION`, or with `VIEW ANY SECURITY
+DEFINITION` denied, the tool login cannot see a user-defined server role or
+one role's membership of another (PA2), so the read is not complete and the
+rule is refused as `role_lookup` missing, naming the grant; `report
+accounts` then warns with `SOPULI-W075`. A database role is not what a
+`role:` names: a login holds one only through a user in one database.
 
 ### 6.4 Names in a statement
 

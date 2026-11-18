@@ -246,6 +246,59 @@ class Catalog:
         return {owner: tuple(roles) for owner, roles in found.items()}
 
     @cached_property
+    def children(self) -> Mapping[int, tuple[int, ...]]:
+        """Each role's members, one step down."""
+        found: dict[int, list[int]] = {}
+        for role_id, member_id in self.memberships:
+            found.setdefault(role_id, []).append(member_id)
+        return {role: tuple(members) for role, members in found.items()}
+
+    def server_role(self, name: str) -> Principal | None:
+        """The server role ``name``, compared by ``upper()`` as the tool
+        compares names, or ``None`` where there is none (#1554, Q6)."""
+        wanted = name.upper()
+        return next(
+            (p for p in self.principals.values() if p.is_role and p.name.upper() == wanted),
+            None,
+        )
+
+    def members(self, role_id: int) -> tuple[Principal, ...]:
+        """Every principal that is not a role and holds ``role_id``, through
+        any chain of nested server roles, by name (#1554, Q6). ``public`` has
+        no membership rows, so it names nobody here."""
+        found: dict[int, Principal] = {}
+        seen = {role_id}
+        stack = [role_id]
+        while stack:
+            for member_id in self.children.get(stack.pop(), ()):
+                member = self.principals.get(member_id)
+                if member is None or member_id in seen:
+                    continue
+                seen.add(member_id)
+                if member.is_role:
+                    stack.append(member_id)
+                else:
+                    found[member_id] = member
+        return tuple(sorted(found.values(), key=lambda p: p.name))
+
+    def roles_of(self, principal_id: int) -> frozenset[str]:
+        """Every server role ``principal_id`` holds, directly or through
+        nested roles, by name: what a `role:` rule is compared with."""
+        names: set[str] = set()
+        seen: set[int] = set()
+        stack = list(self.parents.get(principal_id, ()))
+        while stack:
+            role_id = stack.pop()
+            if role_id in seen:
+                continue
+            seen.add(role_id)
+            role = self.principals.get(role_id)
+            if role is not None:
+                names.add(role.name)
+            stack.extend(self.parents.get(role_id, ()))
+        return frozenset(names)
+
+    @cached_property
     def public_id(self) -> int | None:
         """The id of ``public``, or ``None`` where the read has no row for it."""
         return next(

@@ -25,7 +25,7 @@ from sopuli.driver.mssql.admin import (
     assess,
     read_catalog,
 )
-from sopuli.driver.protocol import Credential
+from sopuli.driver.protocol import Credential, UnsupportedCapabilityError
 from sopuli.secrets import Secret
 
 pyodbc = pytest.importorskip("pyodbc")
@@ -266,6 +266,62 @@ def test_the_session_reads_the_catalog_once(
 
     assert server_found.grants == frozenset({"CONTROL SERVER"})
     assert plain.grants == frozenset()
+
+
+def _session(live_mssql: Any) -> Any:
+    session_module = pytest.importorskip("sopuli.driver.mssql.session")
+    target = ExpandedTarget(
+        target=Target(
+            name="tier1-mssql",
+            type="mssql",
+            dsn=live_mssql.dsn,
+            mssql=TargetMssql(trust_server_certificate=True),
+        )
+    )
+    credential = Credential(username=live_mssql.tool_user, secret=Secret(live_mssql.tool_password))
+    return session_module.MssqlDriver(correlation_id="t1-1554").connect(target, credential)
+
+
+def test_a_role_rule_follows_nested_server_roles(
+    live_mssql: Any, server: tuple[Any, Paths, bool]
+) -> None:
+    """#1554, Q6: a `role:` names a server role, and its members are
+    followed through nested server roles. The holder is in `nest`, which
+    is in `ctl`."""
+    sa, paths, _ = server
+    holder = paths.holder("nested")
+    with _view_definitions(sa, live_mssql.tool_user, held=True):
+        session = _session(live_mssql)
+        try:
+            spelled = session.resolve_role(paths.ctl.upper())
+            members = session.accounts_matching(role=paths.ctl)
+            state = session.describe_user(holder)
+            missing = session.resolve_role(f"acme_t1_nobody_{paths.tag}")
+        finally:
+            session.close()
+
+    assert spelled == paths.ctl
+    assert holder in members
+    assert paths.plain not in members
+    assert state is not None
+    assert {paths.nest, paths.ctl} <= state.roles
+    assert missing is None
+
+
+def test_without_view_any_definition_a_role_rule_is_refused_naming_the_grant(
+    live_mssql: Any, server: tuple[Any, Paths, bool]
+) -> None:
+    sa, paths, _ = server
+    with _view_definitions(sa, live_mssql.tool_user, held=False):
+        session = _session(live_mssql)
+        try:
+            with pytest.raises(UnsupportedCapabilityError) as caught:
+                session.resolve_role(paths.ctl)
+        finally:
+            session.close()
+
+    assert caught.value.capability == "role_lookup"
+    assert "GRANT VIEW ANY DEFINITION" in (caught.value.remedy or "")
 
 
 def test_the_tool_login_reads_its_own_grant(

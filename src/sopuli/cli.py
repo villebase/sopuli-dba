@@ -1742,7 +1742,7 @@ def account_suspend(
     # unattended run is refused with no login, and the plan-time logins come
     # before a person is asked.
     demand = _refuse_unconfirmable(plan, run, action=action, confirmed=confirm, noun="account")
-    _refuse_mandatory_roles_at_plan(reached, run, config)
+    _refuse_unresolvable_rules(reached, run, config, members=False)
     _ask_environments(plan, run, demand, action=action, noun="account")
 
     if not reached:
@@ -2066,7 +2066,7 @@ def account_expire_password(
         scope = _plan_scope(expanded, run, config, scopes)
         if scope is not None:
             expire.require_expiry(scope, target=expanded.name)
-    _refuse_mandatory_roles_at_plan(reached, run, config)
+    _refuse_unresolvable_rules(reached, run, config, members=False)
 
     _ask_environments(plan, run, demand, action=action, noun="account")
 
@@ -2498,7 +2498,7 @@ def account_reset_password(
     _require_encryption(reached, run, config, scopes=scopes)
     _require_seen_expiry(reached, run, config, delivery=delivery, scopes=scopes)
     _require_password_value(reached, run, config, scopes=scopes)
-    _refuse_mandatory_roles_at_plan(reached, run, config)
+    _refuse_unresolvable_rules(reached, run, config, members=False)
 
     # The question comes after the checks above, as in `account expire-password`
     # (#1214): a yes followed by a refusal means nothing, and teaches people to
@@ -2921,38 +2921,6 @@ def _refuse_mandatory_roles(session: Any, config: Config, target: ExpandedTarget
     for rule in rules_for(config, target.name):
         if rule.role is not None:
             session.resolve_role(rule.role)
-
-
-def _refuse_mandatory_roles_at_plan(
-    targets: Iterable[ExpandedTarget], run: Invocation, config: Config
-) -> None:
-    """:func:`_refuse_mandatory_roles` at plan time, before any password is
-    drawn or any question asked: one connection per MySQL or MariaDB target
-    that a `role:` rule reaches, and none otherwise. A target this cannot
-    reach, or whose rules it cannot read, is left to the run, which asks
-    again."""
-    for expanded in targets:
-        if expanded.target.type not in EVERY_ACCOUNT_ROLE_TYPES or not any(
-            rule.role is not None for rule in rules_for(config, expanded.name)
-        ):
-            continue
-        try:
-            session = _open_session(expanded, run, config)
-        except Exception:  # noqa: BLE001 -- the run reports it on its row
-            continue
-        try:
-            _refuse_mandatory_roles(session, config, expanded)
-        except DriverError as error:
-            # The rule's own refusal: a role every account holds, `config`
-            # (MySQL, MariaDB, SQL Server), or one the tool cannot read, a
-            # missing capability. Anything else the run asks again.
-            if error.category == "config" or isinstance(error, UnsupportedCapabilityError):
-                raise
-        except Exception:  # noqa: BLE001 -- the run asks again, and reports it
-            pass
-        finally:
-            with suppress(Exception):
-                session.close()
 
 
 def _reset_lock_keys(
@@ -4520,13 +4488,23 @@ def account_list_command(
 
 
 def _refuse_unresolvable_rules(
-    reached: Sequence[ExpandedTarget], run: Invocation, config: Config
+    reached: Sequence[ExpandedTarget],
+    run: Invocation,
+    config: Config,
+    *,
+    members: bool = True,
 ) -> None:
     """Refuse a `profile:` or `role:` rule a target cannot resolve, before
-    anything is listed (invariant 4, #1598).
+    anything is listed or changed (invariant 4, #1598, #1603).
 
     :func:`_list_one` resolves the rules outside its per-target ``try``, so a
     refusal there would end the run after earlier targets' rows were read.
+    The `account` verbs that change an account ask it too (#1603). They admit
+    an account by the profile and roles it holds, so without this a rule
+    that names nothing would only leave the account undeclared, and the run
+    would report it skipped, not the typo. They pass ``members=False``: a
+    verb reads no rule's members, so it asks only whether the profile or role
+    exists, and the questions the role's read asks with it.
 
     A `profile:` rule on a product with no profiles is refused from the
     target's type, before any target is opened: the registry's
@@ -4535,8 +4513,9 @@ def _refuse_unresolvable_rules(
     connection per target that has one. So every refusal the listing could
     meet while it resolves a rule comes here instead, with the driver's own
     error: a missing capability, exit 5, naming it; a role MySQL makes
-    mandatory or MariaDB reaches through `PUBLIC`; a read the server refuses;
-    and a profile or role the target does not have.
+    mandatory, MariaDB reaches through `PUBLIC`, or SQL Server gives every
+    login; a read the server refuses; and a profile or role the target does
+    not have.
 
     A target that cannot be opened is passed over, as
     :func:`_refuse_uncomparable` passes it, and so is one whose session is
@@ -4572,7 +4551,10 @@ def _refuse_unresolvable_rules(
                 continue
             try:
                 for rule in predicates[target.name]:
-                    _resolve_rule(session, rule, target)
+                    if members:
+                        _resolve_rule(session, rule, target)
+                    else:
+                        _refuse_unnamed(session, rule, target)
             except DriverError as error:
                 # A session lost while reading says nothing about the rule,
                 # as a target that cannot be opened says nothing.
@@ -4753,6 +4735,15 @@ def _resolve_rule(
     if members is None:
         raise _no_such_predicate(target, "role", rule.role)
     return members
+
+
+def _refuse_unnamed(session: Any, rule: PersonalAccountRule, target: ExpandedTarget) -> None:
+    """:func:`_resolve_rule`'s refusals without its member read: a predicate
+    whose profile or role the target does not have (#1603)."""
+    if rule.profile is not None and session.resolve_profile(rule.profile) is None:
+        raise _no_such_predicate(target, "profile", rule.profile)
+    if rule.role is not None and session.resolve_role(rule.role) is None:
+        raise _no_such_predicate(target, "role", rule.role)
 
 
 def role_members(session: Any, role: str) -> tuple[str, ...] | None:

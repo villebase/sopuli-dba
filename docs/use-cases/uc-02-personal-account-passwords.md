@@ -513,6 +513,18 @@ names a profile or role that **does not exist** is refused, because that is a
 misspelling. One that exists and **matches no accounts** is not an error, because
 that is a true answer about today's estate.
 
+**Every `account` verb asks this at plan time**, before anything is read or
+changed, as `account list` does (§4, #1598, [#1603](../decisions/log.md#1603)).
+A verb that changes an account admits it by the profile and roles it holds,
+so without the question a rule that names nothing would only leave the
+account undeclared, and the run would report it skipped. The verbs ask only
+whether each `profile:` and `role:` rule on a target names something, with
+one more connection per target that has such a rule. They read no rule's
+members. Each refusal ends the run, as it ends `account list`'s: a profile
+or role the target does not have (exit 1), a missing capability (exit 5), a
+role every account holds (exit 9), and a read the server refuses. A target
+that cannot be reached is not refused here: the run reports it on its row.
+
 **On PostgreSQL, only `accounts:` and `role:` apply.** A cluster has no
 profiles, so a `profile:` predicate is refused by the absent
 `profile_management` capability, exit 5. A `role:` predicate admits every role

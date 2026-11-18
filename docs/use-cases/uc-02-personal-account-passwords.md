@@ -419,6 +419,17 @@ question, so it is one verb, not two.
   two-policies refusal fires here exactly as it does in the mutating verbs. A
   listing that quietly showed the first match would be where an operator formed
   a belief that a reset then refuses.
+- **A rule a target cannot resolve is refused before anything is listed**
+  (invariant 4, #1598). A `profile:` rule on a product with no profiles is
+  refused by `profile_management` from the target's type, with no connection.
+  Any other `profile:` or `role:` rule is resolved on each target it applies
+  to before the listing starts, with one more connection per target. A
+  target that lacks `profile_management` or `role_lookup` ends the run with
+  exit 5, naming the capability and the target. Every other refusal met
+  while resolving a rule also ends the run there, before anything is
+  listed: a profile or role the target does not have, a role the server
+  refuses as a predicate, and a read the server refuses. A target that
+  cannot be reached is not refused: the listing reports it as a failed row.
 
 **There is no separate read verb.** "When was this person last reset" is
 answered by `account list` (H2, decided in #450). It shows two columns for it:

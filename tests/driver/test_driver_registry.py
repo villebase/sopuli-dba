@@ -120,6 +120,17 @@ def test_every_type_the_config_accepts_has_a_driver() -> None:
     assert set(TARGET_TYPES) == set(DRIVERS)
 
 
+@pytest.mark.parametrize("product", sorted(DRIVERS))
+def test_a_product_has_no_profiles_exactly_where_its_profile_check_is_not_applicable(
+    product: str,
+) -> None:
+    """Two fields say one fact about the product: `account list` refuses a
+    `profile:` rule from ``no_profiles`` with no connection (#1598), and
+    `report accounts` reads the profile check as not applicable."""
+    entry = DRIVERS[product]
+    assert (entry.no_profiles is not None) == ("profile" in entry.not_applicable)
+
+
 def test_the_oracle_entry_names_the_module_that_pip_installs() -> None:
     """`oracledb`, not `python-oracledb`: Oracle calls it the second everywhere
     it is written about, and the second resolves to nothing at all."""

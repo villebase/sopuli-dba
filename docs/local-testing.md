@@ -2501,6 +2501,119 @@ $ sopuli --config mssql.yaml account expire-password --account acme_jdoe
 sopuli: target "mssql-dev" does not support expire_password
 ```
 
+### `account reset-password` on SQL Server
+
+On the instance of §7, with the Vault of §2 and a login `acme_reset_user`
+made as `sa` with `CHECK_POLICY = ON, CHECK_EXPIRATION = ON`, `mssql.yaml`
+declares it, delivers by `vault_wrapped` and keeps a reset journal:
+
+```yaml
+personal_accounts:
+  - accounts: [acme_reset_user]
+delivery:
+  method: vault_wrapped
+  vault_wrapped:
+    vault: vault-dev
+    ttl: 15m
+reset_records:
+  vault: vault-dev
+  prefix: sopuli/personal-resets
+```
+
+The unseen reset sends the password's value with the login's policy off,
+which also ends a lockout, and sets `CHECK_POLICY` and `CHECK_EXPIRATION`
+back after. The reset record holds them while the policy is off:
+
+```
+$ sopuli --config mssql.yaml account reset-password --account acme_reset_user
+Plan: 1 account x 1 target = 1 account   [dev]
+
+ACCOUNT          TARGET     INTENT        SECRET
+acme_reset_user  mssql-dev  password_set  -
+
+ACCOUNT          TARGET     STATE  WAS   DETAIL
+acme_reset_user  mssql-dev  RESET  OPEN  declared by accounts 'acme_reset_user'
+
+reset acme_reset_user on 1 of 1 targets
+
+hand this to acme_reset_user for mssql-dev; it unwraps once:
+
+    <TOKEN>
+
+It stops working at 2026-11-18T18:20:06.269368Z, and the first unwrap is the
+last. Do not unwrap it to check -- that spends the person's one read, and
+them finding it spent is the only warning either of you gets.
+...
+```
+
+The password the token unwraps logs in, and both flags read on again.
+Without the `reset_records:` block, a login whose `CHECK_POLICY` is on is
+refused before anything changes, exit 9:
+
+```
+$ sopuli --config mssql.yaml account reset-password --account acme_reset_user
+...
+sopuli: target "mssql-dev": an unseen reset of a login whose CHECK_POLICY is on needs a `reset_records:` block
+  hint: the reset turns the login's policy off and keeps its CHECK_POLICY and CHECK_EXPIRATION in the reset record until it sets them back, so a run that stopped would leave them off for good. Declare `reset_records:` (02-mssql-privileges.md §6.3), or use the seen reset, `delivery.method: manual`
+```
+
+The seen reset, `delivery.method: manual` with `force_expire: true`, sends
+the password with `MUST_CHANGE`, so the owner must change it at the first
+login, and prints it once, as on Oracle. A policy whose charset can draw `'`
+is refused there, exit 5. A preview:
+
+```
+$ sopuli --config mssql.yaml account reset-password --account acme_reset_user --dry-run
+Plan: 1 account x 1 target = 1 account   [dev]
+
+ACCOUNT          TARGET     INTENT        SECRET
+acme_reset_user  mssql-dev  password_set  -
+
+ACCOUNT          TARGET     STATE  WAS   DETAIL
+acme_reset_user  mssql-dev  RESET  OPEN  declared by accounts 'acme_reset_user'; would be reset
+
+would reset acme_reset_user on 1 of 1 targets
+...
+```
+
+The seen reset itself, from a terminal, with `<PASSWORD>` in place of the
+password it showed. The plan and the warning print once before the question,
+on stderr, and again in the result, on stdout, as on every product:
+
+```
+$ sopuli --config mssql.yaml account reset-password --account acme_reset_user
+Plan: 1 account x 1 target = 1 account   [dev]
+
+ACCOUNT          TARGET     INTENT        SECRET
+acme_reset_user  mssql-dev  password_set  -
+1 warning:
+  targets[0].mssql.trust_server_certificate: target 'mssql-dev' does not verify the server (`trust_server_certificate: true`)
+    hint: anything between this run and the server can present its own certificate and read the password a run sets. Use `trust_server_certificate: false` (the default), with the CA that issued the server's certificate in the operating system's trust store, which ODBC Driver 18 checks the server against
+show the new password for acme_reset_user on mssql-dev on this terminal? [y/N]: y
+password for acme_reset_user, shown once:
+
+    <PASSWORD>
+
+It is expired: the owner must change it at first logon, which is what ends
+your sight of it. It is not stored anywhere and will not be shown again.
+
+Plan: 1 account x 1 target = 1 account   [dev]
+
+ACCOUNT          TARGET     INTENT        SECRET
+acme_reset_user  mssql-dev  password_set  -
+
+ACCOUNT          TARGET     STATE  WAS   DETAIL
+acme_reset_user  mssql-dev  RESET  OPEN  declared by accounts 'acme_reset_user'
+
+reset acme_reset_user on 1 of 1 targets
+
+1 warning:
+  targets[0].mssql.trust_server_certificate: target 'mssql-dev' does not verify the server (`trust_server_certificate: true`)
+    hint: anything between this run and the server can present its own certificate and read the password a run sets. Use `trust_server_certificate: false` (the default), with the CA that issued the server's certificate in the operating system's trust store, which ODBC Driver 18 checks the server against
+```
+
+The login then answers `18488` to that password until its owner changes it.
+
 ### Personal accounts on MariaDB
 
 On the server of §7, as root, make a role and two accounts that hold it:

@@ -109,10 +109,13 @@ Give a person's account a new password, and hand it over.
 This is for someone who cannot get into their own account, usually because
 the password expired and they no longer know it. The command draws a new
 password, sets it, and delivers it by the method `delivery:` names. It
-works on Oracle, MySQL and MariaDB targets, and on PostgreSQL by an unseen
-method only. On MariaDB a reset never unlocks the account, because the tool
-cannot tell a suspension from a block after failed logins: a DBA unlocks it
-by hand after checking for a suspension.
+works on Oracle, MySQL, MariaDB and SQL Server targets, and on PostgreSQL
+by an unseen method only. On MariaDB a reset never unlocks the account,
+because the tool cannot tell a suspension from a block after failed
+logins: a DBA unlocks it by hand after checking for a suspension. On SQL
+Server the unseen path needs a `reset_records:` block where the login's
+CHECK_POLICY is on, because the reset turns the policy off and keeps the
+login's flags there until it sets them back.
 
 The configuration chooses one of two paths. The unseen path, the default,
 puts the password where only the owner can fetch it, and shows it to

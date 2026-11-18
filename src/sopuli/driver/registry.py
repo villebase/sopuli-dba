@@ -138,6 +138,13 @@ class DatabaseDriver:
     #: ``getattr``, because the command must know before it connects which
     #: products need that extra connection; every other product makes none.
     login_check_preflight: bool = False
+    #: Whether this product's unseen reset turns the login's policy off and
+    #: keeps its flags in the reset record (SQL Server, #1554). With no
+    #: `reset_records:` block, `account reset-password` then asks each such
+    #: target at plan time whether the login's policy is on, and refuses it
+    #: (Q7). A flag rather than a method, as ``login_check_preflight`` is:
+    #: the command must know before it connects which targets need asking.
+    reset_keeps_policy_flags: bool = False
     #: Where the product has no profiles, the hint that refuses a
     #: `personal_accounts:` rule's `profile:` on it, by ``profile_management``.
     #: ``None`` where the product has profiles and only the target can say
@@ -387,12 +394,13 @@ DRIVERS: dict[str, DatabaseDriver] = {
         refuses=frozenset({CONTROL, ENCODING, BYTE_LENGTH}),
         fixed_limit=MSSQL_LIMIT,
         # UC-1's change (#1551), `creds check` by login on a Linux host
-        # (#1552), UC-5's reports (#1555), and UC-2's `account list`,
-        # `suspend` and `expire-password`, the last refused at plan time by
-        # capability (#1554). `account reset-password` is #1554's next part.
+        # (#1552), UC-5's reports (#1555), and UC-2's commands (#1554):
+        # `account list`, `suspend`, `reset-password` on both paths, and
+        # `expire-password`, refused at plan time by capability.
         commands=frozenset(
             {
                 "account.list",
+                "account.reset-password",
                 "account.suspend",
                 "account.expire-password",
                 "creds.check",
@@ -414,6 +422,7 @@ DRIVERS: dict[str, DatabaseDriver] = {
             "(02-mssql-privileges.md section 6.3)",
         ),
         login_check_preflight=True,
+        reset_keeps_policy_flags=True,
         system_library=(
             "install unixODBC (`unixodbc` on Debian and Ubuntu) and Microsoft ODBC Driver 18 "
             "for SQL Server, which are system packages: pyodbc loads unixODBC's libodbc when "

@@ -407,6 +407,25 @@ def test_a_change_the_server_refused_takes_its_flags_out_of_the_record(
     assert unread.first is None
 
 
+def test_account_list_warns_of_a_reset_that_stopped_with_the_flags_recorded(
+    write_config: WriteConfig, journal: MemoryStore
+) -> None:
+    """The flags with no reset finished: the login's policy may be off, and
+    the listing says so, naming the fix."""
+    config = load_config(write_config(JOURNALLED))
+    [target] = config.expanded_targets
+    path = f"sopuli/personal-resets/{TARGET}/{ACCOUNT}"
+    journal.write(
+        path, {"account": ACCOUNT, "target": TARGET, "policy_flags": ON.to_record()}, cas=None
+    )
+    unread = _JournalFailures()
+
+    assert _reset_at(journal, config, target, ACCOUNT, unread=unread) is None
+
+    assert unread.first is not None
+    assert "may be off" in unread.first[1]
+
+
 def test_a_connection_lost_after_the_change_went_out_keeps_the_flags(
     write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch, journal: MemoryStore
 ) -> None:

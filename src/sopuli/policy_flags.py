@@ -58,6 +58,12 @@ class PolicyFlags:
     def to_record(self) -> dict[str, bool]:
         return {CHECK_POLICY: self.check_policy, CHECK_EXPIRATION: self.check_expiration}
 
+    @property
+    def need_restoring(self) -> bool:
+        """Whether turning the policy off changes anything to set back: not
+        where both were off already."""
+        return self.check_policy or self.check_expiration
+
     @classmethod
     def from_record(cls, node: Any) -> PolicyFlags | None:
         """The flags a record's entry holds, or ``None`` where it is not a pair

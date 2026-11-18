@@ -729,7 +729,7 @@ class MssqlSession(ClosesConnection):
         ``flags``, and say whether a statement was sent. Where both were off,
         step 2 changed neither, and nothing is sent."""
         self._policy_off.discard(account.upper())
-        if not flags.check_policy and not flags.check_expiration:
+        if not flags.need_restoring:
             return False
         require_read_write(
             self.scope(),
@@ -874,7 +874,12 @@ class MssqlSession(ClosesConnection):
         self, login: accounts.Login, secret: Secret, status: str
     ) -> tuple[AccountChange, ...]:
         """The unseen path's change: the value, with the policy off, which
-        ends a lockout too (WP4). The command sets the flags back."""
+        ends a lockout too (WP4). The command sets the flags back.
+
+        The pending ``MUST_CHANGE`` is refused here as well as in
+        :meth:`reset_policy_flags`: this is reached through the protocol's
+        :meth:`reset_password`, and a caller that did not read the flags
+        first must still not send a value the server refuses, ``15128``."""
         if login.must_change:
             raise MustChangeError(login.name, target=self.target.name, hint=UNSEEN_MUST_CHANGE)
         self.set_password(login.name, secret)

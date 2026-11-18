@@ -6545,6 +6545,37 @@ the register.
   exception to invariant 4. The cost accepted: one more connection per
   target that has a `role:` rule, or a `profile:` rule on Oracle.
 
+## #1603
+
+- **Decided:** 2026-11-18, #1603
+- **Question:** a `profile:` or `role:` rule that names a profile or role a
+  target does not have, such as a typo, is not a missing capability, so
+  #1598 did not decide it. Should it be one failed target, a refusal at
+  plan time, or left as it was? And do the verbs that change an account
+  give the same answer?
+- **Decision:** the maintainer's, option B. It is refused at plan time,
+  before anything is listed or changed, with #1598's check. #1600 already
+  does this for `account list`. `account suspend`, `account
+  expire-password` and `account reset-password` now ask the same check.
+  They ask only whether each rule names something; they read no rule's
+  members, because a verb admits an account by the profile and roles it
+  holds. The check replaces the narrower one they asked before, which
+  covered only a `role:` rule that every account holds.
+- **Why:** before, a verb met a misspelt rule only as an account no rule
+  admitted. `account suspend` then reported the account `SKIPPED`, "the
+  config does not declare this account", and exited 0, while `account list`
+  refused the same file. One file read two ways teaches the operator the
+  wrong lesson about the typo.
+- **Rejected:** A, one failed row for the target, the other targets listed,
+  exit 1. C, leave it. The cost accepted for B: one target's typo blocks
+  the whole run, and a verb makes one more connection per target that has
+  a `profile:` or `role:` rule. A read the server refuses while the rule is
+  checked now ends a verb's run at plan time, where the narrower check left
+  it to the run. On Oracle a verb with a `role:` rule now needs
+  `role_lookup` (`DBA_ROLES`), as `account list` does: without it a role
+  that names nothing cannot be told from one nobody holds. An error the
+  driver did not wrap is still left to the run.
+
 ## #1605
 
 - **Decided:** 2026-11-18, #1605

@@ -21,7 +21,8 @@ import pytest
 from click.testing import CliRunner, Result
 
 from conftest import WriteConfig
-from sopuli.cli import cli
+from sopuli.cli import _JournalFailures, _reset_at, cli
+from sopuli.config.loading import load_config
 from sopuli.delivery import Receipt
 from sopuli.driver.protocol import (
     ACCOUNT_UNLOCK,
@@ -98,6 +99,7 @@ class FlagSession:
         self.flags = flags
         self.journal = journal
         self.events: list[Any] = []
+        self.restored_names: list[str] = []
         self.restore_fails = False
 
     def describe_user(self, account: str) -> UserState:
@@ -126,6 +128,7 @@ class FlagSession:
 
     def restore_policy(self, account: str, flags: PolicyFlags) -> bool:
         self.events.append(("restore", flags))
+        self.restored_names.append(account)
         if self.restore_fails:
             raise DriverError("the connection was lost")
         return True
@@ -247,6 +250,46 @@ def test_flags_a_stopped_reset_recorded_are_the_ones_set_back(
     assert "policy_flags" not in record
 
 
+def test_flags_are_set_back_on_the_name_the_server_stores_and_the_action_says_so(
+    write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch, journal: MemoryStore
+) -> None:
+    """The fake stores the name in upper case, as a case-sensitive collation
+    could; step 2 changed that login, so step 4 sets it back."""
+    session = opened(monkeypatch, FlagSession(ON, journal))
+
+    result = run(write_config, JOURNALLED)
+
+    assert session.events[-1] == ("restore", ON)
+    assert session.restored_names == [ACCOUNT.upper()]
+    [row] = json.loads(result.stdout)["results"]
+    [password_set] = [one for one in row["actions"] if one["kind"] == PASSWORD_SET]
+    assert "set back" in password_set["detail"]
+
+
+def test_a_record_left_by_a_run_that_stopped_before_its_change_is_not_set_back(
+    write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch, journal: MemoryStore
+) -> None:
+    """A run that stopped after its change leaves CHECK_POLICY off. This login
+    reads it on, so the record is stale, from a run that stopped before its
+    change, perhaps before a DBA changed the login: what the login reads now
+    is recorded and set back."""
+    opened(monkeypatch, FlagSession(ON, journal))
+    run(write_config, JOURNALLED)
+    [path] = record_paths(journal)
+    stored = journal.read(path)
+    assert stored is not None
+    journal.write(path, {**stored.data, "policy_flags": ON.to_record()}, cas=None)
+
+    now = PolicyFlags(check_policy=True, check_expiration=False)
+    session = opened(monkeypatch, FlagSession(now, journal))
+    result = run(write_config, JOURNALLED)
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    sent = next(one for one in session.events if isinstance(one, tuple) and one[0] == "sent")
+    assert [one.get("policy_flags") for one in sent[1]] == [now.to_record()]
+    assert session.events[-1] == ("restore", now)
+
+
 def test_flags_not_set_back_stay_in_the_record_and_the_row_says_so(
     write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch, journal: MemoryStore
 ) -> None:
@@ -320,3 +363,28 @@ def test_a_preview_reads_the_flags_and_writes_nothing(
     assert result.exit_code == ExitCode.SUCCESS, result.output
     assert session.events == ["read flags"]
     assert records(journal) == []
+
+
+def test_account_list_reads_a_record_of_flags_alone_as_no_reset(
+    write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch, journal: MemoryStore
+) -> None:
+    """A first reset that stopped before its own record leaves the flags
+    alone in it. No reset has finished, which is not a journal it cannot
+    read (`SOPULI-W054`)."""
+    session = FlagSession(ON, journal)
+    session.restore_fails = True
+
+    def stops(account: str, secret: Secret, **_: Any) -> tuple[AccountChange, ...]:
+        raise DriverError("the connection was lost")
+
+    session.reset_password = stops  # type: ignore[method-assign]
+    opened(monkeypatch, session)
+    run(write_config, JOURNALLED)
+    [record] = records(journal)
+    assert set(record) == {"account", "target", "policy_flags"}
+
+    config = load_config(write_config(JOURNALLED))
+    [target] = config.expanded_targets
+    unread = _JournalFailures()
+    assert _reset_at(journal, config, target, ACCOUNT, unread=unread) is None
+    assert unread.first is None

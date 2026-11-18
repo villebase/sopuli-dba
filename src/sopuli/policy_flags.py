@@ -58,6 +58,25 @@ class PolicyFlags:
     def to_record(self) -> dict[str, bool]:
         return {CHECK_POLICY: self.check_policy, CHECK_EXPIRATION: self.check_expiration}
 
+    @classmethod
+    def from_record(cls, node: Any) -> PolicyFlags | None:
+        """The flags a record's entry holds, or ``None`` where it is not a pair
+        of JSON booleans the server can have: ``CHECK_EXPIRATION`` is on only
+        with ``CHECK_POLICY`` on, so a pair with expiration alone could never
+        be set back (``statements.restore_policy`` refuses it). A string
+        ``"true"`` is refused too: nothing here guesses what a value written
+        some other way meant."""
+        if (
+            not isinstance(node, Mapping)
+            or set(node) != {CHECK_POLICY, CHECK_EXPIRATION}
+            or not all(isinstance(value, bool) for value in node.values())
+        ):
+            return None
+        flags = cls(check_policy=node[CHECK_POLICY], check_expiration=node[CHECK_EXPIRATION])
+        if flags.check_expiration and not flags.check_policy:
+            return None
+        return flags
+
 
 class PolicyFlagsUnreadableError(StoreError):
     """The vault holds a policy-flags record the tool cannot read.
@@ -102,13 +121,10 @@ def recorded(document: Any, layout: StageLayout, target: str) -> PolicyFlags | N
         node = node[segment]
     if node is None:
         return None
-    if (
-        not isinstance(node, Mapping)
-        or set(node) != {CHECK_POLICY, CHECK_EXPIRATION}
-        or not all(isinstance(value, bool) for value in node.values())
-    ):
+    flags = PolicyFlags.from_record(node)
+    if flags is None:
         raise PolicyFlagsUnreadableError(target, path)
-    return PolicyFlags(check_policy=node[CHECK_POLICY], check_expiration=node[CHECK_EXPIRATION])
+    return flags
 
 
 def record_patch(layout: StageLayout, target: str, flags: PolicyFlags) -> dict[str, Any]:

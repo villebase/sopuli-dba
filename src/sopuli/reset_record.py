@@ -54,12 +54,7 @@ from sopuli.config.secret_refs import TRAVERSAL, normalise_path
 from sopuli.config.targets import USER_AT_HOST_TYPES
 from sopuli.lock.keys import LockKey
 from sopuli.lock.record import Holder
-from sopuli.policy_flags import (
-    CHECK_EXPIRATION,
-    CHECK_POLICY,
-    PolicyFlags,
-    PolicyFlagsUnreadableError,
-)
+from sopuli.policy_flags import PolicyFlags, PolicyFlagsUnreadableError
 from sopuli.secrets import Secret
 
 
@@ -177,14 +172,10 @@ def recorded_flags(document: Any, *, target: str, path: str) -> PolicyFlags | No
     """
     if not isinstance(document, Mapping) or document.get(POLICY_FLAGS) is None:
         return None
-    node = document[POLICY_FLAGS]
-    if (
-        not isinstance(node, Mapping)
-        or set(node) != {CHECK_POLICY, CHECK_EXPIRATION}
-        or not all(isinstance(value, bool) for value in node.values())
-    ):
+    flags = PolicyFlags.from_record(document[POLICY_FLAGS])
+    if flags is None:
         raise PolicyFlagsUnreadableError(target, (path, POLICY_FLAGS))
-    return PolicyFlags(check_policy=node[CHECK_POLICY], check_expiration=node[CHECK_EXPIRATION])
+    return flags
 
 
 def with_flags(document: Any, flags: PolicyFlags, *, account: str, target: str) -> dict[str, Any]:

@@ -6008,7 +6008,12 @@ the register.
      measured it: a `CREATE LOGIN` with a `0x0300` value, rolled back,
      answers `15021` where the server refuses `0x0300`, and leaves no login.
      Which way the driver reads it is #1564. [#1564](#1564) later chose
-     that rolled-back `CREATE LOGIN`, once per session.
+     that rolled-back `CREATE LOGIN`, once per session. [#1601](#1601) later
+     measured that a server audit's `BATCH_COMPLETED_GROUP` keeps one
+     character of the seen reset's password for each `'` in it, and decided
+     that the seen reset is safe only because SQL Server refuses, at plan
+     time, a seen reset whose policy's alphabet holds `'`. The refusal is not
+     built yet (open: #1601).
   3. `creds check` logs in. Where the host has a lockout the tool cannot
      read, on Windows until `mssql-windows-policy` is measured, the check is
      refused. The tool never reads `password_hash`. #1557 later measured it
@@ -6287,7 +6292,10 @@ the register.
   `15025` among them, fails the check at plan time. The check runs in a
   session that changes a password and in its `--dry-run`, never on a target
   the run only reads or a `readonly` one. What an audit keeps of the
-  statement is measured next (`mssql-hash-check-audit`, #1569).
+  statement is measured next (`mssql-hash-check-audit`, #1569). #1569 later
+  measured it: the audit keeps the `CREATE LOGIN` with `succeeded` 1, naming
+  the random login, and `BATCH_COMPLETED_GROUP` keeps the value's last 70 hex
+  digits, as for every `HASHED` value ([#1601](#1601)).
   [#1551](#1551) later decided, by the maintainer's choice on 2026-11-17,
   that the two halves cannot both hold, and kept the second: the check runs
   once, in the session that changes the login, and any other answer refuses
@@ -6454,6 +6462,37 @@ the register.
      account, SQL logins too, read *not checked*, and every run exited 4.
      The gap as a note only: a Windows login whose privileges may be short
      would read OK.
+
+## #1601
+
+- **Decided:** 2026-11-18, #1601
+- **Question:** a server audit's `BATCH_COMPLETED_GROUP` keeps the end of a
+  literal it should mask (`mssql-hash-check-audit`). What does the tool do
+  about the seen reset's password, and about a `HASHED` value?
+- **Decision:** the maintainer's:
+  1. A seen reset on SQL Server, `manual` delivery, whose policy's alphabet
+     holds `'` is refused at plan time, with exit 5, naming the target and
+     the policy. Decision 2 of [#1538](#1538)
+     relies on the server masking the password, and that holds only because
+     of this refusal. It is built with the seen reset's SQL Server wiring
+     (#1554), or before it, and must be in place before `account
+     reset-password` runs the seen reset on SQL Server.
+  2. The tail of a `HASHED` value in `BATCH_COMPLETED_GROUP` is accepted and
+     documented in `02-mssql-privileges.md` §6.1, with an operator note.
+- **Why:** `16_hash_check_audit_probe.py`, on 15.0.4510.2, 16.0.4325.4 and
+  17.0.5065.9, as a tool login with only `ALTER ANY LOGIN`: the `BCM`
+  record replaces as many characters as the value or the password has, and
+  keeps the rest of the literal.
+  1. The literal doubles each `'`, so `BCM` keeps one character of the
+     password's end for each `'` in it. A password of 32 characters with
+     none is masked whole. The default charset,
+     `alnum_safe`, holds no `'`; `printable_ascii` and a `custom` charset
+     can.
+  2. A value is written as 140 hex digits for 70 bytes, so `BCM` keeps the
+     last 70: 35 of the 64 digest bytes. The version and the salt are in the
+     masked part. The password itself never reaches the server, so
+     invariant 15 holds, and it already calls the value sensitive.
+- **Rejected:** no other option was proposed.
 
 ## #1598
 

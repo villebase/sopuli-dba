@@ -83,7 +83,9 @@ SQL Server has no form that draws the password on the server. Send the
 and check it for typing errors before you send it. The server keeps a password
 statement that parses with its password left out or replaced by `******`. It
 keeps one that fails to parse, or that runs inside `EXEC`, with the password
-in clear (`01_password_text_probe.py`, PT0, PT3 and PT6). §6 has the details.
+in clear (`01_password_text_probe.py`, PT0, PT3 and PT6). A server audit with
+`BATCH_COMPLETED_GROUP` keeps one character of the password's end for each
+`'` in it, so choose a password without `'`. §6 has the details.
 Store the password where the target's `admin.auth` reads it
 ([`01-configuration.md`](01-configuration.md) §*`admin:`*).
 
@@ -427,12 +429,37 @@ trace and the error log (`01_password_text_probe.py`):
 
 | Statement | What the server keeps |
 |---|---|
-| `CREATE LOGIN` or `ALTER LOGIN … WITH PASSWORD = '…'`, which parses (PT0, PT1, PT2, PT4) | no event with its text; the audit and the default trace replace the password with `******` |
+| `CREATE LOGIN` or `ALTER LOGIN … WITH PASSWORD = '…'`, which parses (PT0, PT1, PT2, PT4) | no event with its text; the audit and the default trace replace the password with `******`, but see below for `'` |
 | the same with a syntax error after the password (PT3) | the password in clear, in Extended Events and in the audit's `BATCH_COMPLETED_GROUP` |
 | the same inside `EXEC (N'…')` (PT6) | the password in clear, in the same places |
-| `… WITH PASSWORD = 0x… HASHED` (PT5) | as the first row: the value is left out or replaced |
+| `… WITH PASSWORD = 0x… HASHED` (PT5) | no event with its text; the default trace and every audit record but `BATCH_COMPLETED_GROUP` replace the value with `******`. `BATCH_COMPLETED_GROUP` keeps the value's last 70 hex digits |
 
 The plan cache, Query Store and the error log keep none of these statements.
+
+**A server audit with `BATCH_COMPLETED_GROUP` replaces as many characters as
+the value or the password has, and keeps the rest of the literal in clear**
+(`16_hash_check_audit_probe.py`). The record is `BCM`. A 70-byte value is
+written as `0x` and 140 hex digits, so `BCM` keeps the last 70: 35 of the 64
+digest bytes. The version and the salt are in the part it replaces. A
+password's literal doubles each `'`, so `BCM` keeps one character of the
+password's end for each `'` in it. Measured on 15.0.4510.2, 16.0.4325.4 and
+17.0.5065.9, for the hash-version check, UC-1's change and UC-2's seen reset:
+
+```text
+BCM: ALTER LOGIN [sopuli_probe_hash] WITH PASSWORD = 0x******<change value: last 70 of 140> HASHED, CHECK_POLICY = OFF
+BCM: ALTER LOGIN [sopuli_probe_hash] WITH PASSWORD = N'******<pw2: last 4 of 36>' MUST_CHANGE, CHECK_POLICY = ON, CHECK_EXPIRATION = ON
+```
+
+The probe prints each part it found as `<…>`, not as the server wrote it.
+The other audit records, Extended Events and the default trace replace the
+value and the password whole.
+
+**Operator note.** Whoever can read a server audit with
+`BATCH_COMPLETED_GROUP` reads half of each value's digest. Without the salt,
+a guess must also try each of the 2^32 salts, and the tool's passwords are
+random, but treat the audit's files as sensitive. The password itself
+never reaches the server on this path. A seen reset sends a password in
+clear, and §6.3 says how `'` is kept out of it.
 
 ### 6.2 UC-1: the password never reaches the server
 
@@ -479,9 +506,18 @@ the run changed before it, and after `creds rotate` has written `pending`
 and the plan names the value, such as `0x0300 password value
 (PBKDF2-HMAC-SHA512)`, or the error where the check gave no answer or a
 refusal, so the plan shows each refused target as the run would. A target the run only reads, or
-one that is `readonly`, never gets it. The rolled-back statement changes
-nothing, but what a server audit or Extended Events keep of it is not
-measured (unverified: mssql-hash-check-audit).
+one that is `readonly`, never gets it.
+
+The rolled-back statement changes nothing, but an auditor sees it
+(`16_hash_check_audit_probe.py`). A server audit's `CR` record keeps a
+`CREATE LOGIN` for a login named `sopuli_hash_check_` and 16 hex digits,
+with `succeeded` 1, also where 2019 refuses it and where 2022 and 2025 roll
+it back. The value is `******`. The default trace keeps an Audit Addlogin
+Event with no text, naming the login, and Extended Events keeps the batch
+with the `CREATE LOGIN` replaced by dashes. `BATCH_COMPLETED_GROUP` keeps
+the value's last 70 hex digits, as for every `HASHED` value (§6.1). The
+value is of a random password nobody holds, so it says nothing about a
+managed one. No login of that name exists afterwards.
 
 `HASHED` is refused on a login with `CHECK_POLICY = ON`, `33020` (CH4). So a
 change runs in this order, on every host:
@@ -612,7 +648,14 @@ either path ([#1554](../decisions/log.md#1554), open: #1554).
 The statement is a batch of its own, never inside `EXEC`. The password is a
 Unicode string literal with each `'` doubled, so the statement always
 parses. The server then keeps it with the password left out or masked
-(§6.1). It is an exception to invariant 15, which decision 2 accepts. A
+(§6.1), but for one thing. A server audit's `BATCH_COMPLETED_GROUP` keeps
+one character of the password's end for each `'` in it. So **the tool
+refuses, at plan time, a seen reset on SQL Server whose policy's alphabet
+holds `'`**, with exit 5, naming the target and the policy
+([#1601](../decisions/log.md#1601)). The refusal is not built yet
+(open: #1601). The default charset, `alnum_safe`, holds no `'`. The seen
+reset is an exception to invariant 15, which decision 2 accepts, and the
+server masks the password only because of this refusal. A
 tier-1 test sends it through the driver, with a `'`, ODBC's escape
 characters `{` `}` `?` and a character outside the Basic Multilingual Plane
 in the password. It finds the password in no Extended Events record, the

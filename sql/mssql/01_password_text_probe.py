@@ -40,8 +40,10 @@ Query Store can capture it. Each is read back from:
   error log    xp_readerrorlog, the current log, from the start of the cases
 
 Each row about a case is labelled with the case and with what it holds: `PT1
-clear`, PT1's password; `PT5 hash`, PT5's value; `PT1 masked`, PT1's statement
-with the password replaced; `PT2 message`, an error message that holds none.
+clear`, PT1's password; `PT5 hash`, PT5's value; `PT5 hash, last 70 of 140
+hex digits`, the end of PT5's value, 4 hex digits or more right after
+`0x******`, where the rest is replaced; `PT1 masked`, PT1's statement with
+the password replaced; `PT2 message`, an error message that holds none.
 A case with no marker is told by the rest of its text (SHAPES). Any other row
 is labelled with its first characters, as SQL Server wrote it.
 
@@ -54,7 +56,10 @@ STATUS: run on 15.0.4510.2, 16.0.4325.4 and 17.0.5065.9, the
 mcr.microsoft.com/mssql/server 2019-latest, 2022-latest and 2025-latest images
 of test/compose.yaml profile mssql-matrix, as pulled on 2026-11-15, with
 Python 3.13.12 on Windows 11 AMD64, on 2026-11-15 (#1538). Twice, the first
-time on servers just created, exit 0, and the same result every time.
+time on servers just created, exit 0, and the same result every time. Run
+again on the same three releases on 2026-11-18 (#1601), twice, exit 0, with
+the label that finds the end of PT5's value; the runs of 2026-11-15 looked
+only for the whole value.
 
 RESULTS -- the same on every release
 
@@ -67,10 +72,12 @@ RESULTS -- the same on every release
        PT7, is in the batch and statement events
   plan cache and query store
        only the control, PT7
-  audit    PT0, PT1, PT2, PT4 and PT5 in BATCH_COMPLETED_GROUP (BCM), and in
-       CR, PWR and PWPL, with the password or the value replaced by `******`.
-       PT3 and PT6 in BCM, password in clear. PT6 also in PWR, masked. The
-       control in BCM
+  audit    PT0, PT1, PT2 and PT4 in BATCH_COMPLETED_GROUP (BCM), and in CR,
+       PWR and PWPL, with the password replaced by `******`. **PT5 in BCM
+       with its value's last 70 hex digits in clear**: BCM replaces 70
+       characters, as many as the value has bytes, and the literal has 140.
+       PT5 in PWR with the value replaced whole. PT3 and PT6 in BCM, password
+       in clear. PT6 also in PWR, masked. The control in BCM
   trace    PT0 as Audit Addlogin Event, with no text. PT4 as Audit Login
        Change Property Event, password replaced by `******`. No other case.
        The default trace takes no statement of the probe's choosing, so it
@@ -83,7 +90,9 @@ RESULTS -- the same on every release
   audit and the trace replace the password. The password is in clear, in
   Extended Events and in the audit's BATCH_COMPLETED_GROUP, in two cases: a
   statement that fails to parse, and a statement inside dynamic SQL, which
-  parses.
+  parses. A HASHED value keeps half of its hex digits in clear in
+  BATCH_COMPLETED_GROUP. 16_hash_check_audit_probe.py measures this for
+  the driver's statements, and for a password that holds `'`.
 
 HOW TO RUN, against the matrix (test/README.md), from the repo root:
 
@@ -103,6 +112,7 @@ them. The control's marker stays in the error log until it is cycled.
 from __future__ import annotations
 
 import importlib.util
+import re
 import subprocess
 import sys
 from collections.abc import Callable
@@ -192,9 +202,27 @@ def ours(text: str) -> bool:
         LOGIN in text
         or LOGIN6 in text
         or "sopuli_probe_missing" in text
-        or SEED_HASH.lower() in text.lower()
+        or hash_tail(text) > 0
         or any(marker in text for marker in MARKERS.values())
     )
+
+
+def hash_tail(text: str) -> int:
+    """How many of the last hex digits of PT5's value `text` holds: all of
+    them, or 4 or more right after the mask, `0x******`, where a server that
+    masks only part of the value leaves its end; else 0. Four digits alone
+    could be in any row by chance."""
+    lowered = text.lower()
+    if SEED_HASH.lower() in lowered:
+        return len(SEED_HASH)
+    start = lowered.find("0x******")
+    while start >= 0:
+        digits = re.match(r"[0-9a-f]*", lowered[start + 8 :])
+        kept = digits[0] if digits else ""
+        if len(kept) >= 4 and SEED_HASH.lower().endswith(kept):
+            return len(kept)
+        start = lowered.find("0x******", start + 8)
+    return 0
 
 
 def label(text: str) -> str:
@@ -207,8 +235,11 @@ def label(text: str) -> str:
     for case, marker in MARKERS.items():
         if marker in text:
             return f"{case} clear"
-    if SEED_HASH.lower() in text.lower():
+    tail = hash_tail(text)
+    if tail == len(SEED_HASH):
         return "PT5 hash"
+    if tail:
+        return f"PT5 hash, last {tail} of {len(SEED_HASH)} hex digits"
     case = next((case for words, case in SHAPES if words in text), "other")
     if "******" in text:
         return f"{case} masked"
@@ -281,6 +312,13 @@ def prepare(service: str) -> None:
         f"ALTER DATABASE [{DATABASE}] SET QUERY_STORE = ON "
         "(OPERATION_MODE = READ_WRITE, QUERY_CAPTURE_MODE = ALL)",
     )
+    # Query Store starts capturing once it is read in the database. Without
+    # this read, a busy server left the control out of it.
+    state = ch.sa(
+        service, "SELECT actual_state_desc FROM sys.database_query_store_options", DATABASE
+    )
+    if state != "READ_WRITE":
+        raise ch.StepError(f"{service}: Query Store is {state!r}, not READ_WRITE")
 
 
 def send(service: str) -> dict[str, str]:
@@ -475,7 +513,7 @@ RECORDED = {
         "BCM: PT2 masked",
         "BCM: PT3 clear",
         "BCM: PT4 masked",
-        "BCM: PT5 masked",
+        "BCM: PT5 hash, last 70 of 140 hex digits",
         "BCM: PT6 clear",
         "BCM: PT7 clear",
         "CR: PT0 masked",

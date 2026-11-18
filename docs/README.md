@@ -844,7 +844,8 @@ The probes are in `sql/mssql/`, and the matrix of 2019, 2022 and 2025 is the
   Extended Events then has no event with its text: only an error's message,
   which names the login and holds no password. The audit keeps the statement
   with the password as `******`, and so does the default trace for one that
-  changes the policy. The plan cache, Query Store and the error log keep
+  changes the policy. `BATCH_COMPLETED_GROUP` keeps the end of a `HASHED`
+  value, and of a password that holds `'` (`mssql-hash-check-audit`). The plan cache, Query Store and the error log keep
   none of the statements, though each keeps a control statement the probe
   sends.
   `sql/mssql/01_password_text_probe.py` measures it.
@@ -878,14 +879,23 @@ The probes are in `sql/mssql/`, and the matrix of 2019, 2022 and 2025 is the
   17, which is a release, not a capability. The driver uses the rolled-back
   `CREATE LOGIN` ([#1564](decisions/log.md#1564)).
   `sql/mssql/11_hash_version_probe.py` measures it.
-- `unverified` `mssql-hash-check-audit` (#1569) — **What do a server audit
-  and Extended Events keep of the driver's hash-version check?**
+- `verified` `mssql-hash-check-audit` (#1569, #1601) — **What do a server
+  audit and Extended Events keep of the driver's hash-version check?**
   The driver sends, once per session, a `CREATE LOGIN` with a `0x0300` value
   inside a transaction that it rolls back
-  ([#1564](decisions/log.md#1564)). It leaves no login, but an audit may
-  record it, and an auditor may ask about it. Measuring it needs a server
-  audit with the login-change groups, and probe 01's Extended Events
-  sessions, on 2019, 2022 and 2025.
+  ([#1564](decisions/log.md#1564)). It leaves no login, but an auditor sees
+  it. The audit's `CR` record keeps the `CREATE LOGIN` with `succeeded` 1,
+  also where 2019 refuses it, `15021`, and where 2022 and 2025 roll it
+  back. It names the check's random login, `sopuli_hash_check_…`, and
+  replaces the value with `******`. The default trace keeps an Audit
+  Addlogin Event with no text, naming the login. Extended Events replaces
+  the `CREATE LOGIN` with dashes. **`BATCH_COMPLETED_GROUP` replaces only as
+  many characters as the value has bytes, so it keeps the last 70 of the
+  value's 140 hex digits in clear**, for the check and for every `HASHED`
+  change. It does the same to a password in clear: it keeps one character
+  of the literal's end for each `'`, which the literal doubles. Every other
+  record masks the value and the password whole.
+  `sql/mssql/16_hash_check_audit_probe.py` measures it.
 - `verified` `mssql-policy-off` (#1538, #1557) — **What does `CHECK_POLICY =
   OFF` clear, and does a failed login while it is off count toward a
   lockout?**

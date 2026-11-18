@@ -22,9 +22,11 @@ refuses the target before it draws a password (#1564). The value is computed
 from a random password nobody holds, and is never used again.
 
 The check is a write, rolled back, so the session runs it only where a
-password will be set, and never on a target that is read-only (#1564). What a
-server audit or Extended Events keep of the rolled-back statement is not
-measured (unverified: mssql-hash-check-audit).
+password will be set, and never on a target that is read-only (#1564). An
+auditor sees it: a server audit keeps the `CREATE LOGIN` with `succeeded` 1
+and the random name, and its `BATCH_COMPLETED_GROUP` keeps the value's last
+70 hex digits (``16_hash_check_audit_probe.py``; `02-mssql-privileges.md`
+§6.1 and §6.2). The prefix of the name says what the login was.
 """
 
 from __future__ import annotations

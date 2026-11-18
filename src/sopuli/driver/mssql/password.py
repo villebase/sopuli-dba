@@ -142,7 +142,11 @@ class MustChange:
     ``MUST_CHANGE`` has no ``HASHED`` form (CH5), so the password goes as a
     Unicode literal with each ``'`` doubled, in a statement that always
     parses: the server keeps such a statement with the password left out or
-    masked, and keeps one that fails to parse as sent (§6.1, PT0 to PT3).
+    masked, and keeps one that fails to parse as sent (§6.1, PT0 to PT3). A
+    server audit's ``BATCH_COMPLETED_GROUP`` masks only as many characters
+    as the password has, so it keeps one of its last characters for each
+    doubled ``'``. A seen reset whose alphabet holds ``'`` is refused at plan
+    time (§6.3), which is not built yet: TODO(#1601).
     The password is admitted first, so a control character, which could end
     the literal's line, is refused before anything is built. ``UNLOCK`` ends
     a lockout after failed logins, which a new password alone leaves in

@@ -224,7 +224,13 @@ detail.
     `MUST_CHANGE`, which a value cannot carry, as a batch of its own, never
     inside `EXEC`, in a statement that always parses, and the server masks
     it ([#1538](docs/decisions/log.md#1538),
-    decision 2). The
+    decision 2). The server masks it whole only for a password with no `'`:
+    a server audit's `BATCH_COMPLETED_GROUP` keeps one character of the
+    password's end for each `'`. So a SQL Server seen reset whose policy's
+    alphabet holds `'` is refused at plan time
+    ([#1601](docs/decisions/log.md#1601)), which is not built yet
+    (open: #1601). The same audit record keeps the last half of a `HASHED`
+    value's hex digits, but not its salt. The
     verifier, hash or value still allows an offline guessing attack, so treat
     it as sensitive, but it is never the password.
     `docs/design/02-postgres-privileges.md` §6, `02-mysql-privileges.md` §6,

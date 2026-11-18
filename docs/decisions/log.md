@@ -6564,3 +6564,23 @@ the register.
 - **Rejected:** B, keeping file order and documenting it. The cost accepted:
   a reset whose first admitting rule had no policy now draws the policy a
   later rule names, not `defaults.policy`.
+
+## #1594
+
+- **Decided:** 2026-11-18, #1594
+- **Question:** `creds generate` staged a `pending` for a SQL Server login
+  whose `MUST_CHANGE` was pending, which no value can pass (`15128`). Each
+  `creds apply` then reported it `EXPIRED` with the hint to move the
+  expiry date, and the promotion was held. Should `generate` ask first?
+- **Decision:** the maintainer's, option A. `creds generate` asks each
+  selected SQL Server target, on the connection it already opens, whether
+  the login's `MUST_CHANGE` is pending, and stages nothing for that
+  credential if it is, as `creds rotate`'s pre-flight refuses it. `creds
+  apply`, which can still meet a login that got `MUST_CHANGE` after
+  `generate`, reports it with its own message, naming `MUST_CHANGE` and how
+  to clear it, not the expiry date.
+- **Why:** a `pending` that no run can apply holds the promotion for good,
+  and on a Windows host each `apply` sets it again on the other targets.
+  Moving an expiry date does not clear `MUST_CHANGE`.
+- **Rejected:** B, keeping the documented behaviour: a credential staged
+  for nothing, and a hint that sends the operator to the wrong fix.

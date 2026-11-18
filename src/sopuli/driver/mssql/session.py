@@ -92,6 +92,7 @@ from sopuli.driver.protocol import (
     ACCOUNT_UNLOCK,
     EXPIRE_PASSWORD,
     FAIL,
+    MUST_CHANGE_PENDING,
     OFFLINE_VERIFY,
     OLD_DISCARD,
     PASS,
@@ -222,11 +223,8 @@ class MustChangeError(DriverError):
         super().__init__(
             f'login "{account}" on target "{target}" must change its password at its next '
             "login, so it cannot take a value the tool computes",
-            hint=hint
-            or (
-                "the server refuses CHECK_POLICY = OFF while MUST_CHANGE is pending. Let "
-                "the owner log in and change it, or clear it by hand, then run again"
-            ),
+            # The one text `creds generate` and `apply` give for it too (#1594).
+            hint=hint or MUST_CHANGE_PENDING,
         )
 
 

@@ -152,6 +152,15 @@ EXPIRE_PASSWORD = "expire_password"
 #: password a login has.
 EXPIRE_ON_RESET = "expire_on_reset"
 
+#: Why a credential is neither staged nor applied for an account whose
+#: :attr:`UserState.pending_must_change` is set, and how to clear it (#1594).
+MUST_CHANGE_PENDING = (
+    "the login must change its password at its next login (MUST_CHANGE), and until it "
+    "does the server refuses CHECK_POLICY = OFF, so it cannot take a password value. Let "
+    "the owner log in and change it, or clear it by hand with ALTER LOGIN ... WITH "
+    "PASSWORD = ... without MUST_CHANGE"
+)
+
 #: The hint for a seen reset on a target without :data:`EXPIRE_ON_RESET`,
 #: given at plan time and by a driver alike (#1201, #1554).
 SEEN_NEEDS_EXPIRY = (
@@ -864,6 +873,12 @@ class UserState:
     #: as one would make `check` report a working account as expired and skip the
     #: login that would prove it.
     expired: bool = False
+    #: The account must set its own password at its next login before the
+    #: tool can set one: SQL Server's pending ``MUST_CHANGE``, which refuses
+    #: ``CHECK_POLICY = OFF`` (``15128``) and so any password value. Also
+    #: :attr:`expired`. `creds generate` stages nothing for it and `creds
+    #: apply` says so in :data:`MUST_CHANGE_PENDING`'s words (#1594).
+    pending_must_change: bool = False
     #: The password still works and is on notice: past its ``PASSWORD_LIFE_TIME``
     #: and inside the window ``PASSWORD_GRACE_TIME`` grants. Mutually exclusive
     #: with :attr:`expired` -- one is a credential that has stopped working and

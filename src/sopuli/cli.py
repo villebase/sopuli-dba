@@ -220,6 +220,7 @@ from sopuli.driver.protocol import (
     DEFAULT_MARGIN,
     EXPIRE_PASSWORD,
     FAIL,
+    MUST_CHANGE_PENDING,
     OLD_DISCARD,
     OLD_KEEP,
     OLD_RETAIN,
@@ -8466,7 +8467,8 @@ def _reserved_on(
     session: Any, target: str, bindings: Sequence[Binding]
 ) -> dict[tuple[str, str], str]:
     """Each account on ``target`` that guardrail check 6, 8 or 9 refuses whatever
-    is granted, keyed ``(target, account)``, with the refusal's reason (#1174).
+    is granted (#1174), or that has SQL Server's ``MUST_CHANGE`` pending, which
+    no value can pass (#1594), keyed ``(target, account)``, with the reason.
 
     `creds generate` skips such an account, so it stages no `pending` that no
     run could apply. **An account whose state cannot be read is not skipped.**
@@ -8483,6 +8485,10 @@ def _reserved_on(
         refusal = None if state is None else guardrails.server_refusal(state)
         if refusal is not None:
             found[(target, account)] = refusal.reason
+        elif state is not None and state.pending_must_change:
+            # SQL Server: no value can be set until the owner changes the
+            # password, so a `pending` would be applied nowhere (#1594).
+            found[(target, account)] = MUST_CHANGE_PENDING
     return found
 
 
@@ -8517,7 +8523,7 @@ def _split_reserved(
         elif where:
             names = ", ".join(target for target, _ in where)
             skipped.append(
-                (candidate, f"a guardrail refuses this credential on {names}, so it was not staged")
+                (candidate, f"this credential cannot be applied on {names}, so it was not staged")
             )
         else:
             kept.append(candidate)

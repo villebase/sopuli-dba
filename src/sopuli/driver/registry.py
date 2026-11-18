@@ -138,6 +138,13 @@ class DatabaseDriver:
     #: ``getattr``, because the command must know before it connects which
     #: products need that extra connection; every other product makes none.
     login_check_preflight: bool = False
+    #: Where the product has no profiles, the hint that refuses a
+    #: `personal_accounts:` rule's `profile:` on it, by ``profile_management``.
+    #: ``None`` where the product has profiles and only the target can say
+    #: whether it may read them, as on Oracle. A fact about the product, so
+    #: `account list` refuses such a rule with no connection (#1598), and the
+    #: driver's own ``resolve_profile`` gives the same hint.
+    no_profiles: str | None = None
     #: The system package the client loads when it is imported, where it has
     #: one, as a hint: pyodbc loads unixODBC's ``libodbc`` on Linux and macOS.
     #: Without it the import fails with an ``ImportError`` that is not a
@@ -207,6 +214,10 @@ DRIVERS: dict[str, DatabaseDriver] = {
         # A role has a `VALID UNTIL` date, not a lifetime; no failed-login
         # limit; and no profile (#1443, #1411).
         not_applicable=frozenset({"password_lifetime", "failed_login_limit", "profile"}),
+        no_profiles=(
+            "PostgreSQL has no profiles; declare these accounts by name with `accounts:`, "
+            "or by a role they hold with `role:`"
+        ),
         # UC-1: `creds check`, by login (#1067); `creds apply`, which sets a
         # password with a verifier computed on the client (#1060); and `creds
         # rotate`, `generate`, `status` and `finish-rollover`, whose modes
@@ -269,6 +280,10 @@ DRIVERS: dict[str, DatabaseDriver] = {
         # MySQL has a lifetime and a failed-login limit per account, but no
         # profile (#1448), and no `VALID UNTIL` (#1459).
         not_applicable=frozenset({"profile", "valid_until"}),
+        no_profiles=(
+            "MySQL has no profiles; declare these accounts by name with `accounts:`, "
+            "or by a role they hold with `role:`"
+        ),
         commands=frozenset(
             {
                 "report.accounts",
@@ -324,6 +339,10 @@ DRIVERS: dict[str, DatabaseDriver] = {
         # `max_password_errors` (#1411, R1), no profile (#1448), and no `VALID
         # UNTIL` (#1459).
         not_applicable=frozenset({"failed_login_limit", "profile", "valid_until"}),
+        no_profiles=(
+            "MariaDB has no profiles; declare these accounts by name with `accounts:`, "
+            "or by a role they hold with `role:`"
+        ),
         commands=frozenset(
             {
                 "report.accounts",
@@ -377,6 +396,7 @@ DRIVERS: dict[str, DatabaseDriver] = {
             }
         ),
         not_applicable=frozenset({"profile", "valid_until"}),
+        no_profiles="SQL Server has no profiles; declare these logins by name with `accounts:`",
         login_check_preflight=True,
         system_library=(
             "install unixODBC (`unixodbc` on Debian and Ubuntu) and Microsoft ODBC Driver 18 "
@@ -448,6 +468,17 @@ def refused_password_rules(products: Iterable[str]) -> frozenset[str]:
     for product in products or DRIVERS:
         found = found | DRIVERS[product].refuses
     return found
+
+
+def no_profiles_hint(product: str) -> str:
+    """:attr:`DatabaseDriver.no_profiles` for a product that has no profiles,
+    for its driver's refusal of a `profile:` rule. Raises for a product that
+    has them, so a driver module that names the wrong product fails on import
+    rather than refusing with no hint."""
+    hint = DRIVERS[product].no_profiles
+    if hint is None:
+        raise ValueError(f"{product} has profiles; it has no no_profiles hint")
+    return hint
 
 
 def installed(driver: DatabaseDriver) -> bool:

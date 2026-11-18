@@ -49,6 +49,7 @@ from sopuli.driver.protocol import (
     KEPT_WINDOW_UNREADABLE,
     KEPT_WINDOW_UNREADABLE_MARIADB,
     SEEN_NEEDS_EXPIRY,
+    SEEN_RESET_QUOTE,
     Scope,
     UnsupportedCapabilityError,
     UserState,
@@ -213,37 +214,33 @@ def refuse_unreadable_kept_window(
             raise UnsupportedCapabilityError(KEEP_ROLLOVER, target=expanded.name, hint=hint)
 
 
-#: What a seen reset names as the missing capability where its policy can
-#: draw a character the server keeps in clear (#1601).
-SEEN_RESET_QUOTE = "seen_reset_quote"
-
-
 def refuse_unmasked_seen_password(
     delivery: Delivery, config: Config, account: str, targets: Iterable[ExpandedTarget]
 ) -> None:
     """Refuse a seen reset, at plan time, where the policy could draw a
     character the server keeps in clear (#1601, decision 1).
 
-    The registry's ``seen_reset_unmasked`` names them: on SQL Server ``'``,
-    because an audit's ``BATCH_COMPLETED_GROUP`` keeps one of the password's
-    last characters for each one (``02-mssql-privileges.md`` §6.3). Exit 5,
-    naming the target, with the policy in the hint. The first target that
-    refuses ends the run. Under ``--dry-run`` too, for
-    :func:`refuse_kept_window`'s reason.
+    The registry's ``seen_reset_unmasked`` names them, and
+    ``seen_reset_unmasked_why`` says why: on SQL Server ``'``, because an
+    audit's ``BATCH_COMPLETED_GROUP`` keeps one of the password's last
+    characters for each one (``02-mssql-privileges.md`` §6.3). Exit 5, naming
+    the target, with the policy in the hint. The first target that refuses
+    ends the run. Under ``--dry-run`` too, for :func:`refuse_kept_window`'s
+    reason.
 
-    Knowable from the file, so it needs no connection. The policy is the one
-    the rule that admits the account names, or `defaults.policy`. Only an
-    enumerated rule can be matched from the file, so **a predicate rule's
-    policy counts too**: which rule admits the account is known only from the
-    database, and every policy that could apply is checked. SQL Server
-    refuses `profile:` and `role:` rules today (#1554, Q6), so there it is the
-    policy of the rule that names the account.
+    Knowable from the file, so it needs no connection. Where an enumerated
+    rule names the account, its policy is the one drawn. Where none does, a
+    predicate rule admits it, and which one only the database says, so every
+    predicate rule's policy on the target is checked
+    (:func:`_policies_admitting`). A rule with no policy names
+    `defaults.policy`.
     """
     if not delivery.is_seen:
         return
     policies = {policy.name: policy.password for policy in config.policies}
     for expanded in targets:
-        unmasked = DRIVERS[expanded.target.type].seen_reset_unmasked
+        entry = DRIVERS[expanded.target.type]
+        unmasked = entry.seen_reset_unmasked
         if not unmasked:
             continue
         for name in _policies_admitting(config, account, expanded):
@@ -258,25 +255,32 @@ def refuse_unmasked_seen_password(
                     SEEN_RESET_QUOTE,
                     target=expanded.name,
                     hint=(
-                        f"policy {name!r} can draw {characters}, and a seen reset sends the "
-                        "password in clear: a server audit's batch-completed record keeps "
-                        "one character of the password's end for each `'` "
-                        "(02-mssql-privileges.md section 6.3). Use a charset without it, "
+                        f"policy {name!r} can draw {characters}: "
+                        f"{entry.seen_reset_unmasked_why}. Use a charset without it, "
                         "such as `alnum_safe`, or an unseen delivery method"
                     ),
                 )
 
 
 def _policies_admitting(config: Config, account: str, target: ExpandedTarget) -> list[str]:
-    """The policy names of every rule on ``target`` that could admit ``account``,
-    in file order and once each: an enumerated rule that names it, by the
-    product's comparison, and any predicate rule. A rule with no policy names
-    `defaults.policy`."""
+    """The policy names the reset on ``target`` could draw from, in file order
+    and once each. A rule with no policy names `defaults.policy`.
+
+    An enumerated rule that names the account, by the product's comparison,
+    gives the one policy: a predicate that also admits it with another policy
+    is refused as two rules, two policies, before any password is drawn
+    (UC-2 §2). Only where no enumerated rule names it does every predicate
+    rule's policy count, because only the database says which admits it.
+    """
     same = account_matcher(target.target.type)
+    rules = rules_for(config, target.name)
+    named = [
+        rule
+        for rule in rules
+        if not rule.is_predicate and any(same(name, account) for name in rule.accounts)
+    ]
     found: list[str] = []
-    for rule in rules_for(config, target.name):
-        if not rule.is_predicate and not any(same(name, account) for name in rule.accounts):
-            continue
+    for rule in named or [rule for rule in rules if rule.is_predicate]:
         name = rule.policy or config.defaults.policy
         if name is not None and name not in found:
             found.append(name)

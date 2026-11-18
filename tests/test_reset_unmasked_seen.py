@@ -9,16 +9,20 @@ draw one.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import pytest
+from click.testing import CliRunner
 
+from conftest import WriteConfig
+from sopuli.cli import cli
 from sopuli.config.loading import build_config
 from sopuli.config.model import Config, Delivery, ManualDelivery, WrappedDelivery
-from sopuli.driver.protocol import UnsupportedCapabilityError
+from sopuli.driver.protocol import SEEN_RESET_QUOTE, UnsupportedCapabilityError
 from sopuli.driver.registry import DRIVERS
 from sopuli.exit_codes import ExitCode
-from sopuli.reset import SEEN_RESET_QUOTE, refuse_unmasked_seen_password
+from sopuli.reset import refuse_unmasked_seen_password
 
 SEEN = Delivery(method="manual", manual=ManualDelivery(force_expire=True))
 UNSEEN = Delivery(method="vault_wrapped", vault_wrapped=WrappedDelivery(ttl="15m"))
@@ -117,14 +121,27 @@ def test_a_rule_on_another_target_does_not_count() -> None:
     refused(found)
 
 
-def test_a_predicate_rule_counts_because_only_the_database_says_whom_it_admits() -> None:
-    """The role rule applies to both targets. Which rule admits the account is
-    read from the database, so its policy counts on SQL Server, while Oracle,
-    which keeps no part of the password, is not refused."""
+def test_a_rule_that_names_the_account_decides_over_a_predicate() -> None:
+    """A role rule with a wide policy does not block a login a rule names with
+    a safe one: a predicate that also admitted it with another policy would be
+    refused as two rules, two policies, before any password is drawn."""
     found = config(
         [
             {"accounts": ["acme_jdoe"], "policy": "plain"},
             {"role": "acme_dev_role", "policy": "wide"},
+        ]
+    )
+    refused(found)
+
+
+def test_an_account_no_rule_names_counts_every_predicate_policy() -> None:
+    """Which predicate admits the account only the database says, so a wide
+    policy on any of them on the target refuses it."""
+    found = config(
+        [
+            {"accounts": ["acme_asmith"], "policy": "plain"},
+            {"role": "acme_dev_role", "policy": "plain"},
+            {"role": "acme_ops_role", "policy": "wide"},
         ]
     )
 
@@ -132,10 +149,64 @@ def test_a_predicate_rule_counts_because_only_the_database_says_whom_it_admits()
         refused(found)
 
     assert 'target "mssql-dev"' in str(caught.value)
+    assert "'wide'" in str(caught.value.hint)
 
 
 def test_only_sql_server_names_the_character() -> None:
     """The registry says which products keep part of a seen password in
-    clear: SQL Server alone, by measurement (#1601)."""
+    clear, and why: SQL Server alone, by measurement (#1601)."""
     assert {name for name, entry in DRIVERS.items() if entry.seen_reset_unmasked} == {"mssql"}
     assert DRIVERS["mssql"].seen_reset_unmasked == "'"
+    for entry in DRIVERS.values():
+        assert bool(entry.seen_reset_unmasked) == (entry.seen_reset_unmasked_why is not None)
+
+
+CLI_CONFIG = """version: 1
+targets:
+  - name: mssql-dev
+    type: mssql
+    environment: dev
+    dsn: db.example.com:1433
+    admin: {{ username: sopuli_svc, auth: {{ method: env }} }}
+policies:
+  personal:
+    password: {{ length: 24, charset: {charset} }}
+delivery:
+  method: manual
+  manual: {{ force_expire: true }}
+personal_accounts:
+  - accounts: [acme_jdoe]
+    policy: personal
+"""
+
+
+def test_account_reset_password_refuses_before_it_connects(
+    write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Through the command: a dry run, which skips the terminal guards, is
+    refused with exit 5 and opens no connection."""
+
+    def no_connection(*_: Any, **__: Any) -> None:
+        raise AssertionError("the refusal needs no connection")
+
+    monkeypatch.setattr("sopuli.cli._open_session", no_connection)
+    monkeypatch.setattr("sopuli.cli._plan_scope", no_connection)
+    path = write_config(CLI_CONFIG.format(charset="printable_ascii"))
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--config",
+            str(path),
+            "--output",
+            "json",
+            "account",
+            "reset-password",
+            "--account",
+            "acme_jdoe",
+            "--dry-run",
+        ],
+    )
+
+    found = json.loads(result.output)
+    assert found["exit_code"] == ExitCode.UNSUPPORTED_CAPABILITY, result.output
+    assert found["error"]["target_capability"] == SEEN_RESET_QUOTE

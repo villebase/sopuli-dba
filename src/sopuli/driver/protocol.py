@@ -166,6 +166,11 @@ EXPIRY_UNAVAILABLE = (
 #: driver alike (#1225, decision 2; #1272).
 KEEP_ROLLOVER = "--keep-rollover"
 
+#: What `account reset-password` names as the missing capability on the
+#: seen path where the policy can draw a character the server keeps part of
+#: in clear: on SQL Server, ``'`` (#1601).
+SEEN_RESET_QUOTE = "seen_reset_quote"
+
 #: Its hint on MySQL.
 KEPT_WINDOW_UNREADABLE = (
     "a reset on a MySQL server discards the old password: a password kept with "

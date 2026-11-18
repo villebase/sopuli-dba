@@ -6012,8 +6012,8 @@ the register.
      measured that a server audit's `BATCH_COMPLETED_GROUP` keeps one
      character of the seen reset's password for each `'` in it, and decided
      that the seen reset is safe only because SQL Server refuses, at plan
-     time, a seen reset whose policy's alphabet holds `'`. The refusal is not
-     built yet (open: #1601). #1604 later built it.
+     time, a seen reset whose policy's alphabet holds `'`. The refusal was
+     not built then; #1601 later built it.
   3. `creds check` logs in. Where the host has a lockout the tool cannot
      read, on Windows until `mssql-windows-policy` is measured, the check is
      refused. The tool never reads `password_hash`. #1557 later measured it

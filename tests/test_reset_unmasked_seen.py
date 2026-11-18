@@ -19,9 +19,18 @@ from conftest import WriteConfig
 from sopuli.cli import cli
 from sopuli.config.loading import build_config
 from sopuli.config.model import Config, Delivery, ManualDelivery, WrappedDelivery
-from sopuli.driver.protocol import SEEN_RESET_QUOTE, UnsupportedCapabilityError
+from sopuli.driver.protocol import (
+    ENCRYPTION_TLS,
+    EXPIRE_PASSWORD,
+    SEEN_RESET_QUOTE,
+    Encryption,
+    Scope,
+    UnsupportedCapabilityError,
+    UserState,
+)
 from sopuli.driver.registry import DRIVERS
 from sopuli.exit_codes import ExitCode
+from sopuli.passwords import ByteLimit
 from sopuli.reset import refuse_unmasked_policy, refuse_unmasked_seen_password
 
 SEEN = Delivery(method="manual", manual=ManualDelivery(force_expire=True))
@@ -208,9 +217,33 @@ def test_only_sql_server_names_the_character() -> None:
     """The registry says which products keep part of a seen password in
     clear, and why: SQL Server alone, by measurement (#1601)."""
     assert {name for name, entry in DRIVERS.items() if entry.seen_reset_unmasked} == {"mssql"}
-    assert DRIVERS["mssql"].seen_reset_unmasked == "'"
-    for entry in DRIVERS.values():
-        assert bool(entry.seen_reset_unmasked) == (entry.seen_reset_unmasked_why is not None)
+    unmasked = DRIVERS["mssql"].seen_reset_unmasked
+    assert unmasked is not None
+    assert unmasked[0] == "'"
+    assert "batch-completed" in unmasked[1]
+
+
+def test_a_profile_rule_does_not_count_on_a_product_with_no_profiles() -> None:
+    """It admits nobody on SQL Server, so its policy is never drawn there."""
+    found = config(
+        [
+            {"profile": "ACME_DEV", "policy": "wide"},
+            {"accounts": ["acme_jdoe"], "policy": "plain"},
+        ]
+    )
+    refused(found)
+
+
+def test_a_predicate_whose_policy_differs_from_the_naming_rule_does_not_count() -> None:
+    """Were it to admit the account, the two policies would be refused as a
+    pair, so a password is never drawn from the predicate's."""
+    found = config(
+        [
+            {"role": "acme_dev_role", "policy": "wide"},
+            {"accounts": ["acme_jdoe"], "policy": "plain"},
+        ]
+    )
+    refused(found)
 
 
 CLI_CONFIG = """version: 1
@@ -262,3 +295,49 @@ def test_account_reset_password_refuses_before_it_connects(
     found = json.loads(result.output)
     assert found["exit_code"] == ExitCode.UNSUPPORTED_CAPABILITY, result.output
     assert found["error"]["target_capability"] == SEEN_RESET_QUOTE
+
+
+class FakeLogin:
+    """A SQL Server where `acme_jdoe` is an open login."""
+
+    def scope(self) -> Scope:
+        return Scope(
+            type="server",
+            read_write=True,
+            capabilities=frozenset({EXPIRE_PASSWORD}),
+            encryption=Encryption(method=ENCRYPTION_TLS),
+        )
+
+    def describe_user(self, account: str) -> UserState | None:
+        return UserState(name=account, status="OPEN") if account == "acme_jdoe" else None
+
+    def byte_limit(self) -> ByteLimit:
+        return ByteLimit(max_bytes=256, encoding="utf-16-le")
+
+    def reset_password(self, *_: Any, **__: Any) -> tuple[Any, ...]:
+        raise AssertionError("a refused run never resets")
+
+    def close(self) -> None:
+        return None
+
+
+def test_the_run_checks_the_policy_it_picked_before_it_draws(
+    write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With the plan-time check taken out, the run still refuses the target,
+    on the policy `_reset_policy` picked, before a password is drawn."""
+    monkeypatch.setattr("sopuli.reset.refuse_unmasked_seen_password", lambda *_: None)
+    monkeypatch.setattr("sopuli.cli._open_session", lambda *_, **__: FakeLogin())
+    path = write_config(CLI_CONFIG.format(charset="printable_ascii"))
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--config", str(path), "--output", "json", "account", "reset-password",
+            "--account", "acme_jdoe", "--dry-run",
+        ],
+    )  # fmt: skip
+
+    found = json.loads(result.output)
+    rows = found["results"]
+    assert [row["state"] for row in rows] == ["ERROR"], result.output
+    assert "seen_reset_quote" in rows[0]["error"]["message"]

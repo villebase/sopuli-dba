@@ -56,7 +56,12 @@ from sopuli.driver.protocol import (
 )
 from sopuli.driver.registry import DRIVERS
 from sopuli.exit_codes import ExitCode
-from sopuli.personal import bound_by_application, declared_on, policies_possible
+from sopuli.personal import (
+    bound_by_application,
+    declared_on,
+    policies_possible,
+    policy_named,
+)
 from sopuli.safety import RefusedError
 
 #: ``results[].state`` words this verb uses, all already in the run schema's
@@ -236,10 +241,15 @@ def refuse_unmasked_seen_password(
     """
     if not delivery.is_seen:
         return
-    policies = {policy.name: policy.password for policy in config.policies}
     for expanded in targets:
-        for name in policies_possible(config, account, expanded.name):
-            policy = policies.get(name)
+        entry = DRIVERS[expanded.target.type]
+        if entry.seen_reset_unmasked is None:
+            continue
+        possible = policies_possible(
+            config, account, expanded.name, profiles=entry.no_profiles is None
+        )
+        for name in possible:
+            policy = policy_named(config, name)
             if policy is not None:
                 # A dangling name is refused where the policy is read.
                 refuse_unmasked_policy(delivery, name, policy, expanded)
@@ -252,18 +262,19 @@ def refuse_unmasked_policy(
     character the product's server keeps in clear (#1601). Called at plan
     time for each policy the reset could draw from, and at run time for the
     one the admitting rule names."""
-    if not delivery.is_seen:
+    unmasked = DRIVERS[target.target.type].seen_reset_unmasked
+    if not delivery.is_seen or unmasked is None:
         return
-    entry = DRIVERS[target.target.type]
-    held = sorted(set(entry.seen_reset_unmasked) & set(alphabet(policy)))
+    characters, why = unmasked
+    held = sorted(set(characters) & set(alphabet(policy)))
     if not held:
         return
-    characters = " ".join(f"`{one}`" for one in held)
+    listed = " ".join(f"`{one}`" for one in held)
     raise UnsupportedCapabilityError(
         SEEN_RESET_QUOTE,
         target=target.name,
         hint=(
-            f"policy {name!r} can draw {characters}: {entry.seen_reset_unmasked_why}. "
+            f"policy {name!r} can draw {listed}: {why}. "
             "Use a charset without it, such as `alnum_safe`, or an unseen delivery method"
         ),
     )

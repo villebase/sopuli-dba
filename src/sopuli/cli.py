@@ -414,7 +414,7 @@ from sopuli.payload import (
     merge,
     stage_layout,
 )
-from sopuli.personal import declared_on, policy_of, rules_for
+from sopuli.personal import declared_on, policy_named, policy_of, rules_for
 from sopuli.policy_flags import PolicyFlags
 from sopuli.preflight import Finding
 from sopuli.safety import (
@@ -4095,7 +4095,9 @@ def _reset_policy(
             ),
         )
     dangling(named, {policy.name for policy in config.policies}, noun="policy", section="policies")
-    return named, next(policy.password for policy in config.policies if policy.name == named)
+    policy = policy_named(config, named)
+    assert policy is not None, "dangling() refused a name `policies:` does not have"
+    return named, policy
 
 
 def _hand_over(

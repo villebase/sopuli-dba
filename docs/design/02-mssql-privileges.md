@@ -656,9 +656,12 @@ holds `'`**, with exit 5, naming the target and the policy
 capability it names is `seen_reset_quote`. A reset draws from the policy of the
 first rule, in file order, that admits the account on that target, and only
 the server says whether a `profile:` or `role:` rule does. So the check
-reads the policy of every such rule written before the rule that names the
-account, and of that rule. Where no rule names it, it reads every `profile:`
-and `role:` rule's policy there. A rule with no policy of its own uses
+reads the policy of every `role:` rule written before the rule that names
+the account, and of that rule. A `role:` rule is left out where both it and
+the naming rule have a `policy:` of their own and the two differ, because
+the run then refuses the pair. Where no rule names the account, it reads
+every `role:` rule's policy there. A `profile:` rule admits nobody on SQL
+Server, so it is never read. A rule with no policy of its own uses
 `defaults.policy`. The run checks the one policy drawn again, before it
 draws a password.
 The default charset, `alnum_safe`, holds no `'`, and `printable_ascii`

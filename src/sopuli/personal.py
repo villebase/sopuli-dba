@@ -34,7 +34,7 @@ from __future__ import annotations
 from collections.abc import Callable, Collection
 
 from sopuli.config.errors import ROOT, ConfigError
-from sopuli.config.model import Config, PersonalAccountRule
+from sopuli.config.model import Config, PasswordPolicy, PersonalAccountRule
 from sopuli.config.products import account_matcher, role_matcher, same_name
 from sopuli.config.selection import select
 
@@ -188,29 +188,59 @@ def policy_of(config: Config, rule: PersonalAccountRule | None) -> str | None:
     return (rule.policy if rule is not None else None) or config.defaults.policy
 
 
-def policies_possible(config: Config, account: str, target: str) -> tuple[str, ...]:
+def policy_named(config: Config, name: str) -> PasswordPolicy | None:
+    """The password rules of the policy called ``name``, or ``None`` where
+    `policies:` has none by that name."""
+    return next((policy.password for policy in config.policies if policy.name == name), None)
+
+
+def policies_possible(
+    config: Config, account: str, target: str, *, profiles: bool = True
+) -> tuple[str, ...]:
     """Every policy a reset of ``account`` on ``target`` could draw from, read
     from the file alone, in file order and once each (#1601).
 
     :func:`declared_on` returns the first rule in file order that admits the
-    account, and only the database says whether a predicate does. So each
-    predicate rule counts until an enumerated rule that names the account,
-    which admits it for certain and so ends the list: no later rule can come
-    first. Where no rule names it, every predicate rule counts. Each is read
-    by :func:`policy_of`.
+    account, refusing admitting rules whose own ``policy:`` differ, and only
+    the database says whether a predicate admits it. So:
+
+    - an enumerated rule that names the account admits it for certain, so no
+      later rule can come first, and it ends the list;
+    - a predicate rule before it counts, unless both name a ``policy:`` and
+      the two differ: then the pair is refused, and neither is drawn from
+      the predicate;
+    - where no rule names the account, every predicate rule counts.
+
+    A `profile:` rule counts only where the product has profiles
+    (``profiles``): elsewhere it admits nobody. Each is read by
+    :func:`policy_of`.
     """
     same = account_matcher(_product(config, target))
+    rules = [rule for rule in rules_for(config, target) if profiles or rule.profile is None]
+    naming = next(
+        (rule for rule in rules if not rule.is_predicate and admits(rule, account, same=same)),
+        None,
+    )
     found: list[str] = []
-    for rule in rules_for(config, target):
-        names = not rule.is_predicate and admits(rule, account, same=same)
-        if not rule.is_predicate and not names:
-            continue
-        name = policy_of(config, rule)
-        if name is not None and name not in found:
-            found.append(name)
-        if names:
+    for rule in rules:
+        if rule is naming:
+            _add(found, policy_of(config, rule))
             break
+        if not rule.is_predicate:
+            continue
+        refused_as_a_pair = (
+            naming is not None
+            and None not in (rule.policy, naming.policy)
+            and rule.policy != naming.policy
+        )
+        if not refused_as_a_pair:
+            _add(found, policy_of(config, rule))
     return tuple(found)
+
+
+def _add(found: list[str], name: str | None) -> None:
+    if name is not None and name not in found:
+        found.append(name)
 
 
 def bound_by_application(config: Config, account: str, target: str) -> str | None:

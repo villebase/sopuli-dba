@@ -184,13 +184,15 @@ empty answer.
   nobody holds is a true empty answer.
 
   An install that lacks this grant still works for everything except role
-  predicates. `role_lookup` is a probed capability (P1), so `account list`
-  refuses a role predicate at plan time, with exit 5, naming the capability, the
-  target and this grant. It is not one of the required reads that
-  `doctor --check-privileges` audits (§3). The pre-flight in `creds apply` and
-  `creds rotate` blocks on a missing required read, and making this one required
-  would stop older installs from rotating, for a grant that only a UC-2 listing
-  uses. `doctor` shows it as the capability `role_lookup`, absent.
+  predicates. `role_lookup` is a probed capability (P1), so `account list`,
+  `account suspend`, `account expire-password` and `account reset-password`
+  refuse a role predicate at plan time, with exit 5, naming the capability, the
+  target and this grant ([#1603](../decisions/log.md#1603)). It is not one of
+  the required reads that `doctor --check-privileges` audits (§3). The
+  pre-flight in `creds apply` and `creds rotate` blocks on a missing required
+  read, and making this one required would stop older installs from rotating,
+  for a grant that only UC-2's role predicates use. `doctor` shows it as the
+  capability `role_lookup`, absent.
 
 **A role-granted `ALTER USER` reads as absent.** The capability `common_users` is
 probed through `USER_SYS_PRIVS`, which shows direct grants only. An account that

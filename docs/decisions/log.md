@@ -6571,7 +6571,10 @@ the register.
   the whole run, and a verb makes one more connection per target that has
   a `profile:` or `role:` rule. A read the server refuses while the rule is
   checked now ends a verb's run at plan time, where the narrower check left
-  it to the run.
+  it to the run. On Oracle a verb with a `role:` rule now needs
+  `role_lookup` (`DBA_ROLES`), as `account list` does: without it a role
+  that names nothing cannot be told from one nobody holds. An error the
+  driver did not wrap is still left to the run.
 
 ## #1605
 

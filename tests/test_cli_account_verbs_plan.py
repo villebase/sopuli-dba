@@ -115,8 +115,9 @@ def test_a_profile_rule_on_a_product_with_no_profiles_is_refused_by_capability(
 
 
 @pytest.mark.parametrize("verb", sorted(VERBS))
+@pytest.mark.parametrize("product", sorted(PRODUCTS))
 def test_a_verb_reads_no_rule_members(
-    write_config: WriteConfig, sessions: dict[str, Any], verb: str
+    write_config: WriteConfig, sessions: dict[str, Any], verb: str, product: str
 ) -> None:
     """A verb admits by what the account holds, so the plan-time check asks
     only whether the role exists: a member read that fails does not refuse."""
@@ -124,8 +125,46 @@ def test_a_verb_reads_no_rule_members(
     sessions["dev-1"] = {"accounts_matching": failing}
     sessions["dev-2"] = {"accounts_matching": failing}
 
-    result = run(write_config, verb, "postgresql", "  - role: acme_dev_role")
+    result = run(write_config, verb, product, f"  - role: {PRODUCTS[product][2]}")
 
     assert "member read" not in result.output
     assert "has no role" not in result.output
-    assert "error" not in document(result), "the plan-time check passed the rule"
+
+
+class EveryAccountRoleError(DriverError):
+    """What MySQL's, MariaDB's and SQL Server's ``resolve_role`` raise for a
+    role every account holds: ``config``, exit 9."""
+
+    category = "config"
+    exit_code = ExitCode.CONFIG_INVALID
+
+
+@pytest.mark.parametrize("verb", sorted(VERBS))
+@pytest.mark.parametrize("product", ["mariadb", "mssql", "mysql"])
+def test_a_role_every_account_holds_is_refused_at_plan_time(
+    write_config: WriteConfig, sessions: dict[str, Any], verb: str, product: str
+) -> None:
+    """The narrower check the verbs asked before #1603 refused this; the
+    shared one must still, through ``resolve_role``."""
+    refusal = EveryAccountRoleError("every account holds this role", hint="")
+    sessions["dev-1"] = {"resolve_role": refusal}
+
+    result = run(write_config, verb, product, f"  - role: {PRODUCTS[product][2]}")
+
+    found = document(result)
+    assert found["exit_code"] == ExitCode.CONFIG_INVALID, result.output
+    assert "every account holds" in found["error"]["message"]
+    assert described(sessions) == []
+
+
+@pytest.mark.parametrize("verb", sorted(VERBS))
+def test_an_error_the_driver_did_not_wrap_is_left_to_the_run(
+    write_config: WriteConfig, sessions: dict[str, Any], verb: str
+) -> None:
+    """Not a refusal of the rule: the run meets it, and reports it per target."""
+    sessions["dev-1"] = {"resolve_role": OSError("the socket went away")}
+
+    result = run(write_config, verb, "postgresql", "  - role: acme_dev_role")
+
+    assert "has no role" not in result.output
+    assert "the socket went away" not in document(result).get("error", {}).get("message", "")

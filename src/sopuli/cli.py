@@ -4572,25 +4572,28 @@ def _refuse_unresolvable_rules(
     The `account` verbs that change an account ask it too (#1603). They admit
     an account by the profile and roles it holds, so without this a rule
     that names nothing would only leave the account undeclared, and the run
-    would report it skipped, not the typo. They pass ``members=False``: a
-    verb reads no rule's members, so it asks only whether the profile or role
-    exists, and the questions the role's read asks with it.
+    would report it skipped, not the typo.
 
     A `profile:` rule on a product with no profiles is refused from the
     target's type, before any target is opened: the registry's
-    ``no_profiles``. Any other `profile:` or `role:` rule is resolved here as
-    the listing resolves it, by :func:`_resolve_rule`, with one more
-    connection per target that has one. So every refusal the listing could
-    meet while it resolves a rule comes here instead, with the driver's own
-    error: a missing capability, exit 5, naming it; a role MySQL makes
-    mandatory, MariaDB reaches through `PUBLIC`, or SQL Server gives every
-    login; a read the server refuses; and a profile or role the target does
-    not have.
+    ``no_profiles``. Any other `profile:` or `role:` rule is asked on the
+    target, with one more connection per target that has one, and refused
+    with the driver's own error: a missing capability, exit 5, naming it; a
+    role MySQL makes mandatory, MariaDB reaches through `PUBLIC`, or SQL
+    Server gives every login, exit 9; a read the server refuses; and a
+    profile or role the target does not have.
+
+    The listing resolves each rule as it will while listing, by
+    :func:`_resolve_rule`, so every refusal it could meet there, the member
+    read's included, comes here instead. The verbs pass ``members=False``
+    and ask only :func:`_refuse_unnamed`: a verb reads no rule's members, so
+    a refusal only the member read raises is not one a verb could meet.
 
     A target that cannot be opened is passed over, as
     :func:`_refuse_uncomparable` passes it, and so is one whose session is
-    lost while it is read (category ``connectivity``): the listing reports
-    each as a failed row, or meets the fault itself.
+    lost while it is read (category ``connectivity``), or that fails with an
+    error the driver did not wrap: the run reports each on the target's row,
+    or meets the fault itself.
 
     The claims the opens record in ``run.clusters`` are put back afterwards,
     so the listing, which opens every target in order, decides which of two
@@ -4630,6 +4633,10 @@ def _refuse_unresolvable_rules(
                 # as a target that cannot be opened says nothing.
                 if error.category != "connectivity":
                     raise
+            except click.ClickException:
+                raise  # the rule names nothing: `_no_such_predicate`
+            except Exception:  # noqa: BLE001 -- unwrapped: the run reports it, per target
+                pass
             finally:
                 with suppress(Exception):
                     session.close()
@@ -4795,21 +4802,16 @@ def _resolve_rule(
     if not rule.is_predicate:
         return account_list.enumerated_names(rule)
 
+    _refuse_unnamed(session, rule, target)
     if rule.profile is not None:
-        if session.resolve_profile(rule.profile) is None:
-            raise _no_such_predicate(target, "profile", rule.profile)
         return tuple(session.accounts_matching(profile=rule.profile))
-
-    assert rule.role is not None
-    members = role_members(session, rule.role)
-    if members is None:
-        raise _no_such_predicate(target, "role", rule.role)
-    return members
+    return tuple(session.accounts_matching(role=rule.role))
 
 
 def _refuse_unnamed(session: Any, rule: PersonalAccountRule, target: ExpandedTarget) -> None:
-    """:func:`_resolve_rule`'s refusals without its member read: a predicate
-    whose profile or role the target does not have (#1603)."""
+    """Refuse a predicate whose profile or role the target does not have: the
+    question :func:`_resolve_rule` asks before it reads the members, and the
+    only one the `account` verbs ask (#1603), so the two cannot drift apart."""
     if rule.profile is not None and session.resolve_profile(rule.profile) is None:
         raise _no_such_predicate(target, "profile", rule.profile)
     if rule.role is not None and session.resolve_role(rule.role) is None:

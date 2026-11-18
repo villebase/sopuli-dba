@@ -146,7 +146,7 @@ class MustChange:
     server audit's ``BATCH_COMPLETED_GROUP`` masks only as many characters
     as the password has, so it keeps one of its last characters for each
     doubled ``'``. A seen reset whose alphabet holds ``'`` is refused at plan
-    time (§6.3), which is not built yet: TODO(#1601).
+    time (§6.3, :func:`sopuli.reset.refuse_unmasked_seen_password`).
     The password is admitted first, so a control character, which could end
     the literal's line, is refused before anything is built. ``UNLOCK`` ends
     a lockout after failed logins, which a new password alone leaves in

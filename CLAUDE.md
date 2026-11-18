@@ -228,8 +228,7 @@ detail.
     a server audit's `BATCH_COMPLETED_GROUP` keeps one character of the
     password's end for each `'`. So a SQL Server seen reset whose policy's
     alphabet holds `'` is refused at plan time
-    ([#1601](docs/decisions/log.md#1601)), which is not built yet
-    (open: #1601). The same audit record keeps the last half of a `HASHED`
+    ([#1601](docs/decisions/log.md#1601)). The same audit record keeps the last half of a `HASHED`
     value's hex digits, but not its salt. The
     verifier, hash or value still allows an offline guessing attack, so treat
     it as sensitive, but it is never the password.

@@ -145,6 +145,15 @@ class DatabaseDriver:
     #: `account list` refuses such a rule with no connection (#1598), and the
     #: driver's own ``resolve_profile`` gives the same hint.
     no_profiles: str | None = None
+    #: The characters a seen reset's password may not be drawn with on this
+    #: product, because the server keeps part of such a password in clear.
+    #: SQL Server's ``'``: the password goes as a literal with each ``'``
+    #: doubled, and an audit's ``BATCH_COMPLETED_GROUP`` masks only as many
+    #: characters as the password has, so it keeps one of the password's last
+    #: characters for each ``'`` (#1601). A fact about the product, so
+    #: `account reset-password` refuses the policy at plan time, with no
+    #: connection.
+    seen_reset_unmasked: str = ""
     #: The system package the client loads when it is imported, where it has
     #: one, as a hint: pyodbc loads unixODBC's ``libodbc`` on Linux and macOS.
     #: Without it the import fails with an ``ImportError`` that is not a
@@ -397,6 +406,7 @@ DRIVERS: dict[str, DatabaseDriver] = {
         ),
         not_applicable=frozenset({"profile", "valid_until"}),
         no_profiles="SQL Server has no profiles; declare these logins by name with `accounts:`",
+        seen_reset_unmasked="'",
         login_check_preflight=True,
         system_library=(
             "install unixODBC (`unixodbc` on Debian and Ubuntu) and Microsoft ODBC Driver 18 "

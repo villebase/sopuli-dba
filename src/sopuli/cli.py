@@ -2444,6 +2444,7 @@ def account_reset_password(
     reached = config.expanded_targets
     _refuse_a_bare_mysql_name(account, reached)
     reset.refuse_unreadable_kept_window(reached, keep_rollover=keep_rollover)
+    reset.refuse_unmasked_seen_password(delivery, config, account, reached)
     # Before the plan, the prompt and any event, `--dry-run` included: a preview
     # must not say "would be reset" for a run that will be refused. With them,
     # what the delivery backends would refuse from the config alone (#1257); the

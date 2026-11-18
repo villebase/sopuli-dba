@@ -3409,7 +3409,7 @@ def _reset_one(
                     raise refusal
             named, policy = _reset_policy(config, account, target.name, state)
             # The plan-time check read every policy the file allows; this is
-            # the one the admitting rule names (#1601).
+            # the one the run draws from (#1601, #1605).
             reset.refuse_unmasked_policy(delivery, named, policy, target)
             limit = session.byte_limit()
             require_feasible(policy, limit=limit, target=target.name)
@@ -4077,9 +4077,9 @@ def _reset_policy(
 
     The one policy the rules that admit the account name, and
     `defaults.policy` where none names one, whatever order they are written in
-    (:func:`~sopuli.personal.policy_for`, #1605) -- the same chain
-    `bindings.py` reads for an application account, so a personal policy is
-    configured the way every other policy is.
+    (:func:`~sopuli.personal.policy_for`, #1605). Several rules may admit one
+    personal account, where an application binding has one entry, so this is
+    not `bindings.py`'s chain; it ends at the same `defaults.policy`.
     """
     named = (
         policy_for(config, state.name, target, profile=state.profile, roles=state.roles)

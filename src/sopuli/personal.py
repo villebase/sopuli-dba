@@ -160,6 +160,12 @@ def declared_on(
     predicate admits a given account is a fact about a database. So this is a
     plan-time refusal (invariant 4) naming both rules, raised before anything is
     issued.
+
+    **The rule returned is the first admitting one that names a policy**, and
+    the first admitting one only where none does (#1605). A rule with no
+    ``policy:`` names nothing, so it must not hide one that does: the policy
+    drawn (:func:`policy_for`) and the rule a row credits would otherwise
+    depend on the order the rules are written in.
     """
     admitting = rules_admitting(config, account, target, profile=profile, roles=roles)
     if not admitting:
@@ -178,7 +184,7 @@ def declared_on(
                 + " -- give them the same `policy:`, or narrow one with `targets:`"
             ),
         )
-    return admitting[0]
+    return next((rule for rule in admitting if rule.policy is not None), admitting[0])
 
 
 def policy_for(
@@ -192,15 +198,12 @@ def policy_for(
     """The policy a reset of ``account`` on ``target`` draws from (#1605).
 
     The one ``policy:`` the rules that admit the account name, and
-    `defaults.policy` only where none names one. Rules that name different
-    policies are refused by :func:`declared_on`, which this calls first. So
-    the order the rules are written in never decides: a rule with no
-    ``policy:`` of its own does not hide another rule's.
+    `defaults.policy` only where none names one: :func:`declared_on` returns
+    the rule that names it, and refuses rules that name different policies.
+    So the order the rules are written in never decides.
     """
-    declared_on(config, account, target, profile=profile, roles=roles)
-    admitting = rules_admitting(config, account, target, profile=profile, roles=roles)
-    named = next((rule.policy for rule in admitting if rule.policy is not None), None)
-    return named or config.defaults.policy
+    rule = declared_on(config, account, target, profile=profile, roles=roles)
+    return (rule.policy if rule is not None else None) or config.defaults.policy
 
 
 def policy_named(config: Config, name: str) -> PasswordPolicy | None:

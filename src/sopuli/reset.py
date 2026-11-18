@@ -262,7 +262,7 @@ def refuse_unmasked_policy(
     """Refuse a seen reset on ``target`` from ``policy`` where it can draw a
     character the product's server keeps in clear (#1601). Called at plan
     time for each policy the reset could draw from, and at run time for the
-    one the admitting rule names."""
+    one it draws from (:func:`~sopuli.personal.policy_for`)."""
     unmasked = DRIVERS[target.target.type].seen_reset_unmasked
     if not delivery.is_seen or unmasked is None:
         return

@@ -304,7 +304,7 @@ def test_a_role_rule_follows_nested_server_roles(
     assert holder in members
     assert paths.plain not in members
     assert state is not None
-    assert {paths.nest, paths.ctl} <= state.roles
+    assert {paths.nest.upper(), paths.ctl.upper()} <= state.roles
     assert missing is None
 
 

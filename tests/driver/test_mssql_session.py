@@ -161,7 +161,7 @@ def test_a_role_the_tool_cannot_read_is_refused_as_role_lookup_missing() -> None
         opened.resolve_role("acme_ops")
 
     assert caught.value.capability == "role_lookup"
-    assert "VIEW ANY DEFINITION" in (caught.value.hint or "")
+    assert "server role" in (caught.value.hint or "")
     # SOPULI-W075 words its fix from the remedy alone (#1587 review).
     assert "GRANT VIEW ANY DEFINITION" in (caught.value.remedy or "")
 

@@ -57,6 +57,10 @@ PRINCIPAL_CLASS = 101
 #: certificate or an asymmetric key.
 ROLE_TYPE = "R"
 
+#: ``sys.server_principals.type`` for a SQL login, the one kind with a
+#: password the tool sets (:data:`~sopuli.driver.mssql.accounts.SQL_LOGIN`).
+SQL_LOGIN_TYPE = "S"
+
 #: ``sys.server_permissions.state`` of a grant, and of a grant with
 #: ``WITH GRANT OPTION``. A ``DENY`` is ``D``, and is not read.
 GRANTED = frozenset({"G", "W"})
@@ -254,18 +258,22 @@ class Catalog:
         return {role: tuple(members) for role, members in found.items()}
 
     def server_role(self, name: str) -> Principal | None:
-        """The server role ``name``, compared by ``upper()`` as the tool
-        compares names, or ``None`` where there is none (#1554, Q6)."""
+        """The server role ``name``, or ``None`` where there is none (#1554,
+        Q6). The exact spelling first, so two roles a case-sensitive server
+        tells apart are not mixed up; then by ``upper()``, as the tool
+        compares names."""
+        roles = [p for p in self.principals.values() if p.is_role]
+        exact = next((p for p in roles if p.name == name), None)
+        if exact is not None:
+            return exact
         wanted = name.upper()
-        return next(
-            (p for p in self.principals.values() if p.is_role and p.name.upper() == wanted),
-            None,
-        )
+        return next((p for p in roles if p.name.upper() == wanted), None)
 
     def members(self, role_id: int) -> tuple[Principal, ...]:
-        """Every principal that is not a role and holds ``role_id``, through
-        any chain of nested server roles, by name (#1554, Q6). ``public`` has
-        no membership rows, so it names nobody here."""
+        """Every SQL login that holds ``role_id``, through any chain of nested
+        server roles, by name (#1554, Q6). A Windows or Entra login or group,
+        or a login mapped to a certificate, has no password the tool can set,
+        so a `role:` rule does not name it."""
         found: dict[int, Principal] = {}
         seen = {role_id}
         stack = [role_id]
@@ -277,26 +285,20 @@ class Catalog:
                 seen.add(member_id)
                 if member.is_role:
                     stack.append(member_id)
-                else:
+                elif member.type == SQL_LOGIN_TYPE:
                     found[member_id] = member
         return tuple(sorted(found.values(), key=lambda p: p.name))
 
     def roles_of(self, principal_id: int) -> frozenset[str]:
         """Every server role ``principal_id`` holds, directly or through
-        nested roles, by name: what a `role:` rule is compared with."""
-        names: set[str] = set()
-        seen: set[int] = set()
-        stack = list(self.parents.get(principal_id, ()))
-        while stack:
-            role_id = stack.pop()
-            if role_id in seen:
-                continue
-            seen.add(role_id)
-            role = self.principals.get(role_id)
-            if role is not None:
-                names.add(role.name)
-            stack.extend(self.parents.get(role_id, ()))
-        return frozenset(names)
+        nested roles, upper-cased as :attr:`UserState.roles
+        <sopuli.driver.protocol.UserState.roles>` holds them: what a `role:`
+        rule is compared with."""
+        return frozenset(
+            self.principals[role_id].name.upper()
+            for role_id in _roles_of(self, principal_id)
+            if role_id in self.principals
+        )
 
     @cached_property
     def public_id(self) -> int | None:

@@ -63,7 +63,7 @@ from sopuli.driver.mssql import (
 )
 from sopuli.driver.mssql import errors as server_errors
 from sopuli.driver.mssql import privileges as tool_login
-from sopuli.driver.mssql.admin import Assessment, Catalog, assess, read_catalog
+from sopuli.driver.mssql.admin import PUBLIC, Assessment, Catalog, assess, read_catalog
 from sopuli.driver.mssql.client import client_lines
 from sopuli.driver.mssql.connection import connection_string
 from sopuli.driver.mssql.errors import (
@@ -115,6 +115,7 @@ from sopuli.driver.protocol import (
 )
 from sopuli.driver.registry import NotWrittenError, no_profiles_hint
 from sopuli.driver.survey import SurveyedAccount
+from sopuli.exit_codes import ExitCode
 from sopuli.output.debug import logger
 from sopuli.passwords import ByteLimit
 from sopuli.policy_flags import PolicyFlags
@@ -174,8 +175,29 @@ NO_PROFILES = no_profiles_hint("mssql")
 #: `SOPULI-W075` words its fix from (#1554, Q6).
 ROLE_LOOKUP_REMEDY = (
     "GRANT VIEW ANY DEFINITION to the tool login, and revoke any DENY of "
-    "VIEW ANY SECURITY DEFINITION or VIEW DEFINITION (02-mssql-privileges.md section 2.2)"
+    "VIEW ANY SECURITY DEFINITION or VIEW DEFINITION (02-mssql-privileges.md §2.2)"
 )
+
+
+class PublicRoleError(DriverError):
+    """A `role:` rule names ``public``, which every login holds (#1554, Q6).
+
+    ``config`` and exit 9, as MySQL's mandatory role is: the fix is in the
+    config, and running again changes nothing."""
+
+    category = "config"
+    exit_code = ExitCode.CONFIG_INVALID
+
+    def __init__(self, *, target: str) -> None:
+        super().__init__(
+            f'target "{target}": every login holds the server role public, so a `role:` '
+            "rule naming it would admit every login",
+            hint=(
+                "name a role that only the people the rule is for hold, or list the logins "
+                "under `accounts:`"
+            ),
+        )
+
 
 #: The host platform this build changes passwords on.
 LINUX = "Linux"
@@ -478,8 +500,8 @@ class MssqlSession(ClosesConnection):
         )
         if login is None:
             return None
-        assessment = self.admin_assessment(login.principal_id)
         catalog = self._server_catalog()
+        assessment = assess(login.principal_id, catalog)
         return accounts.state_of(
             login,
             now=datetime.now(UTC),
@@ -897,7 +919,10 @@ class MssqlSession(ClosesConnection):
         grant. `report accounts` then shows the role's members as undeclared
         and warns with `SOPULI-W075` (UC-5 §4)."""
         found = self._role_catalog().server_role(role)
-        return found.name if found is not None else None
+        if found is None:
+            return None
+        self._refuse_public(found.name)
+        return found.name
 
     def accounts_matching(
         self, *, profile: str | None = None, role: str | None = None
@@ -914,7 +939,15 @@ class MssqlSession(ClosesConnection):
         found = catalog.server_role(role or "")
         if found is None:
             return ()
+        self._refuse_public(found.name)
         return tuple(member.name for member in catalog.members(found.principal_id))
+
+    def _refuse_public(self, role: str) -> None:
+        """Every login holds ``public``, with no membership rows to read, so a
+        rule naming it would admit every login: refused, as MySQL refuses a
+        mandatory role."""
+        if role == PUBLIC:
+            raise PublicRoleError(target=self.target.name)
 
     def _role_catalog(self) -> Catalog:
         """:meth:`_server_catalog`, refused as ``role_lookup`` missing where the
@@ -926,7 +959,8 @@ class MssqlSession(ClosesConnection):
                 target=self.target.name,
                 hint=(
                     "a personal_accounts: rule's role: names a server role, and the tool "
-                    f"login cannot read the server's roles completely: {catalog.unread}"
+                    "login cannot see every server role and which roles each role holds, so "
+                    "a role that admits nobody could not be told from one that does not exist"
                 ),
                 # SOPULI-W075 words its fix from this, not from the hint.
                 remedy=ROLE_LOOKUP_REMEDY,

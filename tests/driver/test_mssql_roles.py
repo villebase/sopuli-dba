@@ -55,10 +55,31 @@ def test_a_cycle_of_roles_ends() -> None:
     assert [one.name for one in looped.members(301)] == ["acme_asmith", "acme_jdoe"]
 
 
-def test_a_login_holds_every_role_above_it() -> None:
-    assert catalog().roles_of(400) == {"acme_ops", "acme_staff"}
-    assert catalog().roles_of(401) == {"acme_staff"}
+def test_a_login_holds_every_role_above_it_upper_cased() -> None:
+    """Upper-cased, as `UserState.roles` holds roles on every product."""
+    assert catalog().roles_of(400) == {"ACME_OPS", "ACME_STAFF"}
+    assert catalog().roles_of(401) == {"ACME_STAFF"}
     assert catalog().roles_of(402) == frozenset()
+
+
+def test_only_sql_logins_are_members() -> None:
+    """A Windows login has no password the tool sets, so the rule does not
+    name it, and the listing does not fail on it every run."""
+    windows = Principal(principal_id=500, name="EXAMPLE\\dbas", type="G")
+    read = Catalog.read([*PRINCIPALS, windows], [*MEMBERSHIPS, (301, 500)], [])
+    assert [one.name for one in read.members(300)] == ["acme_asmith", "acme_jdoe"]
+
+
+def test_the_exact_spelling_wins_over_another_in_another_case() -> None:
+    """A case-sensitive server can hold both."""
+    other = Principal(principal_id=302, name="ACME_STAFF", type=ROLE_TYPE)
+    read = Catalog.read([*PRINCIPALS, other], MEMBERSHIPS, [])
+    found = read.server_role("ACME_STAFF")
+    assert found is not None
+    assert found.principal_id == 302
+    found = read.server_role("acme_staff")
+    assert found is not None
+    assert found.principal_id == 300
 
 
 def opened(read: Catalog) -> Any:
@@ -78,3 +99,14 @@ def test_the_session_resolves_a_role_and_lists_its_logins() -> None:
     assert one.resolve_role("acme_nobody") is None
     assert one.accounts_matching(role="acme_staff") == ("acme_asmith", "acme_jdoe")
     assert one.accounts_matching(role="acme_nobody") == ()
+
+
+def test_public_is_refused_because_every_login_holds_it() -> None:
+    """As MySQL refuses a mandatory role: the rule would admit every login."""
+    one = opened(catalog())
+
+    with pytest.raises(session.PublicRoleError) as caught:
+        one.resolve_role("PUBLIC")
+    assert caught.value.exit_code == 9
+    with pytest.raises(session.PublicRoleError):
+        one.accounts_matching(role="public")

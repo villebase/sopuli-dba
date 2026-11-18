@@ -6544,3 +6544,23 @@ the register.
   rule, and the others listed with exit 1 or 4. It would be a fourth
   exception to invariant 4. The cost accepted: one more connection per
   target that has a `role:` rule, or a `profile:` rule on Oracle.
+
+## #1605
+
+- **Decided:** 2026-11-18, #1605
+- **Question:** a personal account's reset drew from the first admitting
+  rule's `policy:`, or `defaults.policy` where that rule had none. So where
+  only some admitting rules named a policy, the one drawn depended on the
+  order the rules were written in. Should it?
+- **Decision:** the maintainer's, option A. The policy is the one `policy:`
+  the admitting rules name, and `defaults.policy` only where none names one.
+  Admitting rules that name different policies are still refused. This
+  applies on every product, and #1601's plan-time check
+  (`personal.policies_possible`) follows the same rule.
+- **Why:** a whitelist whose answer depends on rule order is what
+  `declared_on` already refuses when two rules name different policies. A
+  rule with no `policy:` names nothing, so it should not hide a rule that
+  does.
+- **Rejected:** B, keeping file order and documenting it. The cost accepted:
+  a reset whose first admitting rule had no policy now draws the policy a
+  later rule names, not `defaults.policy`.

@@ -160,6 +160,12 @@ def declared_on(
     predicate admits a given account is a fact about a database. So this is a
     plan-time refusal (invariant 4) naming both rules, raised before anything is
     issued.
+
+    **The rule returned is the first admitting one that names a policy**, and
+    the first admitting one only where none does (#1605). A rule with no
+    ``policy:`` names nothing, so it must not hide one that does: the policy
+    drawn (:func:`policy_for`) and the rule a row credits would otherwise
+    depend on the order the rules are written in.
     """
     admitting = rules_admitting(config, account, target, profile=profile, roles=roles)
     if not admitting:
@@ -178,13 +184,25 @@ def declared_on(
                 + " -- give them the same `policy:`, or narrow one with `targets:`"
             ),
         )
-    return admitting[0]
+    return next((rule for rule in admitting if rule.policy is not None), admitting[0])
 
 
-def policy_of(config: Config, rule: PersonalAccountRule | None) -> str | None:
-    """The policy a reset draws from where ``rule`` admits the account: its
-    own ``policy:``, else `defaults.policy`. ``rule`` is what
-    :func:`declared_on` returned."""
+def policy_for(
+    config: Config,
+    account: str,
+    target: str,
+    *,
+    profile: str | None = None,
+    roles: Collection[str] = (),
+) -> str | None:
+    """The policy a reset of ``account`` on ``target`` draws from (#1605).
+
+    The one ``policy:`` the rules that admit the account name, and
+    `defaults.policy` only where none names one: :func:`declared_on` returns
+    the rule that names it, and refuses rules that name different policies.
+    So the order the rules are written in never decides.
+    """
+    rule = declared_on(config, account, target, profile=profile, roles=roles)
     return (rule.policy if rule is not None else None) or config.defaults.policy
 
 
@@ -197,23 +215,21 @@ def policy_named(config: Config, name: str) -> PasswordPolicy | None:
 def policies_possible(
     config: Config, account: str, target: str, *, profiles: bool = True
 ) -> tuple[str, ...]:
-    """Every policy a reset of ``account`` on ``target`` could draw from, read
-    from the file alone, in file order and once each (#1601).
+    """Every policy :func:`policy_for` could pick for ``account`` on
+    ``target``, read from the file alone, in file order and once each (#1601,
+    #1605).
 
-    :func:`declared_on` returns the first rule in file order that admits the
-    account, refusing admitting rules whose own ``policy:`` differ, and only
-    the database says whether a predicate admits it. So:
+    Only the database says whether a predicate rule admits the account, so:
 
-    - an enumerated rule that names the account admits it for certain, so no
-      later rule can come first, and it ends the list;
-    - a predicate rule before it counts, unless both name a ``policy:`` and
-      the two differ: then the pair is refused, and neither is drawn from
-      the predicate;
-    - where no rule names the account, every predicate rule counts.
+    - where an enumerated rule names the account with a ``policy:``, that is
+      the one: a predicate that admits it with another is refused as a pair,
+      and one with none adds nothing;
+    - otherwise every predicate rule's ``policy:`` could be the one, and
+      `defaults.policy` too, where a rule that admits the account may name
+      none.
 
     A `profile:` rule counts only where the product has profiles
-    (``profiles``): elsewhere it admits nobody. Each is read by
-    :func:`policy_of`.
+    (``profiles``): elsewhere it admits nobody.
     """
     same = account_matcher(_product(config, target))
     rules = [rule for rule in rules_for(config, target) if profiles or rule.profile is None]
@@ -221,20 +237,14 @@ def policies_possible(
         (rule for rule in rules if not rule.is_predicate and admits(rule, account, same=same)),
         None,
     )
+    if naming is not None and naming.policy is not None:
+        return (naming.policy,)
+    predicates = [rule for rule in rules if rule.is_predicate]
     found: list[str] = []
-    for rule in rules:
-        if rule is naming:
-            _add(found, policy_of(config, rule))
-            break
-        if not rule.is_predicate:
-            continue
-        refused_as_a_pair = (
-            naming is not None
-            and None not in (rule.policy, naming.policy)
-            and rule.policy != naming.policy
-        )
-        if not refused_as_a_pair:
-            _add(found, policy_of(config, rule))
+    for rule in predicates:
+        _add(found, rule.policy)
+    if naming is not None or any(rule.policy is None for rule in predicates):
+        _add(found, config.defaults.policy)
     return tuple(found)
 
 

@@ -22,6 +22,7 @@ from sopuli.personal import (
     admits,
     bound_by_application,
     declared_on,
+    policy_for,
     rules_admitting,
     rules_for,
 )
@@ -45,19 +46,20 @@ OTHER = {
 }
 
 
-def config(*rules: dict[str, Any]) -> Any:
-    return build_config(
-        {
-            "version": 1,
-            "targets": [TARGET, OTHER],
-            "groups": {"dev-pdbs": {"match": {"env": "dev"}}},
-            "policies": {
-                "personal-standard": {"password": {"length": 24, "charset": "alnum"}},
-                "personal-strict": {"password": {"length": 32, "charset": "alnum"}},
-            },
-            "personal_accounts": list(rules),
-        }
-    )
+def config(*rules: dict[str, Any], default: str | None = None) -> Any:
+    raw: dict[str, Any] = {
+        "version": 1,
+        "targets": [TARGET, OTHER],
+        "groups": {"dev-pdbs": {"match": {"env": "dev"}}},
+        "policies": {
+            "personal-standard": {"password": {"length": 24, "charset": "alnum"}},
+            "personal-strict": {"password": {"length": 32, "charset": "alnum"}},
+        },
+        "personal_accounts": list(rules),
+    }
+    if default is not None:
+        raw["defaults"] = {"policy": default}
+    return build_config(raw)
 
 
 # --------------------------------------------------------------- admits ---
@@ -321,7 +323,8 @@ def test_two_rules_naming_different_policies_are_refused() -> None:
 
 
 def test_a_rule_with_no_policy_does_not_conflict_with_one_that_has_it() -> None:
-    """An absent `policy:` is "whatever `defaults:` says", not a third answer."""
+    """An absent `policy:` names nothing, so it is not a second answer: the
+    other rule's policy is the one (#1605)."""
     resolved = config(
         {"accounts": ["jdoe"]},
         {"profile": "DEV_USERS", "policy": "personal-strict"},
@@ -330,3 +333,50 @@ def test_a_rule_with_no_policy_does_not_conflict_with_one_that_has_it() -> None:
     rule = declared_on(resolved, "jdoe", "appdb-dev-alpha", profile="DEV_USERS")
 
     assert rule is not None
+
+
+@pytest.mark.parametrize("swapped", [False, True], ids=["named-last", "named-first"])
+def test_the_one_named_policy_is_drawn_whatever_the_order(swapped: bool) -> None:
+    """A rule with no `policy:` written first used to give `defaults.policy`,
+    and the same rules swapped gave the named one (#1605)."""
+    rules = [{"accounts": ["jdoe"]}, {"profile": "DEV_USERS", "policy": "personal-strict"}]
+    resolved = config(*(reversed(rules) if swapped else rules), default="personal-standard")
+
+    named = policy_for(resolved, "jdoe", "appdb-dev-alpha", profile="DEV_USERS")
+    rule = declared_on(resolved, "jdoe", "appdb-dev-alpha", profile="DEV_USERS")
+
+    assert named == "personal-strict"
+    # The rule a row credits is the one whose policy is drawn.
+    assert rule is not None
+    assert rule.profile == "DEV_USERS"
+
+
+def test_the_default_is_drawn_where_no_admitting_rule_names_a_policy() -> None:
+    resolved = config({"accounts": ["jdoe"]}, {"profile": "DEV_USERS"}, default="personal-standard")
+
+    named = policy_for(resolved, "jdoe", "appdb-dev-alpha", profile="DEV_USERS")
+
+    assert named == "personal-standard"
+
+
+def test_a_rule_that_does_not_admit_the_account_names_nothing() -> None:
+    """The profile rule's policy counts only where the profile admits jdoe."""
+    resolved = config(
+        {"accounts": ["jdoe"]},
+        {"profile": "DEV_USERS", "policy": "personal-strict"},
+        default="personal-standard",
+    )
+
+    named = policy_for(resolved, "jdoe", "appdb-dev-alpha", profile="OTHER")
+
+    assert named == "personal-standard"
+
+
+def test_policy_for_refuses_rules_naming_different_policies() -> None:
+    resolved = config(
+        {"accounts": ["jdoe"], "policy": "personal-standard"},
+        {"profile": "DEV_USERS", "policy": "personal-strict"},
+    )
+
+    with pytest.raises(ConfigError, match="different policies"):
+        policy_for(resolved, "jdoe", "appdb-dev-alpha", profile="DEV_USERS")

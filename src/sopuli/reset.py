@@ -235,8 +235,9 @@ def refuse_unmasked_seen_password(
 
     Knowable from the file, so it needs no connection. It checks every policy
     the reset could draw from, :func:`~sopuli.personal.policies_possible`:
-    the run picks the first rule in file order that admits the account, and
-    only the database says whether a predicate does.
+    the run draws the one policy the admitting rules name, or
+    `defaults.policy` (:func:`~sopuli.personal.policy_for`), and only the
+    database says whether a predicate admits the account.
     :func:`refuse_unmasked_policy` checks the one policy picked again, at run
     time, before a password is drawn.
     """
@@ -262,7 +263,7 @@ def refuse_unmasked_policy(
     """Refuse a seen reset on ``target`` from ``policy`` where it can draw a
     character the product's server keeps in clear (#1601). Called at plan
     time for each policy the reset could draw from, and at run time for the
-    one the admitting rule names."""
+    one it draws from (:func:`~sopuli.personal.policy_for`)."""
     unmasked = DRIVERS[target.target.type].seen_reset_unmasked
     if not delivery.is_seen or unmasked is None:
         return

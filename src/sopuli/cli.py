@@ -414,7 +414,7 @@ from sopuli.payload import (
     merge,
     stage_layout,
 )
-from sopuli.personal import declared_on, rules_for
+from sopuli.personal import declared_on, policy_named, policy_of, rules_for
 from sopuli.policy_flags import PolicyFlags
 from sopuli.preflight import Finding
 from sopuli.safety import (
@@ -2444,6 +2444,7 @@ def account_reset_password(
     reached = config.expanded_targets
     _refuse_a_bare_mysql_name(account, reached)
     reset.refuse_unreadable_kept_window(reached, keep_rollover=keep_rollover)
+    reset.refuse_unmasked_seen_password(delivery, config, account, reached)
     # Before the plan, the prompt and any event, `--dry-run` included: a preview
     # must not say "would be reset" for a run that will be refused. With them,
     # what the delivery backends would refuse from the config alone (#1257); the
@@ -3406,7 +3407,10 @@ def _reset_one(
                 )
                 if refusal is not None:
                     raise refusal
-            policy = _reset_policy(config, account, target.name, state)
+            named, policy = _reset_policy(config, account, target.name, state)
+            # The plan-time check read every policy the file allows; this is
+            # the one the admitting rule names (#1601).
+            reset.refuse_unmasked_policy(delivery, named, policy, target)
             limit = session.byte_limit()
             require_feasible(policy, limit=limit, target=target.name)
             # The store's policy, asked again on the name the database stores,
@@ -4067,20 +4071,21 @@ def _delivery_backend(
 
 def _reset_policy(
     config: Config, account: str, target: str, state: UserState | None
-) -> PasswordPolicy:
-    """The policy this account's password is drawn from.
+) -> tuple[str, PasswordPolicy]:
+    """The name of the policy this account's password is drawn from, and the
+    policy.
 
     The rule that admitted the account names it, and `defaults.policy` answers
-    where the rule does not -- the same chain `bindings.py` reads for an
-    application account, so a personal policy is configured the way every other
-    policy is.
+    where the rule does not (:func:`~sopuli.personal.policy_of`) -- the same
+    chain `bindings.py` reads for an application account, so a personal policy
+    is configured the way every other policy is.
     """
     rule = (
         declared_on(config, state.name, target, profile=state.profile, roles=state.roles)
         if state is not None
         else None
     )
-    named = (rule.policy if rule is not None else None) or config.defaults.policy
+    named = policy_of(config, rule)
     if named is None:
         raise ConfigError(
             f"no password policy for {account}",
@@ -4090,7 +4095,9 @@ def _reset_policy(
             ),
         )
     dangling(named, {policy.name for policy in config.policies}, noun="policy", section="policies")
-    return next(policy.password for policy in config.policies if policy.name == named)
+    policy = policy_named(config, named)
+    assert policy is not None, "dangling() refused a name `policies:` does not have"
+    return named, policy
 
 
 def _hand_over(

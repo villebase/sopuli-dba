@@ -35,9 +35,10 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import dataclass
 
+from sopuli.config.charsets import alphabet
 from sopuli.config.delivery import IMPLEMENTED, MANUAL
 from sopuli.config.errors import ArgumentError
-from sopuli.config.model import Config, Delivery, ExpandedTarget
+from sopuli.config.model import Config, Delivery, ExpandedTarget, PasswordPolicy
 from sopuli.config.targets import MARIADB, MYSQL
 from sopuli.driver.guardrails import Review, review
 from sopuli.driver.oracle.accounts import deliberately_locked
@@ -47,13 +48,20 @@ from sopuli.driver.protocol import (
     KEPT_WINDOW_UNREADABLE,
     KEPT_WINDOW_UNREADABLE_MARIADB,
     SEEN_NEEDS_EXPIRY,
+    SEEN_RESET_QUOTE,
     Scope,
     UnsupportedCapabilityError,
     UserState,
     require_capability,
 )
+from sopuli.driver.registry import DRIVERS
 from sopuli.exit_codes import ExitCode
-from sopuli.personal import bound_by_application, declared_on
+from sopuli.personal import (
+    bound_by_application,
+    declared_on,
+    policies_possible,
+    policy_named,
+)
 from sopuli.safety import RefusedError
 
 #: ``results[].state`` words this verb uses, all already in the run schema's
@@ -208,6 +216,68 @@ def refuse_unreadable_kept_window(
         hint = _KEPT_WINDOW_HINTS.get(expanded.target.type)
         if hint is not None:
             raise UnsupportedCapabilityError(KEEP_ROLLOVER, target=expanded.name, hint=hint)
+
+
+def refuse_unmasked_seen_password(
+    delivery: Delivery, config: Config, account: str, targets: Iterable[ExpandedTarget]
+) -> None:
+    """Refuse a seen reset, at plan time, where the policy could draw a
+    character the server keeps in clear (#1601, decision 1).
+
+    The registry's ``seen_reset_unmasked`` names them, and
+    ``seen_reset_unmasked_why`` says why: on SQL Server ``'``, because an
+    audit's ``BATCH_COMPLETED_GROUP`` keeps one of the password's last
+    characters for each one (``02-mssql-privileges.md`` §6.3). Exit 5, naming
+    the target, with the policy in the hint. The first target that refuses
+    ends the run. Under ``--dry-run`` too, for :func:`refuse_kept_window`'s
+    reason.
+
+    Knowable from the file, so it needs no connection. It checks every policy
+    the reset could draw from, :func:`~sopuli.personal.policies_possible`:
+    the run picks the first rule in file order that admits the account, and
+    only the database says whether a predicate does.
+    :func:`refuse_unmasked_policy` checks the one policy picked again, at run
+    time, before a password is drawn.
+    """
+    if not delivery.is_seen:
+        return
+    for expanded in targets:
+        entry = DRIVERS[expanded.target.type]
+        if entry.seen_reset_unmasked is None:
+            continue
+        possible = policies_possible(
+            config, account, expanded.name, profiles=entry.no_profiles is None
+        )
+        for name in possible:
+            policy = policy_named(config, name)
+            if policy is not None:
+                # A dangling name is refused where the policy is read.
+                refuse_unmasked_policy(delivery, name, policy, expanded)
+
+
+def refuse_unmasked_policy(
+    delivery: Delivery, name: str, policy: PasswordPolicy, target: ExpandedTarget
+) -> None:
+    """Refuse a seen reset on ``target`` from ``policy`` where it can draw a
+    character the product's server keeps in clear (#1601). Called at plan
+    time for each policy the reset could draw from, and at run time for the
+    one the admitting rule names."""
+    unmasked = DRIVERS[target.target.type].seen_reset_unmasked
+    if not delivery.is_seen or unmasked is None:
+        return
+    characters, why = unmasked
+    held = sorted(set(characters) & set(alphabet(policy)))
+    if not held:
+        return
+    listed = " ".join(f"`{one}`" for one in held)
+    raise UnsupportedCapabilityError(
+        SEEN_RESET_QUOTE,
+        target=target.name,
+        hint=(
+            f"policy {name!r} can draw {listed}: {why}. "
+            "Use a charset without it, such as `alnum_safe`, or an unseen delivery method"
+        ),
+    )
 
 
 def refuse_seen_path(

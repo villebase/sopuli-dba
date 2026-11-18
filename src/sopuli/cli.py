@@ -12273,12 +12273,14 @@ def _require_seen_expiry(
     delivery: Delivery,
     scopes: dict[str, Scope | None],
 ) -> None:
-    """Refuse a seen reset, at plan time, on a target that cannot expire a
-    password (#1201).
+    """Refuse a seen reset, at plan time, on a target that cannot set a
+    password that must be changed at the next login (#1201; #1554, Q8).
 
     The seen path's expiry is what ends the DBA's exposure (UC-2 §1), so a
-    target without ``expire_password`` cannot take it: PostgreSQL has no "change
-    the password at next login". Exit 5, naming the target, before any password
+    target without ``expire_on_reset`` cannot take it: PostgreSQL has no
+    "change the password at next login". SQL Server has it without
+    ``expire_password``, because ``MUST_CHANGE`` comes only with a new
+    password. Exit 5, naming the target, before any password
     is drawn. One connection per target on the seen path, shared through
     ``scopes`` with :func:`_require_encryption`, and none on an unseen one. A
     target whose scope this cannot read is left to the run, which asks again in

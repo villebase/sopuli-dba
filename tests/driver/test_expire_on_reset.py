@@ -11,9 +11,35 @@ SQL Server's scope, which reports only `expire_on_reset`, is tested in
 
 from __future__ import annotations
 
+import pytest
+
 from sopuli.driver.mariadb.session import CAPABILITIES as MARIADB
 from sopuli.driver.oracle.capabilities import STRUCTURAL as ORACLE
-from sopuli.driver.protocol import EXPIRE_ON_RESET, EXPIRE_PASSWORD
+from sopuli.driver.protocol import (
+    EXPIRE_ON_RESET,
+    EXPIRE_PASSWORD,
+    SERVER,
+    Scope,
+    UnsupportedCapabilityError,
+)
+from sopuli.reset import require_seen_expiry
+
+
+def _scope(*capabilities: str) -> Scope:
+    return Scope(type=SERVER, read_write=True, capabilities=frozenset(capabilities))
+
+
+def test_the_seen_gate_lets_a_target_with_expire_on_reset_alone_through() -> None:
+    """SQL Server's set: the seen reset can expire the password it sets."""
+    require_seen_expiry(_scope(EXPIRE_ON_RESET), target="mssql-dev")
+
+
+def test_the_seen_gate_refuses_a_target_with_expire_password_alone() -> None:
+    """It asks for `expire_on_reset` and nothing else, so a set that has only
+    `expire_password` is refused, naming the capability it lacks."""
+    with pytest.raises(UnsupportedCapabilityError) as caught:
+        require_seen_expiry(_scope(EXPIRE_PASSWORD), target="odd-dev")
+    assert caught.value.capability == EXPIRE_ON_RESET
 
 
 def test_oracle_reports_both_on_every_release() -> None:

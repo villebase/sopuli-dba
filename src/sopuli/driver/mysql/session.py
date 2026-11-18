@@ -225,8 +225,8 @@ class MysqlSession(ClosesConnection):
         return self._scope
 
     def _capabilities(self) -> frozenset[str]:
-        """``role_lookup`` always, and ``password_rollover`` and
-        ``expire_password`` where the server has
+        """``role_lookup`` always, and ``password_rollover``,
+        ``expire_password`` and ``expire_on_reset`` where the server has
         ``caching_sha2_password_digest_rounds``.
 
         ``role_lookup``: a role is a row in ``mysql.user`` and its grants are in
@@ -246,6 +246,10 @@ class MysqlSession(ClosesConnection):
         because the expiry sends ``DISCARD OLD PASSWORD`` first: a server too
         old to know the statement is refused at plan time, exit 5, rather than
         with a syntax error in the run (invariant 4).
+
+        ``expire_on_reset``: the seen reset sends ``PASSWORD EXPIRE`` with the
+        new hash, then ``DISCARD OLD PASSWORD``, so it comes with
+        ``expire_password`` (#1554, Q8).
         """
         try:
             self._rounds = self._read(_digest_rounds)

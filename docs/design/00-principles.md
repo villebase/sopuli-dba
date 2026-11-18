@@ -153,7 +153,7 @@ capability set, and commands degrade or refuse explicitly rather than silently.
 | `profile_management` | Tool can read password profile parameters. It never alters a profile; it reports the DDL for an operator to run | yes |
 | `password_reuse_policy` | Server may reject a generated password | yes (`PASSWORD_REUSE_*`, verify function) |
 | `expire_password` | Force expiry / end rollover | yes |
-| `expire_on_reset` | Set a new password that must be changed at the next login, which UC-2's seen reset needs | yes. Every product that reports `expire_password` reports it too. SQL Server reports it and not `expire_password`: `MUST_CHANGE` comes only with a new password (#1554) |
+| `expire_on_reset` | Set a new password that must be changed at the next login, which UC-2's seen reset needs | yes |
 | `account_lock_state` | Read and set lock state | yes |
 | `role_lookup` | Which roles exist can be read, so a `role:` predicate naming no role is told apart from one matching nobody (UC-2 §2) | `SELECT ON SYS.DBA_ROLES`, in `02-oracle-privileges.md` §2's grant set. PostgreSQL: always, from `pg_roles`. MySQL: always, from `mysql.user` and `mysql.role_edges`, in `02-mysql-privileges.md` §2.1's grant set. MariaDB: always, from the `mysql.user` view and `mysql.roles_mapping`, in `02-mariadb-privileges.md` §2.1's grant set |
 | `password_value` | The server takes the password value the driver computes on the client (invariant 15) | not reported. MariaDB only: reported unless a password validation plugin is active and `strict_password_validation` is `ON`, which refuses every value (#1310) |
@@ -165,12 +165,18 @@ and none of the others. On MySQL the tool opens the window itself, with
 `RETAIN CURRENT PASSWORD` (UC-1 §6.3), and ends it with `DISCARD OLD
 PASSWORD`. A MariaDB session reports `role_lookup`, `expire_password`,
 `expire_on_reset` and `password_rollover` always, and `password_value` where
-no password validation plugin refuses the value. A SQL Server session
-reports `expire_on_reset` and none of the others. On MariaDB the tool opens a window by sending the new and the old value
-joined by `OR`, and ends it by sending the current value alone (#1271).
-`creds apply`, `creds rotate`, `creds finish-rollover` and `account
-reset-password` refuse a MariaDB target without `password_value` at plan
-time, exit 5, and the driver refuses before it sends.
+no password validation plugin refuses the value. On MariaDB the tool opens a
+window by sending the new and the old value joined by `OR`, and ends it by
+sending the current value alone (#1271). `creds apply`, `creds rotate`,
+`creds finish-rollover` and `account reset-password` refuse a MariaDB target
+without `password_value` at plan time, exit 5, and the driver refuses before
+it sends.
+
+A SQL Server session reports `expire_on_reset` and none of the others:
+`MUST_CHANGE` comes only with a new password, so a login can be given a
+password that must be changed, and its current password cannot be expired
+(#1554). Every other product reports `expire_on_reset` wherever it reports
+`expire_password`.
 
 A command that needs a capability the target lacks must fail with a distinct exit
 code and a message naming the capability and the target — never a generic error.

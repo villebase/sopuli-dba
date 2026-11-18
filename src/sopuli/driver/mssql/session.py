@@ -781,9 +781,10 @@ class MssqlSession(ClosesConnection):
         guardrails, from :meth:`describe_user`, as on every driver.
 
         The unseen path, which sends a value with the policy off, is not
-        written: where it records the flags is open (#1554, Q7). Which
-        capability lets the seen path through the command's plan-time gate is
-        open too (#1554, Q8), so the command does not reach this yet. SQL
+        written yet (#1554). The seen path passes the command's plan-time gate
+        by ``expire_on_reset`` (#1554, Q8), but the registry does not list
+        `account reset-password` for SQL Server yet, so the command does not
+        reach this. SQL
         Server has no rollover window: ``keep_rollover`` is refused by
         capability, and the third row never sends anything.
         """

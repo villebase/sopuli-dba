@@ -143,6 +143,10 @@ MISSING_GRANT_HINT = (
 #:   sent alone ends an expiry (``11_rollover_expiry_probe.py``). It also tells
 #:   `creds apply` it may set a password on an expired account, as on MySQL
 #:   (:func:`sopuli.apply.settled_before_acting`'s ``expiry_cleared``);
+#: - ``expire_on_reset``: the seen reset sends the new value with ``PASSWORD
+#:   EXPIRE`` in one statement (#1272), so the password it sets must be
+#:   changed at the next login. It holds wherever ``expire_password`` does
+#:   (#1554, Q8);
 #: - ``password_rollover``: two methods joined by ``OR`` both log in, on
 #:   10.11.19 to 12.3.3 (``03_dual_password_probe.py``, DP2). The tool opens
 #:   the window itself (#1271), and cannot read whether one is open.

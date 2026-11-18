@@ -2576,6 +2576,44 @@ would reset acme_reset_user on 1 of 1 targets
 ...
 ```
 
+The seen reset itself, from a terminal, with `<PASSWORD>` in place of the
+password it showed. The plan and the warning print once before the question,
+on stderr, and again in the result, on stdout, as on every product:
+
+```
+$ sopuli --config mssql.yaml account reset-password --account acme_reset_user
+Plan: 1 account x 1 target = 1 account   [dev]
+
+ACCOUNT          TARGET     INTENT        SECRET
+acme_reset_user  mssql-dev  password_set  -
+1 warning:
+  targets[0].mssql.trust_server_certificate: target 'mssql-dev' does not verify the server (`trust_server_certificate: true`)
+    hint: anything between this run and the server can present its own certificate and read the password a run sets. Use `trust_server_certificate: false` (the default), with the CA that issued the server's certificate in the operating system's trust store, which ODBC Driver 18 checks the server against
+show the new password for acme_reset_user on mssql-dev on this terminal? [y/N]: y
+password for acme_reset_user, shown once:
+
+    <PASSWORD>
+
+It is expired: the owner must change it at first logon, which is what ends
+your sight of it. It is not stored anywhere and will not be shown again.
+
+Plan: 1 account x 1 target = 1 account   [dev]
+
+ACCOUNT          TARGET     INTENT        SECRET
+acme_reset_user  mssql-dev  password_set  -
+
+ACCOUNT          TARGET     STATE  WAS   DETAIL
+acme_reset_user  mssql-dev  RESET  OPEN  declared by accounts 'acme_reset_user'
+
+reset acme_reset_user on 1 of 1 targets
+
+1 warning:
+  targets[0].mssql.trust_server_certificate: target 'mssql-dev' does not verify the server (`trust_server_certificate: true`)
+    hint: anything between this run and the server can present its own certificate and read the password a run sets. Use `trust_server_certificate: false` (the default), with the CA that issued the server's certificate in the operating system's trust store, which ODBC Driver 18 checks the server against
+```
+
+The login then answers `18488` to that password until its owner changes it.
+
 ### Personal accounts on MariaDB
 
 On the server of §7, as root, make a role and two accounts that hold it:

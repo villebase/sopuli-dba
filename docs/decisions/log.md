@@ -6244,6 +6244,34 @@ the register.
   3. Never unlocking on SQL Server: a reset would leave its owner unable to
      log in, against H4.
 
+  The build raised three more questions, which the maintainer decided on
+  2026-11-18, each as proposed (A):
+
+  6. **What a `role:` rule names on SQL Server.** A server role. Its members
+     are followed through nested server roles, as `report privileges` reads
+     them. The tool login needs `VIEW ANY DEFINITION` to see them; without
+     it, `role_lookup` refuses the rule at plan time, naming the grant.
+     Rejected: `database.role`, which needs `CONNECT ANY DATABASE` too and
+     makes the accounts a rule admits depend on which databases the tool
+     can open; and no support, which leaves rules to name logins.
+  7. **Where the unseen reset records the flags when only a delivery's
+     `vault:` is configured.** Decision 1 puts them in the reset's metadata
+     record, which is written only under `reset_records:`. So where the
+     login's `CHECK_POLICY` is on, the unseen reset is refused at plan time
+     without a `reset_records:` block, naming it, whatever the delivery.
+     Rejected: the flags in the delivery's store, a new kind of document for
+     one product in a store that holds deliveries; and a delivery vault
+     counting with no record kept, which loses the flags if the run stops.
+  8. **Which capability lets the seen reset past its plan-time gate.** A new
+     one, `expire_on_reset`: the database can expire the password it is
+     given. Every product that reports `expire_password` reports it too, and
+     SQL Server reports only it, because `MUST_CHANGE` comes only with a new
+     password. `require_seen_expiry` asks for it, and run schema 1.108 adds
+     it to `scope.capabilities`. Rejected: SQL Server reporting
+     `expire_password`, which `creds apply` and `creds check` read as "a new
+     password ends an expiry", wrong for a login with `MUST_CHANGE` pending;
+     and a product branch in `require_seen_expiry`, against P1.
+
 ## #1549
 
 - **Decided:** 2026-11-16, #1549

@@ -64,6 +64,7 @@ from sopuli.driver.mysql_family.encryption import read_encryption
 from sopuli.driver.mysql_family.errors import COLUMN_ACCESS_DENIED, TABLE_ACCESS_DENIED
 from sopuli.driver.protocol import (
     ACCOUNT_LOCK,
+    EXPIRE_ON_RESET,
     EXPIRE_PASSWORD,
     KEEP_ROLLOVER,
     KEPT_WINDOW_UNREADABLE_MARIADB,
@@ -145,7 +146,7 @@ MISSING_GRANT_HINT = (
 #: - ``password_rollover``: two methods joined by ``OR`` both log in, on
 #:   10.11.19 to 12.3.3 (``03_dual_password_probe.py``, DP2). The tool opens
 #:   the window itself (#1271), and cannot read whether one is open.
-CAPABILITIES = frozenset({ROLE_LOOKUP, EXPIRE_PASSWORD, PASSWORD_ROLLOVER})
+CAPABILITIES = frozenset({ROLE_LOOKUP, EXPIRE_PASSWORD, EXPIRE_ON_RESET, PASSWORD_ROLLOVER})
 
 #: The server refused a read of a table (``1142``) or a column (``1143``).
 REFUSED_READ = frozenset({str(TABLE_ACCESS_DENIED), str(COLUMN_ACCESS_DENIED)})

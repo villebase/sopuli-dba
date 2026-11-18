@@ -42,7 +42,7 @@ from sopuli.config.targets import MARIADB, MYSQL
 from sopuli.driver.guardrails import Review, review
 from sopuli.driver.oracle.accounts import deliberately_locked
 from sopuli.driver.protocol import (
-    EXPIRE_PASSWORD,
+    EXPIRE_ON_RESET,
     KEEP_ROLLOVER,
     KEPT_WINDOW_UNREADABLE,
     KEPT_WINDOW_UNREADABLE_MARIADB,
@@ -147,11 +147,12 @@ class DeliveryUnavailableError(RefusedError):
 
 
 def require_seen_expiry(scope: Scope, *, target: str) -> None:
-    """Refuse a seen reset on a target that cannot expire a password, exit 5
-    (#1201). The expiry is what ends the DBA's exposure (UC-2 §1). Asked at
-    plan time for every target, and again per target for one whose scope plan
-    time could not read."""
-    require_capability(scope, EXPIRE_PASSWORD, target=target, hint=SEEN_NEEDS_EXPIRY)
+    """Refuse a seen reset on a target that cannot set a password that must
+    be changed at the next login, ``expire_on_reset``, exit 5 (#1201; #1554,
+    Q8). The expiry is what ends the DBA's exposure (UC-2 §1). Asked at plan
+    time for every target, and again per target for one whose scope plan time
+    could not read."""
+    require_capability(scope, EXPIRE_ON_RESET, target=target, hint=SEEN_NEEDS_EXPIRY)
 
 
 def refuse_kept_window(delivery: Delivery, *, keep_rollover: bool) -> None:

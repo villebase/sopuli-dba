@@ -145,8 +145,15 @@ def password_value_hint(checks: tuple[str, ...] = ()) -> str:
 #: Force expiry, or end a rollover window early.
 EXPIRE_PASSWORD = "expire_password"
 
-#: The hint for a seen reset on a target without :data:`EXPIRE_PASSWORD`,
-#: given at plan time and by a driver alike (#1201).
+#: Set a new password that must be changed at the next login, which UC-2's
+#: seen reset needs (#1554, Q8). Every product that reports
+#: :data:`EXPIRE_PASSWORD` reports this too. SQL Server reports only this:
+#: ``MUST_CHANGE`` comes only with a new password, so it cannot expire the
+#: password a login has.
+EXPIRE_ON_RESET = "expire_on_reset"
+
+#: The hint for a seen reset on a target without :data:`EXPIRE_ON_RESET`,
+#: given at plan time and by a driver alike (#1201, #1554).
 SEEN_NEEDS_EXPIRY = (
     "the seen path expires the password so that the copy the DBA saw stops working "
     "at the owner's first login (UC-2 §1), and this target cannot expire one; use an "
@@ -202,6 +209,7 @@ CAPABILITIES = frozenset(
         PROFILE_MANAGEMENT,
         PASSWORD_REUSE_POLICY,
         EXPIRE_PASSWORD,
+        EXPIRE_ON_RESET,
         ACCOUNT_LOCK_STATE,
         ROLE_LOOKUP,
         PASSWORD_VALUE,

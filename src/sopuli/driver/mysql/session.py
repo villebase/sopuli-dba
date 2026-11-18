@@ -66,6 +66,7 @@ from sopuli.driver.mysql_family.errors import (
 from sopuli.driver.protocol import (
     ACCOUNT_LOCK,
     ACCOUNT_UNLOCK,
+    EXPIRE_ON_RESET,
     EXPIRE_PASSWORD,
     EXPIRY_UNAVAILABLE,
     KEEP_ROLLOVER,
@@ -252,7 +253,7 @@ class MysqlSession(ClosesConnection):
             if error.code != str(UNKNOWN_SYSTEM_VARIABLE):
                 raise
             return frozenset({ROLE_LOOKUP})
-        return frozenset({EXPIRE_PASSWORD, PASSWORD_ROLLOVER, ROLE_LOOKUP})
+        return frozenset({EXPIRE_PASSWORD, EXPIRE_ON_RESET, PASSWORD_ROLLOVER, ROLE_LOOKUP})
 
     def _not_written(self, what: str) -> NotWrittenError:
         return NotWrittenError(

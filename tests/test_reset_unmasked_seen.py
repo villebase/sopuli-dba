@@ -21,7 +21,7 @@ from sopuli.config.loading import build_config
 from sopuli.config.model import Config, Delivery, ManualDelivery, WrappedDelivery
 from sopuli.driver.protocol import (
     ENCRYPTION_TLS,
-    EXPIRE_PASSWORD,
+    EXPIRE_ON_RESET,
     SEEN_RESET_QUOTE,
     Encryption,
     Scope,
@@ -304,7 +304,8 @@ class FakeLogin:
         return Scope(
             type="server",
             read_write=True,
-            capabilities=frozenset({EXPIRE_PASSWORD}),
+            # SQL Server's: the seen reset's gate, and not `expire_password`.
+            capabilities=frozenset({EXPIRE_ON_RESET}),
             encryption=Encryption(method=ENCRYPTION_TLS),
         )
 

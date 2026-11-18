@@ -1,6 +1,6 @@
 """UC-2 on PostgreSQL in tier 0: what `reset_password` and `suspend_account`
-send, what they refuse before sending anything, and the refusal of
-`expire_password` (#1201).
+send, what they refuse before sending anything: the seen reset, by
+`expire_on_reset`, and `expire_password` (#1201, #1554).
 
 A scripted connection returns the verifier, as in `test_postgres_password.py`.
 The live test (`test_postgres_reset_live.py`) has libpq compute it and logs in
@@ -134,7 +134,7 @@ def test_a_seen_reset_is_refused_by_capability_before_anything_is_sent() -> None
         session.reset_password(ROLE, Secret(PASSWORD), expire=True)
 
     assert refused.value.exit_code == ExitCode.UNSUPPORTED_CAPABILITY
-    assert "expire_password" in refused.value.message
+    assert "expire_on_reset" in refused.value.message
     assert session.connection.sent == []
 
 

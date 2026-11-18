@@ -23,6 +23,7 @@ from sopuli.config.targets import MSSQL_OPTIONAL
 from sopuli.driver.mssql import groups
 from sopuli.driver.protocol import (
     ENCRYPTION_TLS,
+    EXPIRE_ON_RESET,
     SERVER,
     UNKNOWN,
     Cursor,
@@ -103,5 +104,9 @@ def observe(cursor: Cursor, *, target: str, settings: TargetMssql) -> Scope:
         db_release=str(version),
         open_mode=READ_WRITE if can_write else READ_ONLY,
         read_write=can_write,
+        # `MUST_CHANGE` with a new password, which UC-2's seen reset sends;
+        # never `expire_password`, because it comes only with a new
+        # password (#1554, Q8).
+        capabilities=frozenset({EXPIRE_ON_RESET}),
         encryption=encryption(settings),
     )

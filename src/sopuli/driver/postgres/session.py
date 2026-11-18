@@ -63,6 +63,7 @@ from sopuli.driver.postgres.verification import REQUIRED_METHOD, login_outcome
 from sopuli.driver.protocol import (
     ACCOUNT_LOCK,
     ACCOUNT_UNLOCK,
+    EXPIRE_ON_RESET,
     EXPIRE_PASSWORD,
     EXPIRY_UNAVAILABLE,
     OFFLINE_VERIFY,
@@ -416,7 +417,7 @@ class PostgresSession(ClosesConnection):
         """
         if expire:
             require_capability(
-                self.scope(), EXPIRE_PASSWORD, target=self.target.name, hint=SEEN_NEEDS_EXPIRY
+                self.scope(), EXPIRE_ON_RESET, target=self.target.name, hint=SEEN_NEEDS_EXPIRY
             )
         admit(secret)
         state = self._role_to_set(account)

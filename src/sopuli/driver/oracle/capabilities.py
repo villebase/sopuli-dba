@@ -49,6 +49,7 @@ from sopuli.driver.protocol import (
     ENCRYPTION_NATIVE,
     ENCRYPTION_NONE,
     ENCRYPTION_TLS,
+    EXPIRE_ON_RESET,
     EXPIRE_PASSWORD,
     OFFLINE_VERIFY,
     PASSWORD_REUSE_POLICY,
@@ -139,6 +140,7 @@ PROBES: dict[str, str] = {
 #: which is worse than saying so.
 STRUCTURAL: dict[str, str] = {
     EXPIRE_PASSWORD: "ALTER USER ... PASSWORD EXPIRE exists on every supported release",
+    EXPIRE_ON_RESET: "ALTER USER ... IDENTIFIED BY ... PASSWORD EXPIRE likewise",
     ACCOUNT_LOCK_STATE: "ACCOUNT_STATUS and ALTER USER ... ACCOUNT LOCK likewise",
 }
 

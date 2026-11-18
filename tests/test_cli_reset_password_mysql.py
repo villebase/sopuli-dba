@@ -21,6 +21,7 @@ from sopuli.cli import cli
 from sopuli.driver.mysql.roles import MandatoryRoleError
 from sopuli.driver.protocol import (
     ENCRYPTION_TLS,
+    EXPIRE_ON_RESET,
     EXPIRE_PASSWORD,
     KEEP_ROLLOVER,
     ROLE_LOOKUP,
@@ -66,7 +67,7 @@ class FakeSession:
         return Scope(
             type="server",
             read_write=True,
-            capabilities=frozenset({EXPIRE_PASSWORD, ROLE_LOOKUP}),
+            capabilities=frozenset({EXPIRE_PASSWORD, EXPIRE_ON_RESET, ROLE_LOOKUP}),
             encryption=Encryption(method=ENCRYPTION_TLS),
         )
 

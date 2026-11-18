@@ -681,7 +681,13 @@ account and the target and holds the flags alone. It sets them back after the
 change, and its own record then drops them. Where they could not be set back,
 the record keeps them, the row is `ERROR`, and the next reset of that login
 sets them back, without reading the login again: the login reads with its
-policy off then. A record whose `policy_flags` is not that pair of booleans
+policy off then. A record whose flags meet a login whose policy reads on is
+from a reset that stopped before its change, and the login is read again.
+Where the change did not happen, because the server refused it or it was
+never sent, the reset takes the flags it wrote back out. Where the connection
+was lost after it went out, the record keeps them, and the row says so.
+`account list` reads a record that holds no `reset_at` and nothing but the
+account, the target and the flags as no reset to date. A record whose `policy_flags` is not that pair of booleans
 stops the reset, and is not written over, because it may be the only copy.
 The record format has no version: this is one more optional key.
 

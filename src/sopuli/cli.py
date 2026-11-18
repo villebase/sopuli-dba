@@ -3049,10 +3049,21 @@ class _KeptFlags:
 
 
 def _flag_keeper(session: Any) -> _FlagKeeper | None:
-    """``session`` where it keeps its login's policy flags, else ``None``."""
-    if isinstance(session, _FlagKeeper) and session.keeps_policy_flags:
-        return session
-    return None
+    """``session`` where it keeps its login's policy flags, else ``None``.
+
+    A session that says it keeps them (`creds apply` asks the same
+    attribute) and lacks the reset's methods is a fault, not a session
+    without flags: running the unseen reset on it would turn a policy off with
+    nothing recorded."""
+    if not getattr(session, "keeps_policy_flags", False):
+        return None
+    if not isinstance(session, _FlagKeeper):
+        raise DriverError(
+            "this session keeps its login's policy flags and cannot read or set them back "
+            "for a reset",
+            hint="this is a fault in sopuli: the driver is missing reset_policy_flags",
+        )
+    return session
 
 
 def _flags_for_reset(
@@ -3108,13 +3119,14 @@ def _record_flags_before(
     path: str | None,
     account: str,
     target: str,
-) -> None:
-    """Write the flags into the reset record before the change turns the
-    policy off (§6.3). Raises where they cannot be written, so nothing is
-    delivered or sent. Nothing to write where the record already holds them,
-    or where both flags are off."""
+    secret: Secret,
+) -> bool:
+    """Write the flags into the reset record just before the change turns the
+    policy off (§6.3), and say whether this call wrote them. Raises where
+    they cannot be written, so the change is not sent. Nothing to write where
+    the record already holds them, or where both flags are off."""
     if kept.recorded or not kept.need_restoring:
-        return
+        return False
     journal = _reset_journal(run, config) if path is not None else None
     if path is None or journal is None:
         raise DriverError(
@@ -3123,9 +3135,53 @@ def _record_flags_before(
             hint="this is a fault in sopuli: the run gave the reset no record to write to",
         )
     document = reset_record.with_flags(kept.stored, kept.flags, account=account, target=target)
+    # Invariant 2 against the document, as the record's own write holds it.
+    reset_record.assert_no_secret(document, secret=secret)
     # Unguarded, as the record's own write is: the advisory lock serialises
     # two resets of one account (UC-2 §3.3).
     journal.write(path, document, cas=None)
+    return True
+
+
+def _unrecord_flags(
+    kept: _KeptFlags,
+    error: Exception,
+    *,
+    run: Invocation,
+    config: Config,
+    path: str | None,
+    account: str,
+    target: str,
+) -> str | None:
+    """After a change that failed, the flags this run wrote are taken out of
+    the record where the change did not happen, so a later reset does not set
+    back flags a DBA may have changed since. Returns what the row should add.
+
+    The value's statement is atomic: one the server refused, or one never
+    sent, changed nothing. One whose connection was lost after it went out
+    (``connectivity``) may have committed with the policy off, so the record
+    keeps the flags for the next reset, and the row says so.
+    """
+    if _carried(error) and getattr(error, "category", None) == "connectivity":
+        return (
+            "the value may have been set with the login's policy off; the reset record "
+            "keeps its CHECK_POLICY and CHECK_EXPIRATION, and the next reset of this "
+            "login sets them back"
+        )
+    journal = _reset_journal(run, config) if path is not None else None
+    if path is None or journal is None:
+        return None
+    before = (
+        kept.stored if isinstance(kept.stored, Mapping) else {"account": account, "target": target}
+    )
+    try:
+        journal.write(path, before, cas=None)
+    except Exception as failure:  # noqa: BLE001 -- the reset has already failed
+        return (
+            "the reset record still holds the login's CHECK_POLICY and CHECK_EXPIRATION "
+            f"from before this run, which nothing changed: {_finding(failure).message}"
+        )
+    return None
 
 
 def _write_reset_record(
@@ -3368,16 +3424,18 @@ _RESET_STATEMENTS = (ACCOUNT_UNLOCK, PASSWORD_SET, ROLLOVER_FINISH)
 
 
 def _with_restore(
-    changes: Sequence[AccountChange], unrestored: Error | None
+    changes: Sequence[AccountChange], unrestored: Error | None, *, needed: bool = True
 ) -> tuple[AccountChange, ...]:
     """``changes``, with the set's detail saying whether the login's policy
     flags were set back after it (§6.3), so the run document tells a restored
-    login from one left with its policy off."""
-    note = (
-        "CHECK_POLICY and CHECK_EXPIRATION set back"
-        if unrestored is None
-        else "CHECK_POLICY and CHECK_EXPIRATION not set back, so the policy is off"
-    )
+    login from one left with its policy off. ``needed`` is false where both
+    were off before, and stay off."""
+    if not needed:
+        note = "CHECK_POLICY and CHECK_EXPIRATION were off before, and stay off"
+    elif unrestored is None:
+        note = "CHECK_POLICY and CHECK_EXPIRATION set back"
+    else:
+        note = "CHECK_POLICY and CHECK_EXPIRATION not set back, so the policy is off"
     return tuple(
         replace(one, detail=f"password value set; {note}") if one.action == PASSWORD_SET else one
         for one in changes
@@ -3528,9 +3586,10 @@ def _reset_one(
         # a password inside this target's byte limit is asked without drawing
         # one. The real run asks them here as well, which is still the last
         # point before a password is drawn.
-        keeper = _flag_keeper(session)
+        keeper: _FlagKeeper | None = None
         kept: _KeptFlags | None = None
         try:
+            keeper = _flag_keeper(session)
             # Asked again for a target `_require_seen_expiry` could not read.
             if delivery.is_seen:
                 reset.require_seen_expiry(session.scope(), target=target.name)
@@ -3609,19 +3668,9 @@ def _reset_one(
         # Set before the DDL, so a row for a DDL that failed still says what the
         # delivery could not delete (SOPULI-W061).
         receipt: Receipt | None = None
+        wrote_flags = False
         try:
             secret = generate(policy, limit=limit, target=target.name)
-            # Before anything is delivered or sent: a flag record that cannot be
-            # written stops the reset with the login as it was (§6.3).
-            if kept is not None:
-                _record_flags_before(
-                    kept,
-                    run=run,
-                    config=config,
-                    path=record_at,
-                    account=account,
-                    target=target.name,
-                )
             # **UC-2 6.4's other order, and this is the branch that makes it
             # two orders rather than one.** The rule is that the
             # irreversible step goes last, and what is irreversible differs by
@@ -3651,6 +3700,19 @@ def _reset_one(
             # the server refuses has still carried the password across the
             # network, and one the driver refused first has not.
             sent = session.scope().encryption
+            # After delivery and just before the change: a flag record that
+            # cannot be written stops the reset with the login as it was, and
+            # one written for a change that then fails is taken out (§6.3).
+            if kept is not None:
+                wrote_flags = _record_flags_before(
+                    kept,
+                    run=run,
+                    config=config,
+                    path=record_at,
+                    account=account,
+                    target=target.name,
+                    secret=secret,
+                )
             try:
                 changes = session.reset_password(
                     account,
@@ -3683,12 +3745,25 @@ def _reset_one(
                 changes, partial = error.completed, error
         except Exception as error:  # noqa: BLE001 -- a per-target finding
             reported = _finding(error)
+            flags_note = (
+                _unrecord_flags(
+                    kept,
+                    error,
+                    run=run,
+                    config=config,
+                    path=record_at,
+                    account=account,
+                    target=target.name,
+                )
+                if kept is not None and wrote_flags
+                else None
+            )
             return _Reset(
                 account=account,
                 target=target.name,
                 state=check_states.ERROR,
                 changed=False,
-                detail=reported.message,
+                detail=reported.message + (f" -- {flags_note}" if flags_note else ""),
                 status=status,
                 overridden=overridden,
                 caveats=caveats,
@@ -3721,13 +3796,14 @@ def _reset_one(
         # leaves the password set and the policy off, so the row says so, and
         # the record keeps the flags for the next reset to set back.
         unrestored: Error | None = None
-        if kept is not None and keeper is not None and kept.need_restoring:
-            try:
-                # The name the server stores, which step 2 changed.
-                keeper.restore_policy(state.name, kept.flags)
-            except Exception as error:  # noqa: BLE001 -- the password is set; say so
-                unrestored = _finding(error)
-            changes = _with_restore(changes, unrestored)
+        if kept is not None and keeper is not None:
+            if kept.need_restoring:
+                try:
+                    # The name the server stores, which step 2 changed.
+                    keeper.restore_policy(state.name, kept.flags)
+                except Exception as error:  # noqa: BLE001 -- the password is set; say so
+                    unrestored = _finding(error)
+            changes = _with_restore(changes, unrestored, needed=kept.need_restoring)
         problems: list[str] = []
         if unclosed is not None:
             problems.append(
@@ -4769,11 +4845,11 @@ def _reset_at(
     if (
         moment is None
         and isinstance(stored.data, dict)
-        and reset_record.POLICY_FLAGS in stored.data
+        and set(stored.data) - {reset_record.POLICY_FLAGS} == {"account", "target"}
     ):
-        # A SQL Server login's flags, written before an unseen reset's change,
-        # with no reset finished since (§6.3): no reset to date, and nothing
-        # wrong with the journal.
+        # What an unseen reset of a SQL Server login writes before its change,
+        # or leaves after one that did not happen, with no reset finished
+        # since (§6.3): no reset to date, and nothing wrong with the journal.
         return None
     if not isinstance(moment, str):
         unread.failed(records.vault, f"the record at {path!r} holds no `reset_at` string")

@@ -365,26 +365,66 @@ def test_a_preview_reads_the_flags_and_writes_nothing(
     assert records(journal) == []
 
 
-def test_account_list_reads_a_record_of_flags_alone_as_no_reset(
+class LostError(DriverError):
+    category = "connectivity"
+
+
+def failing(session: FlagSession, error: DriverError) -> FlagSession:
+    """``session``, whose value statement raises ``error``."""
+
+    def fails(account: str, secret: Secret, **_: Any) -> tuple[AccountChange, ...]:
+        session.events.append(("sent", records(session.journal)))
+        raise error
+
+    session.reset_password = fails  # type: ignore[method-assign]
+    return session
+
+
+def test_a_change_the_server_refused_takes_its_flags_out_of_the_record(
     write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch, journal: MemoryStore
 ) -> None:
-    """A first reset that stopped before its own record leaves the flags
-    alone in it. No reset has finished, which is not a journal it cannot
-    read (`SOPULI-W054`)."""
-    session = FlagSession(ON, journal)
-    session.restore_fails = True
+    """The statement is atomic, so the login's policy never went off. The
+    flags written for it are taken out, so a later reset does not set back
+    flags a DBA may have changed since. On a first reset that leaves the
+    account and the target alone, which `account list` reads as no reset,
+    not as a journal it cannot read (`SOPULI-W054`)."""
+    refused = DriverError("the server refused it")
+    refused.password_sent = True
+    session = opened(monkeypatch, failing(FlagSession(ON, journal), refused))
 
-    def stops(account: str, secret: Secret, **_: Any) -> tuple[AccountChange, ...]:
-        raise DriverError("the connection was lost")
+    result = run(write_config, JOURNALLED)
 
-    session.reset_password = stops  # type: ignore[method-assign]
-    opened(monkeypatch, session)
-    run(write_config, JOURNALLED)
+    assert result.exit_code != ExitCode.SUCCESS, result.output
+    sent = next(one for one in session.events if isinstance(one, tuple))
+    assert [one.get("policy_flags") for one in sent[1]] == [ON.to_record()]
     [record] = records(journal)
-    assert set(record) == {"account", "target", "policy_flags"}
+    assert record == {"account": ACCOUNT, "target": TARGET}
 
     config = load_config(write_config(JOURNALLED))
     [target] = config.expanded_targets
     unread = _JournalFailures()
     assert _reset_at(journal, config, target, ACCOUNT, unread=unread) is None
     assert unread.first is None
+
+
+def test_a_connection_lost_after_the_change_went_out_keeps_the_flags(
+    write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch, journal: MemoryStore
+) -> None:
+    """It may have committed with the policy off, so the record keeps the
+    flags for the next reset, and the row says so."""
+    lost = LostError("the connection was lost")
+    lost.password_sent = True
+    opened(monkeypatch, failing(FlagSession(ON, journal), lost))
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--config", str(write_config(JOURNALLED)), "account", "reset-password",
+            "--account", ACCOUNT,
+        ],
+    )  # fmt: skip
+
+    assert result.exit_code != ExitCode.SUCCESS, result.output
+    [record] = records(journal)
+    assert record["policy_flags"] == ON.to_record()
+    assert "may have been set with the login's policy off" in result.output

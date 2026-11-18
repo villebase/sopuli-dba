@@ -893,7 +893,7 @@ class MssqlSession(ClosesConnection):
                 PASSWORD_SET,
                 changed=True,
                 status=status,
-                detail="password value set, with CHECK_POLICY off until its flags are set back",
+                detail="password value set, with CHECK_POLICY = OFF in its statement",
             ),
             AccountChange(
                 ROLLOVER_FINISH,

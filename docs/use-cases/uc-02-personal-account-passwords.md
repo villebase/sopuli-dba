@@ -501,7 +501,11 @@ is ordinary: both say the same thing about the same account, with the same
 guarantee. A `policy:` is different. Taking the first match would make the
 password policy depend on the order in which somebody wrote two entries. That is
 refused at **plan time**, not at load, naming both rules, because whether a
-predicate admits an account is a fact about a database.
+predicate admits an account is a fact about a database. A rule with no
+`policy:` names none, so it never decides: the reset draws from the one
+policy the admitting rules name, and from `defaults.policy` only where none
+names one, whatever order the rules are written in
+([#1605](../decisions/log.md#1605)).
 
 **Refusals follow the asymmetry in `01-configuration.md` §2.** A predicate that
 names a profile or role that **does not exist** is refused, because that is a

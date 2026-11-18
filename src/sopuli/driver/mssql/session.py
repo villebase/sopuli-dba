@@ -180,15 +180,25 @@ class MustChangeError(DriverError):
 
     about_account = True
 
-    def __init__(self, account: str, *, target: str) -> None:
+    def __init__(self, account: str, *, target: str, hint: str | None = None) -> None:
         super().__init__(
             f'login "{account}" on target "{target}" must change its password at its next '
             "login, so it cannot take a value the tool computes",
-            hint=(
+            hint=hint
+            or (
                 "the server refuses CHECK_POLICY = OFF while MUST_CHANGE is pending. Let "
                 "the owner log in and change it, or clear it by hand, then run again"
             ),
         )
+
+
+#: Why an unseen reset refuses a login whose ``MUST_CHANGE`` is pending, and
+#: what works instead (#1554, decision 2).
+UNSEEN_MUST_CHANGE = (
+    "the server refuses CHECK_POLICY = OFF while MUST_CHANGE is pending, so the unseen "
+    "reset cannot send its value. The seen reset, `delivery.method: manual`, keeps the "
+    "policy on and works on such a login (02-mssql-privileges.md section 6.3)"
+)
 
 
 def _not_tried(detail: str) -> VerifyResult:
@@ -628,14 +638,17 @@ class MssqlSession(ClosesConnection):
         finding, so it passes here."""
         self._changeable_login(account)
 
-    def _changeable_login(self, account: str) -> accounts.Login | None:
+    def _changeable_login(
+        self, account: str, *, must_change_hint: str | None = None
+    ) -> accounts.Login | None:
         """The login's row, or ``None`` where there is none. Raises
-        :class:`MustChangeError` where its ``MUST_CHANGE`` is pending."""
+        :class:`MustChangeError` where its ``MUST_CHANGE`` is pending, with
+        ``must_change_hint`` where the caller has a better one."""
         login = self._read(
             lambda cursor: accounts.read_one(cursor, account, target=self.target.name)
         )
         if login is not None and login.must_change:
-            raise MustChangeError(login.name, target=self.target.name)
+            raise MustChangeError(login.name, target=self.target.name, hint=must_change_hint)
         return login
 
     #: The command records the flags :meth:`policy_flags` reads, before
@@ -653,7 +666,19 @@ class MssqlSession(ClosesConnection):
         ``MUST_CHANGE`` is pending (:class:`MustChangeError`), and a server
         whose value version cannot be read (:meth:`hash_version`).
         """
-        login = self._changeable_login(account)
+        return self._flags_before_change(account)
+
+    def reset_policy_flags(self, account: str) -> PolicyFlags:
+        """:meth:`policy_flags` for UC-2's unseen reset, which the command
+        records in the reset record (§6.3). A login whose ``MUST_CHANGE`` is
+        pending is refused naming the seen reset, which works on it (#1554,
+        decision 2)."""
+        return self._flags_before_change(account, must_change_hint=UNSEEN_MUST_CHANGE)
+
+    def _flags_before_change(
+        self, account: str, *, must_change_hint: str | None = None
+    ) -> PolicyFlags:
+        login = self._changeable_login(account, must_change_hint=must_change_hint)
         if login is None:
             raise _no_login(account, target=self.target.name)
         # The value's version, asked here so that a server that takes neither,
@@ -770,26 +795,29 @@ class MssqlSession(ClosesConnection):
     def reset_password(
         self, account: str, secret: Secret, *, expire: bool, keep_rollover: bool = False
     ) -> tuple[AccountChange, ...]:
-        """UC-2 §4.1's seen path on SQL Server: one statement, with
-        ``MUST_CHANGE``, and ``UNLOCK`` where a lockout is in place
-        (``02-mssql-privileges.md`` §6.3; #1554, decision 3).
+        """UC-2's reset on SQL Server (``02-mssql-privileges.md`` §6.3; #1554).
 
-        The password goes in clear, the exception to invariant 15 that #1538's
-        decision 2 accepts (:class:`~.password.MustChange`). A disabled login
-        is refused before anything is sent: `account suspend` set it, and a
-        reset does not undo that (H4). The tool's own login is refused by the
-        guardrails, from :meth:`describe_user`, as on every driver.
+        **The seen path** (``expire``) sends one statement, with
+        ``MUST_CHANGE``, and ``UNLOCK`` where a lockout is in place (decision
+        3). The password goes in clear, the exception to invariant 15 that
+        #1538's decision 2 accepts (:class:`~.password.MustChange`).
 
-        The unseen path, which sends a value with the policy off, is not
-        written yet (#1554). The seen path passes the command's plan-time gate
-        by ``expire_on_reset`` (#1554, Q8), but the registry does not list
+        **The unseen path** sends the value with the policy off, §6.2's step
+        2 (:meth:`set_password`), which also ends a lockout. The command has
+        recorded the login's flags (:meth:`policy_flags`) before it calls
+        this, and sets them back after (:meth:`restore_policy`). A login whose
+        ``MUST_CHANGE`` is pending cannot take a value, and is refused before
+        anything is sent, naming the seen reset (decision 2). It makes no
+        login with the new password (H4).
+
+        On both paths a disabled login is refused before anything is sent:
+        `account suspend` set it, and a reset does not undo that (H4). The
+        tool's own login is refused by the guardrails, from
+        :meth:`describe_user`, as on every driver. The registry does not list
         `account reset-password` for SQL Server yet, so the command does not
-        reach this. SQL
-        Server has no rollover window: ``keep_rollover`` is refused by
-        capability, and the third row never sends anything.
+        reach this. SQL Server has no rollover window: ``keep_rollover`` is
+        refused by capability, and the third row never sends anything.
         """
-        if not expire:
-            self._not_written("reset a password on the unseen path")
         if keep_rollover:
             self.require_rollover(account)
         require_read_write(
@@ -806,6 +834,8 @@ class MssqlSession(ClosesConnection):
                     "LOGIN … ENABLE first if that is what you mean (H4)"
                 ),
             )
+        if not expire:
+            return self._reset_by_value(login, secret, status)
         statement = MustChange(login.name, secret, unlock=login.locked_out)
         with self._cursor() as cursor:
             try:
@@ -831,6 +861,39 @@ class MssqlSession(ClosesConnection):
                 changed=True,
                 status=status,
                 detail="password set, MUST_CHANGE, with CHECK_POLICY and CHECK_EXPIRATION on",
+            ),
+            AccountChange(
+                ROLLOVER_FINISH,
+                changed=False,
+                status=status,
+                detail="SQL Server has no rollover window",
+            ),
+        )
+
+    def _reset_by_value(
+        self, login: accounts.Login, secret: Secret, status: str
+    ) -> tuple[AccountChange, ...]:
+        """The unseen path's change: the value, with the policy off, which
+        ends a lockout too (WP4). The command sets the flags back."""
+        if login.must_change:
+            raise MustChangeError(login.name, target=self.target.name, hint=UNSEEN_MUST_CHANGE)
+        self.set_password(login.name, secret)
+        return (
+            AccountChange(
+                ACCOUNT_UNLOCK,
+                changed=login.locked_out,
+                status=status,
+                detail=(
+                    "the login was locked out after failed logins; turning the policy off ended it"
+                    if login.locked_out
+                    else "the login was not locked out"
+                ),
+            ),
+            AccountChange(
+                PASSWORD_SET,
+                changed=True,
+                status=status,
+                detail="password value set, with CHECK_POLICY off until its flags are set back",
             ),
             AccountChange(
                 ROLLOVER_FINISH,

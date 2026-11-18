@@ -638,9 +638,11 @@ with no store configured is **not refused**; it warns (§3.4). SQL Server's
 unseen reset is the exception: there the record also holds the login's
 `CHECK_POLICY` and `CHECK_EXPIRATION` before the change, so that a stopped run
 can restore them. An unseen reset of a SQL Server login whose `CHECK_POLICY`
-is on is refused at plan time where no store is configured
+is on is refused where no `reset_records:` block is configured, whatever the
+delivery: the delivery's own store holds no record
 ([`02-mssql-privileges.md`](../design/02-mssql-privileges.md) §6.3,
-[#1554](../decisions/log.md#1554), open: #1554).
+[#1554](../decisions/log.md#1554), Q7). The run refuses it before anything
+is sent; the plan-time refusal is not built yet (open: #1554).
 
 There is one record per **(target, account)**, under a prefix of its own. This is
 not the unit UC-1 locks on, and the difference matters. UC-1 keys on the vault
@@ -666,6 +668,18 @@ The record holds what happened:
 
 That record is from a tier-1 run, with the host and the operating-system user
 replaced.
+
+**`policy_flags` is a SQL Server login's flags while its policy is off**:
+`{"check_policy": true, "check_expiration": true}`, the server's own option
+names. The unseen reset writes them into the record before the change turns
+the policy off, into the record already at the path or into one that names the
+account and the target and holds the flags alone. It sets them back after the
+change, and its own record then drops them. Where they could not be set back,
+the record keeps them, the row is `ERROR`, and the next reset of that login
+sets them back, without reading the login again: the login reads with its
+policy off then. A record whose `policy_flags` is not that pair of booleans
+stops the reset, and is not written over, because it may be the only copy.
+The record format has no version: this is one more optional key.
 
 **`audited` and `audited_detail` are what §1 describes**: whether the database
 audits the DBA's routes to acting as the person, and why. They are the run

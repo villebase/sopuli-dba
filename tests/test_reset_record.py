@@ -124,6 +124,9 @@ def test_there_is_no_field_a_password_could_go_in() -> None:
         "correlation_id",
         "audited",
         "audited_detail",
+        # Two booleans, a SQL Server login's CHECK_POLICY and CHECK_EXPIRATION
+        # while its policy is off (#1554): nothing a password could go in.
+        "policy_flags",
     }
 
 

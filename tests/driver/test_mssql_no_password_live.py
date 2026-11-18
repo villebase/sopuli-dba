@@ -263,6 +263,41 @@ def test_a_change_sends_and_leaves_the_password_nowhere(
         assert password not in text, f"the password is in the {place}"
 
 
+def test_the_unseen_reset_sends_a_value_and_sets_the_flags_back(
+    recorded: tuple[Any, Recorder, Sent], live_mssql: Any
+) -> None:
+    """UC-2's unseen reset (#1554, decision 1): §6.2's steps 1, 2 and 4, as
+    the command runs them. The password never reaches the server, the login
+    then logs in with it, and both flags are on again."""
+    session, recorder, sent = recorded
+    password = f"Acme-np-{uuid.uuid4().hex[:12]}"
+
+    flags = session.reset_policy_flags(LOGIN)
+    session.reset_password(LOGIN, Secret(password), expire=False)
+    assert session.restore_policy(LOGIN, flags)
+
+    assert sent.holds(password) == [], "the driver sent the password"
+    kept = recorder.kept(mark(session.connection))
+    for place, text in kept.items():
+        assert password not in text, f"the password is in the {place}"
+
+    live_mssql.connect_as(LOGIN, password).close()
+    admin = live_mssql.connect()
+    try:
+        policy, expiration = (
+            admin.cursor()
+            .execute(
+                "SELECT is_policy_checked, is_expiration_checked FROM sys.sql_logins "
+                "WHERE name = ?",
+                LOGIN,
+            )
+            .fetchone()
+        )
+    finally:
+        admin.close()
+    assert (policy, expiration) == (True, True)
+
+
 @pytest.mark.parametrize("flags", ["on", "off"])
 def test_the_seen_reset_leaves_its_password_nowhere_on_the_server(
     recorded: tuple[Any, Recorder, Sent], live_mssql: Any, flags: str

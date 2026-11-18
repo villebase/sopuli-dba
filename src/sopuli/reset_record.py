@@ -42,6 +42,7 @@ argument, which is what keeps the whole module tier 0 (`04-testing.md` §4).
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -53,6 +54,12 @@ from sopuli.config.secret_refs import TRAVERSAL, normalise_path
 from sopuli.config.targets import USER_AT_HOST_TYPES
 from sopuli.lock.keys import LockKey
 from sopuli.lock.record import Holder
+from sopuli.policy_flags import (
+    CHECK_EXPIRATION,
+    CHECK_POLICY,
+    PolicyFlags,
+    PolicyFlagsUnreadableError,
+)
 from sopuli.secrets import Secret
 
 
@@ -119,6 +126,11 @@ class ResetRecord:
     audited: bool | str | None = None
     #: Why, in the driver's words. Present exactly when ``audited`` is.
     audited_detail: str | None = None
+    #: A SQL Server login's ``CHECK_POLICY`` and ``CHECK_EXPIRATION`` from
+    #: before an unseen reset turned the policy off, where the reset could not
+    #: set them back. ``None``, and the key omitted, once they are back
+    #: (``02-mssql-privileges.md`` §6.3; #1554, decision 1).
+    policy_flags: PolicyFlags | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """The document to write.
@@ -146,7 +158,45 @@ class ResetRecord:
         if self.audited is not None:
             data["audited"] = self.audited
             data["audited_detail"] = self.audited_detail
+        if self.policy_flags is not None:
+            data[POLICY_FLAGS] = self.policy_flags.to_record()
         return data
+
+
+#: The key that holds a login's policy flags while its policy is off.
+POLICY_FLAGS = "policy_flags"
+
+
+def recorded_flags(document: Any, *, target: str, path: str) -> PolicyFlags | None:
+    """The policy flags a record holds, or ``None`` where it holds none.
+
+    Raises :class:`~sopuli.policy_flags.PolicyFlagsUnreadableError` for a
+    value of the wrong shape: it may be the only copy of the login's flags, so
+    the reset is refused rather than written over it, as UC-1's change does
+    (:func:`sopuli.policy_flags.recorded`).
+    """
+    if not isinstance(document, Mapping) or document.get(POLICY_FLAGS) is None:
+        return None
+    node = document[POLICY_FLAGS]
+    if (
+        not isinstance(node, Mapping)
+        or set(node) != {CHECK_POLICY, CHECK_EXPIRATION}
+        or not all(isinstance(value, bool) for value in node.values())
+    ):
+        raise PolicyFlagsUnreadableError(target, (path, POLICY_FLAGS))
+    return PolicyFlags(check_policy=node[CHECK_POLICY], check_expiration=node[CHECK_EXPIRATION])
+
+
+def with_flags(document: Any, flags: PolicyFlags, *, account: str, target: str) -> dict[str, Any]:
+    """``document``, the record already at the path, with ``flags`` added: what
+    an unseen reset writes before it turns the policy off. Where there is no
+    record yet, one that names the account and the target and holds the flags
+    alone, which the reset's own record replaces once the flags are back."""
+    base = dict(document) if isinstance(document, Mapping) else {}
+    base.setdefault("account", account)
+    base.setdefault("target", target)
+    base[POLICY_FLAGS] = flags.to_record()
+    return base
 
 
 def record_path(records: ResetRecords, *, target: str, account: str, product: str) -> str:
@@ -276,6 +326,7 @@ RECORD_KEYS = frozenset(
         "correlation_id",
         "audited",
         "audited_detail",
+        POLICY_FLAGS,
     }
 )
 

@@ -3016,6 +3016,100 @@ class _RecordFailure:
     reason: str
 
 
+@dataclass(frozen=True)
+class _KeptFlags:
+    """A SQL Server login's policy flags, kept across an unseen reset (§6.3).
+
+    ``recorded`` is whether the reset record already held them: a reset that
+    stopped after turning the policy off left them there, and they are the
+    ones to set back, not what the login reads now.
+    """
+
+    flags: PolicyFlags
+    recorded: bool
+
+    @property
+    def need_restoring(self) -> bool:
+        """Both flags off leave nothing for the change to turn off."""
+        return self.flags.check_policy or self.flags.check_expiration
+
+
+def _flags_for_reset(
+    session: Any,
+    account: str,
+    *,
+    run: Invocation,
+    config: Config,
+    target: str,
+    record_at: str | None,
+) -> _KeptFlags | None:
+    """Step 1 of an unseen reset on a session that keeps its login's policy
+    flags (``02-mssql-privileges.md`` §6.3; #1554, decision 1), or ``None``
+    on every other session. Reads only.
+
+    The session refuses a login whose ``MUST_CHANGE`` is pending, naming the
+    seen reset (decision 2). Flags a stopped reset recorded are kept, and the
+    login is not read for them again: a second read would record the policy
+    that stopped run left off. With no `reset_records:` block nothing can
+    hold them, so a login whose ``CHECK_POLICY`` is on is refused (Q7).
+    """
+    if not getattr(session, "keeps_policy_flags", False):
+        return None
+    now: PolicyFlags = session.reset_policy_flags(account)
+    if record_at is None:
+        if now.check_policy:
+            raise DriverError(
+                f'target "{target}": an unseen reset of a login whose CHECK_POLICY is on '
+                "needs a `reset_records:` block",
+                hint=(
+                    "the unseen reset turns the login's policy off and records its "
+                    "CHECK_POLICY and CHECK_EXPIRATION in the reset record first, so it can "
+                    "set them back if the run stops. Declare a `reset_records:` block "
+                    "(02-mssql-privileges.md section 6.3)"
+                ),
+            )
+        return _KeptFlags(now, recorded=False)
+    journal = _reset_journal(run, config)
+    stored = journal.read(record_at) if journal is not None else None
+    earlier = reset_record.recorded_flags(
+        stored.data if stored is not None else None, target=target, path=record_at
+    )
+    if earlier is not None:
+        return _KeptFlags(earlier, recorded=True)
+    return _KeptFlags(now, recorded=False)
+
+
+def _record_flags_before(
+    kept: _KeptFlags,
+    *,
+    run: Invocation,
+    config: Config,
+    path: str | None,
+    account: str,
+    target: str,
+) -> None:
+    """Write the flags into the reset record before the change turns the
+    policy off (§6.3). Raises where they cannot be written, so nothing is
+    delivered or sent. Nothing to write where the record already holds them,
+    or where both flags are off."""
+    if kept.recorded or not kept.need_restoring:
+        return
+    journal = _reset_journal(run, config) if path is not None else None
+    if path is None or journal is None:
+        raise DriverError(
+            f'target "{target}" needs the reset record to keep the login\'s policy flags '
+            "while its policy is off, and this run has none",
+            hint="this is a fault in sopuli: the run gave the reset no record to write to",
+        )
+    stored = journal.read(path)
+    document = reset_record.with_flags(
+        stored.data if stored is not None else None, kept.flags, account=account, target=target
+    )
+    # Unguarded, as the record's own write is: the advisory lock serialises
+    # two resets of one account (UC-2 §3.3).
+    journal.write(path, document, cas=None)
+
+
 def _write_reset_record(
     run: Invocation,
     config: Config,
@@ -3029,8 +3123,13 @@ def _write_reset_record(
     secret: Secret,
     token: Secret | None = None,
     audited: AuditCoverage | None = None,
+    policy_flags: PolicyFlags | None = None,
 ) -> _RecordFailure | None:
     """Journal one reset, or say why it could not be (UC-2 §3.1).
+
+    ``policy_flags`` is a SQL Server login's flags that this reset could not
+    set back (§6.3): the record keeps them, so the next reset sets them back.
+    ``None`` drops any it held, because they are back.
 
     **Called after the database has confirmed and after delivery** (§6.4). The
     record holds what happened, so writing it earlier would make it hold an
@@ -3083,6 +3182,7 @@ def _write_reset_record(
         correlation_id=run.document.correlation_id,
         audited=audited_value(audited) if audited is not None else None,
         audited_detail=audited.detail if audited is not None else None,
+        policy_flags=policy_flags,
     )
     document = record.to_dict()
     # Invariant 2 against the serialised document rather than against the
@@ -3393,6 +3493,7 @@ def _reset_one(
         # a password inside this target's byte limit is asked without drawing
         # one. The real run asks them here as well, which is still the last
         # point before a password is drawn.
+        kept: _KeptFlags | None = None
         try:
             # Asked again for a target `_require_seen_expiry` could not read.
             if delivery.is_seen:
@@ -3413,6 +3514,18 @@ def _reset_one(
             reset.refuse_unmasked_policy(delivery, named, policy, target)
             limit = session.byte_limit()
             require_feasible(policy, limit=limit, target=target.name)
+            # A SQL Server login's flags, which the unseen reset turns off and
+            # sets back (§6.3). Read here, so a login it refuses is refused in
+            # a preview too.
+            if not delivery.is_seen:
+                kept = _flags_for_reset(
+                    session,
+                    account,
+                    run=run,
+                    config=config,
+                    target=target.name,
+                    record_at=record_at,
+                )
             # The store's policy, asked again on the name the database stores,
             # which is the path `vault_path` writes (UC-2 §6.6). Plan time asked
             # on the name as typed, so a name the database stores the same way
@@ -3462,6 +3575,17 @@ def _reset_one(
         receipt: Receipt | None = None
         try:
             secret = generate(policy, limit=limit, target=target.name)
+            # Before anything is delivered or sent: a flag record that cannot be
+            # written stops the reset with the login as it was (§6.3).
+            if kept is not None:
+                _record_flags_before(
+                    kept,
+                    run=run,
+                    config=config,
+                    path=record_at,
+                    account=account,
+                    target=target.name,
+                )
             # **UC-2 6.4's other order, and this is the branch that makes it
             # two orders rather than one.** The rule is that the
             # irreversible step goes last, and what is irreversible differs by
@@ -3557,20 +3681,40 @@ def _reset_one(
         # be thrown away. The row is still `ERROR` at exit 4, and the record and
         # the notification follow, because both hold what happened.
         unclosed = _finding(partial) if partial is not None else None
+        # §6.3's step 4: the flags the change turned off, set back. A failure
+        # leaves the password set and the policy off, so the row says so, and
+        # the record keeps the flags for the next reset to set back.
+        unrestored: Error | None = None
+        if kept is not None and kept.need_restoring:
+            try:
+                # A session that keeps flags has the method (`keeps_policy_flags`).
+                keeper: Any = session
+                keeper.restore_policy(account, kept.flags)
+            except Exception as error:  # noqa: BLE001 -- the password is set; say so
+                unrestored = _finding(error)
+        if unclosed is not None:
+            detail = (
+                "password set, but the old password was not ended, so assume it still "
+                f"works: {unclosed.message}" + (f" -- {unclosed.hint}" if unclosed.hint else "")
+            )
+        elif unrestored is not None:
+            detail = (
+                "password set, but the login's CHECK_POLICY and CHECK_EXPIRATION were not set "
+                f"back, so its policy is off: {unrestored.message} -- the reset record keeps "
+                "them, and the next reset of this login sets them back"
+            )
+        else:
+            detail = decision.detail
+        failed = unclosed or unrestored
         row = _Reset(
             account=account,
             target=target.name,
-            state=reset.RESET if unclosed is None else check_states.ERROR,
+            state=reset.RESET if failed is None else check_states.ERROR,
             changed=True,
-            detail=(
-                decision.detail
-                if unclosed is None
-                else "password set, but the old password was not ended, so assume it still "
-                f"works: {unclosed.message}" + (f" -- {unclosed.hint}" if unclosed.hint else "")
-            ),
+            detail=detail,
             status=status,
             actions=_reset_actions(changes, unclosed),
-            error=unclosed,
+            error=failed,
             delivered=delivery.method,
             handover=receipt.reported() if receipt is not None else None,
             left_behind=receipt.left_behind if receipt is not None else None,
@@ -3603,6 +3747,7 @@ def _reset_one(
                     secret=secret,
                     token=receipt.token if receipt is not None else None,
                     audited=audited,
+                    policy_flags=kept.flags if kept is not None and unrestored else None,
                 ),
             )
 

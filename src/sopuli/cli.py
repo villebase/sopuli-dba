@@ -4249,45 +4249,59 @@ def _refuse_unresolvable_rules(
     """Refuse a `profile:` or `role:` rule a target cannot resolve, before
     anything is listed (invariant 4, #1598).
 
-    Without this, the refusal came from :func:`_list_one` partway through the
-    estate, outside its per-target ``try``, and the rows already read for
-    earlier targets were lost.
+    :func:`_list_one` resolves the rules outside its per-target ``try``, so a
+    refusal there would end the run after earlier targets' rows were read.
 
     A `profile:` rule on a product with no profiles is refused from the
-    target's type, with no connection: the registry's ``no_profiles``. Any
-    other `profile:` or `role:` rule is resolved here as the listing resolves
-    it, by :func:`_resolve_rule`, with one more connection per target that has
-    one. So every refusal the listing could meet while it resolves a rule
-    comes here instead, with the driver's own error: a missing capability,
-    exit 5, naming it; a role MySQL makes mandatory or MariaDB reaches
-    through `PUBLIC`; a read the server refuses; and a profile or role the
-    target does not have.
+    target's type, before any target is opened: the registry's
+    ``no_profiles``. Any other `profile:` or `role:` rule is resolved here as
+    the listing resolves it, by :func:`_resolve_rule`, with one more
+    connection per target that has one. So every refusal the listing could
+    meet while it resolves a rule comes here instead, with the driver's own
+    error: a missing capability, exit 5, naming it; a role MySQL makes
+    mandatory or MariaDB reaches through `PUBLIC`; a read the server refuses;
+    and a profile or role the target does not have.
 
-    Only a target that cannot be opened is passed over, as
-    :func:`_refuse_uncomparable` passes it: the listing reports it as a failed
-    row. The claims the opens record in ``run.clusters`` are put back
-    afterwards, so the listing, which opens every target in order, decides
-    which of two targets on one server is refused, as it did without this.
+    A target that cannot be opened is passed over, as
+    :func:`_refuse_uncomparable` passes it, and so is one whose session is
+    lost while it is read (category ``connectivity``): the listing reports
+    each as a failed row, or meets the fault itself.
+
+    The claims the opens record in ``run.clusters`` are put back afterwards,
+    so the listing, which opens every target in order, decides which of two
+    targets on one server is refused.
     """
+    predicates = {
+        target.name: [
+            rule for rule in account_list.rules_on(config, target.name) if rule.is_predicate
+        ]
+        for target in reached
+    }
+    for target in reached:
+        no_profiles = DRIVERS[target.target.type].no_profiles
+        if no_profiles is not None and any(
+            rule.profile is not None for rule in predicates[target.name]
+        ):
+            raise UnsupportedCapabilityError(
+                PROFILE_MANAGEMENT, target=target.name, hint=no_profiles
+            )
     claims = dict(run.clusters)
     try:
         for target in reached:
-            rules = account_list.rules_on(config, target.name)
-            predicates = [rule for rule in rules if rule.is_predicate]
-            if not predicates:
+            if not predicates[target.name]:
                 continue
-            no_profiles = DRIVERS[target.target.type].no_profiles
-            if no_profiles is not None and any(rule.profile is not None for rule in predicates):
-                raise UnsupportedCapabilityError(
-                    PROFILE_MANAGEMENT, target=target.name, hint=no_profiles
-                )
             try:
                 session = _open_session(target, run, config)
             except Exception:  # noqa: BLE001 -- the listing reports it, per target
                 continue
             try:
-                for rule in predicates:
+                for rule in predicates[target.name]:
                     _resolve_rule(session, rule, target)
+            except DriverError as error:
+                # A session lost while reading says nothing about the rule,
+                # as a target that cannot be opened says nothing.
+                if error.category != "connectivity":
+                    raise
             finally:
                 with suppress(Exception):
                     session.close()

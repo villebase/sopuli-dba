@@ -141,6 +141,39 @@ def test_a_profile_rule_on_a_product_with_no_profiles_is_refused_with_no_connect
     assert error["hint"] == DRIVERS[product].no_profiles
 
 
+MIXED = """version: 1
+targets:
+  - name: ora-dev
+    type: oracle
+    environment: dev
+    dsn: db.example.com:1521/ACME
+    admin: { username: sopuli_svc, auth: { method: env } }
+  - name: mysql-dev
+    type: mysql
+    environment: dev
+    dsn: db.example.com:3306
+    admin: { username: "sopuli_svc@%", auth: { method: env } }
+personal_accounts:
+  - profile: ACME_DEV
+"""
+
+
+def test_the_refusal_from_the_type_comes_before_any_target_is_opened(
+    write_config: WriteConfig, sessions: dict[str, Any]
+) -> None:
+    """The Oracle target comes first and has profiles, but the MySQL target's
+    refusal needs no connection, so neither is opened."""
+    config = write_config(MIXED)
+    result = CliRunner().invoke(
+        cli, ["--config", str(config), "--output", "json", "account", "list"]
+    )
+
+    found = document(result)
+    assert found["exit_code"] == ExitCode.UNSUPPORTED_CAPABILITY, result.output
+    assert "mysql-dev" in found["error"]["message"]
+    assert sessions["opened"] == []
+
+
 def test_oracle_has_profiles_so_a_profile_rule_asks_the_target(
     write_config: WriteConfig, sessions: dict[str, Any]
 ) -> None:
@@ -164,8 +197,8 @@ def test_oracle_has_profiles_so_a_profile_rule_asks_the_target(
 def test_a_role_rule_the_second_target_cannot_resolve_lists_nothing(
     write_config: WriteConfig, sessions: dict[str, Any], product: str
 ) -> None:
-    """The refusal used to come from the listing, on the second target, after
-    the first target's rows had been read, and they were lost."""
+    """The refusal comes before the first target's accounts are described, so
+    no rows are read and then dropped."""
     sessions["dev-2"] = {
         "resolve_role": UnsupportedCapabilityError(
             ROLE_LOOKUP, target="dev-2", hint="grant the tool the read"
@@ -221,6 +254,40 @@ def test_a_target_that_cannot_be_opened_is_passed_over_and_reported_per_target(
     rows = {row["target"]: row for row in found["results"]}
     assert rows["dev-1"]["state"] == "ERROR"
     assert rows["dev-2"]["account"] == "acme_jdoe"
+
+
+class LostError(DriverError):
+    """A session lost while it is read."""
+
+    category = "connectivity"
+
+
+def test_a_session_lost_in_the_check_is_passed_over(
+    write_config: WriteConfig, sessions: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """dev-1's session is lost while the check reads it. That says nothing
+    about the rule, so the run goes on, and the listing reads dev-1 again."""
+    opens = {"dev-1": 0}
+
+    def open_session(target: Any, run: Any, config: Any) -> FakeSession:
+        refuse: dict[str, Exception | None] = {}
+        if target.name == "dev-1":
+            opens["dev-1"] += 1
+            if opens["dev-1"] == 1:
+                refuse = {"resolve_role": LostError("the connection was lost")}
+        session = FakeSession(target.name, refuse)
+        sessions["opened"].append(session)
+        return session
+
+    monkeypatch.setattr("sopuli.cli._open_session", open_session)
+    result = listed(write_config, "postgresql", "  - role: acme_dev_role")
+
+    found = document(result)
+    assert found["exit_code"] == ExitCode.SUCCESS, result.output
+    assert [(row["account"], row["target"]) for row in found["results"]] == [
+        ("acme_jdoe", "dev-1"),
+        ("acme_jdoe", "dev-2"),
+    ]
 
 
 class MandatoryRoleError(DriverError):

@@ -470,6 +470,17 @@ def refused_password_rules(products: Iterable[str]) -> frozenset[str]:
     return found
 
 
+def no_profiles_hint(product: str) -> str:
+    """:attr:`DatabaseDriver.no_profiles` for a product that has no profiles,
+    for its driver's refusal of a `profile:` rule. Raises for a product that
+    has them, so a driver module that names the wrong product fails on import
+    rather than refusing with no hint."""
+    hint = DRIVERS[product].no_profiles
+    if hint is None:
+        raise ValueError(f"{product} has profiles; it has no no_profiles hint")
+    return hint
+
+
 def installed(driver: DatabaseDriver) -> bool:
     """Whether ``driver``'s client is importable, **without importing it**.
 

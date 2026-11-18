@@ -429,8 +429,7 @@ question, so it is one verb, not two.
   while resolving a rule also ends the run there, before anything is
   listed: a profile or role the target does not have, a role the server
   refuses as a predicate, and a read the server refuses. A target that
-  cannot be reached is not refused: the listing reports it as a failed row,
-  as before.
+  cannot be reached is not refused: the listing reports it as a failed row.
 
 **There is no separate read verb.** "When was this person last reset" is
 answered by `account list` (H2, decided in #450). It shows two columns for it:

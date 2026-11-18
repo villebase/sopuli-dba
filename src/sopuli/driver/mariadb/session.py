@@ -98,7 +98,7 @@ from sopuli.driver.protocol import (
     password_value_hint,
     require_capability,
 )
-from sopuli.driver.registry import DRIVERS, NotWrittenError
+from sopuli.driver.registry import NotWrittenError, no_profiles_hint
 from sopuli.driver.survey import SurveyedAccount
 from sopuli.output.debug import logger
 from sopuli.passwords import ByteLimit
@@ -123,7 +123,7 @@ def _rollover_caveat(plugin: str) -> str | None:
 
 #: The hint for a `profile:` rule on a MariaDB server, the registry's, so
 #: `account list`'s refusal with no connection says the same (#1598).
-NO_PROFILES = DRIVERS["mariadb"].no_profiles
+NO_PROFILES = no_profiles_hint("mariadb")
 
 MISSING_GRANT_HINT = (
     "the tool account lacks a grant of 02-mariadb-privileges.md section 2.1, which it "

@@ -146,18 +146,24 @@ def test_every_other_method_is_not_written() -> None:
         assert "is a SQL Server instance, and this build cannot" in str(caught.value)
 
 
-def test_a_personal_role_is_refused_as_role_lookup_missing() -> None:
-    """So `report accounts` shows the role's members as undeclared and warns
-    with `SOPULI-W075`, rather than failing the target (#1555)."""
+def test_a_role_the_tool_cannot_read_is_refused_as_role_lookup_missing() -> None:
+    """Without VIEW ANY DEFINITION the catalog is not complete. So `report
+    accounts` shows the role's members as undeclared and warns with
+    `SOPULI-W075`, rather than failing the target (#1555), and the fix names
+    the grant (#1554, Q6)."""
+    from sopuli.driver.mssql.admin import MISSING_GRANT, Catalog
+
     opened = session.MssqlSession(connection=None, target=target())
+    opened.scope = lambda: None
+    opened._catalog = Catalog(unread=MISSING_GRANT)
 
     with pytest.raises(UnsupportedCapabilityError) as caught:
         opened.resolve_role("acme_ops")
 
     assert caught.value.capability == "role_lookup"
-    assert "#1554" in (caught.value.hint or "")
+    assert "server role" in (caught.value.hint or "")
     # SOPULI-W075 words its fix from the remedy alone (#1587 review).
-    assert "#1554" in (caught.value.remedy or "")
+    assert "GRANT VIEW ANY DEFINITION" in (caught.value.remedy or "")
 
 
 def test_client_report_names_pyodbc() -> None:

@@ -212,8 +212,6 @@ from sopuli.driver.clusters import (
     scope_and_claim,
 )
 from sopuli.driver.grants import PrivilegeSurvey, PrivilegeViewState
-from sopuli.driver.mariadb.roles import PublicRoleError
-from sopuli.driver.mysql.roles import MandatoryRoleError
 from sopuli.driver.oracle.wallet import survey as wallet_survey
 from sopuli.driver.protocol import (
     ACCOUNT_LOCK_STATE,
@@ -2889,15 +2887,19 @@ def _refuse_a_bare_mysql_name(account: str, reached: Sequence[ExpandedTarget]) -
 
 
 #: The products where a role can be held by every account: MySQL's
-#: `mandatory_roles`, and MariaDB's `PUBLIC`.
-EVERY_ACCOUNT_ROLE_TYPES = frozenset({MYSQL, MARIADB})
+#: `mandatory_roles`, MariaDB's `PUBLIC`, and SQL Server's `public`. On SQL
+#: Server the same question also refuses a `role:` the tool login cannot read
+#: without `VIEW ANY DEFINITION`, as `role_lookup` missing (#1554, Q6).
+EVERY_ACCOUNT_ROLE_TYPES = frozenset({MYSQL, MARIADB, MSSQL})
 
 
 def _refuse_mandatory_roles(session: Any, config: Config, target: ExpandedTarget) -> None:
     """Refuse a `role:` rule that names a role every account holds, exit 9: on
     MySQL a mandatory role, or a role one holds, with ``MandatoryRoleError``
     (#1225, decision 5); on MariaDB a role ``PUBLIC`` reaches, with
-    ``PublicRoleError`` (#1272).
+    ``PublicRoleError`` (#1272); on SQL Server ``public``, with
+    ``PublicServerRoleError``, and a role the tool login cannot read, as
+    ``role_lookup`` missing (#1554, Q6).
 
     Every account holds such a role, so the rule would admit every account on
     the server, and a rule that admits every account is not a whitelist
@@ -2939,8 +2941,12 @@ def _refuse_mandatory_roles_at_plan(
             continue
         try:
             _refuse_mandatory_roles(session, config, expanded)
-        except (MandatoryRoleError, PublicRoleError):
-            raise
+        except DriverError as error:
+            # The rule's own refusal: a role every account holds, `config`
+            # (MySQL, MariaDB, SQL Server), or one the tool cannot read, a
+            # missing capability. Anything else the run asks again.
+            if error.category == "config" or isinstance(error, UnsupportedCapabilityError):
+                raise
         except Exception:  # noqa: BLE001 -- the run asks again, and reports it
             pass
         finally:

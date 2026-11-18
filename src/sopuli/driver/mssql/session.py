@@ -63,7 +63,15 @@ from sopuli.driver.mssql import (
 )
 from sopuli.driver.mssql import errors as server_errors
 from sopuli.driver.mssql import privileges as tool_login
-from sopuli.driver.mssql.admin import Assessment, Catalog, assess, read_catalog
+from sopuli.driver.mssql.admin import (
+    MISSING_GRANT,
+    PUBLIC,
+    Assessment,
+    Catalog,
+    Principal,
+    assess,
+    read_catalog,
+)
 from sopuli.driver.mssql.client import client_lines
 from sopuli.driver.mssql.connection import connection_string
 from sopuli.driver.mssql.errors import (
@@ -115,6 +123,7 @@ from sopuli.driver.protocol import (
 )
 from sopuli.driver.registry import NotWrittenError, no_profiles_hint
 from sopuli.driver.survey import SurveyedAccount
+from sopuli.exit_codes import ExitCode
 from sopuli.output.debug import logger
 from sopuli.passwords import ByteLimit
 from sopuli.policy_flags import PolicyFlags
@@ -168,6 +177,35 @@ NO_EXPIRY = (
 #: profiles (#1554): the registry's, so `account list`'s refusal with no
 #: connection says the same (#1598).
 NO_PROFILES = no_profiles_hint("mssql")
+
+#: How a SQL Server target gets ``role_lookup``: the grant that lets the tool
+#: login see user-defined server roles and nested membership (PA2), which
+#: `SOPULI-W075` words its fix from (#1554, Q6).
+ROLE_LOOKUP_REMEDY = (
+    "GRANT VIEW ANY DEFINITION to the tool login, and revoke any DENY of "
+    "VIEW ANY SECURITY DEFINITION or VIEW DEFINITION (02-mssql-privileges.md §2.2)"
+)
+
+
+class PublicServerRoleError(DriverError):
+    """A `role:` rule names ``public``, which every login holds (#1554, Q6).
+
+    ``config`` and exit 9, as MySQL's mandatory role is: the fix is in the
+    config, and running again changes nothing."""
+
+    category = "config"
+    exit_code = ExitCode.CONFIG_INVALID
+
+    def __init__(self, *, target: str) -> None:
+        super().__init__(
+            f'target "{target}": every login holds the server role public, so a `role:` '
+            "rule naming it would admit every login",
+            hint=(
+                "name a role that only the people the rule is for hold, or list the logins "
+                "under `accounts:`"
+            ),
+        )
+
 
 #: The host platform this build changes passwords on.
 LINUX = "Linux"
@@ -335,6 +373,12 @@ class MssqlSession(ClosesConnection):
         for the session, so every managed login on the target is assessed
         against one read. The scope comes first, so a session in a contained
         group's master is refused before any login is read."""
+        return assess(principal_id, self._server_catalog())
+
+    def _server_catalog(self) -> Catalog:
+        """The server's principals and memberships as the tool login reads
+        them, read once per session (:func:`~.admin.read_catalog`). Guardrail
+        9 and a `role:` rule read the same one."""
         self.scope()
         if self._catalog is None:
             self._catalog = self._read(read_catalog)
@@ -343,7 +387,7 @@ class MssqlSession(ClosesConnection):
                 self.target.name,
                 self._catalog.unread or "complete",
             )
-        return assess(principal_id, self._catalog)
+        return self._catalog
 
     def host_platform(self) -> str | None:
         """``Linux`` or ``Windows``: the host's platform, read once and
@@ -474,12 +518,19 @@ class MssqlSession(ClosesConnection):
         )
         if login is None:
             return None
-        assessment = self.admin_assessment(login.principal_id)
+        catalog = self._server_catalog()
+        assessment = assess(login.principal_id, catalog)
         return accounts.state_of(
             login,
             now=datetime.now(UTC),
             admin_unread=assessment.unread,
             global_privileges=assessment.grants,
+            # The server roles it holds, through nesting, which a `role:`
+            # rule is compared with (#1554, Q6). None where the read is not
+            # complete: a verb's plan-time question about each `role:` rule
+            # has already refused it then, as `role_lookup` missing
+            # (`cli._refuse_mandatory_roles`).
+            roles=catalog.roles_of(login.principal_id) if catalog.complete else frozenset(),
         )
 
     def survey_with_profiles(self) -> tuple[tuple[SurveyedAccount, ...], frozenset[str]]:
@@ -934,35 +985,81 @@ class MssqlSession(ClosesConnection):
         )
         raise AssertionError("unreachable: the scope never reports profile_management")
 
-    def resolve_role(self, role: str) -> NoReturn:
-        """Refused as ``role_lookup`` missing: SQL Server has server roles and
-        database roles, and which one a personal rule's `role:` names is not
-        decided (#1554, Q6). `report accounts` then shows the role's members
-        as undeclared and warns with `SOPULI-W075`, rather than failing the
-        target (UC-5 §4)."""
-        raise UnsupportedCapabilityError(
-            ROLE_LOOKUP,
-            target=self.target.name,
-            hint=(
-                "a personal_accounts: rule's role: is not resolved on SQL Server: whether it "
-                "names a server role or a database role is not decided yet (#1554); name the "
-                "logins with `accounts:` instead"
-            ),
-            # SOPULI-W075 words its fix from this, not from the hint.
-            remedy=(
-                "No grant gives it: what a role: means on SQL Server is not decided yet (#1554)."
-            ),
-        )
+    def resolve_role(self, role: str) -> str | None:
+        """The server role ``role`` as the server spells it, or ``None`` where
+        there is none (#1554, Q6: a `role:` names a server role).
 
-    def accounts_matching(self, *, profile: str | None = None, role: str | None = None) -> NoReturn:
-        """Refused as :meth:`resolve_profile` and :meth:`resolve_role` refuse:
-        SQL Server has no profiles, and what a `role:` means here is open
-        (#1554, Q6). A rule that names logins needs neither."""
+        Read from the catalog guardrail 9 reads. Without ``VIEW ANY
+        DEFINITION`` the tool login cannot see a user-defined server role or
+        one role's membership of another (PA2), so a role that matches nobody
+        could not be told from one that does not exist: the read is not
+        complete, and this is refused as ``role_lookup`` missing, naming the
+        grant. `report accounts` then shows the role's members as undeclared
+        and warns with `SOPULI-W075` (UC-5 §4)."""
+        found = self._one_role(self._role_catalog(), role)
+        if found is None:
+            return None
+        self._refuse_public(found.name)
+        return found.name
+
+    def accounts_matching(
+        self, *, profile: str | None = None, role: str | None = None
+    ) -> tuple[str, ...]:
+        """Every login that holds the server role ``role``, through any chain
+        of nested server roles, by name (#1554, Q6). A role the server has no
+        row for holds nobody. ``profile`` is refused, as
+        :meth:`resolve_profile` refuses it: SQL Server has no profiles."""
         if (profile is None) == (role is None):
             raise ValueError("accounts_matching takes exactly one of `profile` and `role`")
         if profile is not None:
             self.resolve_profile(profile)
-        self.resolve_role(role or "")
+        catalog = self._role_catalog()
+        found = self._one_role(catalog, role or "")
+        if found is None:
+            return ()
+        self._refuse_public(found.name)
+        return tuple(member.name for member in catalog.members(found.principal_id))
+
+    def _one_role(self, catalog: Catalog, role: str) -> Principal | None:
+        """The one server role ``role`` names by ``upper()``, or ``None``.
+        Two in two cases, on a case-sensitive server, are refused: a verb
+        compares by ``upper()``, so it would admit the members of both, and
+        the listing must admit the same logins."""
+        found = catalog.server_roles(role)
+        if len(found) > 1:
+            raise DriverError(
+                f'target "{self.target.name}" has {len(found)} server roles named '
+                f"{role!r} in different cases: " + ", ".join(sorted(p.name for p in found)),
+                hint="rename one of them, or list the logins under `accounts:`",
+            )
+        return found[0] if found else None
+
+    def _refuse_public(self, role: str) -> None:
+        """Every login holds ``public``, with no membership rows to read, so a
+        rule naming it would admit every login: refused, as MySQL refuses a
+        mandatory role."""
+        if role == PUBLIC:
+            raise PublicServerRoleError(target=self.target.name)
+
+    def _role_catalog(self) -> Catalog:
+        """:meth:`_server_catalog`, refused as ``role_lookup`` missing where the
+        read is not complete."""
+        catalog = self._server_catalog()
+        if not catalog.complete:
+            raise UnsupportedCapabilityError(
+                ROLE_LOOKUP,
+                target=self.target.name,
+                hint=(
+                    "a personal_accounts: rule's role: names a server role, and the tool "
+                    "login cannot see every server role and which roles each role holds, so "
+                    "a role that admits nobody could not be told from one that does not exist"
+                ),
+                # SOPULI-W075 words its fix from this, not from the hint: the
+                # grant where it is missing, else the read's own reason,
+                # which says what to do (a DENY to revoke, a read to run again).
+                remedy=ROLE_LOOKUP_REMEDY if catalog.unread == MISSING_GRANT else catalog.unread,
+            )
+        return catalog
 
     def verify_password(
         self,

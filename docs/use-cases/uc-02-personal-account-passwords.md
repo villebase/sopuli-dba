@@ -12,7 +12,8 @@ PostgreSQL, `account list`, the unseen `account reset-password` (§4.1) and
 `account suspend` are built. The seen reset and `account expire-password` are
 refused there with exit 5, because a role cannot be made to change its password
 at its next login. On MySQL and MariaDB every verb is built. On SQL Server,
-`account list` for rules that name logins and `account suspend` are built,
+`account list` and `account suspend` are built, with a `role:` rule naming
+a server role and its members followed through nested server roles,
 and `account expire-password` is refused with exit 5, because `MUST_CHANGE`
 is taken only with a new password; the resets are not built yet
 (open: #1554). A seen reset there whose policy can draw `'` is refused with

@@ -161,11 +161,19 @@ def test_a_profile_predicate_is_refused_by_capability(monkeypatch: pytest.Monkey
     assert "no profiles" in (caught.value.hint or "")
 
 
-def test_a_role_predicate_is_refused_by_capability(monkeypatch: pytest.MonkeyPatch) -> None:
-    """What a `role:` means on SQL Server is open (#1554, Q6)."""
+def test_a_role_predicate_is_refused_where_the_roles_cannot_be_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without VIEW ANY DEFINITION the catalog is not complete, so a role
+    that matches nobody could not be told from one that does not exist
+    (#1554, Q6)."""
+    from sopuli.driver.mssql.admin import MISSING_GRANT, Catalog
+
     one = opened(monkeypatch)
+    one._catalog = Catalog(unread=MISSING_GRANT)
 
     with pytest.raises(UnsupportedCapabilityError) as caught:
         one.accounts_matching(role="acme_staff")
 
     assert caught.value.capability == "role_lookup"
+    assert "VIEW ANY DEFINITION" in (caught.value.remedy or "")

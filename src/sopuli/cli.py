@@ -8461,7 +8461,8 @@ def _reserved_on(
     session: Any, target: str, bindings: Sequence[Binding]
 ) -> dict[tuple[str, str], str]:
     """Each account on ``target`` that guardrail check 6, 8 or 9 refuses whatever
-    is granted, keyed ``(target, account)``, with the refusal's reason (#1174).
+    is granted (#1174), or that has SQL Server's ``MUST_CHANGE`` pending, which
+    no value can pass (#1594), keyed ``(target, account)``, with the reason.
 
     `creds generate` skips such an account, so it stages no `pending` that no
     run could apply. **An account whose state cannot be read is not skipped.**
@@ -8516,7 +8517,7 @@ def _split_reserved(
         elif where:
             names = ", ".join(target for target, _ in where)
             skipped.append(
-                (candidate, f"a guardrail refuses this credential on {names}, so it was not staged")
+                (candidate, f"this credential cannot be applied on {names}, so it was not staged")
             )
         else:
             kept.append(candidate)

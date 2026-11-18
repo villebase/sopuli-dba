@@ -157,8 +157,8 @@ EXPIRE_ON_RESET = "expire_on_reset"
 MUST_CHANGE_PENDING = (
     "the login must change its password at its next login (MUST_CHANGE), and until it "
     "does the server refuses CHECK_POLICY = OFF, so it cannot take a password value. Let "
-    "the owner log in and change it, or clear it by hand with ALTER LOGIN … WITH "
-    "PASSWORD = … without MUST_CHANGE"
+    "the owner log in and change it, or clear it by hand with ALTER LOGIN ... WITH "
+    "PASSWORD = ... without MUST_CHANGE"
 )
 
 #: The hint for a seen reset on a target without :data:`EXPIRE_ON_RESET`,

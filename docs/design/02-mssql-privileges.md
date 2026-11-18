@@ -555,8 +555,10 @@ it, exit 1, before it stages a password. `creds generate` asks too, on the
 connection it already opens for the byte limit, from `describe_user`'s
 `pending_must_change`: it stages nothing for that credential, and reports
 it `SKIPPED`, naming `MUST_CHANGE` and how to clear it
-([#1594](../decisions/log.md#1594)). A login can get `MUST_CHANGE` after
-`generate` has staged, so `creds apply` still meets it: it leaves the login
+([#1594](../decisions/log.md#1594)). `creds generate --offline` opens no
+connection, so it does not ask. A login can get `MUST_CHANGE` after
+`generate` has staged, or have nothing staged because `generate` skipped
+it, so `creds apply` still meets it: on its own target it leaves the login
 alone before anything is written or sent, with or without `--preflight`,
 and reports it `EXPIRED` with its own message, which names `MUST_CHANGE`
 and how to clear it: the owner logs in and changes the password, or a DBA

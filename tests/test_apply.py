@@ -388,6 +388,19 @@ def test_a_pending_must_change_is_its_own_message_not_the_expiry_date(
     assert "expiry date" not in outcome.detail
 
 
+def test_a_credential_generate_skipped_for_must_change_says_so() -> None:
+    """With nothing staged, "run creds generate first" would only be skipped
+    again, so the cause is the row (#1594 review)."""
+    pending = user(status="EXPIRED", expired=True, pending_must_change=True)
+
+    outcome = apply.settled_before_acting(pending, None)
+
+    assert outcome is not None
+    assert outcome.state == check.EXPIRED
+    assert "MUST_CHANGE" in outcome.detail
+    assert "generate" not in outcome.detail
+
+
 def test_an_account_that_is_not_expired_is_applied_either_way() -> None:
     assert apply.settled_before_acting(user(), source(), expiry_cleared=False) is None
 

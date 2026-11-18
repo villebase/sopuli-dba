@@ -475,6 +475,10 @@ def settled_before_acting(
     DDL: setting the password would be repeated on every run and never confirm.
     """
     if source is None:
+        if user is not None and user.pending_must_change:
+            # `creds generate` skipped it for this, so "run generate first"
+            # would only be skipped again: the cause is the answer (#1594).
+            return Outcome(EXPIRED, f"no password was staged: {MUST_CHANGE_PENDING}")
         return Outcome(ERROR, _nothing_to_apply(requested))
     if user is None:
         return Outcome(

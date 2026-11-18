@@ -3096,7 +3096,8 @@ which is logic this tool already owns. The notes the reading produced
 `run.finished`.
 
 - **An account no run could apply is `SKIPPED`** (#1174): one that guardrail
-  check 6, 8 or 9 refuses on its target, and every binding that shares its
+  check 6, 8 or 9 refuses on its target, or a SQL Server login whose
+  `MUST_CHANGE` is pending (#1594), and every binding that shares its
   password. Its `results[]` entry has `changed: false`, its
   `vault_write_pending` action has `applied: false` and the refusal as
   `detail`, and `summary.skipped` counts it. Nothing is written for it, so it

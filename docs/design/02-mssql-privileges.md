@@ -628,7 +628,7 @@ close.
 
 `MUST_CHANGE` has no `HASHED` form: `HASHED MUST_CHANGE` is refused, `15099`
 or `33020` (CH5). `account reset-password` on the seen path therefore sends
-the password in clear, once (decision 2, open: #1554):
+the password in clear, once ([#1538](../decisions/log.md#1538), decision 2):
 
 ```sql
 ALTER LOGIN [jdoe] WITH PASSWORD = N'<password>' MUST_CHANGE, CHECK_POLICY = ON, CHECK_EXPIRATION = ON;
@@ -642,8 +642,8 @@ leaves a locked login locked, and its owner would then be refused, `18456`.
 `MUST_CHANGE` and `UNLOCK` are accepted together, and the login then answers
 `18488` (`09_windows_policy_probe.py`, WP4). A disabled login,
 `is_disabled` 1, is the lock somebody chose, as Oracle's plain `LOCKED` is:
-`account suspend` sets it. A reset refuses a disabled login at plan time, on
-either path ([#1554](../decisions/log.md#1554), open: #1554).
+`account suspend` sets it. A reset refuses a disabled login before anything
+is sent, on either path ([#1554](../decisions/log.md#1554)).
 
 The statement is a batch of its own, never inside `EXEC`. The password is a
 Unicode string literal with each `'` doubled, so the statement always
@@ -672,8 +672,7 @@ in the password. It finds the password in no Extended Events record, the
 plan cache, the default trace or the error log, the login then answers
 `18488`, and both flags read on. The seen path's plan-time gate is
 `expire_on_reset`, which a SQL Server session reports, and not
-`expire_password`, which it does not (#1554, Q8). The driver sends it, and
-`account reset-password` does not run on SQL Server yet (open: #1554).
+`expire_password`, which it does not (#1554, Q8).
 
 `MUST_CHANGE` needs `CHECK_POLICY` and `CHECK_EXPIRATION` on, and neither can
 be turned off while it is pending (LK5). So the seen reset leaves both on,
@@ -700,10 +699,11 @@ they are back; where step 4 fails, the record keeps them and the row is
 `ERROR`. Where no `reset_records:` store is configured and the login's
 `CHECK_POLICY` is on, the unseen reset is refused, whatever the delivery: a
 run that stopped after step 2 would leave the policy, and `CHECK_EXPIRATION`
-with it, off for good (#1554, Q7). The run refuses it before anything is
-sent; the plan-time refusal is not built yet. Where both flags are off and no
-record holds others, there is nothing to restore, and no record is needed
-([#1554](../decisions/log.md#1554), open: #1554).
+with it, off for good (#1554, Q7). The refusal comes at plan time, exit 9,
+with one read of the login per SQL Server target, and only on the unseen
+path with no `reset_records:` block. Where both flags are off and no record
+holds others, there is nothing to restore, and no record is needed
+([#1554](../decisions/log.md#1554)).
 
 A login whose `MUST_CHANGE` is pending, such as one a seen reset left before
 its owner's first logon, cannot take a value (§6.2). The unseen reset refuses

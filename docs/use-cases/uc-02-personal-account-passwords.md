@@ -13,9 +13,9 @@ PostgreSQL, `account list`, the unseen `account reset-password` (§4.1) and
 refused there with exit 5, because a role cannot be made to change its password
 at its next login. On MySQL and MariaDB every verb is built. On SQL Server,
 `account list` for rules that name logins and `account suspend` are built,
-and `account expire-password` is refused with exit 5, because `MUST_CHANGE`
-is taken only with a new password; the resets are not built yet
-(open: #1554). A seen reset there whose policy can draw `'` is refused with
+and so is `account reset-password` on both paths. `account expire-password`
+is refused with exit 5, because `MUST_CHANGE` is taken only with a new
+password. A seen reset there whose policy can draw `'` is refused with
 exit 5, because a server audit keeps part of such a password in clear
 (#1601).
 
@@ -645,8 +645,8 @@ can restore them. An unseen reset of a SQL Server login whose `CHECK_POLICY`
 is on is refused where no `reset_records:` block is configured, whatever the
 delivery: the delivery's own store holds no record
 ([`02-mssql-privileges.md`](../design/02-mssql-privileges.md) §6.3,
-[#1554](../decisions/log.md#1554), Q7). The run refuses it before anything
-is sent; the plan-time refusal is not built yet (open: #1554).
+[#1554](../decisions/log.md#1554), Q7). The refusal comes at plan time, exit
+9.
 
 There is one record per **(target, account)**, under a prefix of its own. This is
 not the unit UC-1 locks on, and the difference matters. UC-1 keys on the vault

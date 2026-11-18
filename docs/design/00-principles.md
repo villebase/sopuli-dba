@@ -295,10 +295,9 @@ Server instance and reports the scope, `server`, and the driver reads a
 declared login. Its entry lists UC-1's `creds generate`, `apply`, `rotate`
 and `finish-rollover`, which change a password (#1551), `creds check`, which
 logs in on a Linux host and is refused at plan time on any other (#1552),
-UC-5's three reports (#1555), and UC-2's `account list` and `account
-suspend`, with `account expire-password` refused at plan time by capability
-(#1554). `account reset-password` refuses a SQL Server target
-(open: #1554). What
+UC-5's three reports (#1555), and UC-2's `account list`, `account suspend`
+and `account reset-password` on both paths, with `account expire-password`
+refused at plan time by capability (#1554). What
 PostgreSQL lacks, such as a rollover window, a profile, or a forced password
 change at next login, is refused at plan time by capability, not by product. A libpq older than 16 is a property of the client,
 not of the target, and is refused per account during the run: an accepted

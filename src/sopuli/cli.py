@@ -2500,6 +2500,7 @@ def account_reset_password(
     _require_seen_expiry(reached, run, config, delivery=delivery, scopes=scopes)
     _require_password_value(reached, run, config, scopes=scopes)
     _refuse_mandatory_roles_at_plan(reached, run, config)
+    _refuse_unrecorded_flags(reached, run, config, delivery=delivery, account=account)
 
     # The question comes after the checks above, as in `account expire-password`
     # (#1214): a yes followed by a refusal means nothing, and teaches people to
@@ -2918,6 +2919,62 @@ def _refuse_mandatory_roles(session: Any, config: Config, target: ExpandedTarget
     for rule in rules_for(config, target.name):
         if rule.role is not None:
             session.resolve_role(rule.role)
+
+
+def _refuse_unrecorded_flags(
+    targets: Iterable[ExpandedTarget],
+    run: Invocation,
+    config: Config,
+    *,
+    delivery: Delivery,
+    account: str,
+) -> None:
+    """Refuse an unseen reset, at plan time, where a login's policy flags
+    would have nowhere to be kept (#1554, Q7).
+
+    SQL Server's unseen reset turns the login's policy off and keeps its
+    ``CHECK_POLICY`` and ``CHECK_EXPIRATION`` in the reset record until it
+    sets them back (``02-mssql-privileges.md`` §6.3). Without a
+    `reset_records:` block there is no record, whatever the delivery, so a
+    run that stopped after the change would leave the policy off for good.
+    Where the login's ``CHECK_POLICY`` is on, the reset is refused, exit 9,
+    naming the block. Where it is off, there is nothing to set back.
+
+    One more connection per target the registry's
+    ``reset_keeps_policy_flags`` names, and only on the unseen path with no
+    block. A target that cannot be opened, or a login it cannot read, is
+    left to the run, which reports it and refuses again before anything is
+    sent.
+    """
+    if delivery.is_seen or config.reset_records is not None:
+        return
+    for expanded in targets:
+        if not DRIVERS[expanded.target.type].reset_keeps_policy_flags:
+            continue
+        try:
+            session = _open_session(expanded, run, config)
+        except Exception:  # noqa: BLE001 -- the run reports it on its row
+            continue
+        try:
+            keeper = _flag_keeper(session)
+            flags = keeper.reset_policy_flags(account) if keeper is not None else None
+        except DriverError:
+            continue
+        finally:
+            with suppress(Exception):
+                session.close()
+        if flags is not None and flags.check_policy:
+            raise ConfigError(
+                f"target {expanded.name!r}: an unseen reset of login {account!r}, whose "
+                "CHECK_POLICY is on, needs a `reset_records:` block",
+                hint=(
+                    "the reset turns the login's policy off and keeps its CHECK_POLICY and "
+                    "CHECK_EXPIRATION in the reset record until it sets them back, so a run "
+                    "that stopped would leave them off for good. Declare `reset_records:` "
+                    "(01-configuration.md section 1), or use the seen reset, "
+                    "`delivery.method: manual`"
+                ),
+            )
 
 
 def _refuse_mandatory_roles_at_plan(

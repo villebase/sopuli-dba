@@ -113,7 +113,7 @@ from sopuli.driver.protocol import (
     require_capability,
     require_read_write,
 )
-from sopuli.driver.registry import NotWrittenError
+from sopuli.driver.registry import DRIVERS, NotWrittenError
 from sopuli.driver.survey import SurveyedAccount
 from sopuli.output.debug import logger
 from sopuli.passwords import ByteLimit
@@ -165,8 +165,9 @@ NO_EXPIRY = (
 )
 
 #: Why a `profile:` predicate is refused on SQL Server, which has no
-#: profiles (#1554).
-NO_PROFILES = "SQL Server has no profiles; declare these logins by name with `accounts:`"
+#: profiles (#1554): the registry's, so `account list`'s refusal with no
+#: connection says the same (#1598).
+NO_PROFILES = DRIVERS["mssql"].no_profiles
 
 #: The host platform this build changes passwords on.
 LINUX = "Linux"

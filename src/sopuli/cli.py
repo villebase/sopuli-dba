@@ -4202,6 +4202,7 @@ def account_list_command(
         # A bare name names no MySQL account, so as a filter it would match
         # nothing and say so as if it were an answer.
         _refuse_a_bare_mysql_name(account, reached)
+    _refuse_unresolvable_rules(reached, run, config)
 
     unjournaled = no_reset_journal() if config.reset_records is None else []
     document.diagnostics.extend(unjournaled)
@@ -4240,6 +4241,63 @@ def account_list_command(
     notes.extend(one.message for one in unreadable)
     notes.extend(one.message for one in unseen)
     return render_account_list(rows, run_notes=notes)
+
+
+def _refuse_unresolvable_rules(
+    reached: Sequence[ExpandedTarget], run: Invocation, config: Config
+) -> None:
+    """Refuse a `profile:` or `role:` rule a target cannot resolve, before
+    anything is listed (invariant 4, #1598).
+
+    Without this, the refusal came from :func:`_list_one` partway through the
+    estate, outside its per-target ``try``, and the rows already read for
+    earlier targets were lost.
+
+    A `profile:` rule on a product with no profiles is refused from the
+    target's type, with no connection: the registry's ``no_profiles``. Any
+    other `profile:` or `role:` rule asks the target, with one more connection
+    per target that has one, through the driver's own ``resolve_profile`` or
+    ``resolve_role``, so the refusal carries the driver's hint. The first
+    target that refuses ends the run with exit 5, naming the capability.
+
+    Only a missing capability is refused here. A target that cannot be opened,
+    or whose read fails another way, is passed over, as
+    :func:`_refuse_uncomparable` passes it: the listing reports it per target.
+    A rule naming a profile or role the target does not have is a typo, which
+    the listing refuses as before.
+    """
+    for target in reached:
+        rules = account_list.rules_on(config, target.name)
+        predicates = [rule for rule in rules if rule.is_predicate]
+        if not predicates:
+            continue
+        no_profiles = DRIVERS[target.target.type].no_profiles
+        if no_profiles is not None and any(rule.profile is not None for rule in predicates):
+            raise UnsupportedCapabilityError(
+                PROFILE_MANAGEMENT, target=target.name, hint=no_profiles
+            )
+        session = None
+        try:
+            try:
+                session = _open_session(target, run, config)
+            except Exception:  # noqa: BLE001 -- the listing reports it, per target
+                continue
+            for rule in predicates:
+                if rule.profile is not None:
+                    session.resolve_profile(rule.profile)
+                else:
+                    assert rule.role is not None
+                    session.resolve_role(rule.role)
+        except UnsupportedCapabilityError:
+            raise
+        except DriverError:
+            # A read that failed another way, such as a dropped connection:
+            # the listing reports the target, as it does one it cannot open.
+            continue
+        finally:
+            if session is not None:
+                with suppress(Exception):
+                    session.close()
 
 
 @dataclass

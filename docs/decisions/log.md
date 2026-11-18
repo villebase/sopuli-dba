@@ -6454,3 +6454,26 @@ the register.
      account, SQL logins too, read *not checked*, and every run exited 4.
      The gap as a note only: a Windows login whose privileges may be short
      would read OK.
+
+## #1598
+
+- **Decided:** 2026-11-18, #1598
+- **Question:** `account list` resolved each `profile:` or `role:` rule
+  while it listed, outside its per-target `try`. A rule a target could not
+  resolve ended the run with exit 5 partway, and the rows already read for
+  earlier targets were lost. Should the listing refuse such a rule at plan
+  time, or report it as one failed target?
+- **Decision:** the maintainer's, option A. `account list` refuses at plan
+  time, before anything is listed, with exit 5 naming the capability and
+  the target, as `creds check`'s `--method hash` refusal does. A `profile:`
+  rule on a product with no profiles is refused from the target's type,
+  with no connection. A `role:` rule, and a `profile:` rule on Oracle, asks
+  the target. No new exception to invariant 4.
+- **Why:** invariant 4: a missing capability fails at plan time, before
+  anything is read. The capability is a fact about the target or the
+  product, not about one run, so a failed row would say the same thing on
+  every run.
+- **Rejected:** B, one failed row for the target that cannot resolve the
+  rule, and the others listed with exit 1 or 4. It would be a fourth
+  exception to invariant 4. The cost accepted: one more connection per
+  target that has a `role:` rule, or a `profile:` rule on Oracle.

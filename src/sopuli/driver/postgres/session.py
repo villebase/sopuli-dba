@@ -95,6 +95,7 @@ from sopuli.driver.protocol import (
     VerifyResult,
     require_capability,
 )
+from sopuli.driver.registry import DRIVERS
 from sopuli.driver.registry import NotWrittenError as NotWrittenError
 from sopuli.driver.survey import SurveyedAccount
 from sopuli.output.debug import logger
@@ -103,11 +104,9 @@ from sopuli.secrets import Secret
 
 LOG = logger("postgres")
 
-#: The hint for a `profile:` predicate on a cluster.
-NO_PROFILES = (
-    "PostgreSQL has no profiles; declare these accounts by name with `accounts:`, "
-    "or by a role they hold with `role:`"
-)
+#: The hint for a `profile:` predicate on a cluster, the registry's, so
+#: `account list`'s refusal with no connection says the same (#1598).
+NO_PROFILES = DRIVERS["postgresql"].no_profiles
 
 
 def _ms(started: float) -> int:

@@ -107,6 +107,7 @@ from sopuli.driver.protocol import (
     VerifyResult,
     require_capability,
 )
+from sopuli.driver.registry import DRIVERS
 from sopuli.driver.registry import NotWrittenError as NotWrittenError
 from sopuli.driver.survey import SurveyedAccount
 from sopuli.output.debug import logger
@@ -125,11 +126,9 @@ MISSING_GRANT_HINT = (
     "that grant them"
 )
 
-#: The hint for a `profile:` rule on a MySQL server.
-NO_PROFILES = (
-    "MySQL has no profiles; declare these accounts by name with `accounts:`, "
-    "or by a role they hold with `role:`"
-)
+#: The hint for a `profile:` rule on a MySQL server, the registry's, so
+#: `account list`'s refusal with no connection says the same (#1598).
+NO_PROFILES = DRIVERS["mysql"].no_profiles
 
 T = TypeVar("T")
 

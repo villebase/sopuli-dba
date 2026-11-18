@@ -6,7 +6,7 @@ for text output that keep it consistent with both.
 `sopuli/output/` produces them, and CI validates the output against the
 published schemas.
 
-Schemas: [`../schemas/sopuli-run-1.107.schema.json`](../schemas/sopuli-run-1.107.schema.json),
+Schemas: [`../schemas/sopuli-run-1.108.schema.json`](../schemas/sopuli-run-1.108.schema.json),
 [`../schemas/sopuli-event-1.25.schema.json`](../schemas/sopuli-event-1.25.schema.json)
 Examples, each from a real run:
 [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json),
@@ -1567,8 +1567,9 @@ with `protocol` `tcp`. `error.code` is the SQLSTATE (§2, `error`).
 `READ ONLY` where the server's `read_only` or `super_read_only`, or the
 session's `transaction_read_only`, is on, and `read_write` is false then.
 `db_version` is `VERSION()` up to its first `-`. `capabilities` holds
-`role_lookup`, and `expire_password` and `password_rollover` too where the
-server has `caching_sha2_password_digest_rounds`. The
+`role_lookup`, and `expire_password`, `expire_on_reset` and
+`password_rollover` too where the server has
+`caching_sha2_password_digest_rounds`. The
 encryption comes from the session's own `Ssl_version` status: `tls`, `none`
 where it is empty, or `unknown` where there is no such row, with `protocol`
 `tcp`. A server whose version names MariaDB or TiDB is refused, a `config`
@@ -1579,12 +1580,19 @@ neither handles passwords as MySQL does.
 `db_unique_name` are null. `open_mode` is `READ WRITE`, or `READ ONLY` where
 the server's `read_only` or the session's `tx_read_only` is on, and
 `read_write` is false then. `db_version` is `VERSION()` up to its first `-`.
-`capabilities` holds `role_lookup`, `expire_password` and `password_rollover`,
-and `password_value` too where the tool read the server's password-check
+`capabilities` holds `role_lookup`, `expire_password`, `expire_on_reset` and
+`password_rollover`, and `password_value` too where the tool read the server's password-check
 plugins and found none that would refuse the value it sends
 (`02-mariadb-privileges.md`). The encryption is read as on MySQL. A server
 whose version does not name MariaDB is refused, a `config` error, before
 anything else is read.
+
+**A SQL Server target's `capabilities` is `["expire_on_reset"]`**, from run
+schema 1.108, and empty before it. `MUST_CHANGE` comes only with a new
+password, so a SQL Server login can be given a password that must be changed
+at the next login, which UC-2's seen reset needs, and its current password
+cannot be expired (#1554). The other products report `expire_on_reset`
+wherever they report `expire_password`.
 
 **`asserted` is absent when the target asserts nothing**, not present with
 `matches: true`. `01-configuration.md` §3a says that an assertion nobody makes is

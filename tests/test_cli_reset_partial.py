@@ -37,6 +37,7 @@ from sopuli.driver.protocol import (
     ACCOUNT_UNLOCK,
     ENCRYPTION_NONE,
     ENCRYPTION_TLS,
+    EXPIRE_ON_RESET,
     EXPIRE_PASSWORD,
     PASSWORD_SET,
     ROLLOVER_FINISH,
@@ -139,8 +140,9 @@ class FakeSession:
         self.encryption = Encryption(method=ENCRYPTION_TLS, protocol="tcps")
         #: What the audit check answers; a test about it sets its own.
         self.audited = AuditCoverage(audited=True, detail="LOGON by P; ALTER USER by P")
-        #: Oracle's, which can expire a password, so the seen path is allowed.
-        self.capabilities = frozenset({EXPIRE_PASSWORD})
+        #: Oracle's, which can expire a password and set one that must be
+        #: changed, so the seen path is allowed.
+        self.capabilities = frozenset({EXPIRE_PASSWORD, EXPIRE_ON_RESET})
 
     def describe_user(self, account: str) -> UserState | None:
         # Check 3 answered, as on a target that took §2's optional grant, so the
@@ -1205,8 +1207,9 @@ def test_the_seen_path_does_not_ask(
 def test_the_seen_path_is_refused_where_the_target_cannot_expire_a_password(
     runner: CliRunner, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch, sent: Sent
 ) -> None:
-    """A PostgreSQL target has no `expire_password` (#1201), so a seen reset
-    stops at plan time with exit 5 naming it, before any password is drawn.
+    """A PostgreSQL target has no `expire_on_reset` (#1201, #1554 Q8), so a
+    seen reset stops at plan time with exit 5 naming it, before any password
+    is drawn.
     Shown as a preview: the real seen run needs a terminal, and the check runs
     before the preview returns, so both stop at the same line."""
     session = Asked("OPEN", DENIED)
@@ -1217,7 +1220,7 @@ def test_the_seen_path_is_refused_where_the_target_cannot_expire_a_password(
 
     assert isinstance(result.exception, UnsupportedCapabilityError), result.output
     assert result.exception.exit_code == ExitCode.UNSUPPORTED_CAPABILITY
-    assert "expire_password" in str(result.exception)
+    assert "expire_on_reset" in str(result.exception)
     assert session.reset == []
 
 
@@ -1496,7 +1499,7 @@ def test_the_seen_path_is_asked_again_where_plan_time_could_not_read_the_scope(
     assert result.exit_code == ExitCode.PARTIAL, result.output
     row = _row(result)
     assert row["state"] == "ERROR"
-    assert "expire_password" in json.dumps(row)
+    assert "expire_on_reset" in json.dumps(row)
     assert session.reset == []
 
 

@@ -64,6 +64,7 @@ from sopuli.driver.mysql_family.encryption import read_encryption
 from sopuli.driver.mysql_family.errors import COLUMN_ACCESS_DENIED, TABLE_ACCESS_DENIED
 from sopuli.driver.protocol import (
     ACCOUNT_LOCK,
+    EXPIRE_ON_RESET,
     EXPIRE_PASSWORD,
     KEEP_ROLLOVER,
     KEPT_WINDOW_UNREADABLE_MARIADB,
@@ -142,10 +143,14 @@ MISSING_GRANT_HINT = (
 #:   sent alone ends an expiry (``11_rollover_expiry_probe.py``). It also tells
 #:   `creds apply` it may set a password on an expired account, as on MySQL
 #:   (:func:`sopuli.apply.settled_before_acting`'s ``expiry_cleared``);
+#: - ``expire_on_reset``: the seen reset sends the new value with ``PASSWORD
+#:   EXPIRE`` in one statement (#1272), so the password it sets must be
+#:   changed at the next login. It holds wherever ``expire_password`` does
+#:   (#1554, Q8);
 #: - ``password_rollover``: two methods joined by ``OR`` both log in, on
 #:   10.11.19 to 12.3.3 (``03_dual_password_probe.py``, DP2). The tool opens
 #:   the window itself (#1271), and cannot read whether one is open.
-CAPABILITIES = frozenset({ROLE_LOOKUP, EXPIRE_PASSWORD, PASSWORD_ROLLOVER})
+CAPABILITIES = frozenset({ROLE_LOOKUP, EXPIRE_PASSWORD, EXPIRE_ON_RESET, PASSWORD_ROLLOVER})
 
 #: The server refused a read of a table (``1142``) or a column (``1143``).
 REFUSED_READ = frozenset({str(TABLE_ACCESS_DENIED), str(COLUMN_ACCESS_DENIED)})

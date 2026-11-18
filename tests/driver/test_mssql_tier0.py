@@ -24,6 +24,7 @@ from sopuli.driver.mssql.errors import (
 from sopuli.driver.mssql.scope import NotAnInstanceError, observe
 from sopuli.driver.protocol import (
     ENCRYPTION_TLS,
+    EXPIRE_ON_RESET,
     SERVER,
     UNKNOWN,
     AuthenticationError,
@@ -300,6 +301,18 @@ def test_a_server_that_takes_writes() -> None:
         True,
     )
     assert scope.encryption.method == ENCRYPTION_TLS
+
+
+def test_the_scope_reports_expire_on_reset_and_not_expire_password() -> None:
+    """`MUST_CHANGE` comes only with a new password: the seen reset can
+    expire the password it sets, and `account expire-password` cannot
+    expire the one a login has (#1554, Q8)."""
+    scope = observe(
+        FakeCursor(("16.0.4325.4", 3, "READ_WRITE", "master")),
+        target="mssql-dev",
+        settings=TargetMssql(),
+    )
+    assert scope.capabilities == frozenset({EXPIRE_ON_RESET})
 
 
 def test_a_read_only_master() -> None:

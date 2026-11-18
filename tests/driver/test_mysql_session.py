@@ -21,6 +21,7 @@ from sopuli.driver.mysql_family.connection import UnencryptedSessionError, requi
 from sopuli.driver.mysql_family.encryption import TLS_VERSION
 from sopuli.driver.protocol import (
     ACCOUNT_UNLOCK,
+    EXPIRE_ON_RESET,
     EXPIRE_PASSWORD,
     KEEP_ROLLOVER,
     PASSWORD_EXPIRE,
@@ -208,6 +209,9 @@ def test_the_server_can_look_up_a_role_whatever_its_rounds() -> None:
     that old may not know, so it is refused at plan time (#1225)."""
     assert _session().scope().supports(ROLE_LOOKUP)
     assert _session().scope().supports(EXPIRE_PASSWORD)
+    # Wherever it reports `expire_password`, it reports `expire_on_reset` too
+    # (#1554, Q8), and neither without the variable.
+    assert _session().scope().supports(EXPIRE_ON_RESET)
     session = _session()
     session.connection.fail_rounds = session_module.pymysql.err.OperationalError(
         1193, "Unknown system variable 'caching_sha2_password_digest_rounds'"

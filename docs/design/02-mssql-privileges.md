@@ -670,9 +670,10 @@ tier-1 test sends it through the driver, with a `'`, ODBC's escape
 characters `{` `}` `?` and a character outside the Basic Multilingual Plane
 in the password. It finds the password in no Extended Events record, the
 plan cache, the default trace or the error log, the login then answers
-`18488`, and both flags read on. The driver
-sends it, and `account reset-password` does not run on SQL Server until the
-seen path's expiry gate is decided (open: #1554).
+`18488`, and both flags read on. The seen path's plan-time gate is
+`expire_on_reset`, which a SQL Server session reports, and not
+`expire_password`, which it does not (#1554, Q8). The driver sends it, and
+`account reset-password` does not run on SQL Server yet (open: #1554).
 
 `MUST_CHANGE` needs `CHECK_POLICY` and `CHECK_EXPIRATION` on, and neither can
 be turned off while it is pending (LK5). So the seen reset leaves both on,

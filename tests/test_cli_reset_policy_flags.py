@@ -481,3 +481,23 @@ def test_without_reset_records_a_login_whose_policy_is_on_is_refused_at_plan_tim
         assert not any(isinstance(one, tuple) for one in session.events), "nothing was sent"
     else:
         assert result.exit_code == ExitCode.SUCCESS, result.output
+
+
+def test_the_plan_time_check_reads_no_login_the_config_does_not_declare(
+    write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch, journal: MemoryStore
+) -> None:
+    """Invariant 5: an undeclared login's flags are nothing the check needs.
+    The run refuses the name on its own row, not the whole run, exit 9."""
+    session = opened(monkeypatch, FlagSession(ON, journal))
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--config", str(write_config(MSSQL)), "--output", "json", "account",
+            "reset-password", "--account", "acme_dev_nobody",
+        ],
+    )  # fmt: skip
+
+    found = json.loads(result.stdout)
+    assert found["exit_code"] != ExitCode.CONFIG_INVALID, result.output
+    assert "read flags" not in session.events

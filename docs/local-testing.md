@@ -2503,13 +2503,13 @@ sopuli: target "mssql-dev" does not support expire_password
 
 ### `account reset-password` on SQL Server
 
-On the instance of §7, with the Vault of §2 and a login `w2_acme_reset`
+On the instance of §7, with the Vault of §2 and a login `acme_reset_user`
 made as `sa` with `CHECK_POLICY = ON, CHECK_EXPIRATION = ON`, `mssql.yaml`
 declares it, delivers by `vault_wrapped` and keeps a reset journal:
 
 ```yaml
 personal_accounts:
-  - accounts: [w2_acme_reset]
+  - accounts: [acme_reset_user]
 delivery:
   method: vault_wrapped
   vault_wrapped:
@@ -2525,22 +2525,22 @@ which also ends a lockout, and sets `CHECK_POLICY` and `CHECK_EXPIRATION`
 back after. The reset record holds them while the policy is off:
 
 ```
-$ sopuli --config mssql.yaml account reset-password --account w2_acme_reset
+$ sopuli --config mssql.yaml account reset-password --account acme_reset_user
 Plan: 1 account x 1 target = 1 account   [dev]
 
-ACCOUNT        TARGET     INTENT        SECRET
-w2_acme_reset  mssql-dev  password_set  -
+ACCOUNT          TARGET     INTENT        SECRET
+acme_reset_user  mssql-dev  password_set  -
 
-ACCOUNT        TARGET     STATE  WAS   DETAIL
-w2_acme_reset  mssql-dev  RESET  OPEN  declared by accounts 'w2_acme_reset'
+ACCOUNT          TARGET     STATE  WAS   DETAIL
+acme_reset_user  mssql-dev  RESET  OPEN  declared by accounts 'acme_reset_user'
 
-reset w2_acme_reset on 1 of 1 targets
+reset acme_reset_user on 1 of 1 targets
 
-hand this to w2_acme_reset for mssql-dev; it unwraps once:
+hand this to acme_reset_user for mssql-dev; it unwraps once:
 
     <TOKEN>
 
-It stops working at 2026-11-18T18:02:36.067962Z, and the first unwrap is the
+It stops working at 2026-11-18T18:20:06.269368Z, and the first unwrap is the
 last. Do not unwrap it to check -- that spends the person's one read, and
 them finding it spent is the only warning either of you gets.
 ...
@@ -2551,10 +2551,10 @@ Without the `reset_records:` block, a login whose `CHECK_POLICY` is on is
 refused before anything changes, exit 9:
 
 ```
-$ sopuli --config mssql.yaml account reset-password --account w2_acme_reset
+$ sopuli --config mssql.yaml account reset-password --account acme_reset_user
 ...
-sopuli: target 'mssql-dev': an unseen reset of login 'w2_acme_reset', whose CHECK_POLICY is on, needs a `reset_records:` block
-  hint: the reset turns the login's policy off and keeps its CHECK_POLICY and CHECK_EXPIRATION in the reset record until it sets them back, so a run that stopped would leave them off for good. Declare `reset_records:` (01-configuration.md section 1), or use the seen reset, `delivery.method: manual`
+sopuli: target "mssql-dev": an unseen reset of a login whose CHECK_POLICY is on needs a `reset_records:` block
+  hint: the reset turns the login's policy off and keeps its CHECK_POLICY and CHECK_EXPIRATION in the reset record until it sets them back, so a run that stopped would leave them off for good. Declare `reset_records:` (02-mssql-privileges.md §6.3), or use the seen reset, `delivery.method: manual`
 ```
 
 The seen reset, `delivery.method: manual` with `force_expire: true`, sends
@@ -2563,22 +2563,18 @@ login, and prints it once, as on Oracle. A policy whose charset can draw `'`
 is refused there, exit 5. A preview:
 
 ```
-$ sopuli --config mssql.yaml account reset-password --account w2_acme_reset --dry-run
+$ sopuli --config mssql.yaml account reset-password --account acme_reset_user --dry-run
 Plan: 1 account x 1 target = 1 account   [dev]
 
-ACCOUNT        TARGET     INTENT        SECRET
-w2_acme_reset  mssql-dev  password_set  -
+ACCOUNT          TARGET     INTENT        SECRET
+acme_reset_user  mssql-dev  password_set  -
 
-ACCOUNT        TARGET     STATE  WAS      DETAIL
-w2_acme_reset  mssql-dev  RESET  EXPIRED  declared by accounts 'w2_acme_reset'; would be reset
+ACCOUNT          TARGET     STATE  WAS   DETAIL
+acme_reset_user  mssql-dev  RESET  OPEN  declared by accounts 'acme_reset_user'; would be reset
 
-would reset w2_acme_reset on 1 of 1 targets
+would reset acme_reset_user on 1 of 1 targets
 ...
 ```
-
-`WAS` is `EXPIRED` here because an earlier seen reset left `MUST_CHANGE`
-pending: the server answers that login `18488` until its owner changes the
-password.
 
 ### Personal accounts on MariaDB
 

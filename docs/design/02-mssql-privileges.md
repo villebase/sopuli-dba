@@ -700,8 +700,9 @@ they are back; where step 4 fails, the record keeps them and the row is
 `CHECK_POLICY` is on, the unseen reset is refused, whatever the delivery: a
 run that stopped after step 2 would leave the policy, and `CHECK_EXPIRATION`
 with it, off for good (#1554, Q7). The refusal comes at plan time, exit 9,
-with one read of the login per SQL Server target, and only on the unseen
-path with no `reset_records:` block. Where both flags are off and no record
+only on the unseen path with no `reset_records:` block, and only on a target
+where a rule declares the login: one more connection per SQL Server target,
+which reads the login and asks the value's version (§6.2's step 1). Where both flags are off and no record
 holds others, there is nothing to restore, and no record is needed
 ([#1554](../decisions/log.md#1554)).
 

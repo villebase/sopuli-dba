@@ -414,7 +414,7 @@ from sopuli.payload import (
     merge,
     stage_layout,
 )
-from sopuli.personal import policy_for, policy_named, rules_for
+from sopuli.personal import declared_on, policy_for, policy_named, rules_for
 from sopuli.policy_flags import PolicyFlags
 from sopuli.preflight import Finding
 from sopuli.safety import (
@@ -2359,10 +2359,13 @@ def account_reset_password(
     This is for someone who cannot get into their own account, usually because
     the password expired and they no longer know it. The command draws a new
     password, sets it, and delivers it by the method `delivery:` names. It
-    works on Oracle, MySQL and MariaDB targets, and on PostgreSQL by an unseen
-    method only. On MariaDB a reset never unlocks the account, because the tool
-    cannot tell a suspension from a block after failed logins: a DBA unlocks it
-    by hand after checking for a suspension.
+    works on Oracle, MySQL, MariaDB and SQL Server targets, and on PostgreSQL
+    by an unseen method only. On MariaDB a reset never unlocks the account,
+    because the tool cannot tell a suspension from a block after failed
+    logins: a DBA unlocks it by hand after checking for a suspension. On SQL
+    Server the unseen path needs a `reset_records:` block where the login's
+    CHECK_POLICY is on, because the reset turns the policy off and keeps the
+    login's flags there until it sets them back.
 
     The configuration chooses one of two paths. The unseen path, the default,
     puts the password where only the owner can fetch it, and shows it to
@@ -2921,6 +2924,21 @@ def _refuse_mandatory_roles(session: Any, config: Config, target: ExpandedTarget
             session.resolve_role(rule.role)
 
 
+#: Why an unseen reset of a login whose CHECK_POLICY is on is refused without
+#: a `reset_records:` block (#1554, Q7): the plan-time refusal's words, and
+#: the run's guard's, so the two cannot drift apart.
+_UNKEPT_POLICY = (
+    'target "{target}": an unseen reset of a login whose CHECK_POLICY is on needs a '
+    "`reset_records:` block"
+)
+_UNKEPT_HINT = (
+    "the reset turns the login's policy off and keeps its CHECK_POLICY and "
+    "CHECK_EXPIRATION in the reset record until it sets them back, so a run that "
+    "stopped would leave them off for good. Declare `reset_records:` "
+    "(02-mssql-privileges.md §6.3), or use the seen reset, `delivery.method: manual`"
+)
+
+
 def _refuse_unrecorded_flags(
     targets: Iterable[ExpandedTarget],
     run: Invocation,
@@ -2953,28 +2971,32 @@ def _refuse_unrecorded_flags(
             continue
         try:
             session = _open_session(expanded, run, config)
+        except click.Abort:
+            raise
         except Exception:  # noqa: BLE001 -- the run reports it on its row
             continue
         try:
             keeper = _flag_keeper(session)
-            flags = keeper.reset_policy_flags(account) if keeper is not None else None
-        except DriverError:
+            # Only where a rule declares the login on this target: an
+            # undeclared one is refused by the run, on its own row, and its
+            # flags are nothing this check needs (invariant 5).
+            state = session.describe_user(account)
+            declared = state is not None and (
+                declared_on(
+                    config, state.name, expanded.name, profile=state.profile, roles=state.roles
+                )
+                is not None
+            )
+            flags = keeper.reset_policy_flags(account) if keeper and declared else None
+        except click.Abort:
+            raise
+        except Exception:  # noqa: BLE001 -- the run asks again, and reports it
             continue
         finally:
             with suppress(Exception):
                 session.close()
         if flags is not None and flags.check_policy:
-            raise ConfigError(
-                f"target {expanded.name!r}: an unseen reset of login {account!r}, whose "
-                "CHECK_POLICY is on, needs a `reset_records:` block",
-                hint=(
-                    "the reset turns the login's policy off and keeps its CHECK_POLICY and "
-                    "CHECK_EXPIRATION in the reset record until it sets them back, so a run "
-                    "that stopped would leave them off for good. Declare `reset_records:` "
-                    "(01-configuration.md section 1), or use the seen reset, "
-                    "`delivery.method: manual`"
-                ),
-            )
+            raise ConfigError(_UNKEPT_POLICY.format(target=expanded.name), hint=_UNKEPT_HINT)
 
 
 def _refuse_mandatory_roles_at_plan(
@@ -3150,16 +3172,7 @@ def _flags_for_reset(
     now = keeper.reset_policy_flags(account)
     if record_at is None:
         if now.check_policy:
-            raise DriverError(
-                f'target "{target}": an unseen reset of a login whose CHECK_POLICY is on '
-                "needs a `reset_records:` block",
-                hint=(
-                    "the unseen reset turns the login's policy off and records its "
-                    "CHECK_POLICY and CHECK_EXPIRATION in the reset record first, so it can "
-                    "set them back if the run stops. Declare a `reset_records:` block "
-                    "(02-mssql-privileges.md section 6.3)"
-                ),
-            )
+            raise DriverError(_UNKEPT_POLICY.format(target=target), hint=_UNKEPT_HINT)
         return _KeptFlags(now, recorded=False)
     journal = _reset_journal(run, config)
     if journal is None:

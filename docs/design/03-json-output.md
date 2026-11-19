@@ -267,6 +267,14 @@ Each part of the tool writes these lines:
   change the server accepted, named by what it did, such as `password set` or
   `ACCOUNT LOCK`, with the account and the target. Never a statement: a
   statement carries the hash or the plugin's value.
+- **`mssql`**: each connection, with the target, the user and the time it
+  took, or the code it failed with. The instance the session found, with its
+  encryption and its host's platform. What the guardrail catalog could not
+  read, such as a database the tool login cannot enter. The password value's
+  version and the check's answer. Each verification login and its result.
+  Each change the server accepted, named by what it did, such as `set the
+  password value` or `DISABLE`, with the login and the target. Never a
+  statement: a statement carries the password value.
 - **`plan`**: why a unit is in the run or not. Each declared target that a
   selector left out, and each account left out on a target that stays, with the
   flag that left it out, such as `--select`, `--account` or `--repair`. Each
@@ -807,12 +815,13 @@ on. A fourth state for it would put "not attempted" in the same vocabulary as
 **An account a guardrail refused is `SKIPPED`, with its reason.** `SKIPPED` is
 the schema's word for something the tool declined to do, as against something it
 tried and could not do; `creds finish-rollover` uses it the same way. It is not
-a failure, and in every verb but one it does not make the run partial: the exit
+a failure, and except in one case it does not make the run partial: the exit
 code ignores it. `02-oracle-privileges.md` §4 has the reasoning: the run was
 never going to act on that account, and a nightly rotation that exited 4
 forever because one account holds `DBA` would be more disruptive than the
-mistake the guardrail catches. The one verb is `creds finish-rollover` on
-MariaDB, whose close sets a password and so runs the account checks. A close
+mistake the guardrail catches. The one case is closing a rollover window on
+MariaDB, by `creds finish-rollover` or by `creds rotate --finish-rollover`.
+The close sets a password and so runs the account checks. A close
 they turn away leaves the old password working, and a MariaDB window never
 elapses, so the run exits 4 and `SOPULI-W043` names the account
 ([#1352](../decisions/log.md#1352)).
@@ -1687,6 +1696,7 @@ declares one Oracle target and one HashiCorp store, laid out one row to a line:
   ],
   "drivers": [
     { "name": "mariadb",    "status": "installed", "targets": 0 },
+    { "name": "mssql",      "status": "installed", "targets": 0 },
     { "name": "mysql",      "status": "installed", "targets": 0 },
     { "name": "oracle",     "status": "installed", "targets": 1 },
     { "name": "postgresql", "status": "installed", "targets": 0 }
@@ -2083,8 +2093,8 @@ treating every PDB as unknowable would refuse to report the ordinary case.
 
 **`source` has three values.** `targets` means at least one database answered.
 `products` means none did, and the product of at least one has a fixed limit,
-which holds without a connection: PostgreSQL, MySQL and MariaDB (#1338, run
-schema 1.80). `policy` means none did, no product has a fixed limit, and the
+which holds without a connection: PostgreSQL, MySQL, MariaDB and SQL Server
+(#1338, run schema 1.80). `policy` means none did, no product has a fixed limit, and the
 policy's declared length governed, which UC-1 §4 makes a legitimate fallback,
 not a failure. `SOPULI-W067` names the targets whose product limit governed,
 and `SOPULI-W015` the ones where the policy did. A run that asked nothing
@@ -2578,7 +2588,7 @@ not contract and may improve.
 | `SOPULI-W064` | A rollover window that not every client can use (#1271). From run schema 1.77. On a MariaDB `ed25519` account, PyMySQL uses only the first method of the `OR`, which is the new password (`11_rollover_expiry_probe.py`, RE5), so a PyMySQL client still on the old password cannot log in during the window. Other clients, and PyMySQL on `mysql_native_password`, use both. **One per account and target**, with `target` and `account` set. In a run, one for each confirmed change that kept the old password, `creds apply` setting a held rollover's `pending` again included, and the row's detail ends with the same sentence. Under `creds rotate --dry-run`, one for each account the run would stage |
 | `SOPULI-W065` | `account reset-password` will reset an account on a MariaDB target (#1317). From run schema 1.78. The new password is set as the only login method, so a second method joined by `OR`, such as a `unix_socket` login on the database host, stops working. The tool cannot see whether the account has one: it is only in `mysql.global_priv`, which the tool account does not read ([#1267](../decisions/log.md#1267), decision 3). **One per MariaDB target the reset reaches**, with `target` set, at plan time, before any confirmation question and the first change. It is printed with the plan, `--dry-run` included. A target whose rule turns out not to admit the account gets one too, because a role's members are read only during the run |
 | `SOPULI-W066` | A secret document was not promoted because a row of it did not confirm, while other rows of it did (#1328). From run schema 1.79 and event schema 1.22. Invariant 7 holds the promotion until every declared target confirms. The confirmed rows carry `SOPULI-W049`, and look finished in the table; this names the document and each row that held it, with the account, the target and the state that row reported. The remedy is to fix what those rows report, then run `creds apply`: run before the fix, it holds the promotion again. It names `creds apply` after a `creds rotate` too, because a second rotate is refused while the document has a `pending` staged. Raised by `creds apply` and `creds rotate`, once per document, and printed under the text view's closing line. Not raised where no row of the document confirmed, because each row then says why |
-| `SOPULI-W067` | `creds generate` could not read the password constraints of one or more targets whose product has a fixed limit, so that limit governed the draw there (#1338). From run schema 1.80 and event schema 1.23. PostgreSQL, MySQL and MariaDB have one, and it holds without a connection, so the draw was checked against it. This is apart from `SOPULI-W015`, which says the policy's declared length governed: a run where an Oracle target was not read either gets both. **One entry per run**, naming the targets. Not printed in the text view, whose `constraints:` line names the product limits. `--offline` emits nothing, as with W015 |
+| `SOPULI-W067` | `creds generate` could not read the password constraints of one or more targets whose product has a fixed limit, so that limit governed the draw there (#1338). From run schema 1.80 and event schema 1.23. PostgreSQL, MySQL, MariaDB and SQL Server have one, and it holds without a connection, so the draw was checked against it. This is apart from `SOPULI-W015`, which says the policy's declared length governed: a run where an Oracle target was not read either gets both. **One entry per run**, naming the targets. Not printed in the text view, whose `constraints:` line names the product limits. `--offline` emits nothing, as with W015 |
 | `SOPULI-W068` | A target's session claimed less than it could, so the check that refuses two targets on one set of accounts (`SOPULI-20008`) may have let two through (#1363). From run schema 1.81 and event schema 1.24. On PostgreSQL, the admin role may not run `pg_control_system()`, so `system_identifier` was not read. On MariaDB, a Galera node was not `Synced`, such as `Donor/Desynced` while a backup runs, so only its server was claimed and not its cluster. The message says which. It is a **warning**, not a refusal: a desynced node is normal, and refusing would fail every scheduled run during a backup. **One entry per target**, from every command that connects, so a scheduled run that skipped the check says so. Printed in the text view, except by `doctor`, whose note on the target says the same |
 | `SOPULI-W069` | A dry run of `keyring set` found a different value in the entry, so the same run without `--dry-run` is refused with exit 8 unless `--replace` is given (#1417). From run schema 1.89. Only on a dry run: the real run refuses instead of warning |
 | `SOPULI-W070` | The run opened a `file` store, which is one age-encrypted file for local development and CI, and not for production (#1372, [#1415](../decisions/log.md#1415), decision 5). From run schema 1.90 and event schema 1.25. It has no compare-and-set, so its lock is advisory only (`locking: advisory-only`), and the file is the only copy of what it holds. **One entry per file store the run opens**, from every command that opens one, `doctor` included, so each run's record shows the store, as `SOPULI-W001` shows `locking: advisory-only`. Printed in the text view |

@@ -25,14 +25,16 @@ What you need before you start:
 
 Everything below was run on Windows 11 with sopuli 0.58.0 and Instant Client
 23.26.3.0.0, against the project's own test containers. The output shown is what
-those runs printed, except the install samples in section 2. Those come from
-installing 0.75.0 from PyPI with pipx, on Windows 11 and on Ubuntu 24.04 in a
-container.
+those runs printed, with three exceptions. The install samples in section 2
+come from installing 0.75.0 from PyPI with pipx, on Windows 11 and on Ubuntu
+24.04 in a container. The `config show --explain` sample in section 5 and the
+`doctor` sample in section 6 come from 0.91.0, installed with the `oracle` and
+`hashicorp` extras only, on 2026-11-19.
 
-Both versions are a **record of what each capture printed**, not a claim about
+Each version is a **record of what its capture printed**, not a claim about
 what the current build is. Your own `sopuli --version` prints the version you
 installed. A version in a sample changes when that sample is captured again, not
-when a release is cut, so do not "correct" either to the current number:
+when a release is cut, so do not "correct" any of them to the current number:
 `pyproject.toml` owns that number.
 [`local-testing.md`](local-testing.md) §2 keeps the same kind of per-sample note.
 
@@ -569,17 +571,40 @@ free-pdb  127.0.0.1:1521/FREEPDB1  dev  pdb    targets
 sopuli --config sopuli.yaml config show --explain
 ```
 ```
+config: sopuli.yaml
+
+vaults
+NAME       TYPE       ADDRESS                NOTE
+vault-dev  hashicorp  http://127.0.0.1:8200  layered: addr
+
+targets
+NAME      DSN                      ENV  SCOPE
+free-pdb  127.0.0.1:1521/FREEPDB1  dev  pdb
+
+policies
+standard
+
+applications
+NAME      ACCOUNTS  TARGETS  SECRET
+(inline)  1         all      vault-dev:acme/{env}/db#DB_CREDENTIALS/{account}
+
 settings
-  db.connect_timeout_s = 30         [built-in default]
-  db.query_timeout_s   = 0          [built-in default]
-  output               = text       [built-in default]
-  safety.dry_run       = false      [built-in default]
-  safety.readonly      = false      [built-in default]
-  vault                = vault-dev  [defaults.vault]
+  db.connect_timeout_s        = 30                     [built-in default]
+  db.query_timeout_s          = 0                      [built-in default]
+  output                      = text                   [built-in default]
+  safety.dry_run              = false                  [built-in default]
+  safety.readonly             = false                  [built-in default]
+  safety.require_encryption   = false                  [built-in default]
+  vault                       = vault-dev              [defaults.vault]
+  vaults.vault-dev.addr       = http://127.0.0.1:8200  [env_thirdparty VAULT_ADDR]
+  vaults.vault-dev.kv_version = 2                      [vaults.vault-dev.kv_version]
+  vaults.vault-dev.mount      = kv                     [vaults.vault-dev.mount]
 ```
 
 `--explain` is the one to remember. Settings can arrive from several places at
-once, and this is how you find out which one won.
+once, and this is how you find out which one won. Here the store's address came
+from the `VAULT_ADDR` you set in section 4 (`env_thirdparty VAULT_ADDR`), not
+from the file, which is why the `vaults` table marks it `layered: addr`.
 
 ---
 
@@ -595,13 +620,14 @@ install
   backend  hashicorp   installed      vault-dev
   backend  oci         not_installed  -
   driver   mariadb     not_installed  -
+  driver   mssql       not_installed  -
   driver   mysql       not_installed  -
   driver   oracle      installed      1 target
   driver   postgresql  not_installed  -
 
 vaults
   VAULT      TYPE       STATUS  AUTH  SKEW
-  vault-dev  hashicorp  ok      yes   -58ms
+  vault-dev  hashicorp  ok      yes   -1000ms
 
 client
   tns_admin         (unset)
@@ -609,7 +635,7 @@ client
   reaches           19.1 and later
 
 TARGET    REACHABLE  SCOPE  CONTAINER  OPEN MODE   CAPABILITIES  ENCRYPTION
-free-pdb  yes        pdb    FREEPDB1   READ WRITE  7             none
+free-pdb  yes        pdb    FREEPDB1   READ WRITE  8             none
   free-pdb: the connection is not encrypted, so a password the tool sets crosses it in clear: require NNE or TLS on the server (SQLNET.ENCRYPTION_SERVER = REQUIRED in its sqlnet.ora, or a TCPS listener endpoint)
 
 1 note:
@@ -623,7 +649,9 @@ it in five parts:
   config asks for. `not_installed` means you did not install that extra,
   which is fine for a store or database your config does not use.
 - **vaults** — whether the store answered, whether your token authenticated, and
-  how far its clock is from yours.
+  how far its clock is from yours. HashiCorp Vault reports its time in whole
+  seconds, so a skew such as `-1000ms` can be rounding. Only a skew marked
+  `(!)` is beyond the tolerance and needs a look.
 - **client** — whether Instant Client loaded, and which Oracle versions it can
   reach. If this says `instant_client  not loaded`, go back to section 2c; a
   `detail:` line underneath says why the library was not found. This part works

@@ -1112,7 +1112,7 @@ install:
 
 ```
 TARGET    REACHABLE  SCOPE  CONTAINER  OPEN MODE   CAPABILITIES  ENCRYPTION
-free-pdb  yes        pdb    FREEPDB1   READ WRITE  6             none
+free-pdb  yes        pdb    FREEPDB1   READ WRITE  7             none
   free-pdb: the connection is not encrypted, so a password the tool sets crosses it in clear: require NNE or TLS on the server (SQLNET.ENCRYPTION_SERVER = REQUIRED in its sqlnet.ora, or a TCPS listener endpoint)
   free-pdb: not checked, and not visible from here: EXECUTE ON DBMS_LOCK, SYSDBA, SYSOPER
   free-pdb: SYSDBA and SYSOPER need SELECT on V$PWFILE_USERS, which 02-oracle-privileges.md §2 leaves optional: GRANT SELECT ON SYS.V_$PWFILE_USERS to the service account to audit them
@@ -1123,7 +1123,7 @@ left unchecked, and there is nothing to suggest about it:
 
 ```
 TARGET    REACHABLE  SCOPE  CONTAINER  OPEN MODE   CAPABILITIES  ENCRYPTION
-free-pdb  yes        pdb    FREEPDB1   READ WRITE  6             none
+free-pdb  yes        pdb    FREEPDB1   READ WRITE  7             none
   free-pdb: the connection is not encrypted, so a password the tool sets crosses it in clear: require NNE or TLS on the server (SQLNET.ENCRYPTION_SERVER = REQUIRED in its sqlnet.ora, or a TCPS listener endpoint)
   free-pdb: not checked, and not visible from here: EXECUTE ON DBMS_LOCK
 ```
@@ -1133,7 +1133,7 @@ not fatal: the run exits 0.
 
 ```
 TARGET    REACHABLE  SCOPE  CONTAINER  OPEN MODE   CAPABILITIES  ENCRYPTION
-free-pdb  yes        pdb    FREEPDB1   READ WRITE  6             none
+free-pdb  yes        pdb    FREEPDB1   READ WRITE  7             none
   free-pdb: the connection is not encrypted, so a password the tool sets crosses it in clear: require NNE or TLS on the server (SQLNET.ENCRYPTION_SERVER = REQUIRED in its sqlnet.ora, or a TCPS listener endpoint)
   free-pdb: not checked, and not visible from here: EXECUTE ON DBMS_LOCK
   free-pdb: over-granted, and the tool needs none of it: SYSDBA

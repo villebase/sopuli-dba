@@ -2,7 +2,7 @@
 
 ``session`` imports PyMySQL, and the registry imports ``session``. The other
 modules are tier 0: they build what is sent and read what comes back, with no
-client on the machine. The driver runs `doctor`, the `creds` commands and the
-`account` commands. It applies no account attributes: that call raises
-``SOPULI-20006``.
+client on the machine. The driver serves the commands the registry lists for
+MySQL. It applies no account attributes: a capability refuses them at plan
+time, and the call raises ``SOPULI-20006`` if a run gets there anyway.
 """

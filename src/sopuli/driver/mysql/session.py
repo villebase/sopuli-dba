@@ -265,8 +265,9 @@ class MysqlSession(ClosesConnection):
             product="a MySQL server",
             what=what,
             hint=(
-                "the MySQL driver runs `doctor`, the `creds` commands and the `account` "
-                "commands, and applies no account attributes"
+                "MySQL has no profiles, and the MySQL driver does not unlock an account "
+                "for `unlock_if_locked`, so a capability refuses both at plan time and no "
+                "run should get here; this is a fault in sopuli"
             ),
         )
 

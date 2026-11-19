@@ -428,8 +428,9 @@ class MariadbSession(ClosesConnection):
             what=what,
             hint=hint
             or (
-                "the MariaDB driver runs `doctor`, the `creds` commands and the `account` "
-                "commands, and applies no account attributes"
+                "MariaDB has no profiles, and the MariaDB driver does not unlock an "
+                "account for `unlock_if_locked`, so a capability refuses both at plan "
+                "time and no run should get here; this is a fault in sopuli"
             ),
         )
 

@@ -183,6 +183,9 @@ def test_what_is_not_written_refuses_with_20006() -> None:
     assert caught.value.code == DRIVER_NOT_IMPLEMENTED
     assert caught.value.exit_code == ExitCode.CONFIG_INVALID
     assert 'target "mysql-dev" is a MySQL server' in str(caught.value)
+    # Only `apply_attributes` gets here, after a capability refused both
+    # attributes at plan time, so the hint calls it a fault (#1630).
+    assert "this is a fault in sopuli" in (caught.value.hint or "")
 
 
 @pytest.mark.parametrize(

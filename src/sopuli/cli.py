@@ -16258,7 +16258,9 @@ def creds_status(
         # cannot observe, so it only ever exits 0 or 1. A target it could not
         # reach is exit 1 -- an inventory with a hole in it must not look
         # complete, which is the same argument `check` makes about a survey.
-        check_states.exit_code_for([one.outcome.state for one in found]),
+        # A refusal about one account is not a hole: its row exits with the
+        # refusal's own code, unless a target could not be reached (#1635).
+        status_states.exit_code_for(found),
         summarise_status(found),
     )
     return f"{render_plan(plan, noun='account')}\n\n{render_status_table(found)}"
@@ -16365,14 +16367,23 @@ def _survey_one(
             rollover = None
     except Exception as error:  # noqa: BLE001 -- a per-account finding
         reported = _finding(error)
+        # A refusal about this account alone keeps its own exit code and is
+        # that account's reason, as in `report history`'s `_database_date`:
+        # the target answered, so it is not counted as unreachable (#1635).
+        refused_exit = (
+            int(error.exit_code) if isinstance(error, DriverError) and error.about_account else None
+        )
         return _Surveyed(
-            _row(
-                binding,
-                user=None,
-                outcome=check_states.Outcome(check_states.ERROR, reported.message),
-                documents=documents,
-                stores=stores,
-                max_age_days=max_age_days,
+            replace(
+                _row(
+                    binding,
+                    user=None,
+                    outcome=check_states.Outcome(check_states.ERROR, reported.message),
+                    documents=documents,
+                    stores=stores,
+                    max_age_days=max_age_days,
+                ),
+                refused_exit=refused_exit,
             ),
             duration_ms=_elapsed(started),
             error=reported,

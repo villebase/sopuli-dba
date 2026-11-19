@@ -31,6 +31,7 @@ account spanning a CDB's PDBs.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -43,9 +44,11 @@ from sopuli.check import (
     UNVERIFIABLE,
     Outcome,
 )
+from sopuli.check import exit_code_for as check_exit_code_for
 from sopuli.clock import as_utc, from_rfc3339, until, utc_now
 from sopuli.config.model import Binding
 from sopuli.driver.protocol import UserState
+from sopuli.exit_codes import ExitCode
 from sopuli.payload import PENDING, ROTATED_AT, stage_layout
 from sopuli.store.credentials import StoredSecret
 
@@ -55,6 +58,7 @@ __all__ = [
     "age_days",
     "decide",
     "exceeds",
+    "exit_code_for",
     "rotated_at",
     "rotation_stamp",
 ]
@@ -94,6 +98,12 @@ class Row:
     #: scope could not be read. ``False`` is a product with no rollover at all,
     #: which the ROLLOVER column says rather than "not configured" (#1072).
     rollover_supported: bool | None = None
+    #: The exit code of a refusal about this account alone
+    #: (:attr:`~sopuli.driver.protocol.DriverError.about_account`), such as a
+    #: SQL Server Windows login, or ``None``. Such a row is ``ERROR`` with the
+    #: refusal as its reason, and is never counted as a target that could not
+    #: be reached: the target answered (#1635).
+    refused_exit: int | None = None
 
 
 def rotated_at(document: Any, binding: Binding) -> datetime | None:
@@ -227,6 +237,21 @@ def decide(
     if stored is None:
         return Outcome(UNVERIFIABLE, "the vault holds no password for this account")
     return Outcome(UNVERIFIABLE, "no login was attempted; `sopuli creds check` compares")
+
+
+def exit_code_for(rows: Sequence[Row]) -> int:
+    """`creds status`'s exit code: `check`'s over the rows a target answered or
+    failed to answer, then a refusal about one account.
+
+    A target that could not be reached is exit 1 and wins, because the
+    inventory has a hole in it. Otherwise a refusal about one account, such as
+    a SQL Server Windows login, exits with the refusal's own code, as it would
+    on any other verb (#1635).
+    """
+    code = check_exit_code_for([row.outcome.state for row in rows if row.refused_exit is None])
+    if code != ExitCode.SUCCESS:
+        return code
+    return next((row.refused_exit for row in rows if row.refused_exit is not None), code)
 
 
 def _has_pending(document: Any, binding: Binding) -> bool:

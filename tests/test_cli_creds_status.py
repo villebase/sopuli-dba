@@ -25,7 +25,7 @@ from sopuli.cli import cli
 from sopuli.config.model import Vault
 from sopuli.config.targets import EXTERNAL
 from sopuli.diagnostics import ROTATION_OVERDUE
-from sopuli.driver.protocol import Credential, Scope, UserState
+from sopuli.driver.protocol import Credential, DriverError, Scope, UserState
 from sopuli.exit_codes import ExitCode
 from sopuli.output.document import SCHEMA_VERSION
 from sopuli.secrets import Secret
@@ -77,7 +77,9 @@ class FakeSession:
     file makes.
     """
 
-    def __init__(self, users: Mapping[str, UserState | None], *, rollover: bool = True) -> None:
+    def __init__(
+        self, users: Mapping[str, UserState | Exception | None], *, rollover: bool = True
+    ) -> None:
         self.users = dict(users)
         self.rollover = rollover
         self.attempts: list[str] = []
@@ -93,7 +95,10 @@ class FakeSession:
         )
 
     def describe_user(self, account: str) -> UserState | None:
-        return self.users.get(account.upper())
+        found = self.users.get(account.upper())
+        if isinstance(found, Exception):
+            raise found
+        return found
 
     def verify_password(self, account: str, secret: Secret, **_: Any) -> Any:
         self.attempts.append(account.upper())
@@ -119,7 +124,7 @@ def estate(monkeypatch: pytest.MonkeyPatch) -> Harness:
     def install(
         *,
         document: dict[str, Any] | None = None,
-        users: Mapping[str, UserState | None] | None = None,
+        users: Mapping[str, UserState | Exception | None] | None = None,
         connect_error: Exception | None = None,
         rollover: bool = True,
         native: dict[str, Any] | None = None,
@@ -594,6 +599,50 @@ def test_an_unreachable_target_is_exit_one(
 
     assert result.exit_code == ExitCode.FAILURE
     assert "2 unreachable" in result.output
+
+
+class _NotAPasswordLoginError(DriverError):
+    """A refusal about one account, as SQL Server's for a Windows login."""
+
+    category = "config"
+    exit_code = ExitCode.CONFIG_INVALID
+    about_account = True
+
+
+def test_a_refusal_about_one_account_is_not_an_unreachable_target(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    """The target answered for the other account, so the summary says
+    refused, and the run exits with the refusal's own code (#1635)."""
+    estate(
+        users={
+            "ACME_WEB_USER": account("ACME_WEB_USER"),
+            "ACME_BATCH_USER": _NotAPasswordLoginError("ACME_BATCH_USER is a Windows login"),
+        }
+    )
+    result = run(runner, write_config(CONFIG))
+
+    assert result.exit_code == ExitCode.CONFIG_INVALID
+    assert "1 refused" in result.output
+    assert "unreachable" not in result.output
+    assert check.ERROR in row(result, "acme_batch_user")
+
+
+def test_a_refusal_about_one_account_keeps_its_category(
+    runner: CliRunner, write_config: Callable[[str], Path], estate: Harness
+) -> None:
+    estate(
+        users={
+            "ACME_WEB_USER": account("ACME_WEB_USER"),
+            "ACME_BATCH_USER": _NotAPasswordLoginError("ACME_BATCH_USER is a Windows login"),
+        }
+    )
+    body = document(run(runner, write_config(CONFIG), "--output", "json"))
+
+    refused = next(one for one in body["results"] if one["account"] == "acme_batch_user")
+    assert refused["state"] == check.ERROR
+    assert refused["error"]["category"] == "config"
+    assert body["exit_code"] == ExitCode.CONFIG_INVALID
 
 
 def test_a_document_that_cannot_be_resolved_still_renders_its_row(

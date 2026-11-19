@@ -2733,6 +2733,14 @@ filled in. The version and the age come from a document read before any database
 was dialled, and dropping them because a listener was down would report less
 than the run knows.
 
+A refusal about one account alone, such as a SQL Server Windows login or a
+MySQL account on another plugin, is that account's `ERROR` row, with the
+refusal as its reason and its own category. The target answered, so the
+verdict counts the row as refused, not unreachable, and the run exits with the
+refusal's own code: exit 9 for both of these. A target that could not be
+reached still makes the run exit 1. `report history` treats the same refusal as
+that account's reason too (#1635).
+
 In the run document, `password_age_days` means what it means everywhere else:
 the **database's** age, from `PASSWORD_CHANGE_DATE`. The vault's age is a
 `warning` that names its source, so that one field name never holds two clocks.

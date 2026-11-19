@@ -14,7 +14,9 @@ its encryption, audits the tool account's privileges for
 in as the role (:meth:`PostgresSession.verify_password`), and sets a role's
 password with a verifier computed on the client
 (:meth:`PostgresSession.set_password`, invariant 15), and suspends a role with
-``ALTER ROLE … NOLOGIN`` (:meth:`PostgresSession.suspend_account`). Those two
+``ALTER ROLE … NOLOGIN`` (:meth:`PostgresSession.suspend_account`). A reset
+(:meth:`PostgresSession.reset_password`) sends the same password statement,
+with a passed ``VALID UNTIL`` cleared to ``infinity`` in it. Those two
 ``ALTER ROLE`` statements are the only ones the driver sends that change
 anything, and each checks
 :func:`~sopuli.driver.postgres.scope.require_read_write` first. It also resolves

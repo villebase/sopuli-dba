@@ -308,8 +308,10 @@ def _server_name(cursor: Cursor) -> str | None:
 @dataclass
 class MssqlSession(ClosesConnection):
     """One open connection to a SQL Server instance. Implements the
-    :class:`~sopuli.driver.protocol.Session` methods `doctor` uses and
-    :meth:`describe_user`; every other one refuses with ``SOPULI-20006``."""
+    :class:`~sopuli.driver.protocol.Session` methods for `doctor`, UC-1, UC-2
+    and UC-5, as the module docstring lists. What SQL Server has no
+    counterpart for is refused by capability; :meth:`apply_attributes` is
+    never reached, and refuses with ``SOPULI-20006``."""
 
     connection: Any
     target: ExpandedTarget
@@ -484,8 +486,8 @@ class MssqlSession(ClosesConnection):
             product="a SQL Server instance",
             what=what,
             hint=(
-                "the SQL Server driver serves `doctor`, the `creds` commands, the reports, "
-                "`account list` and `account suspend`; this is not written yet (#1554)"
+                "SQL Server has no login attribute the tool sets, such as a profile or a "
+                "`VALID UNTIL`, so no run should ask for one; this is a fault in sopuli"
             ),
         )
 

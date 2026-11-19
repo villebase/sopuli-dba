@@ -18,7 +18,7 @@ import pytest
 from sopuli.config.errors import ConfigError
 from sopuli.config.loading import build_config
 from sopuli.config.model import Config, TargetMssql
-from sopuli.driver.registry import DRIVERS, require_command
+from sopuli.driver.registry import CONNECTING_COMMANDS, DRIVERS, require_command
 from sopuli.output.config_view import build_section
 
 VAULTS: dict[str, Any] = {"vault-dev": {"type": "hashicorp", "addr": "https://v.example.com"}}
@@ -329,23 +329,7 @@ def test_the_written_commands() -> None:
     written for SQL Server (#1549, #1551, #1552, #1554, #1555, #1631)."""
     target = loaded(targets=[SERVER]).expanded_targets[0].target
 
-    assert DRIVERS["mssql"].commands == frozenset(
-        {
-            "account.list",
-            "account.reset-password",
-            "account.suspend",
-            "account.expire-password",
-            "creds.check",
-            "creds.apply",
-            "creds.rotate",
-            "creds.generate",
-            "creds.status",
-            "creds.finish-rollover",
-            "report.accounts",
-            "report.history",
-            "report.privileges",
-        }
-    )
+    assert DRIVERS["mssql"].commands is CONNECTING_COMMANDS
     assert DRIVERS["mssql"].not_applicable == frozenset({"profile", "valid_until"})
     assert DRIVERS["mssql"].extra == "mssql"
     assert DRIVERS["mssql"].provides == frozenset({"pyodbc"})

@@ -19,6 +19,7 @@ from sopuli.config.errors import ConfigError
 from sopuli.config.loading import build_config
 from sopuli.config.model import Config, TargetMysql
 from sopuli.driver.registry import (
+    CONNECTING_COMMANDS,
     DRIVERS,
     require_command,
     resolve,
@@ -202,28 +203,12 @@ def test_a_role_names_no_host_on_mariadb() -> None:
 def test_the_driver_serves_exactly_doctor_uc1_uc2_and_three_reports() -> None:
     """`doctor` connects (#1268), and UC-1's (#1270, #1271), UC-2's (#1272)
     and UC-5's `report accounts` (#1462), `report history` (#1460) and
-    `report privileges` (#1483) commands run. The exact set is pinned, so a
-    merge cannot add a command whose session methods still refuse during the
-    run. Which commands are refused is `tests/driver/test_driver_registry.py`'s."""
+    `report privileges` (#1483) commands run: the shared set, which
+    `tests/driver/test_driver_registry.py` pins, with which commands are
+    refused."""
     target = loaded(targets=[SERVER]).expanded_targets[0].target
 
-    assert DRIVERS["mariadb"].commands == frozenset(
-        {
-            "report.accounts",
-            "report.privileges",
-            "account.list",
-            "account.reset-password",
-            "account.suspend",
-            "account.expire-password",
-            "creds.check",
-            "creds.apply",
-            "creds.rotate",
-            "creds.generate",
-            "creds.status",
-            "creds.finish-rollover",
-            "report.history",
-        }
-    )
+    assert DRIVERS["mariadb"].commands is CONNECTING_COMMANDS
     assert DRIVERS["mariadb"].extra == "mariadb"
     # PyMySQL's `ed25519` extra brings PyNaCl; without it the extra is not installed.
     assert DRIVERS["mariadb"].provides == frozenset({"pymysql", "nacl"})

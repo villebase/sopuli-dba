@@ -19,6 +19,7 @@ from sopuli.config.model import Binding
 from sopuli.config.secret_refs import parse_secret_ref
 from sopuli.diagnostics import PASSWORD_GRACE_PERIOD
 from sopuli.driver.protocol import UserState
+from sopuli.exit_codes import ExitCode
 from sopuli.output.status_view import build_result as build_status_result
 from sopuli.output.status_view import render_status_table
 from sopuli.secrets import Secret
@@ -297,3 +298,31 @@ def test_a_healthy_row_notes_nothing() -> None:
 
     assert "note" not in render_status_table([row])
     assert "warnings" not in build_status_result(row)
+
+
+# ------------------------------------------------------- the exit code ---
+
+
+def _error_row(refused_exit: int | None = None) -> status.Row:
+    return status.Row(
+        binding=binding(),
+        outcome=check.Outcome(check.ERROR, "no answer"),
+        refused_exit=refused_exit,
+    )
+
+
+def test_a_refusal_about_one_account_exits_with_its_own_code() -> None:
+    """#1635: the target answered, so the run is not exit 1."""
+    assert status.exit_code_for([_error_row(refused_exit=9)]) == ExitCode.CONFIG_INVALID
+
+
+def test_an_unreachable_target_wins_over_a_refusal_about_one_account() -> None:
+    """A hole in the inventory is exit 1, whatever else the run found."""
+    rows = [_error_row(refused_exit=9), _error_row()]
+    assert status.exit_code_for(rows) == ExitCode.FAILURE
+
+
+def test_the_highest_refusal_code_wins_whatever_the_order() -> None:
+    """The code does not depend on the order of the config."""
+    one, nine = _error_row(refused_exit=1), _error_row(refused_exit=9)
+    assert status.exit_code_for([one, nine]) == status.exit_code_for([nine, one]) == 9

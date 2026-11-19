@@ -410,7 +410,8 @@ def _verdict(rows: Sequence[Row]) -> str:
     over = sum(1 for row in rows if row.over_age)
     expiring = sum(1 for row in rows if _expiring(row.user))
     unhappy = sum(1 for row in rows if _unhappy(row.user))
-    failed = sum(1 for row in rows if is_failure(row.outcome.state))
+    refused = sum(1 for row in rows if row.refused_exit is not None)
+    failed = sum(1 for row in rows if is_failure(row.outcome.state) and row.refused_exit is None)
     if missing:
         findings.append(f"{missing} missing")
     if staged:
@@ -424,6 +425,8 @@ def _verdict(rows: Sequence[Row]) -> str:
         findings.append(f"{expiring} in a grace period")
     if unhappy:
         findings.append(f"{unhappy} locked or expired")
+    if refused:
+        findings.append(f"{refused} refused")
     if failed:
         findings.append(f"{failed} unreachable")
 

@@ -1286,8 +1286,8 @@ something the estate can express and the set silently cannot.
 | Key | Meaning |
 |---|---|
 | `name` | **required, unique** — what `--target` selects on. In a target set this is the *name template* |
-| `type` | **required** — the driver selector (P1): `oracle`, `postgresql`, `mysql` or `mariadb`. Any other value is refused while the file is being written, not at the first connection. `doctor` connects to a `mariadb` target and reports the server, and UC-1's `creds generate`, `apply`, `check`, `rotate`, `status` and `finish-rollover` and UC-2's commands run against it. `doctor` connects to a `mysql` target and reports the server, and UC-1's commands and UC-2's commands run against it. `doctor` connects to a `postgresql` target and reports the cluster, and UC-1's commands (`creds generate`, `apply`, `check`, `rotate`, `status` and `finish-rollover`) run against it. `creds check` logs in as the role, and `creds apply` and `rotate` set a password with a verifier computed on the client. UC-2's commands (`account list`, `reset-password`, `suspend` and `expire-password`) run against it too, and what a cluster lacks is refused at plan time by capability |
-| `dsn` | **required** — Oracle: `host:port/service`, or a TNS alias. PostgreSQL, MySQL and MariaDB: `host:port`. See below |
+| `type` | **required** — the driver selector (P1): `oracle`, `postgresql`, `mysql`, `mariadb` or `mssql`. Any other value is refused while the file is being written, not at the first connection. `doctor` connects to an `mssql` target and reports the instance, and UC-1's, UC-2's and UC-5's commands run against it, `creds check` on a Linux host only (see `mssql:` below). `doctor` connects to a `mariadb` target and reports the server, and UC-1's `creds generate`, `apply`, `check`, `rotate`, `status` and `finish-rollover` and UC-2's commands run against it. `doctor` connects to a `mysql` target and reports the server, and UC-1's commands and UC-2's commands run against it. `doctor` connects to a `postgresql` target and reports the cluster, and UC-1's commands (`creds generate`, `apply`, `check`, `rotate`, `status` and `finish-rollover`) run against it. `creds check` logs in as the role, and `creds apply` and `rotate` set a password with a verifier computed on the client. UC-2's commands (`account list`, `reset-password`, `suspend` and `expire-password`) run against it too, and what a cluster lacks is refused at plan time by capability |
+| `dsn` | **required** — Oracle: `host:port/service`, or a TNS alias. PostgreSQL, MySQL, MariaDB and SQL Server: `host:port`. See below |
 | `environment` | first-class rather than a label, because safety rules key on it (§4). Not overridable from the environment (§6) |
 | `vault` | which store masters passwords here |
 | `admin` | `{ username, auth }` — the credential that reaches the database. There is no password field, and there will not be one (P2). See below |
@@ -1295,6 +1295,7 @@ something the estate can express and the set silently cannot.
 | `postgres` | `{ database, sslmode, sslrootcert }` — how the tool connects to a PostgreSQL cluster. Only on a PostgreSQL target. See below |
 | `mysql` | `{ ssl_mode, ssl_ca }` — how the tool connects to a MySQL server. Only on a MySQL target. See below |
 | `mariadb` | `{ ssl_mode, ssl_ca }` — how the tool connects to a MariaDB server, with the same keys as `mysql`. Only on a MariaDB target. See below |
+| `mssql` | `{ encrypt, trust_server_certificate, host_name_in_certificate, server_certificate }` — how the tool connects to a SQL Server instance. Only on a SQL Server target. See below |
 | `labels` | free labels for selection (C8). A generated target gets its dimension values as labels automatically |
 | `safety` | a `safety:` block (§9) |
 
@@ -2345,8 +2346,8 @@ language (C7): `{name}` is looked up in one flat scope and that is all there is.
 | | |
 |---|---|
 | **In scope** | the outer dimension (`{env}`), the scalar variables of the value being rendered, and the inner dimension's current value (`{tenant}`) |
-| **Substituted in** | every string the template writes — `name`, `dsn`, `environment`, `vault`, `admin.username`, `admin.auth.secret`, `admin.auth.password_env`, `admin.auth.entry`, `oracle.container`, `postgres.database`, `postgres.sslrootcert`, `mysql.ssl_ca`, `labels` keys and values, `safety.confirm_environments`. A field left unrendered would reach a connection string, or a vault, with its braces intact |
-| **Not substituted in** | `type`, `oracle.scope`, `postgres.sslmode`, `mysql.ssl_mode`, `admin.auth.method`. They are closed sets, so a placeholder there is already refused when the set is read |
+| **Substituted in** | every string the template writes — `name`, `dsn`, `environment`, `vault`, `admin.username`, `admin.auth.secret`, `admin.auth.password_env`, `admin.auth.entry`, `oracle.container`, `postgres.database`, `postgres.sslrootcert`, `mysql.ssl_ca`, `mariadb.ssl_ca`, `mssql.host_name_in_certificate`, `mssql.server_certificate`, `labels` keys and values, `safety.confirm_environments`. A field left unrendered would reach a connection string, or a vault, with its braces intact |
+| **Not substituted in** | `type`, `oracle.scope`, `postgres.sslmode`, `mysql.ssl_mode`, `mariadb.ssl_mode`, `mssql.encrypt`, `mssql.trust_server_certificate`, `admin.auth.method`. They are closed sets or booleans, so a placeholder there is already refused when the set is read |
 | **No escaping** | there is no way to write a literal brace. An unbalanced or empty one (`{`, `{}`) is an error, not a literal |
 | **Shadowing** | a variable may not share the name of the dimension it sits under — `for_each: { env: { dev: { env: production } } }` gives `{env}` two meanings, and either choice silently decides a rendered secret path |
 
@@ -2633,8 +2634,11 @@ Naming: `SOPULI_` + upper-snake path, `__` for nesting into a named object.
 Vault's own `VAULT_ADDR`, `VAULT_NAMESPACE` and `VAULT_CACERT` reach the default
 store's `addr`, `namespace` and `tls.ca_file`. They are in P3's layer 2, ranked
 *below* their `SOPULI_*` equivalents. `VAULT_TOKEN` is auth material, not a
-setting, and belongs to §3a's token chain. The tool resolves no other
-third-party variable. Libraries read some themselves: the Oracle client reads
+setting, and belongs to §3a's token chain. No other third-party variable
+reaches a setting. Two are read for a place to look: the config file search
+reads `XDG_CONFIG_HOME`, and on Windows `APPDATA` and `PROGRAMDATA` (P1), and an
+OCI store reads `OCI_CONFIG_FILE` for its config file. Libraries read some
+themselves: the Oracle client reads
 `TNS_ADMIN` and `NLS_LANG`, and `httpx` reads `HTTPS_PROXY` and `NO_PROXY`.
 
 **`VAULT_SKIP_VERIFY` is the one exception.** It is read and **refused** with a
@@ -3979,11 +3983,11 @@ match instead:
 | `secret` and `secret_template` are mutually exclusive | §3 |
 | an `auth:` block carries only the keys its own `method:` takes | §3a |
 | `admin.auth: external` requires a TNS-alias `dsn` and no `username` | yes |
-| `oracle:` only on an Oracle target, `postgres:` only on a PostgreSQL target, `mysql:` only on a MySQL target, and `mariadb:` only on a MariaDB target | yes |
-| a PostgreSQL, MySQL or MariaDB target has a `host:port` `dsn` and no `admin.auth: external` | yes |
+| `oracle:` only on an Oracle target, `postgres:` only on a PostgreSQL target, `mysql:` only on a MySQL target, `mariadb:` only on a MariaDB target, and `mssql:` only on a SQL Server target | yes |
+| a PostgreSQL, MySQL, MariaDB or SQL Server target has a `host:port` `dsn` and no `admin.auth: external` | yes |
 | `postgres.sslrootcert` only with `sslmode: verify-ca` or `verify-full` | yes |
 | `mysql.ssl_ca` and `mariadb.ssl_ca` only with `ssl_mode: VERIFY_CA` or `VERIFY_IDENTITY` | yes |
-| an application's `oracle: container_clause` may not bind to a PostgreSQL, MySQL or MariaDB target | yes |
+| an application's `oracle: container_clause` may not bind to a target of another product | yes |
 | two accounts may not resolve to one secret ref | yes |
 | `require:` may not exceed `length:`, or ask for specials a charset lacks | yes |
 | `allow:` belongs to `charset: custom` | §8 |
@@ -4255,16 +4259,16 @@ notices until a rotation.
   rotation (invariant 4). `admin.auth: vault` with no `secret:` is the same rule:
   there is no default admin path, and guessing at one is how a run authenticates as
   something nobody chose
-- `admin.auth: external` on a PostgreSQL or MySQL target → error, because
+- `admin.auth: external` on a target of any product but Oracle → error, because
   external authentication is an Oracle wallet
 - `admin.auth: external` on an Oracle target whose `dsn` is not a TNS alias →
   error. External auth connects as `/@alias` and the wallet is keyed on that
   alias, so an EZConnect string fails as an *authentication* error, which is the
   most misleading way for a config mistake to surface
-- an `oracle:`, `postgres:` or `mysql:` block on a target of another product →
+- an `oracle:`, `postgres:`, `mysql:`, `mariadb:` or `mssql:` block on a target of another product →
   error naming the target. It would load and do nothing. Checked after
   expansion, because an override can change a generated target's `type`
-- a PostgreSQL or MySQL `dsn` that is not `host:port` → error. A connection URI
+- a PostgreSQL, MySQL, MariaDB or SQL Server `dsn` that is not `host:port` → error. A connection URI
   or a keyword string can carry a password, and the message does not repeat the
   value
 - `postgres.sslrootcert` with an `sslmode` other than `verify-ca` or
@@ -4274,9 +4278,9 @@ notices until a rotation.
   `VERIFY_IDENTITY` → error, because no other mode checks the server against
   the file
 - an application's or an override's `oracle: container_clause` on an
-  application that binds to a PostgreSQL or MySQL target → error. A role or an
-  account there belongs to the whole cluster or server, so there is no
-  container
+  application that binds to a target of any product but Oracle → error. A role
+  or an account there belongs to the whole cluster, server or instance, so
+  there is no container
 - `admin.auth: external` beside a `username:` → error rather than the username
   being ignored. The wallet decides who connects, and a file that appears to name
   the connecting account while the wallet names another is worth stopping for

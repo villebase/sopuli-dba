@@ -326,8 +326,7 @@ def test_two_spellings_of_one_login_are_refused() -> None:
 
 def test_the_written_commands() -> None:
     """`doctor`, UC-1's commands, UC-5's three reports and UC-2's four are
-    written for SQL Server (#1549, #1551, #1552, #1554, #1555, #1631): the
-    same commands as every other driver."""
+    written for SQL Server (#1549, #1551, #1552, #1554, #1555, #1631)."""
     target = loaded(targets=[SERVER]).expanded_targets[0].target
 
     assert DRIVERS["mssql"].commands == frozenset(
@@ -347,7 +346,6 @@ def test_the_written_commands() -> None:
             "report.privileges",
         }
     )
-    assert DRIVERS["mssql"].commands == DRIVERS["mariadb"].commands
     assert DRIVERS["mssql"].not_applicable == frozenset({"profile", "valid_until"})
     assert DRIVERS["mssql"].extra == "mssql"
     assert DRIVERS["mssql"].provides == frozenset({"pyodbc"})

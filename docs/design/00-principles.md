@@ -294,7 +294,7 @@ Server instance and reports the scope, `server`, and the driver reads a
 declared login. Its entry lists UC-1's `creds generate`, `apply`, `rotate`
 and `finish-rollover`, which change a password (#1551), `creds check`, which
 logs in on a Linux host and is refused at plan time on any other (#1552),
-UC-5's three reports (#1555), and UC-2's `account list`, `account suspend`
+`creds status` (#1631), UC-5's three reports (#1555), and UC-2's `account list`, `account suspend`
 and `account reset-password` on both paths, with `account expire-password`
 refused at plan time by capability (#1554). What
 PostgreSQL lacks, such as a rollover window, a profile, or a forced password

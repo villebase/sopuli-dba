@@ -166,8 +166,9 @@ shows an undeclared account, `SOPULI-W075` names the role and the grant, once
 per target and role, in this report and in `report privileges`
 ([#1478](../decisions/log.md#1478)). As with a profile predicate, a
 role does not bring back an account the report leaves out, such as one
-Oracle maintains. A role every account holds (a MySQL mandatory role, or a
-MariaDB role `PUBLIC` reaches) fails that target's report, as `account list`
+Oracle maintains. A role every account holds (a MySQL mandatory role, a
+MariaDB role `PUBLIC` reaches, or SQL Server's `public`) fails that target's
+report, as `account list`
 refuses it: it would make every account personal.
 Accounts that Oracle maintains (`ORACLE_MAINTAINED = 'Y'`) are left out unless a
 rule names them, as a rule for `DBSNMP` does. On 11.2, which has no such
@@ -286,7 +287,8 @@ count:
 
 **On SQL Server** ([#1555](../decisions/log.md#1555)), the survey is one
 read of `sys.server_principals`, `sys.sql_logins` and `LOGINPROPERTY`. The
-tool login reads it with its one grant, `ALTER ANY LOGIN`. The head line's
+tool login reads it with `ALTER ANY LOGIN` alone; a `role:` rule also needs
+`VIEW ANY DEFINITION` (below). The head line's
 release is `SERVERPROPERTY('ProductVersion')`.
 
 - **Every login is listed:** SQL logins, Windows and Entra logins and groups,
@@ -315,8 +317,13 @@ release is `SERVERPROPERTY('ProductVersion')`.
   Oracle.
 - **A rule's `oracle.profile` and `postgresql.valid_until` are *not
   applicable*.**
-- **A personal rule's `role:` is not resolved** until UC-2 is built on SQL
-  Server (#1554): its members show as undeclared, and `SOPULI-W075` says so.
+- **A personal rule's `role:` names a server role**, and admits every login
+  that holds it, through nested server roles (#1554). Where the tool login
+  cannot see every server role and its members, without `VIEW ANY DEFINITION`
+  or under a `DENY` of `VIEW ANY SECURITY DEFINITION` or `VIEW DEFINITION`,
+  the rule is not resolved: its members show as undeclared, and `SOPULI-W075`
+  says so. A rule naming `public`, which every login holds, fails that
+  target's report.
 
 ---
 

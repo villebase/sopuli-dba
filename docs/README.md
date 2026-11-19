@@ -41,7 +41,7 @@ on which Oracle release, and what it showed.
 | [design/04-testing.md](design/04-testing.md) | What can and cannot be containerised, capability-driven matrix, tiering, fault injection, release gates |
 | [use-cases/uc-01-app-credential-sync.md](use-cases/uc-01-app-credential-sync.md) | UC-1: application DB account credentials, vault as master — `generate` / `apply` / `check` / `rotate` |
 | [use-cases/uc-02-personal-account-passwords.md](use-cases/uc-02-personal-account-passwords.md) | UC-2: a person's own database account — the `account` verbs, password reset, the reset record, and delivery methods |
-| [use-cases/uc-05-fleet-reports.md](use-cases/uc-05-fleet-reports.md) | UC-5: read-only reports across a fleet — accounts, privileges and rotation history. Built on Oracle, PostgreSQL, MySQL and MariaDB |
+| [use-cases/uc-05-fleet-reports.md](use-cases/uc-05-fleet-reports.md) | UC-5: read-only reports across a fleet — accounts, privileges and rotation history. Built on Oracle, PostgreSQL, MySQL, MariaDB and SQL Server |
 | [workflow.md](workflow.md) | Binding: branching (`issue-<n>-<slug>`, no long-lived integration branch), Conventional Commits, release-please and the 0.x policy |
 | [measurements.md](measurements.md) | What ran on which Oracle release, when, and what it showed: the one place for release-by-release results |
 | [local-testing.md](local-testing.md) | The usual commands, run by hand against the tier-1 stack: setup, the `creds` lifecycle, the `account` verbs, and a few refusals |
@@ -1322,11 +1322,12 @@ install, and in what form.
 ### UC-5 — account, privilege and rotation reports across a fleet
 
 Specified in [`use-cases/uc-05-fleet-reports.md`](use-cases/uc-05-fleet-reports.md),
-and built on Oracle, PostgreSQL, MySQL and MariaDB: `report accounts`,
-`report privileges` and `report history`. It reads every declared target,
-changes nothing, and is the only place that lists the accounts the config does
-not declare ([#1376](decisions/log.md#1376)). What each product can read is
-measured (`pg-report-reads`, `mysql-report-reads`, `mariadb-report-reads`).
+and built on Oracle, PostgreSQL, MySQL, MariaDB and SQL Server:
+`report accounts`, `report privileges` and `report history`. It reads every
+declared target, changes nothing, and is the only place that lists the
+accounts the config does not declare ([#1376](decisions/log.md#1376)). What each product can read is
+measured (`pg-report-reads`, `mysql-report-reads`, `mariadb-report-reads`,
+`mssql-report-reads`).
 
 ### UC-1b — self-rotation, where there is no admin credential
 

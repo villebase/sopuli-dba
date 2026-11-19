@@ -4,8 +4,8 @@ Depends on: `00-principles.md`, `01-configuration.md`
 
 This document says what the tool login is granted on a SQL Server instance,
 what it reads, and what it must not hold. It is the specification for the SQL
-Server driver. The driver connects and serves `doctor`; each part not built
-yet names the issue that builds it. The decisions are in the decision log
+Server driver, which serves `doctor`, UC-1's commands, UC-2's commands and
+UC-5's reports. The decisions are in the decision log
 ([#1538](../decisions/log.md#1538)), and the probes are in `sql/mssql/`.
 
 The supported releases are 2019 and later (decision 7). Each probe ran on

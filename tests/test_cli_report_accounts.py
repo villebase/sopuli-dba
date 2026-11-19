@@ -611,11 +611,12 @@ def test_an_unsupported_target_beside_a_reached_one_is_not_checked(
     write_config: WriteConfig, sessions: dict[str, Opener]
 ) -> None:
     """One target of another product is that target not checked, exit 4 (UC-5 §3)."""
-    from sopuli.driver.registry import NotWrittenError
+    from sopuli.driver.registry import DriverNotImplementedError
 
     def unwritten(target: Any, run: Any, config: Any) -> Any:
-        raise NotWrittenError(
-            target.name, product="a MySQL server", what="report accounts", hint="none yet"
+        raise DriverNotImplementedError(
+            f'target "{target.name}" declares type "mysql", and this build '
+            "can run only `doctor` there yet"
         )
 
     sessions["prod-alpha"] = unwritten

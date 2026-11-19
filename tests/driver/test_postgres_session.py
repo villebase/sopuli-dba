@@ -2,8 +2,8 @@
 
 Past the scope, the privilege audit and the login that verifies a password,
 what this build does is refuse, so the refusals are the behaviour:
-``SOPULI-20006`` for an operation not written yet, and an absent capability
-named. The audit itself is in ``test_postgres_privileges.py``, and what each
+an internal fault for a call a capability check refuses first, and an absent
+capability named. The audit itself is in ``test_postgres_privileges.py``, and what each
 failed login means in ``test_postgres_verification.py``.
 """
 
@@ -23,12 +23,12 @@ from sopuli.driver.protocol import (
     Driver,
     DriverContext,
     DriverError,
+    InternalFaultError,
     Session,
     Timeouts,
     UnsupportedCapabilityError,
     UserState,
 )
-from sopuli.driver.registry import DRIVER_NOT_IMPLEMENTED
 from sopuli.exit_codes import ExitCode
 from sopuli.secrets import Secret
 
@@ -97,24 +97,42 @@ def test_a_role_has_no_password_rules_beyond_the_length() -> None:
     assert session.password_constraints("acme_app_user") is None
 
 
-def test_an_operation_not_written_yet_is_sopuli_20006() -> None:
-    with pytest.raises(session_module.NotWrittenError) as refused:
+def test_role_attributes_are_an_internal_fault() -> None:
+    """A capability check refuses them before the call, so reaching it is a
+    fault in sopuli: `internal` and exit 1, not a config error (#1640)."""
+    with pytest.raises(InternalFaultError) as refused:
         _session().apply_attributes("acme_app_user", AccountAttributes(unlock=True))
 
-    assert refused.value.code == DRIVER_NOT_IMPLEMENTED
-    assert refused.value.exit_code == ExitCode.CONFIG_INVALID
-    assert refused.value.category == "config"
+    assert refused.value.code is None
+    assert refused.value.exit_code == ExitCode.FAILURE
+    assert refused.value.category == "internal"
     assert 'target "pg-dev" is a PostgreSQL cluster' in refused.value.message
+    assert "this is a fault in sopuli" in refused.value.message
     assert "pip" not in str(refused.value)
-    # A capability refuses the attributes first, so the hint calls it a fault (#1630).
-    assert "this is a fault in sopuli" in (refused.value.hint or "")
 
 
-def test_a_write_not_written_yet_refuses_without_reading_the_scope() -> None:
-    """Not written yet is the answer on a standby too, so no round trip."""
+def test_an_expiry_past_the_capability_check_is_an_internal_fault(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A cluster never reports `expire_password`. If a scope ever did, the
+    call raises a fault rather than returning nothing, which would read as
+    "already expired" with nothing issued (#1640)."""
+    session = _session()
+    monkeypatch.setattr(session_module, "require_capability", lambda *args, **kwargs: None)
+
+    with pytest.raises(InternalFaultError) as refused:
+        session.expire_password("acme_app_user")
+
+    assert refused.value.category == "internal"
+    assert refused.value.exit_code == ExitCode.FAILURE
+    assert "expire a password: this is a fault in sopuli" in refused.value.message
+
+
+def test_the_fault_is_raised_without_reading_the_scope() -> None:
+    """The same answer on a standby, so no round trip."""
     session = _session(recovery=True)
 
-    with pytest.raises(session_module.NotWrittenError):
+    with pytest.raises(InternalFaultError):
         session.apply_attributes("acme_app_user", AccountAttributes())
 
     assert session._scope is None

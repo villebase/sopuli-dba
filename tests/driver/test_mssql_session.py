@@ -4,7 +4,6 @@ where pyodbc is installed: nothing here opens a socket (#1549)."""
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
 from typing import Any
 
 import pytest
@@ -13,10 +12,10 @@ from sopuli.config.model import ExpandedTarget, Target, TargetMssql
 from sopuli.driver.protocol import (
     AuthenticationError,
     Credential,
+    InternalFaultError,
     Timeouts,
     UnsupportedCapabilityError,
 )
-from sopuli.driver.registry import DRIVER_NOT_IMPLEMENTED, NotWrittenError
 from sopuli.exit_codes import ExitCode
 from sopuli.secrets import Secret
 
@@ -133,17 +132,18 @@ def test_a_reset_under_strict_refuses_the_capability(monkeypatch: pytest.MonkeyP
     assert "forcibly closed by the remote host" in (caught.value.hint or "")
 
 
-def test_every_other_method_is_not_written() -> None:
-    """Refused without a round trip: the session has no connection here."""
+def test_login_attributes_are_an_internal_fault() -> None:
+    """A capability check refuses them before the call, so reaching it is a
+    fault in sopuli, with no round trip: the session has no connection here
+    (#1640)."""
     opened = session.MssqlSession(connection=None, target=target())
-    calls: list[Callable[[], object]] = [
-        lambda: opened.apply_attributes("acme_app"),
-    ]
-    for call in calls:
-        with pytest.raises(NotWrittenError) as caught:
-            call()
-        assert caught.value.code == DRIVER_NOT_IMPLEMENTED
-        assert "is a SQL Server instance, and this build cannot" in str(caught.value)
+
+    with pytest.raises(InternalFaultError) as caught:
+        opened.apply_attributes("acme_app")
+
+    assert caught.value.category == "internal"
+    assert caught.value.exit_code == ExitCode.FAILURE
+    assert "is a SQL Server instance, and sopuli asked its driver" in str(caught.value)
 
 
 def test_a_role_the_tool_cannot_read_is_refused_as_role_lookup_missing() -> None:

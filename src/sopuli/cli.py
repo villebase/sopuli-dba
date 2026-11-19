@@ -257,7 +257,6 @@ from sopuli.driver.protocol import (
 from sopuli.driver.registry import (
     DRIVERS,
     DriverNotImplementedError,
-    NotWrittenError,
     driver_for,
     installed,
     require_command,
@@ -6472,7 +6471,7 @@ def _open_report_session(target: ExpandedTarget, run: Invocation, config: Config
     disagree about it (#1586 review)."""
     try:
         return _ReportSession(_open_session(target, run, config))
-    except (DriverNotImplementedError, NotWrittenError) as error:
+    except DriverNotImplementedError as error:
         # Another product: refused before connecting.
         return _ReportSession(None, _finding(error), _UNSUPPORTED)
     except UnsupportedCapabilityError as error:

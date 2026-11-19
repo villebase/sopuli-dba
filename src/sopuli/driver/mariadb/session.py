@@ -96,6 +96,7 @@ from sopuli.driver.protocol import (
     DriverContext,
     DriverError,
     Encryption,
+    InternalFaultError,
     PrivilegeAudit,
     Scope,
     Timeouts,
@@ -105,7 +106,7 @@ from sopuli.driver.protocol import (
     password_value_hint,
     require_capability,
 )
-from sopuli.driver.registry import NotWrittenError, no_profiles_hint
+from sopuli.driver.registry import no_profiles_hint
 from sopuli.driver.survey import SurveyedAccount
 from sopuli.output.debug import logger
 from sopuli.passwords import ByteLimit
@@ -270,8 +271,9 @@ GALERA_HINT = (
 class MariadbSession(ClosesConnection):
     """One open connection to a MariaDB server. Implements the
     :class:`~sopuli.driver.protocol.Session` methods `doctor` uses, and those
-    the module docstring names; every other one refuses with
-    ``SOPULI-20006``."""
+    the module docstring names. :meth:`apply_attributes` is never reached,
+    because a capability check refuses a policy's `account:` block first; if
+    it is, it raises :class:`~sopuli.driver.protocol.InternalFaultError`."""
 
     #: ``creds apply`` and ``creds rotate`` do not log in before a change, as
     #: on MySQL (#1270, decision 4). During a rotation that login fails once,
@@ -421,15 +423,15 @@ class MariadbSession(ClosesConnection):
             )
         return replace(audit, remedies=(*audit.remedies, *lines, *ACCOUNT_GAPS))
 
-    def _not_written(self, what: str) -> NoReturn:
-        raise NotWrittenError(
+    def _fault(self, what: str) -> NoReturn:
+        raise InternalFaultError(
             self.target.name,
             product="a MariaDB server",
             what=what,
             hint=(
                 "MariaDB has no profiles, and the MariaDB driver does not unlock an "
-                "account for `unlock_if_locked`, so a capability refuses both before the "
-                "call and no run should get here; this is a fault in sopuli"
+                "account for `unlock_if_locked`, so a capability check should have "
+                "refused both before the call"
             ),
         )
 
@@ -899,7 +901,7 @@ class MariadbSession(ClosesConnection):
         )
 
     def apply_attributes(self, *args: Any, **kwargs: Any) -> NoReturn:
-        self._not_written("apply account attributes")
+        self._fault("apply account attributes")
 
     def resolve_profile(self, profile: str) -> str | None:
         """Refused by capability: MariaDB has no profiles, so a `profile:` rule

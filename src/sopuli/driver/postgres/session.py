@@ -26,8 +26,9 @@ The registry entry lists the commands it is written for: UC-1's, UC-2's
 `report accounts`, `report history` and `report privileges`. What
 PostgreSQL has no counterpart for, such as a rollover window, a profile, or an
 expired password a role must change at login, is refused by capability, exit 5.
-:meth:`PostgresSession.apply_attributes` is not written, and is never reached:
-the attributes it enforces are refused by capability at plan time.
+:meth:`PostgresSession.apply_attributes` is never reached, because a
+capability check refuses the attributes it enforces first. If it is, it
+raises :class:`~sopuli.driver.protocol.InternalFaultError`.
 """
 
 from __future__ import annotations
@@ -38,7 +39,7 @@ import time
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, NoReturn
 
 import psycopg
 from psycopg import pq, sql
@@ -91,6 +92,7 @@ from sopuli.driver.protocol import (
     Credential,
     DriverContext,
     DriverError,
+    InternalFaultError,
     PrivilegeAudit,
     Scope,
     Timeouts,
@@ -99,7 +101,6 @@ from sopuli.driver.protocol import (
     VerifyResult,
     require_capability,
 )
-from sopuli.driver.registry import NotWrittenError as NotWrittenError
 from sopuli.driver.registry import no_profiles_hint
 from sopuli.driver.survey import SurveyedAccount
 from sopuli.output.debug import logger
@@ -213,15 +214,15 @@ class PostgresSession(ClosesConnection):
                 raise
             raise from_error(error).as_error() from error
 
-    def _not_written(self, what: str) -> NotWrittenError:
-        return NotWrittenError(
+    def _fault(self, what: str) -> NoReturn:
+        raise InternalFaultError(
             self.target.name,
             product="a PostgreSQL cluster",
             what=what,
             hint=(
                 "PostgreSQL has no profiles, and the PostgreSQL driver cannot unlock or "
-                "expire a role, so a capability refuses each of these before the call and "
-                "no run should get here; this is a fault in sopuli"
+                "expire a role, so a capability check should have refused each of these "
+                "before the call"
             ),
         )
 
@@ -470,7 +471,7 @@ class PostgresSession(ClosesConnection):
         # Never reached, as a cluster never reports the capability. If one did,
         # a refusal is the safe answer: an empty tuple would read as "already
         # expired" with nothing issued.
-        raise self._not_written("expire a password")  # pragma: no cover
+        self._fault("expire a password")
 
     def audit_coverage(self, account: str) -> AuditCoverage:
         """Never raises, as the protocol promises: the answer is unknown."""
@@ -481,7 +482,7 @@ class PostgresSession(ClosesConnection):
     def apply_attributes(
         self, account: str, attributes: AccountAttributes
     ) -> tuple[AttributeChange, ...]:
-        raise self._not_written("enforce a role's attributes")
+        self._fault("enforce a role's attributes")
 
     def resolve_profile(self, profile: str) -> str | None:
         """Refused by capability: PostgreSQL has no profiles, so a `profile:`

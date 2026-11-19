@@ -15,7 +15,6 @@ import sopuli.driver.mysql.scope as mysql
 import sopuli.driver.oracle.capabilities as oracle
 import sopuli.driver.postgres.scope as postgres
 from sopuli.driver.protocol import ClosesConnection, ReadOnlyTargetError, Scope
-from sopuli.driver.registry import NotWrittenError
 
 
 class _Session(ClosesConnection):
@@ -79,14 +78,6 @@ def test_every_driver_names_the_shared_read_only_error() -> None:
     assert oracle.ReadOnlyTargetError is ReadOnlyTargetError
     assert postgres.ReadOnlyTargetError is ReadOnlyTargetError
     assert mysql.ReadOnlyTargetError is ReadOnlyTargetError
-
-
-@pytest.mark.parametrize(
-    "module", ["sopuli.driver.postgres.session", "sopuli.driver.mysql.session"]
-)
-def test_every_driver_session_names_the_shared_not_written_error(module: str) -> None:
-    """The session imports its vendor's client, so it is skipped without one."""
-    assert pytest.importorskip(module).NotWrittenError is NotWrittenError
 
 
 @pytest.mark.parametrize(("driver", "require", "hint"), DRIVERS, ids=[d[0] for d in DRIVERS])

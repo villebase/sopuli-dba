@@ -20,10 +20,11 @@ from sopuli.driver.protocol import (
     AccountAttributes,
     DriverError,
     Encryption,
+    InternalFaultError,
     Scope,
     Timeouts,
 )
-from sopuli.driver.registry import DRIVER_NOT_IMPLEMENTED, NotWrittenError
+from sopuli.exit_codes import ExitCode
 from sopuli.secrets import Secret
 
 session_module = pytest.importorskip("sopuli.driver.mariadb.session")
@@ -143,15 +144,16 @@ def test_an_expired_password_is_left_alone(monkeypatch: pytest.MonkeyPatch) -> N
 
 
 def test_account_attributes_are_refused_as_a_fault(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A capability refuses both attributes before the call, so reaching
-    `apply_attributes` is a fault in sopuli, and the hint says so (#1630)."""
+    """A capability check refuses both attributes before the call, so reaching
+    `apply_attributes` is a fault in sopuli: `internal` and exit 1 (#1640)."""
     recorder = Recorder(ACCOUNT)
     session = _session(monkeypatch, recorder)
 
-    with pytest.raises(NotWrittenError) as caught:
+    with pytest.raises(InternalFaultError) as caught:
         session.apply_attributes("acme_dev_alice@%", AccountAttributes(unlock=True))
 
-    assert caught.value.code == DRIVER_NOT_IMPLEMENTED
+    assert caught.value.category == "internal"
+    assert caught.value.exit_code == ExitCode.FAILURE
     assert 'target "mariadb-dev" is a MariaDB server' in str(caught.value)
-    assert "this is a fault in sopuli" in (caught.value.hint or "")
+    assert "this is a fault in sopuli" in caught.value.message
     assert recorder.sent == []

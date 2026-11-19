@@ -6615,3 +6615,26 @@ the register.
   Moving an expiry date does not clear `MUST_CHANGE`.
 - **Rejected:** B, keeping the documented behaviour: a credential staged
   for nothing, and a hint that sends the operator to the wrong fix.
+
+## #1640
+
+- **Decided:** 2026-11-19, #1640
+- **Question:** a session raised `NotWrittenError`, `SOPULI-20006` with
+  category `config` and exit 9, from calls that a capability check refuses
+  before they are made: `apply_attributes` on PostgreSQL, MySQL, MariaDB and
+  SQL Server, and `expire_password` on PostgreSQL. Its message said "this
+  build cannot … yet", while the drivers' hints said reaching it is a fault
+  in sopuli. Which should it be?
+- **Decision:** the maintainer's, option A. These calls raise
+  `InternalFaultError`, with category `internal` and exit 1, and a message
+  that says it is a fault in sopuli. `NotWrittenError` is removed, because
+  nothing else raised it. `SOPULI-20006` keeps one meaning: a target whose
+  driver this build does not run the command on (`require_command`), or
+  has no module for.
+- **Why:** if a capability check ever fails to refuse such a call, the run
+  should say it found a bug, not send the operator to the config. Exit 9
+  tells a wrapper script that the config is wrong.
+- **Rejected:** B, rewording the message and keeping `config` and exit 9:
+  a fault would still exit as a config error. C, leaving it: the message,
+  the hint and the exit code would still disagree. No run reaches these
+  calls, so no output a run can produce changes.

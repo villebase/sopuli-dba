@@ -168,6 +168,7 @@ capabilities exercised
                        oracle
 account_lock_state       ok  
 common_users             --  
+expire_on_reset          ok  
 expire_password          ok  
 offline_verify           ok  
 password_reuse_policy    ok  

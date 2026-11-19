@@ -1322,10 +1322,10 @@ install, and in what form.
 ### UC-5 — account, privilege and rotation reports across a fleet
 
 Specified in [`use-cases/uc-05-fleet-reports.md`](use-cases/uc-05-fleet-reports.md),
-and built on Oracle, PostgreSQL, MySQL, MariaDB and SQL Server: `report accounts`,
-`report privileges` and `report history`. It reads every declared target,
-changes nothing, and is the only place that lists the accounts the config does
-not declare ([#1376](decisions/log.md#1376)). What each product can read is
+and built on Oracle, PostgreSQL, MySQL, MariaDB and SQL Server:
+`report accounts`, `report privileges` and `report history`. It reads every
+declared target, changes nothing, and is the only place that lists the
+accounts the config does not declare ([#1376](decisions/log.md#1376)). What each product can read is
 measured (`pg-report-reads`, `mysql-report-reads`, `mariadb-report-reads`,
 `mssql-report-reads`).
 

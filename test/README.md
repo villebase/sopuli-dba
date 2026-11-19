@@ -232,7 +232,8 @@ starts `mariadb-matrix` sets `SOPULI_TEST_MARIADB1011_PORT`,
 that starts `mssql-matrix` sets `SOPULI_TEST_MSSQL2019_PORT`,
 `SOPULI_TEST_MSSQL2022_PORT` and `SOPULI_TEST_MSSQL2025_PORT`, defaults 14319,
 14322 and 14325. The suite reads only `SOPULI_TEST_MSSQL2022_PORT`, for the
-2022 server that the `mssql` profile starts on the same port.
+2022 server that the `mssql` profile starts on the same port, so a second
+clone that starts either profile sets it.
 
 A tier-1 stack starts `mysql` and `mariadb` too. The rest of it uses about
 2.5 GB of memory in its containers idle, and about 2.9 GB while the suite runs

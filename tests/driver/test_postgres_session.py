@@ -99,13 +99,15 @@ def test_a_role_has_no_password_rules_beyond_the_length() -> None:
 
 def test_an_operation_not_written_yet_is_sopuli_20006() -> None:
     with pytest.raises(session_module.NotWrittenError) as refused:
-        _session().apply_attributes("acme_app_user", AccountAttributes())
+        _session().apply_attributes("acme_app_user", AccountAttributes(unlock=True))
 
     assert refused.value.code == DRIVER_NOT_IMPLEMENTED
     assert refused.value.exit_code == ExitCode.CONFIG_INVALID
     assert refused.value.category == "config"
     assert 'target "pg-dev" is a PostgreSQL cluster' in refused.value.message
     assert "pip" not in str(refused.value)
+    # A capability refuses the attributes first, so the hint calls it a fault (#1630).
+    assert "this is a fault in sopuli" in (refused.value.hint or "")
 
 
 def test_a_write_not_written_yet_refuses_without_reading_the_scope() -> None:

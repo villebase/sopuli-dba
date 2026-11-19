@@ -421,16 +421,15 @@ class MariadbSession(ClosesConnection):
             )
         return replace(audit, remedies=(*audit.remedies, *lines, *ACCOUNT_GAPS))
 
-    def _not_written(self, what: str, *, hint: str | None = None) -> NoReturn:
+    def _not_written(self, what: str) -> NoReturn:
         raise NotWrittenError(
             self.target.name,
             product="a MariaDB server",
             what=what,
-            hint=hint
-            or (
+            hint=(
                 "MariaDB has no profiles, and the MariaDB driver does not unlock an "
-                "account for `unlock_if_locked`, so a capability refuses both at plan "
-                "time and no run should get here; this is a fault in sopuli"
+                "account for `unlock_if_locked`, so a capability refuses both before the "
+                "call and no run should get here; this is a fault in sopuli"
             ),
         )
 

@@ -266,8 +266,8 @@ class MysqlSession(ClosesConnection):
             what=what,
             hint=(
                 "MySQL has no profiles, and the MySQL driver does not unlock an account "
-                "for `unlock_if_locked`, so a capability refuses both at plan time and no "
-                "run should get here; this is a fault in sopuli"
+                "for `unlock_if_locked`, so a capability refuses both before the call and "
+                "no run should get here; this is a fault in sopuli"
             ),
         )
 

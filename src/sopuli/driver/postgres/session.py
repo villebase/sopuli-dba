@@ -219,8 +219,9 @@ class PostgresSession(ClosesConnection):
             product="a PostgreSQL cluster",
             what=what,
             hint=(
-                "the PostgreSQL driver reads roles, checks and sets their passwords, "
-                f"and cannot {what} yet"
+                "PostgreSQL has no profiles, and the PostgreSQL driver cannot unlock or "
+                "expire a role, so a capability refuses each of these before the call and "
+                "no run should get here; this is a fault in sopuli"
             ),
         )
 

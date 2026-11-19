@@ -143,13 +143,13 @@ def test_an_expired_password_is_left_alone(monkeypatch: pytest.MonkeyPatch) -> N
 
 
 def test_account_attributes_are_refused_as_a_fault(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A capability refuses both attributes at plan time, so reaching
+    """A capability refuses both attributes before the call, so reaching
     `apply_attributes` is a fault in sopuli, and the hint says so (#1630)."""
     recorder = Recorder(ACCOUNT)
     session = _session(monkeypatch, recorder)
 
     with pytest.raises(NotWrittenError) as caught:
-        session.apply_attributes("acme_dev_alice@%", AccountAttributes())
+        session.apply_attributes("acme_dev_alice@%", AccountAttributes(unlock=True))
 
     assert caught.value.code == DRIVER_NOT_IMPLEMENTED
     assert 'target "mariadb-dev" is a MariaDB server' in str(caught.value)

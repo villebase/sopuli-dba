@@ -340,13 +340,12 @@ Under native staging it is in the secret's metadata, and every write keeps it.
 OCI's metadata holds about 5,100 characters in all (`oci-metadata-limits`),
 and one target's entry takes about 55. So a credential on more than about 80
 SQL Server targets cannot hold every entry at once. The write that records
-the flags then fails before the change, and that target is not changed. That
-OCI reads a `true` in metadata back as a boolean is not measured
-(unverified: oci-metadata-booleans). Until it is, a SQL Server binding under
-native staging is refused at plan time, before anything connects, exit 5,
-naming `policy_flags_in_metadata` (open: #1584), because a value read back as
-a string would be refused as above, and the flags could then never be set
-back.
+the flags then fails before the change, and that target is not changed. Any
+other write that would pass the limit, such as a stage or a promotion while
+records are left from a run that stopped, fails in the same way. OCI reads
+the record's `true` and `false` back as booleans (`oci-metadata-booleans`),
+and the change reads the record back before it is sent: one that does not
+read back as written stops the change while the policy is still on.
 
 ---
 

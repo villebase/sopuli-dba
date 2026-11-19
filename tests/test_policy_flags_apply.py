@@ -4,18 +4,18 @@ are fakes, and the helpers are the command's own."""
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 import pytest
 
 from sopuli import cli
-from sopuli.driver.protocol import DriverError, UnsupportedCapabilityError
-from sopuli.policy_flags import PolicyFlags
+from sopuli.driver.protocol import DriverError
+from sopuli.policy_flags import PolicyFlags, PolicyFlagsUnreadableError
 
 #: The command's helpers, typed loosely: the fakes below stand in for its types.
 keep: Any = cli._keep_flags
 restore: Any = cli._restore_flags
-refuse: Any = cli._refuse_flags_in_metadata
 
 
 @pytest.fixture(autouse=True)
@@ -34,11 +34,19 @@ class Binding:
 
 
 class Marks:
-    """The vault's record, in memory. ``fail`` makes every write fail."""
+    """The vault's record, in memory. ``fail`` makes every write fail, and
+    ``kept`` is what the store keeps of a record it is given."""
 
-    def __init__(self, recorded: PolicyFlags | None = None, *, fail: str | None = None) -> None:
+    def __init__(
+        self,
+        recorded: PolicyFlags | None = None,
+        *,
+        fail: str | None = None,
+        kept: Callable[[PolicyFlags], PolicyFlags | None] = lambda flags: flags,
+    ) -> None:
         self.recorded = recorded
         self.fail = fail
+        self.kept = kept
         self.writes: list[str] = []
         self.manager = self
 
@@ -53,7 +61,7 @@ class Marks:
         if self.fail:
             return self.fail
         self.writes.append("record")
-        self.recorded = flags
+        self.recorded = self.kept(flags)
         return None
 
     def remove_flags(self, binding: Any) -> str | None:
@@ -102,6 +110,32 @@ def test_a_record_that_cannot_be_written_stops_the_change() -> None:
         keep(Binding(), Session(ON), "acme_app", Marks(fail="the vault refused"))
 
 
+@pytest.mark.parametrize(
+    "kept",
+    [lambda flags: None, lambda flags: OFF],
+    ids=["record lost", "record changed"],
+)
+def test_a_record_that_does_not_read_back_as_written_stops_the_change(
+    kept: Callable[[PolicyFlags], PolicyFlags | None],
+) -> None:
+    """Before the change, while the policy is still on, not at step 4 (#1584)."""
+    with pytest.raises(DriverError, match="did not read back"):
+        keep(Binding(), Session(ON), "acme_app", Marks(kept=kept))
+
+
+def test_a_record_read_back_in_the_wrong_shape_stops_the_change() -> None:
+    """A store that keeps a ``true`` as ``"true"``: the reader refuses it."""
+
+    class Unreadable(Marks):
+        def flags_recorded(self, binding: Any) -> PolicyFlags | None:
+            if self.recorded is not None:
+                raise PolicyFlagsUnreadableError("mssql-dev", ("policy_flags", "mssql-dev"))
+            return None
+
+    with pytest.raises(PolicyFlagsUnreadableError):
+        keep(Binding(), Session(ON), "acme_app", Unreadable())
+
+
 def test_no_vault_to_write_to_stops_the_change() -> None:
     with pytest.raises(DriverError, match="cannot write them"):
         keep(Binding(), Session(ON), "acme_app", None)
@@ -124,53 +158,6 @@ def test_a_record_left_after_the_flags_were_set_back_is_reported() -> None:
     with pytest.raises(DriverError, match="did not remove its record"):
         restore(Binding(), session, "acme_app", marks)
     assert session.restored == [ON]
-
-
-class Expanded:
-    def __init__(self, kind: str) -> None:
-        self.target = type("T", (), {"type": kind})()
-
-
-class Bound:
-    def __init__(self, target: str) -> None:
-        self.target = target
-        self.secret = object()
-        self.vault = "oci-vault"
-        self.account = "acme_app"
-
-
-@pytest.mark.parametrize(("kind", "refused"), [("mssql", True), ("postgresql", False)])
-def test_a_sql_server_credential_staged_natively_is_refused_at_plan_time(
-    monkeypatch: pytest.MonkeyPatch, kind: str, refused: bool
-) -> None:
-    monkeypatch.setattr(cli, "_expanded", lambda config, name: Expanded(kind))
-    monkeypatch.setattr(cli, "_lock_key", lambda binding: binding)
-    monkeypatch.setattr(cli, "_is_native", lambda stores, key: True)
-    bindings = [Bound("db-dev")]
-    if not refused:
-        refuse(bindings, {}, None)
-        return
-    with pytest.raises(UnsupportedCapabilityError) as caught:
-        refuse(bindings, {}, None)
-    assert caught.value.capability == cli.POLICY_FLAGS_IN_METADATA
-    assert "#1584" in (caught.value.hint or "")
-
-
-def test_a_session_that_keeps_flags_is_refused_under_native_staging() -> None:
-    """The session's attribute drives the change, and the command's set drives
-    the plan-time refusal, which runs before anything connects. A driver
-    that keeps flags must be in the set, or it would skip that refusal."""
-    pytest.importorskip("pyodbc")
-    from sopuli.driver.mssql.session import MssqlSession
-    from sopuli.driver.registry import DRIVERS
-
-    keepers = {
-        kind
-        for kind, entry in DRIVERS.items()
-        if entry.module == MssqlSession.__module__ and MssqlSession.keeps_policy_flags
-    }
-    assert keepers <= cli.KEEPS_POLICY_FLAGS
-    assert "mssql" in keepers
 
 
 def test_keep_flags_says_whether_it_wrote_the_record() -> None:

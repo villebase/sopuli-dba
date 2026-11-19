@@ -8095,8 +8095,6 @@ def creds_generate(
         _stores_for({key.store for key in keys}, config, run=run),
         run,
     )
-    # Before anything is staged that no `apply` could set (#1551).
-    _refuse_flags_in_metadata(bindings, stores, config)
     found, unread = _plan_documents(keys, stores)
     # One write per document: a stage, or a new current, which native staging
     # stages and then promotes.
@@ -9525,7 +9523,6 @@ def creds_apply(
         _stores_for({key.store for key in keys}, config, run=run),
         run,
     )
-    _refuse_flags_in_metadata(bindings, stores, config)
     # Read once before a question, so a store that cannot be read refuses before
     # anybody is asked: with token auth, opening a store connects to nothing.
     # The run reads again under the lock, after the answer, and acts on that
@@ -11290,41 +11287,6 @@ def _reach_after_change(
     )
 
 
-#: The target types whose change keeps the login's policy flags in the vault
-#: (#1551, :mod:`sopuli.policy_flags`).
-KEEPS_POLICY_FLAGS = frozenset({"mssql"})
-
-#: The capability a SQL Server binding under native staging lacks until
-#: ``oci-metadata-booleans`` is measured (#1584).
-POLICY_FLAGS_IN_METADATA = "policy_flags_in_metadata"
-
-
-def _refuse_flags_in_metadata(
-    bindings: Sequence[Binding], stores: Mapping[str, SecretStore], config: Config
-) -> None:
-    """Refuse at plan time, before anything connects, a SQL Server binding
-    whose credential stages natively (UC-1 §3, ``policy_flags``). The record
-    is then in the secret's metadata, and whether OCI reads a ``true`` back
-    as a boolean is not measured (``oci-metadata-booleans``): a value read
-    back as anything else could never be set back on the login."""
-    for binding in bindings:
-        if binding.secret is None or binding.vault is None:
-            continue
-        if _expanded(config, binding.target).target.type not in KEEPS_POLICY_FLAGS:
-            continue
-        if _is_native(stores, _lock_key(binding)):
-            raise UnsupportedCapabilityError(
-                POLICY_FLAGS_IN_METADATA,
-                target=binding.target,
-                hint=(
-                    f"vault {binding.vault!r} stages this credential natively, so the "
-                    "login's policy flags would be kept in the secret's metadata, and "
-                    "that OCI reads them back as true and false is not measured (#1584). "
-                    "Keep SQL Server credentials in a store that stages in the document"
-                ),
-            )
-
-
 def _keep_flags(binding: Binding, session: Any, account: str, marks: _VaultMarks | None) -> bool:
     """Step 1 of a SQL Server change (``02-mssql-privileges.md`` §6.2): the
     login's policy flags, recorded in the vault before the policy goes off.
@@ -11336,6 +11298,13 @@ def _keep_flags(binding: Binding, session: Any, account: str, marks: _VaultMarks
     flags cannot be kept, so the change is not sent: the session's own
     refusals (a pending ``MUST_CHANGE``, a value version it cannot read), a
     record the tool cannot read, and a vault write that failed.
+
+    The record is read back from the document the write left before the
+    change is sent, so a store that keeps it in another shape, such as a
+    ``true`` as the string ``"true"``, stops the change while the policy is
+    still on, not at step 4 with it off. The write already reads the document
+    again (:meth:`_VaultMarks._write`), so this costs no further read. Where
+    that read failed, the write's own patch stands in, and this check passes.
     """
     flags = session.policy_flags(account)
     if marks is None or binding.secret is None:
@@ -11354,6 +11323,16 @@ def _keep_flags(binding: Binding, session: Any, account: str, marks: _VaultMarks
             "the vault did not record the login's policy flags, so no change was sent: "
             f"{unwritten}",
             hint="fix what stopped the vault write, then run again: nothing on the login changed",
+        )
+    # Raises PolicyFlagsUnreadableError for a record of the wrong shape.
+    if marks.flags_recorded(binding) != flags:
+        raise DriverError(
+            "the vault did not read back the login's policy flags as they were written, "
+            "so no change was sent",
+            hint=(
+                "nothing on the login changed; this store cannot keep the record, so keep "
+                "SQL Server credentials in another store"
+            ),
         )
     return True
 
@@ -15133,7 +15112,6 @@ def creds_rotate(
         _stores_for({key.store for key in keys}, config, run=run),
         run,
     )
-    _refuse_flags_in_metadata(bindings, stores, config)
     # `--max-age-days` leaves a document that is not due unwritten, so it is
     # not counted; telling which are due takes a read before the lock.
     due: set[LockKey] | None = None

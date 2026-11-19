@@ -1171,16 +1171,14 @@ The probes are in `sql/mssql/`, and the matrix of 2019, 2022 and 2025 is the
   `409 IncorrectState`. It was `ACTIVE` 20.8 and 18.7 seconds after the create
   answered. Scheduling a version's deletion makes the secret `UPDATING`, and it
   was `ACTIVE` 19.7 and 21.8 seconds later. M11.
-- `unverified` `oci-metadata-booleans` (#1551, #1584) — **Does OCI read a `true` or
+- `verified` `oci-metadata-booleans` (#1551, #1584) — **Does OCI read a `true` or
   `false` in a secret's metadata back as a boolean?**
-  The SQL Server driver's `policy_flags` record keeps a login's two policy
-  flags as JSON booleans, and under native staging the record is in the
-  secret's metadata. `oci-metadata-limits` measured a nested object and an
-  integer read back as sent, not a boolean. The reader refuses anything but a
-  boolean, so a value read back as a string blocks the change on that target
-  rather than guessing. Until it is measured, a SQL Server credential under
-  native staging is refused at plan time. Measuring it needs an OCI vault
-  and one metadata update with a boolean value (#1584).
+  Yes. A `policy_flags` record with one `true` and one `false`, nested two
+  levels down, reads back as JSON booleans through both `GetSecret` and a read
+  by name. A later update that sends the map back as read, with one key more,
+  keeps them booleans. So the SQL Server driver's `policy_flags` record, which
+  is in the secret's metadata under native staging, reads back as it was
+  written. M16.
 - `verified` `oci-metadata-limits` (#1151) — **What may a secret's metadata
   hold?**
   About 5,100 characters for the whole map, counted in characters, not bytes.

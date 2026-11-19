@@ -7,7 +7,8 @@ compute a verifier and psycopg's ``sql`` to quote the statement, and imports
 them inside the functions that use them (#1168). The others are tier 0: they
 build what is sent and read what comes back, with no client on the machine.
 
-This build connects, reports what it found, describes a role, checks its
-password by logging in as it, and sets it: UC-1's commands. UC-2's operations
-refuse with ``SOPULI-20006``.
+The driver serves the commands the registry lists for PostgreSQL. It applies
+no role attributes and does not expire a password: a capability refuses each
+before the call, and the call raises ``SOPULI-20006`` if a run gets there
+anyway.
 """

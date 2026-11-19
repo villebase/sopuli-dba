@@ -379,11 +379,12 @@ DRIVERS: dict[str, DatabaseDriver] = {
         ),
     ),
     # The session connects and reports the instance for `doctor` (#1549),
-    # changes a password for UC-1 (#1551), and serves UC-5's three reports
-    # (#1555). SQL Server has no profile and no `VALID UNTIL`. Every other
-    # command refuses a SQL Server target with
-    # SOPULI-20006. The client is pyodbc with Microsoft ODBC Driver 18, a
-    # system package like Oracle's Instant Client (#1538, decision 6).
+    # changes a password for UC-1 (#1551), serves UC-2's commands (#1554) and
+    # UC-5's three reports (#1555). SQL Server has no profile and no `VALID
+    # UNTIL`. A command not in `commands` below, such as `creds status`,
+    # refuses a SQL Server target with SOPULI-20006. The client is pyodbc with
+    # Microsoft ODBC Driver 18, a system package like Oracle's Instant Client
+    # (#1538, decision 6).
     "mssql": DatabaseDriver(
         module="sopuli.driver.mssql.session",
         extra="mssql",

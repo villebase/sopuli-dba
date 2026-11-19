@@ -14,13 +14,16 @@ its encryption, audits the tool account's privileges for
 in as the role (:meth:`PostgresSession.verify_password`), and sets a role's
 password with a verifier computed on the client
 (:meth:`PostgresSession.set_password`, invariant 15), and suspends a role with
-``ALTER ROLE … NOLOGIN`` (:meth:`PostgresSession.suspend_account`). Those two
+``ALTER ROLE … NOLOGIN`` (:meth:`PostgresSession.suspend_account`). A reset
+(:meth:`PostgresSession.reset_password`) sends the same password statement,
+with a passed ``VALID UNTIL`` cleared to ``infinity`` in it. Those two
 ``ALTER ROLE`` statements are the only ones the driver sends that change
 anything, and each checks
 :func:`~sopuli.driver.postgres.scope.require_read_write` first. It also resolves
 a `role:` predicate for `account list` (:meth:`PostgresSession.accounts_matching`).
-The registry entry lists the commands it is written for: UC-1's, and UC-2's
-`account list`, `reset-password`, `suspend` and `expire-password`. What
+The registry entry lists the commands it is written for: UC-1's, UC-2's
+`account list`, `reset-password`, `suspend` and `expire-password`, and UC-5's
+`report accounts`, `report history` and `report privileges`. What
 PostgreSQL has no counterpart for, such as a rollover window, a profile, or an
 expired password a role must change at login, is refused by capability, exit 5.
 :meth:`PostgresSession.apply_attributes` is not written, and is never reached:

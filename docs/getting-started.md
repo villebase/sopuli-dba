@@ -17,9 +17,11 @@ What you need before you start:
 - **An Oracle database** you may change a password on, and an admin account that
   can do it.
 - **A HashiCorp Vault** you can write to. A *vault* is a server built to store
-  secrets and hand them out to the applications that need them; HashiCorp Vault
-  is the one this build supports. If you have none, section 1 gives you a
-  throwaway one in a container.
+  secrets and hand them out to the applications that need them. This guide uses
+  HashiCorp Vault. The build also supports OCI Vault, for the
+  application-credential commands only, and a `file` store, for development and
+  CI only; the [README](../README.md) describes both. If you have none, section
+  1 gives you a throwaway one in a container.
 
 Everything below was run on Windows 11 with sopuli 0.58.0 and Instant Client
 23.26.3.0.0, against the project's own test containers. The output shown is what
@@ -821,6 +823,6 @@ the `SECRET_DELETE` permission, which `manage secrets` gives.
 | `config file is accessible to ...`, exit 9 | the file's permissions are too open. Section 3 has the fix |
 | `instant_client  not loaded` in `doctor` | Instant Client is missing or not on the library path. Section 2c |
 | `... declares type "hashicorp", but that backend is not installed`, exit 9 | the store's client is not installed. The hint gives two lines. Use the `pipx` one if you installed with pipx, as section 2 recommends, and the `pip` one otherwise |
-| `cannot be locked safely: its lock path does not require compare-and-set`, exit 5 | the lock path was created without `cas_required`, by something other than this tool. Set it once with `vault kv metadata put -cas-required=true` on the lock path. See UC-1 §8, *What the fence does in this build*, in [`use-cases/uc-01-app-credential-sync.md`](use-cases/uc-01-app-credential-sync.md) |
+| `cannot be locked safely: its lock path does not require compare-and-set`, exit 5 | the lock path was created without `cas_required`, by something other than this tool. Set it once with `vault kv metadata put -cas-required=true` on the lock path. See UC-1 §8, *How the fence is checked*, in [`use-cases/uc-01-app-credential-sync.md`](use-cases/uc-01-app-credential-sync.md) |
 | `VAULT_ADDR is set and was not applied` (a warning) | you have `VAULT_ADDR` in your environment and your config names no default store. Harmless if the variable belongs to something else; write `defaults.vault` to silence it |
 | exit 3 from `creds check` | not an error. Exit 3 means drift was found — the vault's password does not work on the database. It has its own exit code so a scheduler can tell it apart from a failure |

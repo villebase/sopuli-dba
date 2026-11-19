@@ -12,18 +12,22 @@ It is written in plain language on purpose. The precise versions live in
 reader who is outside the project.
 
 A note on the current state before anything else: this is alpha software.
-This document describes Oracle. PostgreSQL, MySQL and MariaDB are supported
-too. What a target lacks, such as a password rollover window or, on
+This document describes Oracle. PostgreSQL, MySQL, MariaDB and SQL Server
+are supported too. What a target lacks, such as a password rollover window or, on
 PostgreSQL, a forced password change at next login, is refused before anything
 changes.
 [`design/02-postgres-privileges.md`](design/02-postgres-privileges.md),
-[`design/02-mysql-privileges.md`](design/02-mysql-privileges.md) and
-[`design/02-mariadb-privileges.md`](design/02-mariadb-privileges.md) say what
+[`design/02-mysql-privileges.md`](design/02-mysql-privileges.md),
+[`design/02-mariadb-privileges.md`](design/02-mariadb-privileges.md) and
+[`design/02-mssql-privileges.md`](design/02-mssql-privileges.md) say what
 differs on each. The largest difference: on PostgreSQL 13 to 15, the `CREATEROLE`
 attribute the tool account needs can change the password of every role that is
 not a superuser, so there the tool account is close to a superuser and only the
-tool enforces the config's whitelist. From 16 the server enforces it too. The
-secret store is HashiCorp Vault, or OCI Vault or a `file` store for the
+tool enforces the config's whitelist. From 16 the server enforces it too. On
+SQL Server, `ALTER ANY LOGIN` sets the password of every login the server
+does not protect, and reaches `CONTROL SERVER` in two steps through a login
+that holds `ALTER ANY SERVER ROLE`. Only the tool's guardrail 9 closes that
+path (`02-mssql-privileges.md` §1). The secret store is HashiCorp Vault, or OCI Vault or a `file` store for the
 application-credential commands. A `file` store is for development and CI, and
 every run that opens one warns that it is not for production. Try it against a
 test database first.

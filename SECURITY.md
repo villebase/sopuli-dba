@@ -56,7 +56,7 @@ say so.
 ## What is in scope
 
 This project, its documentation, and the SQL in `sql/`, for Oracle,
-PostgreSQL, MySQL and MariaDB.
+PostgreSQL, MySQL, MariaDB and SQL Server.
 
 Some things are known and are not vulnerabilities, because they are the design.
 Reporting them is welcome but the answer will be a pointer to
@@ -71,6 +71,11 @@ in full:
   role that is not a superuser.** The `CREATEROLE` attribute it needs gives
   that power there; from 16 it also needs `ADMIN OPTION` on the role. Only
   the tool's config whitelist narrows it on 13 to 15.
+- **On SQL Server, the tool login can change the password of every login the
+  server does not protect.** `ALTER ANY LOGIN` has no narrower form. It also
+  reaches a login that holds `ALTER ANY SERVER ROLE`, which can make itself
+  `CONTROL SERVER`; the tool's guardrail 9 refuses such a login, and the
+  server does not.
 - **The account guardrails are client-side and can be bypassed by not using the
   tool.** They protect against a typo and a too-wide config change. The security
   boundary is the database's own auditing, and `docs/security-model.md` says so

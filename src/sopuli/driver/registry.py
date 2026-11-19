@@ -72,6 +72,29 @@ DRIVER_NOT_INSTALLED = "SOPULI-20002"
 #: module's ``SOPULI-20002`` are two.
 DRIVER_NOT_IMPLEMENTED = "SOPULI-20006"
 
+#: Every command that connects to a target, by the run document's command name,
+#: and so every command :func:`require_command` gates. A driver that lists its
+#: commands lists these, so a new command reaches every driver at once; a mode
+#: a product lacks is refused by capability at plan time (#1636). `doctor` is
+#: not one: it is never refused.
+CONNECTING_COMMANDS = frozenset(
+    {
+        "creds.check",
+        "creds.apply",
+        "creds.rotate",
+        "creds.generate",
+        "creds.status",
+        "creds.finish-rollover",
+        "account.list",
+        "account.reset-password",
+        "account.suspend",
+        "account.expire-password",
+        "report.accounts",
+        "report.history",
+        "report.privileges",
+    }
+)
+
 
 @dataclass(frozen=True)
 class DatabaseDriver:
@@ -251,23 +274,7 @@ DRIVERS: dict[str, DatabaseDriver] = {
         # privileges`, from the catalogs' ACLs of the database the target
         # connects to, with the cluster's other databases not checked (#1481)
         # unless another declared target connects to them (#1501).
-        commands=frozenset(
-            {
-                "report.privileges",
-                "account.list",
-                "account.reset-password",
-                "account.suspend",
-                "account.expire-password",
-                "creds.check",
-                "creds.apply",
-                "creds.rotate",
-                "creds.generate",
-                "creds.status",
-                "creds.finish-rollover",
-                "report.accounts",
-                "report.history",
-            }
-        ),
+        commands=CONNECTING_COMMANDS,
     ),
     # The module that imports PyMySQL, for the reason the Oracle entry names
     # `session`. `pymysql` is the module the `mysql` extra installs (#1202,
@@ -301,23 +308,7 @@ DRIVERS: dict[str, DatabaseDriver] = {
             "MySQL has no profiles; declare these accounts by name with `accounts:`, "
             "or by a role they hold with `role:`"
         ),
-        commands=frozenset(
-            {
-                "report.accounts",
-                "report.privileges",
-                "account.list",
-                "account.reset-password",
-                "account.suspend",
-                "account.expire-password",
-                "creds.check",
-                "creds.apply",
-                "creds.rotate",
-                "creds.generate",
-                "creds.status",
-                "creds.finish-rollover",
-                "report.history",
-            }
-        ),
+        commands=CONNECTING_COMMANDS,
     ),
     # PyMySQL reaches MariaDB too, and its `ed25519` extra brings PyNaCl for that
     # plugin (#1267, decisions 1 and 5), so the extra provides `nacl` as well as
@@ -360,23 +351,7 @@ DRIVERS: dict[str, DatabaseDriver] = {
             "MariaDB has no profiles; declare these accounts by name with `accounts:`, "
             "or by a role they hold with `role:`"
         ),
-        commands=frozenset(
-            {
-                "report.accounts",
-                "report.privileges",
-                "account.list",
-                "account.reset-password",
-                "account.suspend",
-                "account.expire-password",
-                "creds.check",
-                "creds.apply",
-                "creds.rotate",
-                "creds.generate",
-                "creds.status",
-                "creds.finish-rollover",
-                "report.history",
-            }
-        ),
+        commands=CONNECTING_COMMANDS,
     ),
     # The session connects and reports the instance for `doctor` (#1549),
     # changes a password for UC-1 (#1551), reads a login for `creds status`
@@ -398,23 +373,7 @@ DRIVERS: dict[str, DatabaseDriver] = {
         # commands (#1554):
         # `account list`, `suspend`, `reset-password` on both paths, and
         # `expire-password`, refused at plan time by capability.
-        commands=frozenset(
-            {
-                "account.list",
-                "account.reset-password",
-                "account.suspend",
-                "account.expire-password",
-                "creds.check",
-                "creds.apply",
-                "creds.rotate",
-                "creds.generate",
-                "creds.status",
-                "creds.finish-rollover",
-                "report.accounts",
-                "report.history",
-                "report.privileges",
-            }
-        ),
+        commands=CONNECTING_COMMANDS,
         not_applicable=frozenset({"profile", "valid_until"}),
         no_profiles="SQL Server has no profiles; declare these logins by name with `accounts:`",
         seen_reset_unmasked=(

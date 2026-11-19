@@ -34,6 +34,7 @@ from sopuli.config.targets import TARGET_TYPES
 from sopuli.diagnostics import MISSING_DRIVER, WARNINGS, install_diagnostics
 from sopuli.driver.protocol import DriverContext
 from sopuli.driver.registry import (
+    CONNECTING_COMMANDS,
     DRIVER_NOT_IMPLEMENTED,
     DRIVER_NOT_INSTALLED,
     DRIVERS,
@@ -366,6 +367,14 @@ def test_postgresql_is_written_for_uc1_uc2_and_three_reports() -> None:
         }
     )
     assert DRIVERS["oracle"].commands is None
+
+
+def test_every_driver_that_lists_commands_lists_every_connecting_one() -> None:
+    """One shared set, so a new command reaches every product at once (#1636).
+    A copy per driver once left out `creds status` on SQL Server (#1631)."""
+    for kind, entry in DRIVERS.items():
+        if entry.commands is not None:
+            assert entry.commands == CONNECTING_COMMANDS, kind
 
 
 def test_doctor_is_never_refused_whoever_asks() -> None:

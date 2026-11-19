@@ -122,6 +122,16 @@ SDK, with the same results:
   both sides) is refused with ``404 NotAuthorizedOrNotFound``, though the
   secret is already listed, as ``CREATING``. Once ``ACTIVE``, the read returns
   version 1.
+
+M16 was added for #1584, before SQL Server credentials were allowed under
+native staging. Two runs, 2026-11-19, the same vault, key, region and SDK,
+with the same results:
+
+- **M16** A ``true`` and a ``false`` nested two levels down in the metadata
+  (``{"policy_flags": {"probe-target": {"check_policy": true,
+  "check_expiration": false}}}``) read back as booleans, through both
+  ``GetSecret`` and a read by name. An update that sends the map back as
+  read, with one key more, keeps them booleans.
 """
 
 from __future__ import annotations
@@ -715,6 +725,49 @@ class Probe:
         self.settle(secret.id)
         report("M15", "read with no stage once ACTIVE", self.bundle(name))
 
+    def m16_booleans(self) -> None:
+        """Does a ``true`` or ``false`` in metadata come back as a boolean?
+
+        Reads each answer the way the store does: ``GetSecret`` before a
+        write, and a read by name for the document. The second update sends
+        back the map as read, with one key more, as a write that keeps the
+        metadata does (#1584).
+        """
+
+        def types(value: Any) -> Any:
+            if isinstance(value, dict):
+                return {key: types(item) for key, item in value.items()}
+            return f"{value!r} ({type(value).__name__})"
+
+        name = self.name()
+        secret = self.create(name)
+        flags = {"probe-target": {"check_policy": True, "check_expiration": False}}
+        self.update(secret.id, metadata={"sopuli_cas": "1", "policy_flags": flags})
+        data, _ = self.get(secret.id)
+        bundle = self.secrets.get_secret_bundle_by_name(name, VAULT_ID).data
+        report("M16", "GetSecret after the first update", types(data.metadata))
+        report("M16", "read by name after the first update", types(bundle.metadata))
+
+        kept = {**dict(data.metadata or {}), "sopuli_cas": "2", "reached": {"probe": 1}}
+        self.update(secret.id, metadata=kept)
+        data, _ = self.get(secret.id)
+        bundle = self.secrets.get_secret_bundle_by_name(name, VAULT_ID).data
+        report("M16", "GetSecret after the update that kept it", types(data.metadata))
+        report("M16", "read by name after the update that kept it", types(bundle.metadata))
+        report(
+            "M16",
+            "flags read back equal to and typed as those sent",
+            all(
+                one.get("policy_flags") == flags
+                and all(
+                    type(value) is bool
+                    for entry in one["policy_flags"].values()
+                    for value in entry.values()
+                )
+                for one in (dict(data.metadata or {}), dict(bundle.metadata or {}))
+            ),
+        )
+
     # -------------------------------------------------------------- cleanup ---
 
     def cleanup(self) -> None:
@@ -765,6 +818,7 @@ def main() -> int:
         probe.m13_read_while_updating,
         probe.m14_etag_settle,
         probe.m15_read_while_creating,
+        probe.m16_booleans,
     ]
     wanted = {one.lower() for one in sys.argv[1:]}
     known = {check.__name__.split("_")[0] for check in checks}

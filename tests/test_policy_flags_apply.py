@@ -9,13 +9,12 @@ from typing import Any
 import pytest
 
 from sopuli import cli
-from sopuli.driver.protocol import DriverError, UnsupportedCapabilityError
+from sopuli.driver.protocol import DriverError
 from sopuli.policy_flags import PolicyFlags
 
 #: The command's helpers, typed loosely: the fakes below stand in for its types.
 keep: Any = cli._keep_flags
 restore: Any = cli._restore_flags
-refuse: Any = cli._refuse_flags_in_metadata
 
 
 @pytest.fixture(autouse=True)
@@ -124,53 +123,6 @@ def test_a_record_left_after_the_flags_were_set_back_is_reported() -> None:
     with pytest.raises(DriverError, match="did not remove its record"):
         restore(Binding(), session, "acme_app", marks)
     assert session.restored == [ON]
-
-
-class Expanded:
-    def __init__(self, kind: str) -> None:
-        self.target = type("T", (), {"type": kind})()
-
-
-class Bound:
-    def __init__(self, target: str) -> None:
-        self.target = target
-        self.secret = object()
-        self.vault = "oci-vault"
-        self.account = "acme_app"
-
-
-@pytest.mark.parametrize(("kind", "refused"), [("mssql", True), ("postgresql", False)])
-def test_a_sql_server_credential_staged_natively_is_refused_at_plan_time(
-    monkeypatch: pytest.MonkeyPatch, kind: str, refused: bool
-) -> None:
-    monkeypatch.setattr(cli, "_expanded", lambda config, name: Expanded(kind))
-    monkeypatch.setattr(cli, "_lock_key", lambda binding: binding)
-    monkeypatch.setattr(cli, "_is_native", lambda stores, key: True)
-    bindings = [Bound("db-dev")]
-    if not refused:
-        refuse(bindings, {}, None)
-        return
-    with pytest.raises(UnsupportedCapabilityError) as caught:
-        refuse(bindings, {}, None)
-    assert caught.value.capability == cli.POLICY_FLAGS_IN_METADATA
-    assert "#1584" in (caught.value.hint or "")
-
-
-def test_a_session_that_keeps_flags_is_refused_under_native_staging() -> None:
-    """The session's attribute drives the change, and the command's set drives
-    the plan-time refusal, which runs before anything connects. A driver
-    that keeps flags must be in the set, or it would skip that refusal."""
-    pytest.importorskip("pyodbc")
-    from sopuli.driver.mssql.session import MssqlSession
-    from sopuli.driver.registry import DRIVERS
-
-    keepers = {
-        kind
-        for kind, entry in DRIVERS.items()
-        if entry.module == MssqlSession.__module__ and MssqlSession.keeps_policy_flags
-    }
-    assert keepers <= cli.KEEPS_POLICY_FLAGS
-    assert "mssql" in keepers
 
 
 def test_keep_flags_says_whether_it_wrote_the_record() -> None:

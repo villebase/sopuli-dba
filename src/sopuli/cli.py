@@ -8095,8 +8095,6 @@ def creds_generate(
         _stores_for({key.store for key in keys}, config, run=run),
         run,
     )
-    # Before anything is staged that no `apply` could set (#1551).
-    _refuse_flags_in_metadata(bindings, stores, config)
     found, unread = _plan_documents(keys, stores)
     # One write per document: a stage, or a new current, which native staging
     # stages and then promotes.
@@ -9525,7 +9523,6 @@ def creds_apply(
         _stores_for({key.store for key in keys}, config, run=run),
         run,
     )
-    _refuse_flags_in_metadata(bindings, stores, config)
     # Read once before a question, so a store that cannot be read refuses before
     # anybody is asked: with token auth, opening a store connects to nothing.
     # The run reads again under the lock, after the answer, and acts on that
@@ -11288,41 +11285,6 @@ def _reach_after_change(
         f"the vault did not record the pass, so a later run of this `pending` cannot "
         f"count it: {unrecorded}"
     )
-
-
-#: The target types whose change keeps the login's policy flags in the vault
-#: (#1551, :mod:`sopuli.policy_flags`).
-KEEPS_POLICY_FLAGS = frozenset({"mssql"})
-
-#: The capability a SQL Server binding under native staging lacks until
-#: ``oci-metadata-booleans`` is measured (#1584).
-POLICY_FLAGS_IN_METADATA = "policy_flags_in_metadata"
-
-
-def _refuse_flags_in_metadata(
-    bindings: Sequence[Binding], stores: Mapping[str, SecretStore], config: Config
-) -> None:
-    """Refuse at plan time, before anything connects, a SQL Server binding
-    whose credential stages natively (UC-1 §3, ``policy_flags``). The record
-    is then in the secret's metadata, and whether OCI reads a ``true`` back
-    as a boolean is not measured (``oci-metadata-booleans``): a value read
-    back as anything else could never be set back on the login."""
-    for binding in bindings:
-        if binding.secret is None or binding.vault is None:
-            continue
-        if _expanded(config, binding.target).target.type not in KEEPS_POLICY_FLAGS:
-            continue
-        if _is_native(stores, _lock_key(binding)):
-            raise UnsupportedCapabilityError(
-                POLICY_FLAGS_IN_METADATA,
-                target=binding.target,
-                hint=(
-                    f"vault {binding.vault!r} stages this credential natively, so the "
-                    "login's policy flags would be kept in the secret's metadata, and "
-                    "that OCI reads them back as true and false is not measured (#1584). "
-                    "Keep SQL Server credentials in a store that stages in the document"
-                ),
-            )
 
 
 def _keep_flags(binding: Binding, session: Any, account: str, marks: _VaultMarks | None) -> bool:
@@ -15133,7 +15095,6 @@ def creds_rotate(
         _stores_for({key.store for key in keys}, config, run=run),
         run,
     )
-    _refuse_flags_in_metadata(bindings, stores, config)
     # `--max-age-days` leaves a document that is not due unwritten, so it is
     # not counted; telling which are due takes a read before the lock.
     due: set[LockKey] | None = None

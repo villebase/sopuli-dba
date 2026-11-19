@@ -244,6 +244,7 @@ from sopuli.driver.protocol import (
     DriverContext,
     DriverError,
     Encryption,
+    InternalFaultError,
     PartialAccountChangeError,
     Scope,
     Session,
@@ -3113,7 +3114,7 @@ def _flag_keeper(session: Any) -> _FlagKeeper | None:
     if not getattr(session, "keeps_policy_flags", False):
         return None
     if not isinstance(session, _FlagKeeper):
-        raise DriverError(
+        raise InternalFaultError(
             "this session keeps its login's policy flags and cannot read or set them back "
             "for a reset",
             hint="this is a fault in sopuli: the driver is missing reset_policy_flags",
@@ -3150,7 +3151,7 @@ def _flags_for_reset(
         return _KeptFlags(now, recorded=False)
     journal = _reset_journal(run, config)
     if journal is None:
-        raise DriverError(
+        raise InternalFaultError(
             f'target "{target}" needs the reset record to keep the login\'s policy flags '
             "while its policy is off, and this run has none",
             hint="this is a fault in sopuli: the run gave the reset no record to write to",
@@ -4301,10 +4302,9 @@ def _delivery_backends(
         # Resolved once, by `_refuse_undeliverable`, before the plan. Refused
         # here too rather than asserted, so no backend is ever built without it.
         if onepassword_token is None:
-            raise RefusedError(
+            raise InternalFaultError(
                 f"`delivery.method: {onepassword.METHOD}` has no resolved token",
-                at=ROOT.key("delivery").key(onepassword.METHOD).key("token"),
-                hint="this is a bug in sopuli-dba: the token is resolved before the plan",
+                hint="this is a fault in sopuli: the token is resolved before the plan",
             )
         shared = delivery.onepassword_share
         share = onepassword.OnePassword(
@@ -11307,7 +11307,7 @@ def _keep_flags(binding: Binding, session: Any, account: str, marks: _VaultMarks
     """
     flags = session.policy_flags(account)
     if marks is None or binding.secret is None:
-        raise DriverError(
+        raise InternalFaultError(
             f'target "{binding.target}" needs the vault to keep the login\'s policy '
             "flags while its policy is off, and this run cannot write them",
             hint="this is a fault in sopuli: the run gave the change no vault to write to",

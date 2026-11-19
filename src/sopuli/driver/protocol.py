@@ -582,22 +582,28 @@ class UnsupportedCapabilityError(DriverError):
 
 
 class InternalFaultError(DriverError):
-    """A driver was asked for something a check before the call should have
-    refused (#1640).
+    """A fault in sopuli, not in the config, the target or the store: category
+    ``internal`` and exit 1 (#1640, #1644).
 
-    A capability check refuses a policy's `account:` attributes on a product
-    that lacks them, and an expiry on PostgreSQL, before the driver is asked.
-    So a session that is asked anyway has found a fault in sopuli, not in the
-    config or the target: category ``internal`` and exit 1. ``product`` is how
-    the message names what the target is, such as "a MySQL server", and
-    ``hint`` says which check should have refused the call.
+    A correct build never raises it. It is what a run reports when a check
+    that should have come first did not, such as a closed session used again,
+    or a step the run did not give what it needs. The hint says which. Raise
+    it for that case only: an error the operator can fix has its own category.
     """
 
     category = "internal"
     exit_code = ExitCode.FAILURE
 
-    def __init__(self, target: str, *, product: str, what: str, hint: str) -> None:
-        super().__init__(
+    @classmethod
+    def unreachable_call(
+        cls, target: str, *, product: str, what: str, hint: str
+    ) -> InternalFaultError:
+        """A session asked for something a capability check refuses first: a
+        policy's `account:` attributes on a product that lacks them, or an
+        expiry on PostgreSQL (#1640). ``product`` is how the message names
+        what the target is, such as "a MySQL server", and ``hint`` says which
+        check should have refused the call."""
+        return cls(
             f'target "{target}" is {product}, and sopuli asked its driver to {what}: '
             "this is a fault in sopuli",
             hint=hint,

@@ -202,7 +202,7 @@ class PostgresSession(ClosesConnection):
         unmapped rather than reported as a lost connection.
         """
         if self.connection is None:
-            raise DriverError(
+            raise InternalFaultError(
                 f'the session to target "{self.target.name}" is closed',
                 hint="this is a fault in sopuli: a closed session was used again",
             )
@@ -215,7 +215,7 @@ class PostgresSession(ClosesConnection):
             raise from_error(error).as_error() from error
 
     def _fault(self, what: str) -> NoReturn:
-        raise InternalFaultError(
+        raise InternalFaultError.unreachable_call(
             self.target.name,
             product="a PostgreSQL cluster",
             what=what,

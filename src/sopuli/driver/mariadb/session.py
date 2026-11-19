@@ -424,7 +424,7 @@ class MariadbSession(ClosesConnection):
         return replace(audit, remedies=(*audit.remedies, *lines, *ACCOUNT_GAPS))
 
     def _fault(self, what: str) -> NoReturn:
-        raise InternalFaultError(
+        raise InternalFaultError.unreachable_call(
             self.target.name,
             product="a MariaDB server",
             what=what,
@@ -1094,12 +1094,13 @@ class MariadbSession(ClosesConnection):
             detail="any second password ended; the current password was sent alone",
         )
 
-    def _not_passed(self, which: str, account: str) -> DriverError:
+    def _not_passed(self, which: str, account: str) -> InternalFaultError:
         """The refusal for a password the command must pass and did not:
         ``previous`` for :meth:`set_password` to keep, or ``current`` for
         :meth:`finish_rollover`. MariaDB keeps or ends a rollover only by being
-        sent the value (#1271)."""
-        return DriverError(
+        sent the value (#1271). The command always passes it, so this is a
+        fault in sopuli (#1644)."""
+        return InternalFaultError(
             f'no {which} password was passed for "{account}" on target '
             f'"{self.target.name}"; nothing was sent',
             hint=(
@@ -1118,7 +1119,7 @@ class MariadbSession(ClosesConnection):
         server sent it, and a traceback or a log with ``exc_info`` would print
         it."""
         if self.connection is None:
-            raise DriverError(
+            raise InternalFaultError(
                 f'the session to target "{self.target.name}" is closed',
                 hint="this is a fault in sopuli: a closed session was used again",
             )

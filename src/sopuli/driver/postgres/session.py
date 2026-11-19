@@ -202,10 +202,7 @@ class PostgresSession(ClosesConnection):
         unmapped rather than reported as a lost connection.
         """
         if self.connection is None:
-            raise InternalFaultError(
-                f'the session to target "{self.target.name}" is closed',
-                hint="this is a fault in sopuli: a closed session was used again",
-            )
+            raise InternalFaultError.closed_session(self.target.name)
         try:
             with self.connection.cursor() as cursor:
                 yield cursor

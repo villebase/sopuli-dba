@@ -609,6 +609,16 @@ class InternalFaultError(DriverError):
             hint=hint,
         )
 
+    @classmethod
+    def closed_session(cls, target: str) -> InternalFaultError:
+        """A session used after :meth:`close` (#1644). Every driver's change
+        path reads on the session before it sends a password, so this is
+        raised before anything crosses, and ``password_sent`` stays ``False``."""
+        return cls(
+            f'the session to target "{target}" is closed',
+            hint="this is a fault in sopuli: a closed session was used again",
+        )
+
 
 class AuthenticationError(DriverError):
     """The database refused the credential the tool connected with.

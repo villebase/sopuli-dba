@@ -4299,8 +4299,9 @@ def _delivery_backends(
         # Imported here, for `_delivery_backend`'s reason.
         from sopuli.delivery import onepassword
 
-        # Resolved once, by `_refuse_undeliverable`, before the plan. Refused
-        # here too rather than asserted, so no backend is ever built without it.
+        # Resolved once, by `_refuse_undeliverable`, before the plan. A token
+        # still missing here is a fault in sopuli, raised rather than asserted
+        # so no backend is ever built without it.
         if onepassword_token is None:
             raise InternalFaultError(
                 f"`delivery.method: {onepassword.METHOD}` has no resolved token",

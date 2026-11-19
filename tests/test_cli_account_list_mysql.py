@@ -21,7 +21,7 @@ from conftest import WriteConfig
 from sopuli.cli import cli
 from sopuli.diagnostics import ADMITTED_CROSS_DECLARED, FAILED_LOGIN_BLOCK_UNREAD
 from sopuli.driver.mysql.accounts import OtherPluginError
-from sopuli.driver.protocol import DriverError, UserState
+from sopuli.driver.protocol import InternalFaultError, UserState
 from sopuli.exit_codes import ExitCode
 
 CONFIG = """version: 1
@@ -60,7 +60,7 @@ class FakeSession:
         if account.startswith("legacy"):
             raise OtherPluginError(account, "mysql_native_password", target="mysql-dev")
         if account.startswith("broken"):
-            raise DriverError('the session to target "mysql-dev" is closed')
+            raise InternalFaultError.closed_session("mysql-dev")
         held = frozenset(role for role, names in self.members.items() if account in names)
         locked = account.startswith("locked")
         return UserState(
@@ -210,7 +210,7 @@ def test_a_failure_of_the_target_is_not_caught_per_account(
     members["dev_role@%"] = ("jdoe@%", "broken@%")
     result = listed(write_config, "  - role: dev_role@%", "--target", "mysql-dev")
 
-    assert type(result.exception) is DriverError, result.output
+    assert type(result.exception) is InternalFaultError, result.output
 
 
 def test_two_spellings_of_a_user_are_counted_as_two_accounts(

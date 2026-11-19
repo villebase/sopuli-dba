@@ -9,7 +9,10 @@ and Vault. Most come from main at caf2645, after the 0.78.0 release, on
 2026-10-23. A sample added since then comes from a run of the change that added
 it. Every sample that shows PostgreSQL is one of these, from 18a0ceb to 50ea18d,
 2026-10-25 and 2026-10-26. The samples in §11 come from main at ee0f077 on
-2026-11-07.
+2026-11-07. On 2026-11-19, the 0.91.0 build recaptured the version line, the
+`doctor` install and client lines, every target's `CAPABILITIES` count, the
+PostgreSQL seen reset's refusal, and §11's run schema, with MySQL 8.4,
+MariaDB 11.8 and the `mssql` profile's SQL Server 2022 in the stack too.
 Commands are written for Git Bash or WSL. Where a sample was shortened, `...`
 marks the cut. The tokens and passwords the runs
 printed are replaced with `<TOKEN>` and `<PASSWORD>`, and the local user and
@@ -56,8 +59,8 @@ each run `doctor`, the `creds` commands (§7) and the `account` commands (§9).
 A SQL Server target runs `doctor`, the three `report` commands, `creds
 generate`, `creds apply`, `creds rotate` and `creds finish-rollover`, on a
 Linux host `creds check` (§7), and `account list`, `account suspend` and
-`account reset-password` (§9). It refuses `account expire-password`, because SQL Server takes
-`MUST_CHANGE` only with a new password.
+`account reset-password` (§9). It refuses `account expire-password`, because
+SQL Server takes `MUST_CHANGE` only with a new password.
 
 ---
 

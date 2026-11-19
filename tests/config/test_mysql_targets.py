@@ -19,7 +19,7 @@ from sopuli.config.errors import ConfigError
 from sopuli.config.loading import build_config
 from sopuli.config.model import TargetMysql
 from sopuli.config.targets import MYSQL_SSL_MODES
-from sopuli.driver.registry import DRIVERS, require_command
+from sopuli.driver.registry import CONNECTING_COMMANDS, DRIVERS, require_command
 
 VAULTS: dict[str, Any] = {"vault-dev": {"type": "hashicorp", "addr": "https://v.example.com"}}
 
@@ -331,8 +331,8 @@ def test_a_target_that_verifies_the_server_does_not_warn(mysql: dict[str, str] |
 
 def test_the_commands_the_mysql_driver_is_written_for() -> None:
     """UC-1 (#1223), UC-2 (#1225) and UC-5's `report accounts` (#1461),
-    `report history` (#1460) and `report privileges` (#1482). Pinned so that
-    the list changes by a reviewed line."""
+    `report history` (#1460) and `report privileges` (#1482): the shared set,
+    which `tests/driver/test_driver_registry.py` pins."""
     target = server()
 
     for command in (
@@ -343,20 +343,4 @@ def test_the_commands_the_mysql_driver_is_written_for() -> None:
         "report.privileges",
     ):
         require_command(target, command)
-    assert DRIVERS["mysql"].commands == frozenset(
-        {
-            "report.accounts",
-            "report.privileges",
-            "account.list",
-            "account.reset-password",
-            "account.suspend",
-            "account.expire-password",
-            "creds.check",
-            "creds.apply",
-            "creds.rotate",
-            "creds.generate",
-            "creds.status",
-            "creds.finish-rollover",
-            "report.history",
-        }
-    )
+    assert DRIVERS["mysql"].commands is CONNECTING_COMMANDS

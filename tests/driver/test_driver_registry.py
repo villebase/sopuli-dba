@@ -34,6 +34,7 @@ from sopuli.config.targets import TARGET_TYPES
 from sopuli.diagnostics import MISSING_DRIVER, WARNINGS, install_diagnostics
 from sopuli.driver.protocol import DriverContext
 from sopuli.driver.registry import (
+    CONNECTING_COMMANDS,
     DRIVER_NOT_IMPLEMENTED,
     DRIVER_NOT_INSTALLED,
     DRIVERS,
@@ -344,28 +345,49 @@ def test_a_command_the_driver_lists_is_not_refused(monkeypatch: pytest.MonkeyPat
     assert "can run only `doctor`, `creds apply` there yet" in refused.value.message
 
 
-def test_postgresql_is_written_for_uc1_uc2_and_three_reports() -> None:
+def test_the_connecting_commands_are_uc1_uc2_and_three_reports() -> None:
     """Pinned so that adding a command is a deliberate, reviewed line: UC-1 and
-    UC-2 (#1201), and UC-5's `report accounts` (#1459), `report history`
-    (#1460) and `report privileges` (#1481)."""
-    assert DRIVERS["postgresql"].commands == frozenset(
-        {
-            "account.list",
-            "account.reset-password",
-            "account.suspend",
-            "account.expire-password",
-            "creds.check",
-            "creds.apply",
-            "creds.rotate",
-            "creds.generate",
-            "creds.status",
-            "creds.finish-rollover",
-            "report.accounts",
-            "report.history",
-            "report.privileges",
-        }
+    UC-2, and UC-5's `report accounts`, `report history` and `report
+    privileges`. Every finished driver but Oracle's lists this set."""
+    assert (
+        frozenset(
+            {
+                "account.list",
+                "account.reset-password",
+                "account.suspend",
+                "account.expire-password",
+                "creds.check",
+                "creds.apply",
+                "creds.rotate",
+                "creds.generate",
+                "creds.status",
+                "creds.finish-rollover",
+                "report.accounts",
+                "report.history",
+                "report.privileges",
+            }
+        )
+        == CONNECTING_COMMANDS
     )
     assert DRIVERS["oracle"].commands is None
+
+
+@pytest.mark.parametrize("kind", ["postgresql", "mysql", "mariadb", "mssql"])
+def test_the_finished_drivers_share_the_connecting_commands(kind: str) -> None:
+    """One shared set, so a new command reaches every finished product at once
+    (#1636). A copy per driver once left out `creds status` on SQL Server
+    (#1631). A new product's driver, built one command at a time, lists a set
+    of its own until it is finished."""
+    assert DRIVERS[kind].commands is CONNECTING_COMMANDS
+
+
+def test_every_creds_account_and_report_verb_is_a_connecting_command() -> None:
+    """Every verb in these three groups opens a session and calls
+    `require_command`. One left out of the set would run on Oracle and be
+    refused as not written on every other product."""
+    real = _command_names()
+    grouped = {name for name in real if name.split(".")[0] in {"creds", "account", "report"}}
+    assert grouped == CONNECTING_COMMANDS
 
 
 def test_doctor_is_never_refused_whoever_asks() -> None:

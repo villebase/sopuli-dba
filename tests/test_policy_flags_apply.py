@@ -4,13 +4,14 @@ are fakes, and the helpers are the command's own."""
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 import pytest
 
 from sopuli import cli
 from sopuli.driver.protocol import DriverError
-from sopuli.policy_flags import PolicyFlags
+from sopuli.policy_flags import PolicyFlags, PolicyFlagsUnreadableError
 
 #: The command's helpers, typed loosely: the fakes below stand in for its types.
 keep: Any = cli._keep_flags
@@ -33,11 +34,19 @@ class Binding:
 
 
 class Marks:
-    """The vault's record, in memory. ``fail`` makes every write fail."""
+    """The vault's record, in memory. ``fail`` makes every write fail, and
+    ``kept`` is what the store keeps of a record it is given."""
 
-    def __init__(self, recorded: PolicyFlags | None = None, *, fail: str | None = None) -> None:
+    def __init__(
+        self,
+        recorded: PolicyFlags | None = None,
+        *,
+        fail: str | None = None,
+        kept: Callable[[PolicyFlags], PolicyFlags | None] = lambda flags: flags,
+    ) -> None:
         self.recorded = recorded
         self.fail = fail
+        self.kept = kept
         self.writes: list[str] = []
         self.manager = self
 
@@ -52,7 +61,7 @@ class Marks:
         if self.fail:
             return self.fail
         self.writes.append("record")
-        self.recorded = flags
+        self.recorded = self.kept(flags)
         return None
 
     def remove_flags(self, binding: Any) -> str | None:
@@ -99,6 +108,32 @@ def test_flags_both_off_need_no_record() -> None:
 def test_a_record_that_cannot_be_written_stops_the_change() -> None:
     with pytest.raises(DriverError, match="no change was sent: the vault refused"):
         keep(Binding(), Session(ON), "acme_app", Marks(fail="the vault refused"))
+
+
+@pytest.mark.parametrize(
+    "kept",
+    [lambda flags: None, lambda flags: OFF],
+    ids=["record lost", "record changed"],
+)
+def test_a_record_that_does_not_read_back_as_written_stops_the_change(
+    kept: Callable[[PolicyFlags], PolicyFlags | None],
+) -> None:
+    """Before the change, while the policy is still on, not at step 4 (#1584)."""
+    with pytest.raises(DriverError, match="did not read back"):
+        keep(Binding(), Session(ON), "acme_app", Marks(kept=kept))
+
+
+def test_a_record_read_back_in_the_wrong_shape_stops_the_change() -> None:
+    """A store that keeps a ``true`` as ``"true"``: the reader refuses it."""
+
+    class Unreadable(Marks):
+        def flags_recorded(self, binding: Any) -> PolicyFlags | None:
+            if self.recorded is not None:
+                raise PolicyFlagsUnreadableError("mssql-dev", ("policy_flags", "mssql-dev"))
+            return None
+
+    with pytest.raises(PolicyFlagsUnreadableError):
+        keep(Binding(), Session(ON), "acme_app", Unreadable())
 
 
 def test_no_vault_to_write_to_stops_the_change() -> None:

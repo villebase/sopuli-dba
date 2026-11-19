@@ -11298,6 +11298,13 @@ def _keep_flags(binding: Binding, session: Any, account: str, marks: _VaultMarks
     flags cannot be kept, so the change is not sent: the session's own
     refusals (a pending ``MUST_CHANGE``, a value version it cannot read), a
     record the tool cannot read, and a vault write that failed.
+
+    The record is read back from the document the write left before the
+    change is sent, so a store that keeps it in another shape, such as a
+    ``true`` as the string ``"true"``, stops the change while the policy is
+    still on, not at step 4 with it off. The write already reads the document
+    again (:meth:`_VaultMarks._write`), so this costs no further read. Where
+    that read failed, the write's own patch stands in, and this check passes.
     """
     flags = session.policy_flags(account)
     if marks is None or binding.secret is None:
@@ -11316,6 +11323,16 @@ def _keep_flags(binding: Binding, session: Any, account: str, marks: _VaultMarks
             "the vault did not record the login's policy flags, so no change was sent: "
             f"{unwritten}",
             hint="fix what stopped the vault write, then run again: nothing on the login changed",
+        )
+    # Raises PolicyFlagsUnreadableError for a record of the wrong shape.
+    if marks.flags_recorded(binding) != flags:
+        raise DriverError(
+            "the vault did not read back the login's policy flags as they were written, "
+            "so no change was sent",
+            hint=(
+                "nothing on the login changed; this store cannot keep the record, so keep "
+                "SQL Server credentials in another store"
+            ),
         )
     return True
 

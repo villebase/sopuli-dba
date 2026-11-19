@@ -739,34 +739,27 @@ class Probe:
                 return {key: types(item) for key, item in value.items()}
             return f"{value!r} ({type(value).__name__})"
 
+        def as_sent(one: dict[str, Any]) -> bool:
+            return one.get("policy_flags") == flags and all(
+                type(value) is bool
+                for entry in one["policy_flags"].values()
+                for value in entry.values()
+            )
+
         name = self.name()
         secret = self.create(name)
         flags = {"probe-target": {"check_policy": True, "check_expiration": False}}
-        self.update(secret.id, metadata={"sopuli_cas": "1", "policy_flags": flags})
-        data, _ = self.get(secret.id)
-        bundle = self.secrets.get_secret_bundle_by_name(name, VAULT_ID).data
-        report("M16", "GetSecret after the first update", types(data.metadata))
-        report("M16", "read by name after the first update", types(bundle.metadata))
-
-        kept = {**dict(data.metadata or {}), "sopuli_cas": "2", "reached": {"probe": 1}}
-        self.update(secret.id, metadata=kept)
-        data, _ = self.get(secret.id)
-        bundle = self.secrets.get_secret_bundle_by_name(name, VAULT_ID).data
-        report("M16", "GetSecret after the update that kept it", types(data.metadata))
-        report("M16", "read by name after the update that kept it", types(bundle.metadata))
-        report(
-            "M16",
-            "flags read back equal to and typed as those sent",
-            all(
-                one.get("policy_flags") == flags
-                and all(
-                    type(value) is bool
-                    for entry in one["policy_flags"].values()
-                    for value in entry.values()
-                )
-                for one in (dict(data.metadata or {}), dict(bundle.metadata or {}))
-            ),
-        )
+        reads: list[dict[str, Any]] = []
+        metadata: dict[str, Any] = {"sopuli_cas": "1", "policy_flags": flags}
+        for label in ("the first update", "the update that kept it"):
+            self.update(secret.id, metadata=metadata)
+            data, _ = self.get(secret.id)
+            bundle = self.secrets.get_secret_bundle_by_name(name, VAULT_ID).data
+            report("M16", f"GetSecret after {label}", types(data.metadata))
+            report("M16", f"read by name after {label}", types(bundle.metadata))
+            reads += [dict(data.metadata or {}), dict(bundle.metadata or {})]
+            metadata = {**dict(data.metadata or {}), "sopuli_cas": "2", "reached": {"probe": 1}}
+        report("M16", "every read's flags as sent, in type too", all(map(as_sent, reads)))
 
     # -------------------------------------------------------------- cleanup ---
 

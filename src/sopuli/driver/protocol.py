@@ -611,7 +611,7 @@ class InternalFaultError(DriverError):
 
     @classmethod
     def closed_session(cls, target: str) -> InternalFaultError:
-        """A session used after :meth:`close` (#1644). Every driver's change
+        """A session used after it was closed (#1644). Every driver's change
         path reads on the session before it sends a password, so this is
         raised before anything crosses, and ``password_sent`` stays ``False``."""
         return cls(

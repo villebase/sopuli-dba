@@ -128,8 +128,8 @@ GRANT VIEW ANY DEFINITION TO [sopuli_admin];
 With it, the guardrail follows every path to an administrative grant. Without
 it, the tool cannot see a user-defined server role or its owner, so the
 guardrail refuses every managed login on the password verbs, and names the
-missing grant ([#1567](../decisions/log.md#1567)). `creds check`, `doctor`
-and the reports work without it. It reads no hash.
+missing grant ([#1567](../decisions/log.md#1567)). `creds check`,
+`creds status`, `doctor` and the reports work without it. It reads no hash.
 
 Give the login no other permission, no server role, and no database user.
 

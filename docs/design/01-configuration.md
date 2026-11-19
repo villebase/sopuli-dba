@@ -1886,7 +1886,8 @@ Driver 18, which is a system package, as Oracle's Instant Client is
 ([#1538](../decisions/log.md#1538), decision 6). `doctor` connects to a SQL
 Server target and reports it. UC-1's `creds generate`, `apply`, `rotate` and
 `finish-rollover` change a password on one (#1551), `creds check` logs in
-on one on a Linux host (#1552), UC-5's reports run there (#1555), and
+on one on a Linux host (#1552), `creds status` reads one (#1631), UC-5's
+reports run there (#1555), and
 UC-2's `account list`, `account suspend` and `account reset-password` run
 there, with `account expire-password` refused by capability (#1554).
 

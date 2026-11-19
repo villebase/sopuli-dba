@@ -18,12 +18,7 @@ import pytest
 from sopuli.config.errors import ConfigError
 from sopuli.config.loading import build_config
 from sopuli.config.model import Config, TargetMssql
-from sopuli.driver.registry import (
-    DRIVER_NOT_IMPLEMENTED,
-    DRIVERS,
-    DriverNotImplementedError,
-    require_command,
-)
+from sopuli.driver.registry import DRIVERS, require_command
 from sopuli.output.config_view import build_section
 
 VAULTS: dict[str, Any] = {"vault-dev": {"type": "hashicorp", "addr": "https://v.example.com"}}
@@ -330,9 +325,8 @@ def test_two_spellings_of_one_login_are_refused() -> None:
 
 
 def test_the_written_commands() -> None:
-    """Every command but `doctor`, UC-1's change and check, UC-5's three
-    reports and UC-2's four is refused before anything connects (#1549,
-    #1551, #1552, #1554, #1555)."""
+    """`doctor`, UC-1's commands, UC-5's three reports and UC-2's four are
+    written for SQL Server (#1549, #1551, #1552, #1554, #1555, #1631)."""
     target = loaded(targets=[SERVER]).expanded_targets[0].target
 
     assert DRIVERS["mssql"].commands == frozenset(
@@ -345,6 +339,7 @@ def test_the_written_commands() -> None:
             "creds.apply",
             "creds.rotate",
             "creds.generate",
+            "creds.status",
             "creds.finish-rollover",
             "report.accounts",
             "report.history",
@@ -367,9 +362,7 @@ def test_the_written_commands() -> None:
     require_command(target, "creds.check")
     require_command(target, "account.suspend")
     require_command(target, "account.reset-password")
-    with pytest.raises(DriverNotImplementedError) as caught:
-        require_command(target, "creds.status")
-    assert caught.value.code == DRIVER_NOT_IMPLEMENTED
+    require_command(target, "creds.status")
     # Only SQL Server's unseen reset keeps the login's flags, so only its
     # targets are asked about them at plan time without `reset_records:`.
     assert DRIVERS["mssql"].reset_keeps_policy_flags is True

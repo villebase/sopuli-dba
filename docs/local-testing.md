@@ -9,7 +9,10 @@ and Vault. Most come from main at caf2645, after the 0.78.0 release, on
 2026-10-23. A sample added since then comes from a run of the change that added
 it. Every sample that shows PostgreSQL is one of these, from 18a0ceb to 50ea18d,
 2026-10-25 and 2026-10-26. The samples in §11 come from main at ee0f077 on
-2026-11-07.
+2026-11-07. On 2026-11-19, the 0.91.0 build recaptured the version line, the
+`doctor` install and client lines, every target's `CAPABILITIES` count, the
+PostgreSQL seen reset's refusal, and §11's run schema, with MySQL 8.4,
+MariaDB 11.8 and the `mssql` profile's SQL Server 2022 in the stack too.
 Commands are written for Git Bash or WSL. Where a sample was shortened, `...`
 marks the cut. The tokens and passwords the runs
 printed are replaced with `<TOKEN>` and `<PASSWORD>`, and the local user and
@@ -55,9 +58,9 @@ role change its password at its next login. A MySQL target and a MariaDB target
 each run `doctor`, the `creds` commands (§7) and the `account` commands (§9).
 A SQL Server target runs `doctor`, the three `report` commands, `creds
 generate`, `creds apply`, `creds rotate` and `creds finish-rollover`, on a
-Linux host `creds check` (§7), and `account list` and `account suspend`
-(§9). It refuses `account expire-password`, because SQL Server takes
-`MUST_CHANGE` only with a new password.
+Linux host `creds check` (§7), and `account list`, `account suspend` and
+`account reset-password` (§9). It refuses `account expire-password`, because
+SQL Server takes `MUST_CHANGE` only with a new password.
 
 ---
 
@@ -77,7 +80,7 @@ Check the install:
 
 ```
 $ sopuli --version
-sopuli, version 0.78.0
+sopuli, version 0.91.0
 ```
 
 `sopuli --version` reports the version recorded when the editable install was
@@ -406,13 +409,14 @@ install
   backend  hashicorp   installed  vault-dev
   backend  oci         installed  -
   driver   mariadb     installed  -
+  driver   mssql       installed  -
   driver   mysql       installed  -
   driver   oracle      installed  1 target
   driver   postgresql  installed  -
 
 vaults
   VAULT      TYPE       STATUS  AUTH  SKEW
-  vault-dev  hashicorp  ok      yes   -78ms
+  vault-dev  hashicorp  ok      yes   -182ms
 
 client
   tns_admin         (unset)
@@ -421,9 +425,12 @@ client
   psycopg           3.3.6
   libpq             18.4
   require_auth      accepted
+  pymysql           1.2.4
+  pyodbc            5.5.0
+  odbc_driver       ODBC Driver 18 for SQL Server
 
 TARGET    REACHABLE  SCOPE  CONTAINER  OPEN MODE   CAPABILITIES  ENCRYPTION
-free-pdb  yes        pdb    FREEPDB1   READ WRITE  7             none
+free-pdb  yes        pdb    FREEPDB1   READ WRITE  8             none
   free-pdb: the connection is not encrypted, so a password the tool sets crosses it in clear: require NNE or TLS on the server (SQLNET.ENCRYPTION_SERVER = REQUIRED in its sqlnet.ora, or a TCPS listener endpoint)
 
 1 note:
@@ -472,7 +479,7 @@ vaults
 
 ...
 TARGET    REACHABLE  SCOPE  CONTAINER  OPEN MODE   CAPABILITIES  ENCRYPTION
-free-pdb  yes        pdb    FREEPDB1   READ WRITE  7             none
+free-pdb  yes        pdb    FREEPDB1   READ WRITE  8             none
   free-pdb: the connection is not encrypted, so a password the tool sets crosses it in clear: require NNE or TLS on the server (SQLNET.ENCRYPTION_SERVER = REQUIRED in its sqlnet.ora, or a TCPS listener endpoint)
 ```
 
@@ -533,6 +540,9 @@ client
   psycopg           3.3.6
   libpq             18.4
   require_auth      accepted
+  pymysql           1.2.4
+  pyodbc            5.5.0
+  odbc_driver       ODBC Driver 18 for SQL Server
 
 TARGET  REACHABLE  SCOPE    CONTAINER  OPEN MODE   CAPABILITIES  ENCRYPTION
 pg-dev  yes        cluster  -          READ WRITE  1             none
@@ -757,9 +767,11 @@ client
   libpq             18.4
   require_auth      accepted
   pymysql           1.2.4
+  pyodbc            5.5.0
+  odbc_driver       ODBC Driver 18 for SQL Server
 
 TARGET     REACHABLE  SCOPE   CONTAINER  OPEN MODE   CAPABILITIES  ENCRYPTION
-mysql-dev  yes        server  -          READ WRITE  3             tls
+mysql-dev  yes        server  -          READ WRITE  4             tls
 
 1 note:
   mysql-dev: the admin credential came from the environment variable SOPULI_DB_ADMIN_PASSWORD, which P2 supports and flags as low assurance
@@ -961,7 +973,7 @@ The image's certificate is self-signed, so the target sets `REQUIRED`. Run
 $ sopuli --config mariadb.yaml doctor
 ...
 TARGET       REACHABLE  SCOPE   CONTAINER  OPEN MODE   CAPABILITIES  ENCRYPTION
-mariadb-dev  yes        server  -          READ WRITE  0             tls
+mariadb-dev  yes        server  -          READ WRITE  5             tls
 
 1 note:
   mariadb-dev: the admin credential came from the environment variable SOPULI_DB_ADMIN_PASSWORD, which P2 supports and flags as low assurance
@@ -1238,7 +1250,7 @@ client
   odbc_driver       ODBC Driver 18 for SQL Server
 
 TARGET     REACHABLE  SCOPE   CONTAINER  OPEN MODE   CAPABILITIES  ENCRYPTION
-mssql-dev  yes        server  -          READ WRITE  0             tls
+mssql-dev  yes        server  -          READ WRITE  1             tls
 
 1 note:
   mssql-dev: the admin credential came from the environment variable SOPULI_DB_ADMIN_PASSWORD, which P2 supports and flags as low assurance
@@ -1255,7 +1267,7 @@ alone, it says what the verbs that set a password need:
 $ sopuli --config mssql.yaml doctor --check-privileges
 ...
 TARGET     REACHABLE  SCOPE   CONTAINER  OPEN MODE   CAPABILITIES  ENCRYPTION
-mssql-dev  yes        server  -          READ WRITE  0             tls
+mssql-dev  yes        server  -          READ WRITE  1             tls
   mssql-dev: the tool login does not hold VIEW ANY DEFINITION, so guardrail 9 refuses every managed login on the verbs that set a password; GRANT VIEW ANY DEFINITION TO [sopuli_admin] to change passwords here (02-mssql-privileges.md §2.1)
 ...
 ```
@@ -2089,7 +2101,7 @@ password at its next login:
 ```
 $ sopuli --config postgres.yaml account reset-password --account acme_dev_alice --dry-run
 ...
-sopuli: target "pg-dev" does not support expire_password
+sopuli: target "pg-dev" does not support expire_on_reset
   hint: the seen path expires the password so that the copy the DBA saw stops working at the owner's first login (UC-2 §1), and this target cannot expire one; use an unseen delivery method
 ```
 
@@ -3675,7 +3687,7 @@ schemas are in [`schemas/`](schemas/). For example, read the summary with Python
 ```
 $ sopuli --config sopuli.yaml --output json creds check > check.json
 $ python -c "import json; d=json.load(open('check.json')); print(d['schema_version'], d['exit_code'], d['summary'])"
-1.104 0 {'total': 2, 'ok': 1, 'changed': 0, 'failed': 0, 'unchanged': 2, 'drift': 0, 'unverifiable': 0, 'by_state': {'IN_SYNC': 1, 'ROLLOVER_ACTIVE': 1}}
+1.108 0 {'total': 2, 'ok': 1, 'changed': 0, 'failed': 0, 'unchanged': 2, 'drift': 0, 'unverifiable': 0, 'by_state': {'IN_SYNC': 1, 'ROLLOVER_ACTIVE': 1}}
 ```
 
 `acme_batch_user` is `ROLLOVER_ACTIVE` because the `apply` in §10 opened its

@@ -304,15 +304,15 @@ the tier-1 stack, part way through the first account. The run prints a line
 for every query, and most are left out here:
 
 ```
-sopuli: debug:   1.555s oracle: connect to free-pdb as SYSTEM in 0.079s
-sopuli: debug:   1.557s oracle: call dbms_session.set_identifier in 0.002s
-sopuli: debug:   1.567s oracle: select version, version_full from v$instance in 0.002s
-sopuli: debug:   1.590s oracle: free-pdb is pdb, FREEPDB1, 23.26.3.0.0, READ WRITE; capabilities account_lock_state, expire_password, offline_verify, password_reuse_policy, password_rollover, profile_management, role_lookup
-sopuli: debug:   2.744s oracle: login as ACME_APP_USER: fail in 1.069s
-sopuli: debug:   2.748s vault: GET /v1/kv/data/locks/acme/dev/acme: 200 in 0.004s
-sopuli: debug:   2.753s oracle: select username from dba_users where username = :name (binds :name) in 0.004s
-sopuli: debug:   2.769s oracle: ALTER USER "ACME_APP_USER" IDENTIFIED BY *** in 0.014s
-sopuli: debug:   2.865s oracle: login as ACME_APP_USER: pass in 0.066s
+sopuli: debug:   1.780s oracle: connect to free-pdb as SYSTEM in 0.057s
+sopuli: debug:   1.782s oracle: call dbms_session.set_identifier in 0.002s
+sopuli: debug:   1.790s oracle: select version, version_full from v$instance in 0.001s
+sopuli: debug:   1.808s oracle: free-pdb is pdb, FREEPDB1, 23.26.3.0.0, READ WRITE; capabilities account_lock_state, expire_on_reset, expire_password, offline_verify, password_reuse_policy, password_rollover, profile_management, role_lookup
+sopuli: debug:   2.882s oracle: login as ACME_APP_USER: fail in 1.046s
+sopuli: debug:   2.886s vault: GET /v1/kv/data/locks/acme/dev/acme: 200 in 0.003s
+sopuli: debug:   2.888s oracle: select username from dba_users where username = :name (binds :name) in 0.003s
+sopuli: debug:   2.908s oracle: ALTER USER "ACME_APP_USER" IDENTIFIED BY *** in 0.017s
+sopuli: debug:   2.985s oracle: login as ACME_APP_USER: pass in 0.052s
 ```
 
 These lines are from a second `sopuli creds apply --confirm --debug`, after the
@@ -1502,7 +1502,7 @@ and new states, because that is a major change: a consumer that reads
       "db_release": "23.26.3.0.0",
       "open_mode": "READ WRITE",
       "read_write": true,
-      "capabilities": ["account_lock_state", "expire_password", "password_rollover"],
+      "capabilities": ["account_lock_state", "expire_on_reset", "expire_password", "password_rollover"],
       "offline_verify_available": false,
       "encryption": { "method": "native", "algorithm": "AES256", "protocol": "tcp" },
       "labels": { "target_set": "appdb", "env": "qa" }

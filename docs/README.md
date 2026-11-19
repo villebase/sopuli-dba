@@ -574,9 +574,9 @@ such as "from 16", means the one release of it that was measured.
 
 ### MySQL
 
-The first entries were measured before the MySQL driver was designed (#1202).
-The probes are in `sql/mysql/`, and the matrix of 8.0, 8.4 and 9 is the
-`mysql-matrix` profile of `test/compose.yaml`.
+These entries are what the MySQL driver is built on (#1202). The probes are
+in `sql/mysql/`, and the matrix of 8.0, 8.4 and 9 is the `mysql-matrix`
+profile of `test/compose.yaml`.
 [measurements.md](measurements.md) names each release in full.
 
 - `verified` `mysql-password-text` (#1202) — **What does MySQL keep of the text
@@ -693,8 +693,8 @@ The probes are in `sql/mysql/`, and the matrix of 8.0, 8.4 and 9 is the
 
 ### MariaDB
 
-The first entries were measured before the MySQL driver was built, so that its
-capabilities assume nothing MariaDB breaks (#1220). MariaDB has a driver of
+These entries are what the MariaDB driver, and the code it shares with MySQL's
+in `sopuli/driver/mysql_family/`, are built on (#1220). MariaDB has a driver of
 its own (decision 2 of #1202; [#1267](decisions/log.md#1267)). The probes are
 in `sql/mariadb/`, and the matrix of 10.11, 11.4, 11.8 and 12.3 is the
 `mariadb-matrix` profile of `test/compose.yaml`.

@@ -12,8 +12,7 @@ but must not contradict them.
 ### The rule
 
 Every operation that touches a database goes through a **driver interface**. No
-command contains vendor SQL. Oracle was the first driver and PostgreSQL the
-second. Neither one's shape may leak into the interface.
+command contains vendor SQL. No product's shape may leak into the interface.
 
 ### Driver interface
 
@@ -240,9 +239,9 @@ target. `sopuli doctor` reports the installed client version and warns when a
 configured target is out of its reach, so the connection does not fail with a
 bare ORA error.
 
-### Adding a second product later
+### The products after Oracle
 
-Intended order after Oracle: PostgreSQL, MySQL, MariaDB, SQL Server
+The other drivers are PostgreSQL, MySQL, MariaDB and SQL Server
 ([#1202](../decisions/log.md#1202)). MariaDB has a driver of its own, not a
 variant of MySQL's, because the two differ in how they store and change a
 password. What they share is in `sopuli/driver/mysql_family/`: the arguments

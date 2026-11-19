@@ -269,12 +269,15 @@ Each part of the tool writes these lines:
   statement carries the hash or the plugin's value.
 - **`mssql`**: each connection, with the target, the user and the time it
   took, or the code it failed with. The instance the session found, with its
-  encryption and its host's platform. What the guardrail catalog could not
-  read, such as a database the tool login cannot enter. The password value's
-  version and the check's answer. Each verification login and its result.
-  Each change the server accepted, named by what it did, such as `set the
-  password value` or `DISABLE`, with the login and the target. Never a
-  statement: a statement carries the password value.
+  version, open mode and encryption, and its host's platform. The guardrail
+  catalog's read, `complete` or what it could not read. The password value's
+  version and the check's answer, and a failure to end the check's
+  transaction. For `doctor --check-privileges`, an `msdb` the tool login
+  could not read; for `report privileges`, each database it could not enter.
+  Each verification login and its result. Each change the server accepted,
+  named by what it did, such as `set the password value` or `DISABLE`, with
+  the login and the target. Never a statement: a statement carries the
+  password value.
 - **`plan`**: why a unit is in the run or not. Each declared target that a
   selector left out, and each account left out on a target that stays, with the
   flag that left it out, such as `--select`, `--account` or `--repair`. Each
@@ -815,16 +818,17 @@ on. A fourth state for it would put "not attempted" in the same vocabulary as
 **An account a guardrail refused is `SKIPPED`, with its reason.** `SKIPPED` is
 the schema's word for something the tool declined to do, as against something it
 tried and could not do; `creds finish-rollover` uses it the same way. It is not
-a failure, and except in one case it does not make the run partial: the exit
+a failure, and in every verb but one it does not make the run partial: the exit
 code ignores it. `02-oracle-privileges.md` §4 has the reasoning: the run was
 never going to act on that account, and a nightly rotation that exited 4
 forever because one account holds `DBA` would be more disruptive than the
-mistake the guardrail catches. The one case is closing a rollover window on
-MariaDB, by `creds finish-rollover` or by `creds rotate --finish-rollover`.
-The close sets a password and so runs the account checks. A close
+mistake the guardrail catches. The one verb is `creds finish-rollover` on
+MariaDB, whose close sets a password and so runs the account checks. A close
 they turn away leaves the old password working, and a MariaDB window never
 elapses, so the run exits 4 and `SOPULI-W043` names the account
-([#1352](../decisions/log.md#1352)).
+([#1352](../decisions/log.md#1352)). `creds rotate --finish-rollover` closes
+the window the same way, and a close the checks turn away also makes it exit 4
+with `SOPULI-W043`. Its row keeps the state of the change, not `SKIPPED`.
 
 ### `invocation.selection`
 
@@ -2094,8 +2098,8 @@ treating every PDB as unknowable would refuse to report the ordinary case.
 **`source` has three values.** `targets` means at least one database answered.
 `products` means none did, and the product of at least one has a fixed limit,
 which holds without a connection: PostgreSQL, MySQL, MariaDB and SQL Server
-(#1338, run schema 1.80). `policy` means none did, no product has a fixed limit, and the
-policy's declared length governed, which UC-1 §4 makes a legitimate fallback,
+(#1338, run schema 1.80). `policy` means none did, no product has a fixed
+limit, and the policy's declared length governed, which UC-1 §4 makes a legitimate fallback,
 not a failure. `SOPULI-W067` names the targets whose product limit governed,
 and `SOPULI-W015` the ones where the policy did. A run that asked nothing
 (`--offline`) omits the section, because

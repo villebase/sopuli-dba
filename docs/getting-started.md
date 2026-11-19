@@ -602,7 +602,9 @@ settings
 ```
 
 `--explain` is the one to remember. Settings can arrive from several places at
-once, and this is how you find out which one won.
+once, and this is how you find out which one won. Here the store's address came
+from the `VAULT_ADDR` you set in section 4 (`env_thirdparty VAULT_ADDR`), not
+from the file, which is why the `vaults` table marks it `layered: addr`.
 
 ---
 
@@ -647,7 +649,9 @@ it in five parts:
   config asks for. `not_installed` means you did not install that extra,
   which is fine for a store or database your config does not use.
 - **vaults** — whether the store answered, whether your token authenticated, and
-  how far its clock is from yours.
+  how far its clock is from yours. HashiCorp Vault reports its time in whole
+  seconds, so a skew such as `-1000ms` can be rounding. Only a skew marked
+  `(!)` is beyond the tolerance and needs a look.
 - **client** — whether Instant Client loaded, and which Oracle versions it can
   reach. If this says `instant_client  not loaded`, go back to section 2c; a
   `detail:` line underneath says why the library was not found. This part works

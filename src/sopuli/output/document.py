@@ -2,7 +2,7 @@
 
 There is no such thing as a placeholder run document. The run schema
 sets ``additionalProperties: false`` at the root and requires six top-level
-fields, two of which have required members of their own, so the smallest thing
+fields, three of which have required members of their own, so the smallest thing
 that validates is a complete document. Building it properly now is cheaper than
 discovering the shape later, and it makes the schema check in CI real from the
 first command (invariant 12).

@@ -26,8 +26,16 @@ sends the value with the policy off, :meth:`MssqlSession.verify_password`
 logs in as the login, and :meth:`MssqlSession.restore_policy` sets the flags
 back. On Linux `apply` logs in before a change; on Windows, and on a host
 that names no platform, it does not
-(:attr:`MssqlSession.verifies_before_change`). Every method not written yet
-refuses with ``SOPULI-20006``.
+(:attr:`MssqlSession.verifies_before_change`).
+
+It serves UC-2: :meth:`MssqlSession.suspend_account` disables a login,
+:meth:`MssqlSession.reset_password` resets one on either path, and
+:meth:`MssqlSession.resolve_role` and :meth:`MssqlSession.accounts_matching`
+resolve a `role:` predicate to the logins that hold a server role. It serves
+UC-5's reports through :meth:`MssqlSession.survey_with_profiles` and
+:meth:`MssqlSession.survey_privileges`. What SQL Server has no counterpart
+for, an expired password without a reset, a profile and a rollover window, is
+refused by capability, exit 5.
 
 **pyodbc's pooling is off for the process.** A pooled connection is kept open
 after ``close()``, and the next ``connect()`` with the same string reuses it

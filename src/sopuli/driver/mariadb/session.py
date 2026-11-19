@@ -19,8 +19,9 @@ resets its password and expires it (#1272). It opens a rollover by sending
 the new and the old value joined by ``OR``, and finishes it by sending the
 current value alone (#1271). It surveys every account for `report accounts`
 (:mod:`~sopuli.driver.mariadb.survey`, #1462). The registry lists `doctor`,
-UC-1's `creds generate`, `apply`, `check`, `rotate` and `status`, UC-2's four
-verbs, and UC-5's `report accounts` and `report history`. Every other method
+UC-1's `creds generate`, `apply`, `check`, `rotate`, `status` and
+`finish-rollover`, UC-2's four verbs, and UC-5's `report accounts`,
+`report history` and `report privileges`. Every other method
 refuses with ``SOPULI-20006``.
 
 The session names its server by ``@@server_uid``, so the CLI refuses two

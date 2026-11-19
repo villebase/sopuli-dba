@@ -2,8 +2,8 @@
 
 Past the scope, the privilege audit and the login that verifies a password,
 what this build does is refuse, so the refusals are the behaviour:
-``SOPULI-20006`` for an operation not written yet, and an absent capability
-named. The audit itself is in ``test_postgres_privileges.py``, and what each
+an internal fault for a call a capability check refuses first, and an absent
+capability named. The audit itself is in ``test_postgres_privileges.py``, and what each
 failed login means in ``test_postgres_verification.py``.
 """
 
@@ -109,6 +109,23 @@ def test_role_attributes_are_an_internal_fault() -> None:
     assert 'target "pg-dev" is a PostgreSQL cluster' in refused.value.message
     assert "this is a fault in sopuli" in refused.value.message
     assert "pip" not in str(refused.value)
+
+
+def test_an_expiry_past_the_capability_check_is_an_internal_fault(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A cluster never reports `expire_password`. If a scope ever did, the
+    call raises a fault rather than returning nothing, which would read as
+    "already expired" with nothing issued (#1640)."""
+    session = _session()
+    monkeypatch.setattr(session_module, "require_capability", lambda *args, **kwargs: None)
+
+    with pytest.raises(InternalFaultError) as refused:
+        session.expire_password("acme_app_user")
+
+    assert refused.value.category == "internal"
+    assert refused.value.exit_code == ExitCode.FAILURE
+    assert "expire a password: this is a fault in sopuli" in refused.value.message
 
 
 def test_the_fault_is_raised_without_reading_the_scope() -> None:

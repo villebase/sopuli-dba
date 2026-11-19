@@ -4,7 +4,6 @@ where pyodbc is installed: nothing here opens a socket (#1549)."""
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
 from typing import Any
 
 import pytest
@@ -138,15 +137,13 @@ def test_login_attributes_are_an_internal_fault() -> None:
     fault in sopuli, with no round trip: the session has no connection here
     (#1640)."""
     opened = session.MssqlSession(connection=None, target=target())
-    calls: list[Callable[[], object]] = [
-        lambda: opened.apply_attributes("acme_app"),
-    ]
-    for call in calls:
-        with pytest.raises(InternalFaultError) as caught:
-            call()
-        assert caught.value.category == "internal"
-        assert caught.value.exit_code == ExitCode.FAILURE
-        assert "is a SQL Server instance, and sopuli asked its driver" in str(caught.value)
+
+    with pytest.raises(InternalFaultError) as caught:
+        opened.apply_attributes("acme_app")
+
+    assert caught.value.category == "internal"
+    assert caught.value.exit_code == ExitCode.FAILURE
+    assert "is a SQL Server instance, and sopuli asked its driver" in str(caught.value)
 
 
 def test_a_role_the_tool_cannot_read_is_refused_as_role_lookup_missing() -> None:

@@ -1,9 +1,9 @@
 """The MySQL session on a scripted connection. Tier 0, with PyMySQL installed.
 
 What this build does past connecting is refuse, so the refusals are the
-behaviour: ``SOPULI-20006`` for an operation not written yet, an absent
-capability named, and a session without TLS refused where the mode requires
-it.
+behaviour: an internal fault for a call a capability check refuses first, an
+absent capability named, and a session without TLS refused where the mode
+requires it.
 """
 
 from __future__ import annotations

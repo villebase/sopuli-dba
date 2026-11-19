@@ -20,7 +20,7 @@ every account and every privilege, for `report accounts` and `report
 privileges`. The registry lists `doctor`, the `creds` commands, every
 `account` command and the `report` commands.
 :meth:`MysqlSession.apply_attributes`, which a policy's `account:` block needs,
-is never reached, because a capability check refuses the block first; if it
+is never reached, because a capability check refuses the block first. If it
 is, it raises :class:`~sopuli.driver.protocol.InternalFaultError` without a
 round trip.
 """
@@ -34,7 +34,7 @@ from collections.abc import Callable, Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
-from typing import Any, ClassVar, TypeVar
+from typing import Any, ClassVar, NoReturn, TypeVar
 
 import pymysql
 
@@ -261,8 +261,8 @@ class MysqlSession(ClosesConnection):
             return frozenset({ROLE_LOOKUP})
         return frozenset({EXPIRE_PASSWORD, EXPIRE_ON_RESET, PASSWORD_ROLLOVER, ROLE_LOOKUP})
 
-    def _fault(self, what: str) -> InternalFaultError:
-        return InternalFaultError(
+    def _fault(self, what: str) -> NoReturn:
+        raise InternalFaultError(
             self.target.name,
             product="a MySQL server",
             what=what,
@@ -827,7 +827,7 @@ class MysqlSession(ClosesConnection):
     def apply_attributes(
         self, account: str, attributes: AccountAttributes
     ) -> tuple[AttributeChange, ...]:
-        raise self._fault("enforce an account's attributes")
+        self._fault("enforce an account's attributes")
 
     def resolve_profile(self, profile: str) -> str | None:
         """Refused by capability: MySQL has no profiles, so a `profile:` rule

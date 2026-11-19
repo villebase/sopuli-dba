@@ -848,7 +848,7 @@ config file can be read without knowing what environment it will be read in.
 
 | Key | Meaning |
 |---|---|
-| `type` | **required** — the backend: `hashicorp`, `oci`, `file` (P2). AWS and Azure are listed there as "later" and are refused until they exist. `keyring` is not a store type, and is refused with a message that says so ([#1373](../decisions/log.md#1373)); the OS keyring holds the tool's own credentials instead (§3a). A declared type is validated here and *resolved* to a client only when something connects — see below (ADR-006) |
+| `type` | **required** — the backend: `hashicorp`, `oci`, `file` (P2). AWS and Azure are listed there as "later" and are refused until they exist. `keyring` was removed ([#1373](../decisions/log.md#1373)) and is refused with a message that says so; the OS keyring holds the tool's own credentials instead (§3a). A declared type is validated here and *resolved* to a client only when something connects — see below (ADR-006) |
 | `addr` | backend address, where the backend has one. For `hashicorp`, must be `https://`, except to a loopback host — see *Plain HTTP* below. For `file`, the path of the store's file, and **required** there from some layer. It must be absolute or start with `~`: a relative path would name another file from another working directory, and a missing file is an empty store. Refused on an `oci` store |
 | `mount` | KV mount point (HashiCorp). Refused on an `oci` or `file` store |
 | `kv_version` | `1` or `2` — different backends with different capabilities, not a version to branch on casually (P2). Refused on an `oci` or `file` store |
@@ -3617,10 +3617,10 @@ apply a rule's profile, and the lock is checked as without the key.
 block holds `valid_until:`, because only PostgreSQL has a `VALID UNTIL` date:
 `required` wants a date in the future, and `forbidden` wants none, where
 `infinity` counts as none. A date in the past is a problem with or without the
-key on a role that can log in, and not on a `NOLOGIN` role (UC-5 §4, #1468). On another product the check is *not applicable*. The two
-Oracle keys are not read from a rule's `profile:` or the section's
-`db_profiles:`. A file that has them there is refused, and the message names
-the place they belong. The tool does not read both places, because the file could then say two
+key on a role that can log in, and not on a `NOLOGIN` role (UC-5 §4, #1468). On another product the check is *not applicable*. Config schema
+5.0 moved the two Oracle keys there from a rule's `profile:` and the section's
+`db_profiles:`. A file that still has them in the old place is refused, and the
+message names the new place. The tool does not read both places, because the file could then say two
 things and nobody could tell which one the run read.
 
 **The settings are not Oracle's words** (UC-5 §7). Each takes `unlimited`, or a
@@ -4165,10 +4165,9 @@ notices until a rotation.
   `reports.oracle.profiles` name
   written twice, and a rule's `targets:` naming a group, target or label key the
   file does not have → error
-- a key in a place it no longer belongs → error, naming the key and its place
-  (§8a): a `reports.accounts` rule's `profile:`, whose place is
-  `oracle.profile`, and `reports.db_profiles`, whose place is
-  `reports.oracle.profiles`
+- a key that moved → error, naming the key and its new place (§8a). A
+  `reports.accounts` rule's `profile:` moved to `oracle.profile`, and
+  `reports.db_profiles` to `reports.oracle.profiles`, in config schema 5.0
 - a `personal_accounts:` entry naming none of `accounts:`, `profile:` and `role:`,
   or more than one of them → error. None declares nothing, which invariant 5 says
   is the default anyway and is not worth an entry; two would mean either the union

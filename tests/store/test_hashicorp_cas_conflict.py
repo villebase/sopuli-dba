@@ -9,10 +9,9 @@ drifts silently across a Vault upgrade unless something asserts on it. This
 is that assertion, run against the real thing rather than trusted from a
 one-time reading.
 
-Promoted from ``test/vault_cas_probe.py`` (the exploratory spike, kept for
-the wider investigation -- also covers the ``read()`` 404-ambiguity question
-and the malformed-cas contrast, neither of which is a string dependency the
-way the conflict message is).
+The probe ``test/vault_cas_probe.py`` checks the same by hand, and more: the
+``read()`` 404-ambiguity question and the malformed-cas contrast, neither of
+which is a string dependency the way the conflict message is.
 
 Needs a reachable Vault -- ``docker compose --profile tier0 up -d`` from
 ``test/`` -- and skips cleanly without one, per ``04-testing.md`` §1: the

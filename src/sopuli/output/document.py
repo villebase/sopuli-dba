@@ -65,10 +65,9 @@ class Actor:
     vault_identity: str | None = None
     #: Whether the run could have prompted, not which flag was passed. There is
     #: no `--scheduled` flag: `01-configuration.md` §5 puts run context in a
-    #: profile, and the thing a
-    #: reader of the output actually wants to know is whether anybody could have
-    #: been asked -- which stays true when a run is unattended for some other
-    #: reason, such as a closed stdin.
+    #: profile, and the thing a reader of the output actually wants to know is
+    #: whether anybody could have been asked -- which stays true when a run is
+    #: unattended for some other reason, such as a closed stdin.
     unattended: bool = False
 
     def to_dict(self) -> dict[str, Any]:

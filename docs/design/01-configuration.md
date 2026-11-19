@@ -1286,7 +1286,7 @@ something the estate can express and the set silently cannot.
 | Key | Meaning |
 |---|---|
 | `name` | **required, unique** — what `--target` selects on. In a target set this is the *name template* |
-| `type` | **required** — the driver selector (P1): `oracle`, `postgresql`, `mysql`, `mariadb` or `mssql`. Any other value is refused while the file is being written, not at the first connection. `doctor` connects to an `mssql` target and reports the instance, and UC-1's, UC-2's and UC-5's commands run against it, `creds check` on a Linux host only (see `mssql:` below). `doctor` connects to a `mariadb` target and reports the server, and UC-1's `creds generate`, `apply`, `check`, `rotate`, `status` and `finish-rollover` and UC-2's commands run against it. `doctor` connects to a `mysql` target and reports the server, and UC-1's commands and UC-2's commands run against it. `doctor` connects to a `postgresql` target and reports the cluster, and UC-1's commands (`creds generate`, `apply`, `check`, `rotate`, `status` and `finish-rollover`) run against it. `creds check` logs in as the role, and `creds apply` and `rotate` set a password with a verifier computed on the client. UC-2's commands (`account list`, `reset-password`, `suspend` and `expire-password`) run against it too, and what a cluster lacks is refused at plan time by capability |
+| `type` | **required** — the driver selector (P1): `oracle`, `postgresql`, `mysql`, `mariadb` or `mssql`. Any other value is refused while the file is being written, not at the first connection. UC-5's `report` commands run against every type. `doctor` connects to an `mssql` target and reports the instance, and UC-1's and UC-2's commands run against it, `creds check` on a Linux host only (see `mssql:` below). `doctor` connects to a `mariadb` target and reports the server, and UC-1's `creds generate`, `apply`, `check`, `rotate`, `status` and `finish-rollover` and UC-2's commands run against it. `doctor` connects to a `mysql` target and reports the server, and UC-1's commands and UC-2's commands run against it. `doctor` connects to a `postgresql` target and reports the cluster, and UC-1's commands (`creds generate`, `apply`, `check`, `rotate`, `status` and `finish-rollover`) run against it. `creds check` logs in as the role, and `creds apply` and `rotate` set a password with a verifier computed on the client. UC-2's commands (`account list`, `reset-password`, `suspend` and `expire-password`) run against it too, and what a cluster lacks is refused at plan time by capability |
 | `dsn` | **required** — Oracle: `host:port/service`, or a TNS alias. PostgreSQL, MySQL, MariaDB and SQL Server: `host:port`. See below |
 | `environment` | first-class rather than a label, because safety rules key on it (§4). Not overridable from the environment (§6) |
 | `vault` | which store masters passwords here |
@@ -2347,7 +2347,7 @@ language (C7): `{name}` is looked up in one flat scope and that is all there is.
 |---|---|
 | **In scope** | the outer dimension (`{env}`), the scalar variables of the value being rendered, and the inner dimension's current value (`{tenant}`) |
 | **Substituted in** | every string the template writes — `name`, `dsn`, `environment`, `vault`, `admin.username`, `admin.auth.secret`, `admin.auth.password_env`, `admin.auth.entry`, `oracle.container`, `postgres.database`, `postgres.sslrootcert`, `mysql.ssl_ca`, `mariadb.ssl_ca`, `mssql.host_name_in_certificate`, `mssql.server_certificate`, `labels` keys and values, `safety.confirm_environments`. A field left unrendered would reach a connection string, or a vault, with its braces intact |
-| **Not substituted in** | `type`, `oracle.scope`, `postgres.sslmode`, `mysql.ssl_mode`, `mariadb.ssl_mode`, `mssql.encrypt`, `mssql.trust_server_certificate`, `admin.auth.method`. They are closed sets or booleans, so a placeholder there is already refused when the set is read |
+| **Not substituted in** | `type`, `oracle.scope`, `postgres.sslmode`, `mysql.ssl_mode`, `mariadb.ssl_mode`, `mssql.encrypt`, `mssql.trust_server_certificate`, `safety.max_targets`, `safety.readonly`, `safety.require_encryption`, `safety.delivery.allowed_methods`, `admin.auth.method`. They are closed sets, numbers or booleans, so a placeholder there is already refused when the set is read |
 | **No escaping** | there is no way to write a literal brace. An unbalanced or empty one (`{`, `{}`) is an error, not a literal |
 | **Shadowing** | a variable may not share the name of the dimension it sits under — `for_each: { env: { dev: { env: production } } }` gives `{env}` two meanings, and either choice silently decides a rendered secret path |
 
@@ -2634,11 +2634,13 @@ Naming: `SOPULI_` + upper-snake path, `__` for nesting into a named object.
 Vault's own `VAULT_ADDR`, `VAULT_NAMESPACE` and `VAULT_CACERT` reach the default
 store's `addr`, `namespace` and `tls.ca_file`. They are in P3's layer 2, ranked
 *below* their `SOPULI_*` equivalents. `VAULT_TOKEN` is auth material, not a
-setting, and belongs to §3a's token chain. No other third-party variable
-reaches a setting. Two are read for a place to look: the config file search
-reads `XDG_CONFIG_HOME`, and on Windows `APPDATA` and `PROGRAMDATA` (P1), and an
-OCI store reads `OCI_CONFIG_FILE` for its config file. Libraries read some
-themselves: the Oracle client reads
+setting, and belongs to §3a's token chain. `NO_COLOR`, in the table above, and
+`TERM=dumb` turn colour off (`03-json-output.md` §1). No other third-party
+variable reaches a setting. Some are read for a place to look: the config
+file search reads `XDG_CONFIG_HOME`, and on Windows `APPDATA` and
+`PROGRAMDATA` (P1); an OCI store reads `OCI_CONFIG_FILE` for its config file;
+and `doctor` reads `TNS_ADMIN` to report the wallets and the client. Libraries
+read some themselves: the Oracle client reads
 `TNS_ADMIN` and `NLS_LANG`, and `httpx` reads `HTTPS_PROXY` and `NO_PROXY`.
 
 **`VAULT_SKIP_VERIFY` is the one exception.** It is read and **refused** with a
@@ -3987,6 +3989,7 @@ match instead:
 | a PostgreSQL, MySQL, MariaDB or SQL Server target has a `host:port` `dsn` and no `admin.auth: external` | yes |
 | `postgres.sslrootcert` only with `sslmode: verify-ca` or `verify-full` | yes |
 | `mysql.ssl_ca` and `mariadb.ssl_ca` only with `ssl_mode: VERIFY_CA` or `VERIFY_IDENTITY` | yes |
+| `mssql.trust_server_certificate` and `mssql.host_name_in_certificate` only with `encrypt: mandatory`, `mssql.server_certificate` only with `encrypt: strict`, and `host_name_in_certificate` not beside `trust_server_certificate: true` | yes |
 | an application's `oracle: container_clause` may not bind to a target of another product | yes |
 | two accounts may not resolve to one secret ref | yes |
 | `require:` may not exceed `length:`, or ask for specials a charset lacks | yes |
@@ -4274,9 +4277,14 @@ notices until a rotation.
 - `postgres.sslrootcert` with an `sslmode` other than `verify-ca` or
   `verify-full` → error. libpq ignores the file below `require`, and under
   `require` it turns the mode into `verify-ca` without saying so
-- `mysql.ssl_ca` with an `ssl_mode` other than `VERIFY_CA` or
-  `VERIFY_IDENTITY` → error, because no other mode checks the server against
-  the file
+- `mysql.ssl_ca` or `mariadb.ssl_ca` with an `ssl_mode` other than
+  `VERIFY_CA` or `VERIFY_IDENTITY` → error, because no other mode checks the
+  server against the file
+- `mssql.trust_server_certificate` or `mssql.host_name_in_certificate` under
+  an `encrypt` other than `mandatory`, or `mssql.server_certificate` under one
+  other than `strict` → error, because the key does nothing there; and
+  `host_name_in_certificate` beside `trust_server_certificate: true` → error,
+  because a trusted certificate's name is not checked
 - an application's or an override's `oracle: container_clause` on an
   application that binds to a target of any product but Oracle → error. A role
   or an account there belongs to the whole cluster, server or instance, so

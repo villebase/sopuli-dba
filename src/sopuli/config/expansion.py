@@ -244,10 +244,13 @@ def _expand(target_set: TargetSet) -> list[ExpandedTarget]:
 def _render_target(template: Target, combination: _Combination, *, at: KeyPath) -> Target:
     """The template with every placeholder resolved.
 
-    ``type``, ``oracle.scope``, ``postgres.sslmode`` and ``admin.auth.method``
-    are absent from this because they are closed sets: :mod:`sopuli.config.targets`
-    reads them through :func:`~sopuli.config.fields.choice`, so a ``{placeholder}`` in one was
-    already refused when the set was built. Every other string field is
+    ``type``, ``oracle.scope``, ``postgres.sslmode``, ``mysql.ssl_mode``,
+    ``mariadb.ssl_mode``, ``mssql.encrypt`` and ``admin.auth.method`` are absent
+    from this because they are closed sets: :mod:`sopuli.config.targets` reads
+    them through :func:`~sopuli.config.fields.choice`, so a ``{placeholder}`` in
+    one was already refused when the set was built. A boolean or a number, such
+    as ``mssql.trust_server_certificate`` or ``safety.max_targets``, cannot hold
+    one either. Every other string field is
     rendered, including label keys and the addresses inside ``admin.auth`` -- a
     field that expansion skipped would keep its braces and reach a connection
     string or a vault intact, which is the failure §10's "never an empty string"

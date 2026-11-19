@@ -16,11 +16,11 @@ from sopuli.driver.protocol import (
     PASS,
     UNAVAILABLE,
     DriverError,
+    InternalFaultError,
     Scope,
     UnsupportedCapabilityError,
     UserState,
 )
-from sopuli.driver.registry import NotWrittenError
 from sopuli.policy_flags import PolicyFlags
 from sopuli.secrets import Secret
 
@@ -168,8 +168,8 @@ def test_a_check_login_is_refused_on_a_host_that_is_not_linux(
     for for_check in (True, False):
         with pytest.raises(DriverError) as caught:
             one.verify_password("acme_app", Secret(PASSWORD), for_check=for_check)
-        # A guard with its reason, not unwritten work (SOPULI-20006).
-        assert not isinstance(caught.value, NotWrittenError)
+        # A guard with its reason, not a fault in sopuli.
+        assert not isinstance(caught.value, InternalFaultError)
         assert f"{host}, while the login's password policy is on" in str(caught.value)
         assert "lockout threshold" in (caught.value.hint or "")
 

@@ -581,6 +581,29 @@ class UnsupportedCapabilityError(DriverError):
         self.remedy = remedy
 
 
+class InternalFaultError(DriverError):
+    """A driver was asked for something a check before the call should have
+    refused (#1640).
+
+    A capability check refuses a policy's `account:` attributes on a product
+    that lacks them, and an expiry on PostgreSQL, before the driver is asked.
+    So a session that is asked anyway has found a fault in sopuli, not in the
+    config or the target: category ``internal`` and exit 1. ``product`` is how
+    the message names what the target is, such as "a MySQL server", and
+    ``hint`` says which check should have refused the call.
+    """
+
+    category = "internal"
+    exit_code = ExitCode.FAILURE
+
+    def __init__(self, target: str, *, product: str, what: str, hint: str) -> None:
+        super().__init__(
+            f'target "{target}" is {product}, and sopuli asked its driver to {what}: '
+            "this is a fault in sopuli",
+            hint=hint,
+        )
+
+
 class AuthenticationError(DriverError):
     """The database refused the credential the tool connected with.
 

@@ -9,6 +9,6 @@ build what is sent and read what comes back, with no client on the machine.
 
 The driver serves the commands the registry lists for PostgreSQL. It applies
 no role attributes and does not expire a password: a capability refuses each
-before the call, and the call raises ``SOPULI-20006`` if a run gets there
+before the call, and the call raises an internal fault if a run gets there
 anyway.
 """

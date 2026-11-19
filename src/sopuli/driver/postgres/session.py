@@ -91,6 +91,7 @@ from sopuli.driver.protocol import (
     Credential,
     DriverContext,
     DriverError,
+    InternalFaultError,
     PrivilegeAudit,
     Scope,
     Timeouts,
@@ -99,7 +100,6 @@ from sopuli.driver.protocol import (
     VerifyResult,
     require_capability,
 )
-from sopuli.driver.registry import NotWrittenError as NotWrittenError
 from sopuli.driver.registry import no_profiles_hint
 from sopuli.driver.survey import SurveyedAccount
 from sopuli.output.debug import logger
@@ -213,15 +213,15 @@ class PostgresSession(ClosesConnection):
                 raise
             raise from_error(error).as_error() from error
 
-    def _not_written(self, what: str) -> NotWrittenError:
-        return NotWrittenError(
+    def _fault(self, what: str) -> InternalFaultError:
+        return InternalFaultError(
             self.target.name,
             product="a PostgreSQL cluster",
             what=what,
             hint=(
                 "PostgreSQL has no profiles, and the PostgreSQL driver cannot unlock or "
-                "expire a role, so a capability refuses each of these before the call and "
-                "no run should get here; this is a fault in sopuli"
+                "expire a role, so a capability check should have refused each of these "
+                "before the call"
             ),
         )
 
@@ -470,7 +470,7 @@ class PostgresSession(ClosesConnection):
         # Never reached, as a cluster never reports the capability. If one did,
         # a refusal is the safe answer: an empty tuple would read as "already
         # expired" with nothing issued.
-        raise self._not_written("expire a password")  # pragma: no cover
+        raise self._fault("expire a password")  # pragma: no cover
 
     def audit_coverage(self, account: str) -> AuditCoverage:
         """Never raises, as the protocol promises: the answer is unknown."""
@@ -481,7 +481,7 @@ class PostgresSession(ClosesConnection):
     def apply_attributes(
         self, account: str, attributes: AccountAttributes
     ) -> tuple[AttributeChange, ...]:
-        raise self._not_written("enforce a role's attributes")
+        raise self._fault("enforce a role's attributes")
 
     def resolve_profile(self, profile: str) -> str | None:
         """Refused by capability: PostgreSQL has no profiles, so a `profile:`

@@ -34,12 +34,12 @@ from sopuli.driver.protocol import (
     Driver,
     DriverContext,
     DriverError,
+    InternalFaultError,
     PartialAccountChangeError,
     Session,
     Timeouts,
     UnsupportedCapabilityError,
 )
-from sopuli.driver.registry import DRIVER_NOT_IMPLEMENTED
 from sopuli.exit_codes import ExitCode
 from sopuli.secrets import Secret
 
@@ -176,16 +176,18 @@ def test_the_scope_is_read_once_and_cached() -> None:
     assert session.scope() is first
 
 
-def test_what_is_not_written_refuses_with_20006() -> None:
-    with pytest.raises(DriverError) as caught:
+def test_account_attributes_are_an_internal_fault() -> None:
+    """A capability check refuses both attributes before the call, so reaching
+    it is a fault in sopuli: `internal` and exit 1, not a config error (#1640)."""
+    with pytest.raises(InternalFaultError) as caught:
         _session().apply_attributes("acme_app@%", AccountAttributes(unlock=True))
 
-    assert caught.value.code == DRIVER_NOT_IMPLEMENTED
-    assert caught.value.exit_code == ExitCode.CONFIG_INVALID
+    assert caught.value.category == "internal"
+    assert caught.value.exit_code == ExitCode.FAILURE
+    assert caught.value.code is None
     assert 'target "mysql-dev" is a MySQL server' in str(caught.value)
-    # Only `apply_attributes` gets here, after a capability refused both
-    # attributes, so the hint calls it a fault (#1630).
-    assert "this is a fault in sopuli" in (caught.value.hint or "")
+    assert "this is a fault in sopuli" in caught.value.message
+    assert "unlock_if_locked" in (caught.value.hint or "")
 
 
 @pytest.mark.parametrize(

@@ -121,6 +121,7 @@ from sopuli.driver.protocol import (
     Cursor,
     DriverContext,
     DriverError,
+    InternalFaultError,
     PrivilegeAudit,
     Scope,
     Timeouts,
@@ -130,7 +131,7 @@ from sopuli.driver.protocol import (
     require_capability,
     require_read_write,
 )
-from sopuli.driver.registry import NotWrittenError, no_profiles_hint
+from sopuli.driver.registry import no_profiles_hint
 from sopuli.driver.survey import SurveyedAccount
 from sopuli.exit_codes import ExitCode
 from sopuli.output.debug import logger
@@ -311,7 +312,8 @@ class MssqlSession(ClosesConnection):
     :class:`~sopuli.driver.protocol.Session` methods for `doctor`, UC-1, UC-2
     and UC-5, as the module docstring lists. What SQL Server has no
     counterpart for is refused by capability; :meth:`apply_attributes` is
-    never reached, and refuses with ``SOPULI-20006``."""
+    never reached; if it is, it raises
+    :class:`~sopuli.driver.protocol.InternalFaultError`."""
 
     connection: Any
     target: ExpandedTarget
@@ -480,14 +482,14 @@ class MssqlSession(ClosesConnection):
                 from_error(error).code,
             )
 
-    def _not_written(self, what: str) -> NoReturn:
-        raise NotWrittenError(
+    def _fault(self, what: str) -> NoReturn:
+        raise InternalFaultError(
             self.target.name,
             product="a SQL Server instance",
             what=what,
             hint=(
                 "SQL Server has no login attribute the tool sets, such as a profile or a "
-                "`VALID UNTIL`, so no run should ask for one; this is a fault in sopuli"
+                "`VALID UNTIL`, so a capability check should have refused it before the call"
             ),
         )
 
@@ -983,7 +985,7 @@ class MssqlSession(ClosesConnection):
         )
 
     def apply_attributes(self, *args: Any, **kwargs: Any) -> NoReturn:
-        self._not_written("apply login attributes")
+        self._fault("apply login attributes")
 
     def resolve_profile(self, profile: str) -> NoReturn:
         """Refused by capability: SQL Server has no profiles, so a `profile:`

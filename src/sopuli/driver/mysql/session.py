@@ -20,7 +20,9 @@ every account and every privilege, for `report accounts` and `report
 privileges`. The registry lists `doctor`, the `creds` commands, every
 `account` command and the `report` commands.
 :meth:`MysqlSession.apply_attributes`, which a policy's `account:` block needs,
-refuses with ``SOPULI-20006`` without a round trip.
+is never reached, because a capability check refuses the block first; if it
+is, it raises :class:`~sopuli.driver.protocol.InternalFaultError` without a
+round trip.
 """
 
 from __future__ import annotations
@@ -99,6 +101,7 @@ from sopuli.driver.protocol import (
     DriverContext,
     DriverError,
     Encryption,
+    InternalFaultError,
     PartialAccountChangeError,
     PrivilegeAudit,
     Scope,
@@ -108,7 +111,6 @@ from sopuli.driver.protocol import (
     VerifyResult,
     require_capability,
 )
-from sopuli.driver.registry import NotWrittenError as NotWrittenError
 from sopuli.driver.registry import no_profiles_hint
 from sopuli.driver.survey import SurveyedAccount
 from sopuli.output.debug import logger
@@ -259,15 +261,15 @@ class MysqlSession(ClosesConnection):
             return frozenset({ROLE_LOOKUP})
         return frozenset({EXPIRE_PASSWORD, EXPIRE_ON_RESET, PASSWORD_ROLLOVER, ROLE_LOOKUP})
 
-    def _not_written(self, what: str) -> NotWrittenError:
-        return NotWrittenError(
+    def _fault(self, what: str) -> InternalFaultError:
+        return InternalFaultError(
             self.target.name,
             product="a MySQL server",
             what=what,
             hint=(
                 "MySQL has no profiles, and the MySQL driver does not unlock an account "
-                "for `unlock_if_locked`, so a capability refuses both before the call and "
-                "no run should get here; this is a fault in sopuli"
+                "for `unlock_if_locked`, so a capability check should have refused both "
+                "before the call"
             ),
         )
 
@@ -825,7 +827,7 @@ class MysqlSession(ClosesConnection):
     def apply_attributes(
         self, account: str, attributes: AccountAttributes
     ) -> tuple[AttributeChange, ...]:
-        raise self._not_written("enforce an account's attributes")
+        raise self._fault("enforce an account's attributes")
 
     def resolve_profile(self, profile: str) -> str | None:
         """Refused by capability: MySQL has no profiles, so a `profile:` rule

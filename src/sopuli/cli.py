@@ -16254,12 +16254,11 @@ def creds_status(
     ]
     found = [one.row for one in rows]
     document.finish(
-        # `check`'s codes, and for its reason: exit 3 is drift, which this verb
-        # cannot observe, so it only ever exits 0 or 1. A target it could not
-        # reach is exit 1 -- an inventory with a hole in it must not look
-        # complete, which is the same argument `check` makes about a survey.
-        # A refusal about one account is not a hole: its row exits with the
-        # refusal's own code, unless a target could not be reached (#1635).
+        # Exit 3 is drift, which this verb cannot observe, so it never exits 3.
+        # A target it could not reach is exit 1 -- an inventory with a hole in
+        # it must not look complete, which is the same argument `check` makes
+        # about a survey. A refusal about one account is not a hole: the run
+        # exits with the refusal's own code, such as 9 (#1635).
         status_states.exit_code_for(found),
         summarise_status(found),
     )
@@ -16374,15 +16373,13 @@ def _survey_one(
             int(error.exit_code) if isinstance(error, DriverError) and error.about_account else None
         )
         return _Surveyed(
-            replace(
-                _row(
-                    binding,
-                    user=None,
-                    outcome=check_states.Outcome(check_states.ERROR, reported.message),
-                    documents=documents,
-                    stores=stores,
-                    max_age_days=max_age_days,
-                ),
+            _row(
+                binding,
+                user=None,
+                outcome=check_states.Outcome(check_states.ERROR, reported.message),
+                documents=documents,
+                stores=stores,
+                max_age_days=max_age_days,
                 refused_exit=refused_exit,
             ),
             duration_ms=_elapsed(started),
@@ -16411,6 +16408,7 @@ def _row(
     stores: Mapping[str, SecretStore],
     max_age_days: int | None,
     rollover_supported: bool | None = None,
+    refused_exit: int | None = None,
 ) -> Row:
     """Assemble one row from the vault half and the database half.
 
@@ -16431,6 +16429,7 @@ def _row(
         user=user,
         over_age=status_states.exceeds(age, max_age_days),
         rollover_supported=rollover_supported,
+        refused_exit=refused_exit,
     )
 
 

@@ -25,7 +25,8 @@ from sopuli.cli import cli
 from sopuli.config.model import Vault
 from sopuli.config.targets import EXTERNAL
 from sopuli.diagnostics import ROTATION_OVERDUE
-from sopuli.driver.protocol import Credential, DriverError, Scope, UserState
+from sopuli.driver.mysql.accounts import OtherPluginError
+from sopuli.driver.protocol import Credential, Scope, UserState
 from sopuli.exit_codes import ExitCode
 from sopuli.output.document import SCHEMA_VERSION
 from sopuli.secrets import Secret
@@ -601,12 +602,10 @@ def test_an_unreachable_target_is_exit_one(
     assert "2 unreachable" in result.output
 
 
-class _NotAPasswordLoginError(DriverError):
-    """A refusal about one account, as SQL Server's for a Windows login."""
-
-    category = "config"
-    exit_code = ExitCode.CONFIG_INVALID
-    about_account = True
+def _other_plugin() -> OtherPluginError:
+    """The driver's own refusal about one account, so a change to it shows
+    here."""
+    return OtherPluginError("acme_batch_user", "sha256_password", target="appdb-dev-alpha")
 
 
 def test_a_refusal_about_one_account_is_not_an_unreachable_target(
@@ -617,7 +616,7 @@ def test_a_refusal_about_one_account_is_not_an_unreachable_target(
     estate(
         users={
             "ACME_WEB_USER": account("ACME_WEB_USER"),
-            "ACME_BATCH_USER": _NotAPasswordLoginError("ACME_BATCH_USER is a Windows login"),
+            "ACME_BATCH_USER": _other_plugin(),
         }
     )
     result = run(runner, write_config(CONFIG))
@@ -634,7 +633,7 @@ def test_a_refusal_about_one_account_keeps_its_category(
     estate(
         users={
             "ACME_WEB_USER": account("ACME_WEB_USER"),
-            "ACME_BATCH_USER": _NotAPasswordLoginError("ACME_BATCH_USER is a Windows login"),
+            "ACME_BATCH_USER": _other_plugin(),
         }
     )
     body = document(run(runner, write_config(CONFIG), "--output", "json"))

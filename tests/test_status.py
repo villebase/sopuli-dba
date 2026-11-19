@@ -320,3 +320,9 @@ def test_an_unreachable_target_wins_over_a_refusal_about_one_account() -> None:
     """A hole in the inventory is exit 1, whatever else the run found."""
     rows = [_error_row(refused_exit=9), _error_row()]
     assert status.exit_code_for(rows) == ExitCode.FAILURE
+
+
+def test_the_highest_refusal_code_wins_whatever_the_order() -> None:
+    """The code does not depend on the order of the config."""
+    one, nine = _error_row(refused_exit=1), _error_row(refused_exit=9)
+    assert status.exit_code_for([one, nine]) == status.exit_code_for([nine, one]) == 9

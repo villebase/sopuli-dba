@@ -246,12 +246,13 @@ def exit_code_for(rows: Sequence[Row]) -> int:
     A target that could not be reached is exit 1 and wins, because the
     inventory has a hole in it. Otherwise a refusal about one account, such as
     a SQL Server Windows login, exits with the refusal's own code, as it would
-    on any other verb (#1635).
+    on any other verb (#1635). Where refusals carry different codes, the highest
+    wins, so the code does not depend on the order of the config.
     """
     code = check_exit_code_for([row.outcome.state for row in rows if row.refused_exit is None])
     if code != ExitCode.SUCCESS:
         return code
-    return next((row.refused_exit for row in rows if row.refused_exit is not None), code)
+    return max((row.refused_exit for row in rows if row.refused_exit is not None), default=code)
 
 
 def _has_pending(document: Any, binding: Binding) -> bool:

@@ -56,7 +56,7 @@ say so.
 ## What is in scope
 
 This project, its documentation, and the SQL in `sql/`, for Oracle,
-PostgreSQL, MySQL and MariaDB.
+PostgreSQL, MySQL, MariaDB and SQL Server.
 
 Some things are known and are not vulnerabilities, because they are the design.
 Reporting them is welcome but the answer will be a pointer to

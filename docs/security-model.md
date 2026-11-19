@@ -12,13 +12,14 @@ It is written in plain language on purpose. The precise versions live in
 reader who is outside the project.
 
 A note on the current state before anything else: this is alpha software.
-This document describes Oracle. PostgreSQL, MySQL and MariaDB are supported
-too. What a target lacks, such as a password rollover window or, on
+This document describes Oracle. PostgreSQL, MySQL, MariaDB and SQL Server
+are supported too. What a target lacks, such as a password rollover window or, on
 PostgreSQL, a forced password change at next login, is refused before anything
 changes.
 [`design/02-postgres-privileges.md`](design/02-postgres-privileges.md),
-[`design/02-mysql-privileges.md`](design/02-mysql-privileges.md) and
-[`design/02-mariadb-privileges.md`](design/02-mariadb-privileges.md) say what
+[`design/02-mysql-privileges.md`](design/02-mysql-privileges.md),
+[`design/02-mariadb-privileges.md`](design/02-mariadb-privileges.md) and
+[`design/02-mssql-privileges.md`](design/02-mssql-privileges.md) say what
 differs on each. The largest difference: on PostgreSQL 13 to 15, the `CREATEROLE`
 attribute the tool account needs can change the password of every role that is
 not a superuser, so there the tool account is close to a superuser and only the

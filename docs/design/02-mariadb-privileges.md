@@ -229,7 +229,9 @@ be refused as one ([#1346](../decisions/log.md#1346)).
 ### 2.4 What the reports can read
 
 `report accounts` (#1462) and `report history` (#1460) are built on MariaDB,
-and so is the privilege report, without the global level (#1483). This is what
+and so is the privilege report (#1483). An account's global level comes from
+the optional view `sopuli.global_privileges` (§2.1), and is reported not
+checked without it, or for a role or `PUBLIC`. This is what
 the tool account can read for
 them with §2.1's grants, and what each further read would cost. It was
 measured on 10.11.19, 11.4.13, 11.8.9 and 12.3.3 (`15_report_read_probe.py`,

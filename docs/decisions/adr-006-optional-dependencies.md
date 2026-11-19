@@ -77,7 +77,9 @@ cosmetic:
    What a test can hold is the dependency set that stands for it: in a base
    install none of the clients the backends reach with — `httpx`, the OCI SDK,
    `python-oracledb`, `psycopg`, PyMySQL and the PyNaCl it uses for MariaDB,
-   `pyrage`, `pysequoia`, 1Password's SDK — is importable. The standard library's `urllib` and
+   `pyrage`, `pysequoia`, 1Password's SDK — is importable. [#1538](log.md#1538) later
+   added `pyodbc`, the SQL Server driver's client, and [#1417](log.md#1417)
+   `keyring`, and the test holds both. The standard library's `urllib` and
    `http.client` are importable in every Python and no packaging rule changes
    that, so they are covered by the rule's intent rather than by its assertion:
    base code does not reach the network, whatever it would reach it with.

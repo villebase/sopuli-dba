@@ -844,8 +844,8 @@ measured what they can read on 26ai Free 23.26.3.0.0
   `ORACLE_MAINTAINED` (§4, check 5). This probe ran on no other release.
 
 **The account survey sends three statements.** UC-5's account report reads
-every account on a target through `OracleSession.survey_accounts()`
-(`src/sopuli/driver/oracle/accounts.py`, `survey`). No statement names an
+every account on a target through `OracleSession.survey_with_profiles()`
+(`src/sopuli/driver/oracle/accounts.py`, `survey_with_profiles`). No statement names an
 account, so none binds anything, and none reads a password or verifier column.
 
 | Statement | Reads | Needs |

@@ -315,8 +315,11 @@ release is `SERVERPROPERTY('ProductVersion')`.
   Oracle.
 - **A rule's `oracle.profile` and `postgresql.valid_until` are *not
   applicable*.**
-- **A personal rule's `role:` is not resolved** until UC-2 is built on SQL
-  Server (#1554): its members show as undeclared, and `SOPULI-W075` says so.
+- **A personal rule's `role:` names a server role**, and admits every login
+  that holds it, through nested server roles (#1554). Without `VIEW ANY
+  DEFINITION` the tool login cannot see every server role and its members, so
+  the rule is not resolved: its members show as undeclared, and `SOPULI-W075`
+  says so.
 
 ---
 

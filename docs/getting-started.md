@@ -18,9 +18,10 @@ What you need before you start:
   can do it.
 - **A HashiCorp Vault** you can write to. A *vault* is a server built to store
   secrets and hand them out to the applications that need them. This guide uses
-  HashiCorp Vault; the build also supports OCI Vault and a `file` store, which
-  the README describes. If you have none, section 1 gives you a throwaway one in
-  a container.
+  HashiCorp Vault. The build also supports OCI Vault, for the
+  application-credential commands only, and a `file` store, for development and
+  CI only; the [README](../README.md) describes both. If you have none, section
+  1 gives you a throwaway one in a container.
 
 Everything below was run on Windows 11 with sopuli 0.58.0 and Instant Client
 23.26.3.0.0, against the project's own test containers. The output shown is what

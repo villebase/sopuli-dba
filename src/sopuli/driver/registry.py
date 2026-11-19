@@ -75,8 +75,10 @@ DRIVER_NOT_IMPLEMENTED = "SOPULI-20006"
 #: Every command that connects to a target, by the run document's command name,
 #: and so every command :func:`require_command` gates. A driver that lists its
 #: commands lists these, so a new command reaches every driver at once; a mode
-#: a product lacks is refused by capability at plan time (#1636). `doctor` is
-#: not one: it is never refused.
+#: a product lacks is refused by capability at plan time (#1636). A command is
+#: added here only when every driver that uses this set runs it or refuses it
+#: by capability; a driver that cannot, such as a new product's, lists a set of
+#: its own. `doctor` is not one: it is never refused.
 CONNECTING_COMMANDS = frozenset(
     {
         "creds.check",

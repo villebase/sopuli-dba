@@ -6687,3 +6687,30 @@ the register.
   that the server answered. C, leaving both: the file store's category
   would disagree with its hint. No correct build reaches these errors, so
   no output a run can produce changes.
+
+## #1371
+
+- **Decided:** 2026-11-20, #1371
+- **Question:** the README said the tool was alpha and not for production.
+  The maintainer uses it on real systems, and UC-1 runs end to end on every
+  product. Which part moves to beta, and what does beta promise?
+- **Decision:** the maintainer's. Beta covers UC-1, the `creds` commands, on
+  Oracle and PostgreSQL, with the HashiCorp Vault store. UC-2, MySQL,
+  MariaDB, SQL Server, OCI Vault, the `file` store and keyring credentials
+  stay experimental. The version stays `0.x`. Beta promises that production
+  use is allowed with care; that a change to the config format, the vault
+  records, an exit code or a JSON schema has a changelog entry and an
+  upgrade note in `docs/upgrading.md`; and that vault data a release from
+  0.86.0 on wrote is still read, or the release says how to move it. A PR
+  adds its note under *Unreleased*, and the maintainer names the version
+  when merging the release PR (`workflow.md`, §*Releases*).
+- **Why:** PostgreSQL runs end to end on one release, as MySQL and MariaDB
+  do, but its probes ran on six releases and it has had real runs. The
+  no-loss promise starts at 0.86.0 because the maintainer's own vault
+  entries were written from then on. A file of notes is written in the
+  same PR as the change; the release PR's text would be written later, by
+  whoever remembers.
+- **Rejected:** Oracle alone in beta. The promise from the first beta
+  release only, which would leave the data already written unprotected.
+  Upgrade notes written by hand into the release PR's text. 1.0, which is a
+  separate decision for later.

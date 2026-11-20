@@ -204,6 +204,25 @@ request, so `changes` reports code and every lane runs, tier 1 included.
 - release-please runs on push to `main`, maintains a standing release PR
   with the accumulated changelog and version bump. Merging that PR is the
   explicit act that cuts the tag and GitHub Release.
+- **An upgrade note goes with every change the beta promises one for**
+  ([#1371](https://github.com/villebase/sopuli-dba/issues/1371)). The beta
+  part is the one the README's *Status* names. A PR that changes, for that
+  part, the config format, the vault records (UC-1 §3, *Records in the
+  store*), an exit code or a JSON output schema adds a section under
+  *Unreleased* in [`upgrading.md`](upgrading.md), in the same PR. A change that
+  only adds something optional needs none.
+
+  The section's heading names the change and its issue. Its body says who is
+  affected and what they do, in steps, with the commands to run. It is written
+  for the operator who upgrades, not for a contributor. Vault data that a
+  release from 0.86.0 on wrote is still read, or the note says how to move it:
+  a note that only documents a loss is not enough. When the beta part changes
+  nothing, leave *Unreleased* as it is.
+
+  Before merging the release PR, the maintainer renames *Unreleased* to the
+  new version and adds an empty *Unreleased* above it with "Nothing to do." in
+  it. release-please's changelog lists the commits; it cannot hold the steps,
+  which is why the notes are a file of their own.
 - **The same merge publishes to PyPI** (#545). `release-please.yml` carries
   four more jobs, gated on the action's `release_created` output: `build`
   checks out the new tag, installs `build`, `hatchling` and `twine` from

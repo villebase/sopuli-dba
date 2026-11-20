@@ -1850,7 +1850,7 @@ tool hands a new password to the person and keeps no copy.
 [`use-cases/uc-02-personal-account-passwords.md`](use-cases/uc-02-personal-account-passwords.md)
 specifies these commands.
 
-These commands are experimental in the alpha.
+These commands are experimental.
 
 ### `account list`
 

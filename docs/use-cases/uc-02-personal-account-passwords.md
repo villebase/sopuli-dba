@@ -19,8 +19,10 @@ through nested server roles. `account expire-password` is refused with exit
 there whose policy can draw `'` is refused with exit 5, because a server audit keeps part of such a password in clear
 (#1601).
 
-**These commands are experimental in the alpha.** They are the newest part of
-the tool, so they may change more than the application-credential commands.
+**These commands are experimental.** They are not part of the beta, so the
+beta's promises in the README's *Status* do not cover them. They are the newest
+part of the tool, so they may change more than the application-credential
+commands.
 
 ---
 

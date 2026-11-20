@@ -20,11 +20,12 @@
       test/compose.yaml's 19c services use.
 
   THE RELEASE IS RESOLVED, NOT ASSUMED. Without -DbVersion the newest explicit
-  19.N.0.0 that `oci db version list` offers for the shape is used, and the plan
-  prints it. Record measurements with the version the database reports, never as
-  "19c".
+  19c RU that `oci db version list` offers for the shape is used, written
+  19.N.0.0 or 19.N.0.0.0, and the plan prints it. Record measurements with the
+  version the database reports, never as "19c".
 
-  THE SYS PASSWORD NEVER REACHES ARGV. It is typed at a prompt (twice), checked
+  THE SYS PASSWORD NEVER REACHES ARGV. It is typed at a prompt (twice), or read
+  from the file -SysPasswordFile names, which only you may read. It is checked
   against OCI's rules, and handed to the CLI inside a --from-json file in a
   private temporary directory that is deleted when the script ends. The same
   value becomes SYSTEM's, the PDB admin's and the TDE wallet's: OCI's default.
@@ -62,6 +63,8 @@
 .EXAMPLE
   ./new-db-system.ps1 -CompartmentName my-testing
 .EXAMPLE
+  ./new-db-system.ps1 -CompartmentName my-testing -SysPasswordFile ~/.my-sys-password -Yes
+.EXAMPLE
   ./new-db-system.ps1 -CompartmentName my-testing -Connect
 .EXAMPLE
   ./new-db-system.ps1 -CompartmentName my-testing -Stop
@@ -74,7 +77,7 @@ param(
     [string] $CompartmentName,
 
     [string] $Name = 'sopuli-19c',
-    # Empty: the newest explicit 19.N.0.0 offered for the shape.
+    # Empty: the newest explicit 19c RU offered for the shape.
     [Parameter(ParameterSetName = 'Create')]
     [string] $DbVersion = '',
     [Parameter(ParameterSetName = 'Create')]
@@ -96,6 +99,11 @@ param(
     [string] $AllowSshFrom = '',
     # Not $Profile: that is PowerShell's own automatic variable.
     [string] $OciProfile = 'DEFAULT',
+    # A file holding the SYS password on one line, for a run with no terminal,
+    # with -Yes. Only you may read it. Without it the password is typed at a
+    # prompt.
+    [Parameter(ParameterSetName = 'Create')]
+    [string] $SysPasswordFile = '',
     [switch] $Yes,
 
     [Parameter(ParameterSetName = 'Connect', Mandatory = $true)]
@@ -211,24 +219,41 @@ function Confirm-Plan {
     if ($answer -notmatch '^(y|yes)$') { Write-Host 'Nothing done.'; exit 1 }
 }
 
-function Read-AdminPassword {
-    # Prompted, never a parameter: a parameter is argv, and argv is `ps`.
+function Get-PasswordProblems {
     # OCI's rule: 9-30 characters, at least two each of upper, lower, digit and
     # one of _ # -, and nothing else. The double quote that invariant 11 is about
     # is therefore already impossible.
+    param([string] $Password)
+    $problems = @()
+    if ($Password.Length -lt 9 -or $Password.Length -gt 30) { $problems += '9 to 30 characters' }
+    if ($Password -cnotmatch '^[A-Za-z0-9_#-]+$') { $problems += 'only letters, digits and _ # -' }
+    foreach ($rule in @(@('[A-Z]', 'two uppercase'), @('[a-z]', 'two lowercase'),
+                        @('[0-9]', 'two digits'), @('[_#-]', 'two of _ # -'))) {
+        if (([regex]::Matches($Password, $rule[0], 'None')).Count -lt 2) { $problems += $rule[1] }
+    }
+    return $problems
+}
+
+function Read-AdminPassword {
+    # Prompted, or read from -SysPasswordFile, never a parameter: a parameter is
+    # argv, and argv is `ps`.
+    if ($SysPasswordFile) {
+        # One line. The line break an editor or `Set-Content` leaves is not part
+        # of it.
+        $a = (Get-Content -LiteralPath $SysPasswordFile -Raw) -replace '[\r\n]+$', ''
+        $problems = @(Get-PasswordProblems $a)
+        if ($problems.Count -gt 0) {
+            throw "The password in $SysPasswordFile will be refused by OCI; it needs: $($problems -join ', ')."
+        }
+        return $a
+    }
     while ($true) {
         $first = Read-Host 'SYS / SYSTEM / PDB admin password' -AsSecureString
         $second = Read-Host 'Again' -AsSecureString
         $a = ConvertFrom-Secure $first
         $b = ConvertFrom-Secure $second
         if ($a -cne $b) { Write-Host '  They differ; again.'; continue }
-        $problems = @()
-        if ($a.Length -lt 9 -or $a.Length -gt 30) { $problems += '9 to 30 characters' }
-        if ($a -cnotmatch '^[A-Za-z0-9_#-]+$') { $problems += 'only letters, digits and _ # -' }
-        foreach ($rule in @(@('[A-Z]', 'two uppercase'), @('[a-z]', 'two lowercase'),
-                            @('[0-9]', 'two digits'), @('[_#-]', 'two of _ # -'))) {
-            if (([regex]::Matches($a, $rule[0], 'None')).Count -lt 2) { $problems += $rule[1] }
-        }
+        $problems = @(Get-PasswordProblems $a)
         if ($problems.Count -eq 0) { return $a }
         Write-Host "  OCI will refuse it; it needs: $($problems -join ', ')."
     }
@@ -476,10 +501,29 @@ if (-not (Test-Path $SshPublicKeyFile)) {
 }
 $AllowSshFrom = Resolve-AllowSshFrom $AllowSshFrom
 
-if (-not $dbSystem -and [Console]::IsInputRedirected) {
-    # A new DB system needs the password typed at a prompt, and redirected input
-    # cannot answer one -- it would wait forever at the first Read-Host instead.
-    throw 'Creating a DB system prompts for the SYS password; run this from an interactive terminal.'
+if ($SysPasswordFile) {
+    if (-not (Test-Path -LiteralPath $SysPasswordFile -PathType Leaf)) {
+        throw "No password file at $SysPasswordFile."
+    }
+    # The file holds the SYS, SYSTEM and TDE wallet password, so nobody but
+    # you, SYSTEM and Administrators may read it: the same people who can read
+    # the owner-only temporary directory the launch file goes in.
+    $me = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    $allowed = @($me, 'S-1-5-18', 'S-1-5-32-544')
+    $others = @((Get-Acl -LiteralPath $SysPasswordFile).Access | Where-Object {
+            $_.AccessControlType -eq 'Allow' -and
+            ($_.FileSystemRights -band [Security.AccessControl.FileSystemRights]::ReadData) -and
+            $_.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value -notin $allowed
+        } | ForEach-Object { "$($_.IdentityReference)" })
+    if ($others.Count -gt 0) {
+        throw "Others can read $SysPasswordFile ($($others -join ', ')); make it readable by you alone."
+    }
+}
+if (-not $dbSystem -and [Console]::IsInputRedirected -and -not ($SysPasswordFile -and $Yes)) {
+    # A new DB system needs the password and a yes to the plan, and redirected
+    # input can answer neither -- it would wait forever at the first Read-Host
+    # instead. -SysPasswordFile and -Yes answer both in advance.
+    throw 'Creating a DB system prompts for the SYS password and the plan; run this from an interactive terminal, or pass -SysPasswordFile and -Yes.'
 }
 
 if (-not $dbSystem) {
@@ -487,10 +531,12 @@ if (-not $dbSystem) {
                   '--db-system-shape', $Shape, '--storage-management', 'LVM')) | ForEach-Object { $_.version })
     if (-not $DbVersion) {
         # '19.0.0.0' means "whatever is newest at launch" and records nothing;
-        # pick the explicit RU it stands for so the plan can name it.
-        $DbVersion = $versions | Where-Object { $_ -match '^19\.(\d+)\.0\.0$' -and $_ -ne '19.0.0.0' } |
+        # pick the explicit RU it stands for so the plan can name it. OCI names
+        # an RU with four parts or five, 19.28.0.0 and 19.33.0.0.0, and a 0 in
+        # the second part is that alias in either form.
+        $DbVersion = $versions | Where-Object { $_ -match '^19\.([1-9]\d*)\.0\.0(\.0)?$' } |
             Sort-Object { [int]($_ -split '\.')[1] } -Descending | Select-Object -First 1
-        if (-not $DbVersion) { throw "No explicit 19.N.0.0 offered for $Shape with LVM; offered: $($versions -join ', ')." }
+        if (-not $DbVersion) { throw "No explicit 19.N.0.0 or 19.N.0.0.0 offered for $Shape with LVM; offered: $($versions -join ', ')." }
     } elseif ($DbVersion -notin $versions) {
         throw "$DbVersion is not offered for $Shape with LVM; offered: $($versions -join ', ')."
     }

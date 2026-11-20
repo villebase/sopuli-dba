@@ -123,6 +123,9 @@ MYSQL_RULES: dict[int, Rule] = {
             "that holds SYSTEM_USER needs SYSTEM_USER, which the tool account must not hold"
         ),
     ),
+    # `database`, not `internal`, though the fault is sopuli's (#1647): the
+    # server answered, refusing the form of a hash the client computed. The
+    # hint says whose fault it is.
     PASSWORD_FORMAT: Rule(
         "database",
         hint="the server refused the hash's form. This is a fault in the tool: report it",

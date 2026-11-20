@@ -6659,3 +6659,28 @@ the register.
 - **Rejected:** B, leaving them as they were: the category would disagree
   with the hint, which is what #1640 removed for its own calls. No correct
   build reaches these errors, so no output a run can produce changes.
+
+## #1647
+
+- **Decided:** 2026-11-20, #1647
+- **Question:** two more groups of errors called themselves a fault in the
+  tool and kept another category. The file store's five write refusals
+  (a `max_versions` that is not a whole number, a path, data that is not a
+  JSON object, and a version that cannot be stored) were a `StoreError`
+  with category `vault`. MySQL's `PASSWORD_FORMAT`, the server refusing the
+  form of the hash the client computed, has category `database`. Should
+  they report `internal`, as #1644's errors do?
+- **Decision:** the maintainer's, option B. The file store's refusals raise
+  `StoreFaultError`, a `StoreError` with category `internal` and exit 1.
+  `PASSWORD_FORMAT` stays `database`, and its hint says the fault is
+  sopuli's.
+- **Why:** the file store is handed what sopuli built, so `vault` would send
+  a consumer to check a store that is fine. The error stays a `StoreError`
+  so every caller still treats the write as failed. On MySQL the server
+  answered: it refused a statement, with a vendor code, and that is what
+  `database` means. The category says who answered and the hint says whose
+  fault it is.
+- **Rejected:** A, both `internal`: MySQL's category would no longer say
+  that the server answered. C, leaving both: the file store's category
+  would disagree with its hint. No correct build reaches these errors, so
+  no output a run can produce changes.

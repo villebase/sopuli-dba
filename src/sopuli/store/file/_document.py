@@ -33,7 +33,7 @@ from sopuli.clock import from_rfc3339, to_rfc3339
 # How many versions of a path are kept when the store's `max_versions` is not
 # set (#1415): defined in the config layer, beside the key.
 from sopuli.config.vaults import DEFAULT_MAX_VERSIONS as DEFAULT_MAX_VERSIONS
-from sopuli.store.protocol import StoreError
+from sopuli.store.protocol import StoreError, StoreFaultError
 
 FORMAT = "sopuli-file-store"
 
@@ -66,9 +66,9 @@ MAX_DEPTH = 32
 #: with a lower limit may not.
 MAX_INT_BITS = 14_000
 
-#: What a write refusal says: the store writes what the tool built, so a value
-#: it cannot hold is the tool's fault.
-TOOL_FAULT = "this is a fault in the tool; report it with the command that ran"
+#: What a write refusal says: the store writes what sopuli built, so a value
+#: it cannot hold is sopuli's fault, raised as `StoreFaultError` (#1647).
+TOOL_FAULT = "this is a fault in sopuli; report it with the command that ran"
 
 #: What every refusal of a file this build cannot read says to do. Restoring
 #: is the last step, not the first: a store that is fine but was not the file
@@ -213,15 +213,15 @@ class Document:
         # `type() is int`, as for a pin: True would keep one version, and a
         # float would fail in the slice.
         if type(keep) is not int or keep < 1:
-            raise StoreError(
+            raise StoreFaultError(
                 "the file store's max_versions is not a whole number of at least 1",
                 hint=TOOL_FAULT,
             )
         problem = _path_problem(path)
         if problem is not None:
-            raise StoreError(f"a path cannot be stored: it is {problem}", hint=TOOL_FAULT)
+            raise StoreFaultError(f"a path cannot be stored: it is {problem}", hint=TOOL_FAULT)
         if not isinstance(data, dict):
-            raise StoreError(
+            raise StoreFaultError(
                 f"the data for {path!r} cannot be stored: it is not a JSON object",
                 hint=TOOL_FAULT,
             )
@@ -231,7 +231,7 @@ class Document:
         problem = _not_plain(data, depth=0)
         if problem is not None:
             # The value is not repeated: it may be a password.
-            raise StoreError(
+            raise StoreFaultError(
                 f"the data for {path!r} cannot be stored: it holds {problem}", hint=TOOL_FAULT
             )
         try:
@@ -257,8 +257,8 @@ class Document:
         except ValueError as problem:
             # Version's message names the problem and no data: a time with no
             # zone, or text the walk above passed and the version's own check
-            # did not. Either is the tool's fault, not the operator's.
-            raise StoreError(
+            # did not. Either is sopuli's fault, not the operator's.
+            raise StoreFaultError(
                 f"version {number} of {path!r} cannot be stored: {problem}", hint=TOOL_FAULT
             ) from None
         paths = dict(self.paths)

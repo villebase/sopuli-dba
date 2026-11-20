@@ -347,6 +347,59 @@ the record's `true` and `false` back as booleans (`oci-metadata-booleans`),
 and the change reads the record back before it is sent: one that does not
 read back as written stops the change while the policy is still on.
 
+### Records in the store
+
+This is the list of everything the `creds` commands write to a store. An
+upgrade note that changes any of it names the row it changes. The sections
+above say why each key exists.
+
+**The secret document.** Each key below sits at the document's root. Beside a
+scalar container a key has the shape the *Holds* column gives. Beside a map
+keyed by account it is a map keyed the same way, by the mirror rule. On a
+`hashicorp` or `file` store, and in a document on an OCI store that holds more
+than one account, every key is a field of the document. On an OCI secret that
+holds one account's credential, native staging puts each key where the last
+column says.
+
+| Key | Holds | Written | Removed | On OCI, native staging |
+|---|---|---|---|---|
+| the container, the field the ref names | the current password | at promotion, and by `creds generate --promote` | never | the CURRENT version's content |
+| `pending` | the staged password | when a password is staged | at promotion | the PENDING version's content |
+| `previous` | the password before `current` | at promotion | never; a later promotion replaces it | the PREVIOUS version |
+| `origin` | `generated` or `supplied` | with `pending` | with `pending` | the PENDING version's content. It stays in that version after promotion, and the tool ignores it there |
+| `rollover` | `retaining` | with a `pending` that `creds rotate --strategy rollover` stages | with `pending`, and by any other staging write | as `origin` |
+| `reached` | a map of target name to `spent` or `passed` | on MariaDB, before and after the login that confirms a change | by a staging write, and at promotion | the secret's metadata |
+| `policy_flags` | a map of target name to `check_policy` and `check_expiration` | on SQL Server, before a change | once that target's flags are set back | the secret's metadata |
+| `rotated_at`, `rotated_by`, `policy` | when, by whom and under which policy `current` was promoted | at promotion | never; a later promotion replaces them | the secret's metadata |
+| `targets` | a list of the targets that confirmed `current` | at promotion | by `creds generate --promote --overwrite-current`, because no target has confirmed the value it writes | the secret's metadata |
+| `generated_at`, `generated_by` | when and by whom a version's password was made | under native staging only, with each new version | never | each version's content |
+
+The keys from `pending` to `generated_by` are reserved: a ref may not name a
+field called any of them. The document has no `current` key, because the
+container is the current stage.
+
+**Store metadata.** These are not fields of the document, and the mirror rule
+does not apply to them:
+
+- `pending_version`: on an OCI secret under native staging, the number of the
+  live PENDING version, in the secret's metadata. Written when a password is
+  staged, and removed at promotion.
+- `sopuli_cas`: on an OCI store, the tool's write counter for compare-and-set,
+  in the metadata of each secret it writes, the lock's secret included.
+
+**The lock record.** One per secret path, at `locks/<path>` on the same
+store. On a KV v2 mount that is `<mount>/data/locks/<path>`, and the check
+before the first lock sets `cas_required: true` in that path's metadata. On an
+OCI store it is the metadata key `sopuli_record` of a secret named
+`sopuli-locks.<name>`, whose content is `{}`. A `file` store keeps it in the
+same file as the secret. Its fields are in §8, *How the fence is checked*. A
+release writes a `released` record; the tool never deletes one.
+
+UC-2 writes to a store too, and those writes are not part of this list: its
+records of personal password resets, under the prefix that `reset_records:`
+names, and the password a `vault_path` delivery writes to a person's own path
+([`../design/01-configuration.md`](../design/01-configuration.md)).
+
 ---
 
 ## 4. `sopuli creds generate`

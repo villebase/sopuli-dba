@@ -1,7 +1,7 @@
-# Supported releases
+# Tested releases
 
 This page says which release of each database the tool has run on, and which it
-has not. The README lists the databases. [measurements.md](measurements.md) has
+has not. A release listed here is one somebody ran, not a promise of support. The README lists the databases. [measurements.md](measurements.md) has
 each script, the release it ran on and what it showed, for the maintainers.
 
 "Run end to end" means the commands ran against that release and changed real
@@ -54,9 +54,9 @@ any release but 8.4.13.
 wrote accounts on 10.4.34 and 10.6.28, and created its view on 10.6.28, before
 upgrading them.
 
-**Not tested:** releases before 10.11, except as the release that one probe's
-accounts were written by, before an upgrade. The `creds` commands end to end
-on any release but 11.8.9.
+**Not tested:** releases before 10.11, except that one probe wrote accounts on
+10.4.34 and 10.6.28 before upgrading them. The `creds` commands end to end on
+any release but 11.8.9.
 
 ## SQL Server
 

@@ -75,8 +75,8 @@ keep the database in agreement with the vault. That gives you:
 - **You find out about drift before the applications do.** `sopuli creds check`,
   run from a scheduler, logs in with the vault's password and reports whether each
   database still accepts it. If someone changed the password by hand, you hear
-  about it from a report, not from an outage. On Oracle and MySQL it first
-  reads the account's failed-login count, and does not try if one more failure
+  about it from a report, not from an outage. On Oracle, and on MySQL 9.7 and
+  later, it first reads the account's failed-login count, and does not try if one more failure
   would come too close to the lockout limit. Reading that count needs one
   optional grant; without it the check still runs, and each result says that
   the lockout guard was unavailable.
@@ -123,7 +123,7 @@ unfinished part. It promises three things:
 | **Install** | `pipx install "sopuli-dba[oracle,hashicorp]"`, with your database's extra in place of `oracle` (`postgres`, `mysql`, `mariadb` or `mssql`) and your store's in place of `hashicorp` (`oci` or `file`). SQL Server also needs Microsoft's ODBC Driver 18 for SQL Server as a system package. The *Installing* section below lists the extras and says how to get pipx. `sopuli --version` and `sopuli about` report the installed version. PostgreSQL needs libpq 16 or later: the `postgres` extra's wheels bundle one on Windows and Linux x86_64, and a psycopg built against an older system libpq is not supported |
 | **Databases** | Oracle, for every command. PostgreSQL, MySQL, MariaDB and SQL Server, for every command that connects to a database, with `creds check` on SQL Server on a Linux host only. What a database has no counterpart for, such as a forced password change at next login on PostgreSQL, is refused before anything changes. Azure SQL Database and Azure Synapse are refused when the tool connects |
 | **Not tested** | Each database has releases and platforms that nobody has run the tool on. [`docs/supported-releases.md`](https://github.com/villebase/sopuli-dba/blob/main/docs/supported-releases.md) lists the releases each database ran on, and the ones it has not. If you run another one, please report what you find |
-| **Vaults** | HashiCorp Vault, KV v2 and KV v1, with token, AppRole, Kubernetes and userpass auth, for every command. OCI Vault, with API key, session token, instance principal and resource principal auth, for the application-credential commands (UC-1). With one account per secret, a pending password is an OCI PENDING version, which External Secrets Operator does not read, so an application cannot see it before the tool promotes it. The personal-account commands refuse an OCI store. A `file` store, one age-encrypted file, for local development and CI and the application-credential commands; every run that opens one warns that it is not for production. The OS keyring is not a store, but it can hold the tool's own credentials, a vault token or a target's admin password, with `{ keyring: NAME }` and `method: keyring` |
+| **Vaults** | HashiCorp Vault, KV v2 and KV v1, with token, AppRole, Kubernetes and userpass auth, for every command. OCI Vault, with API key, session token, instance principal and resource principal auth, for the application-credential commands (UC-1). With one account per secret, a pending password is an OCI PENDING version, which External Secrets Operator does not read, so an application cannot see it before the tool promotes it. The personal-account commands refuse an OCI store. A `file` store, one age-encrypted file, for local development and CI and the application-credential commands. It has no compare-and-set, so a command that changes it needs `locking: advisory-only` on it, and every run that opens one warns that it is not for production. The OS keyring is not a store, but it can hold the tool's own credentials, a vault token or a target's admin password, with `{ keyring: NAME }` and `method: keyring` |
 | **What works** | The commands `sopuli --help` lists, including a full password rotation from end to end. [`docs/local-testing.md`](https://github.com/villebase/sopuli-dba/blob/main/docs/local-testing.md) runs the usual commands by hand |
 | **Experimental** | The personal-account commands (UC-2), `sopuli account …`. They are the newest part of the tool, so they may change more than the rest |
 
@@ -268,24 +268,23 @@ a rule the site-wide file turned on. It can only add more.
 
 **A scheduled check is guarded against locking the account out.** To find out
 whether the vault's password still works, the tool has to try logging in — and a
-failed login counts against the database's failed-login limit. So on Oracle and
-MySQL, before it tries, it reads how many failed attempts the account has
-already collected. If one more attempt would come too close to the limit, it
+failed login counts against the database's failed-login limit. So on Oracle,
+and on MySQL 9.7 and later, before it tries, it reads how many failed attempts
+the account has already collected. If one more attempt would come too close to the limit, it
 does not try. It reports that it could not check, and says why. Checking is
 never worth locking out the account you were checking on.
 
 That guard needs one optional grant, which lets the tool read the failed-login
-count: `READ ON SYS.USER$` on Oracle, and a read of
-`performance_schema.temporary_account_locks` on MySQL. Without it, the check
-still runs. It logs in once per account per run (twice with
-`--include-previous`, which also tries the previous password), and every result
-from a login it attempted says that the lockout guard was unavailable. On
-Oracle the grant is not part of the standard install, because it is a broad
-read.
+count: `READ ON SYS.USER$` on Oracle, and `SELECT` on
+`performance_schema.temporary_account_locks` on MySQL. Neither is part of the
+standard install. Without it, the check still runs. It logs in once per account
+per run (twice with `--include-previous`, which also tries the previous
+password), and every result from a login it attempted says that the lockout
+guard was unavailable. On Oracle the grant is a broad read.
 [`docs/security-model.md`](https://github.com/villebase/sopuli-dba/blob/main/docs/security-model.md) §3 explains the trade-off.
 
-The other databases need no guard, or offer none. PostgreSQL has no
-failed-login lockout. On SQL Server, `creds check` logs in only on a Linux
+The other databases need no guard, or offer none. MySQL 8.0 and 8.4 keep the
+count in no table the tool can read. PostgreSQL has no failed-login lockout. On SQL Server, `creds check` logs in only on a Linux
 host, where no login locks. MariaDB has no count the tool can read, so its
 logins are unguarded, and `creds check` logs in only where no other account can
 answer.
@@ -307,10 +306,10 @@ one is asked for on purpose:
 The two that print a password refuse machine-readable JSON output, because JSON
 output is what gets shipped to a log collector.
 
-**A password containing a double quote is rejected, not escaped**, on every
-database. Oracle's quoted identifiers have no escape sequence for `"`, so there
-is no correct way to send one there. The tool refuses the password rather than
-mangling it.
+**A password containing a double quote is rejected, not escaped.** The rule
+comes from Oracle, whose quoted identifiers have no escape sequence for `"`, so
+there is no correct way to send one there. The tool applies it on every
+database, and refuses the password rather than mangling it.
 
 **What each database keeps is measured, not assumed.** On Oracle, `ALTER USER`
 takes the password as a literal — DDL cannot use bind variables — so the
@@ -325,7 +324,9 @@ server. The tool computes the value the server stores, on the client, and sends
 that, because each of these servers keeps a statement's text somewhere, in a
 log or a statement history, password included. One exception is accepted: the
 SQL Server personal-account reset that a person reads sends the password in a
-statement the server masks. The measurements are in §6 of
+statement the server masks. An audit still keeps one character of the
+password's end for each `'` in it, so the tool refuses that reset when the
+policy's characters include `'`. The measurements are in §6 of
 [`02-postgres-privileges.md`](https://github.com/villebase/sopuli-dba/blob/main/docs/design/02-postgres-privileges.md),
 [`02-mysql-privileges.md`](https://github.com/villebase/sopuli-dba/blob/main/docs/design/02-mysql-privileges.md),
 [`02-mariadb-privileges.md`](https://github.com/villebase/sopuli-dba/blob/main/docs/design/02-mariadb-privileges.md)

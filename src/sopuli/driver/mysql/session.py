@@ -262,7 +262,7 @@ class MysqlSession(ClosesConnection):
         return frozenset({EXPIRE_PASSWORD, EXPIRE_ON_RESET, PASSWORD_ROLLOVER, ROLE_LOOKUP})
 
     def _fault(self, what: str) -> NoReturn:
-        raise InternalFaultError(
+        raise InternalFaultError.unreachable_call(
             self.target.name,
             product="a MySQL server",
             what=what,
@@ -454,10 +454,7 @@ class MysqlSession(ClosesConnection):
         server sent it, and a traceback or a log with ``exc_info`` would print
         it."""
         if self.connection is None:
-            raise DriverError(
-                f'the session to target "{self.target.name}" is closed',
-                hint="this is a fault in sopuli: a closed session was used again",
-            )
+            raise InternalFaultError.closed_session(self.target.name)
         try:
             with self.connection.cursor() as cursor:
                 return reader(cursor)

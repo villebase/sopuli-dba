@@ -483,7 +483,7 @@ class MssqlSession(ClosesConnection):
             )
 
     def _fault(self, what: str) -> NoReturn:
-        raise InternalFaultError(
+        raise InternalFaultError.unreachable_call(
             self.target.name,
             product="a SQL Server instance",
             what=what,
@@ -1236,10 +1236,7 @@ class MssqlSession(ClosesConnection):
         """A cursor of this session, closed after. A closed session is a
         fault in sopuli."""
         if self.connection is None:
-            raise DriverError(
-                f'the session to target "{self.target.name}" is closed',
-                hint="this is a fault in sopuli: a closed session was used again",
-            )
+            raise InternalFaultError.closed_session(self.target.name)
         cursor = self.connection.cursor()
         try:
             yield cursor

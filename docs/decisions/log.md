@@ -6638,3 +6638,24 @@ the register.
   a fault would still exit as a config error. C, leaving it: the message,
   the hint and the exit code would still disagree. No run reaches these
   calls, so no output a run can produce changes.
+
+## #1644
+
+- **Decided:** 2026-11-19, #1644
+- **Question:** nine more errors told the operator they were a fault in
+  sopuli. Eight were a plain `DriverError`, with category `database`: a
+  closed session used again on PostgreSQL, MySQL, MariaDB and SQL Server, a
+  MariaDB rollover with no value passed, a session that keeps policy flags
+  without the reset's methods, and a reset or a change with no record store
+  or vault to keep the flags in. The ninth, a `onepassword_share` with no
+  resolved token, was a `RefusedError`, with category `policy` and exit 8.
+  Should they report `internal`, as #1640's calls do?
+- **Decision:** the maintainer's, option A. Each raises `InternalFaultError`,
+  with category `internal` and exit 1. The class takes a message and a hint,
+  and `InternalFaultError.unreachable_call` builds #1640's message.
+- **Why:** a consumer branches on `error.category`. `database` sends it to
+  the server, and `policy` with exit 8 reads as a run that a safety setting
+  stopped on purpose. Neither is true of a bug in sopuli.
+- **Rejected:** B, leaving them as they were: the category would disagree
+  with the hint, which is what #1640 removed for its own calls. No correct
+  build reaches these errors, so no output a run can produce changes.

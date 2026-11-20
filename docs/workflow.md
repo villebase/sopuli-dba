@@ -210,7 +210,8 @@ request, so `changes` reports code and every lane runs, tier 1 included.
   part, the config format, the vault records (UC-1 §3, *Records in the
   store*), an exit code or a JSON output schema adds a section under
   *Unreleased* in [`upgrading.md`](upgrading.md), in the same PR. A change that
-  only adds something optional needs none.
+  only adds something optional, such as a new JSON field or config key, needs
+  none, as the README's *Status* says.
 
   The section's heading names the change and its issue. Its body says who is
   affected and what they do, in steps, with the commands to run. It is written

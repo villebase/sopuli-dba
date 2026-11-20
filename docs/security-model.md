@@ -12,9 +12,10 @@ It is written in plain language on purpose. The precise versions live in
 reader who is outside the project.
 
 A note on the current state before anything else: only part of the tool is
-beta, and the README's *Status* says which. This document describes Oracle. PostgreSQL, MySQL, MariaDB and SQL Server
-are supported too. What a target lacks, such as a password rollover window or, on
-PostgreSQL, a forced password change at next login, is refused before anything
+beta, and the README's *Status* says which. This document describes Oracle.
+PostgreSQL, MySQL, MariaDB and SQL Server are supported too. What a target
+lacks, such as a password rollover window or, on PostgreSQL, a forced password
+change at next login, is refused before anything
 changes.
 [`design/02-postgres-privileges.md`](design/02-postgres-privileges.md),
 [`design/02-mysql-privileges.md`](design/02-mysql-privileges.md),

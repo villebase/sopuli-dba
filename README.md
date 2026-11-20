@@ -119,8 +119,9 @@ The version stays `0.x`. Beta promises three things for the beta part:
   exit code, or to the JSON output's schemas is in
   [the changelog](https://github.com/villebase/sopuli-dba/blob/main/CHANGELOG.md),
   and [`docs/upgrading.md`](https://github.com/villebase/sopuli-dba/blob/main/docs/upgrading.md)
-  says what to do about it. The JSON output's schemas are versioned too, so a
-  change is never silent.
+  says what to do about it. A change that only adds something optional, such
+  as a new JSON field or config key, is in the changelog and needs no note.
+  The JSON output's schemas are versioned too, so a change is never silent.
 - **No silent loss of vault data.** What a release from 0.86.0 on wrote in the
   vault is still read by later releases, or the release that changes it says
   how to move it. [UC-1 §3](https://github.com/villebase/sopuli-dba/blob/main/docs/use-cases/uc-01-app-credential-sync.md#records-in-the-store)
@@ -130,8 +131,8 @@ The version stays `0.x`. Beta promises three things for the beta part:
 but they make none of the promises above. They are:
 
 - the personal-account commands (UC-2), `sopuli account …`, on every database;
-- MySQL, MariaDB and SQL Server, until the `creds` commands run end to end on
-  more than one release of each;
+- the fleet reports (UC-5), `sopuli report …`, which read and change nothing;
+- MySQL, MariaDB and SQL Server;
 - OCI Vault, the `file` store, and the tool's own credentials in the OS
   keyring.
 

@@ -6692,8 +6692,10 @@ the register.
 
 - **Decided:** 2026-11-20, #1371
 - **Question:** the README said the tool was alpha and not for production.
-  The maintainer uses it on real systems, and UC-1 runs end to end on every
-  product. Which part moves to beta, and what does beta promise?
+  The maintainer uses it on real systems, and the `creds` commands have run
+  end to end on one release of each product, with `creds check` on SQL
+  Server on a Linux host only. Which part moves to beta, and what does beta
+  promise?
 - **Decision:** the maintainer's. Beta covers UC-1, the `creds` commands, on
   Oracle and PostgreSQL, with the HashiCorp Vault store. UC-2, MySQL,
   MariaDB, SQL Server, OCI Vault, the `file` store and keyring credentials

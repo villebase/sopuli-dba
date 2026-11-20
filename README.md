@@ -21,18 +21,17 @@ database products can be added.
 
 ### The problem it solves
 
-If you've looked after Oracle databases for a while, you probably know this
-picture:
+If you've looked after databases for a while, you probably know this picture:
 
 - An application account's password was set years ago, and nobody dares change
   it. Nobody is sure which application servers, batch jobs and reporting tools
   have it in a config file, and a single missed one means a 3 a.m. call.
 - When it *does* get changed, it's a planned change window with the application
-  teams on standby. Someone runs `ALTER USER`, someone else edits config files,
-  and everyone hopes the list of places was complete.
-- The one place that was missed keeps trying the old password until
-  `FAILED_LOGIN_ATTEMPTS` locks the account, and then *every* application using it
-  is down.
+  teams on standby. Someone changes the password on the database, someone else
+  edits config files, and everyone hopes the list of places was complete.
+- The one place that was missed keeps trying the old password until the
+  database's failed-login limit locks the account, and then *every* application
+  using it is down.
 - The password has passed through e-mails, tickets, wiki pages and the heads of
   people who have since left.
 - An auditor asks when this account's password was last changed and who knows it.
@@ -64,10 +63,11 @@ keep the database in agreement with the vault. That gives you:
   applications running: once a database has the new password, the old one stops
   working there, unless a rollover window (the next point) keeps it valid.
 - **Applications don't have to switch at the same second.** On Oracle releases
-  with gradual password rollover, the tool can put the account on a profile that
-  keeps the old password valid for a window you choose. Applications pick up the
-  new one as they reconnect, and when the window closes (or when you close it
-  early with `sopuli creds finish-rollover`), only the new password works.
+  with gradual password rollover, and on MySQL and MariaDB, the tool can keep
+  the old password working for a while beside the new one. Applications pick up
+  the new one as they reconnect. When you close the window with
+  `sopuli creds finish-rollover`, only the new password works. On Oracle the
+  window also closes by itself after the time you chose.
 - **One account on many databases stays consistent.** The same application account
   on twenty tenant databases, or across dev, test and prod, is one entry in the
   config file. One command brings them all in line, and `--dry-run` shows exactly
@@ -75,11 +75,11 @@ keep the database in agreement with the vault. That gives you:
 - **You find out about drift before the applications do.** `sopuli creds check`,
   run from a scheduler, logs in with the vault's password and reports whether each
   database still accepts it. If someone changed the password by hand, you hear
-  about it from a report, not from an outage. Before it tries, it reads the
-  account's failed-login count, and does not try if one more failure would come
-  too close to the lockout limit. Reading that count needs one optional grant
-  (`READ ON SYS.USER$`); without it the check still runs, and each result says
-  that the lockout guard was unavailable.
+  about it from a report, not from an outage. On Oracle, and on MySQL 9.7 and
+  later, it first reads the account's failed-login count, and does not try if one more failure
+  would come too close to the lockout limit. Reading that count needs one
+  optional grant; without it the check still runs, and each result says that
+  the lockout guard was unavailable.
 - **You get evidence for the auditor.** Every run can produce a machine-readable
   report of what was checked and what was changed. `sopuli creds status` shows
   each account's vault version, how old that password is, and when the database
@@ -120,10 +120,10 @@ unfinished part. It promises three things:
 
 | | |
 |---|---|
-| **Install** | `pipx install "sopuli-dba[oracle,hashicorp]"`, or `[postgres,hashicorp]` for PostgreSQL, or `[mssql,hashicorp]` for SQL Server, which also needs Microsoft's ODBC Driver 18 for SQL Server as a system package. The *Installing* section below says how to get pipx. `sopuli --version` and `sopuli about` report the installed version. PostgreSQL needs libpq 16 or later: the `postgres` extra's wheels bundle one on Windows and Linux x86_64, and a psycopg built against an older system libpq is not supported |
-| **Databases** | Oracle, for every command. PostgreSQL, for every command that connects to a database; what a cluster lacks, such as a forced password change at next login, is refused before anything changes. MySQL, for every command that connects to a database. MariaDB, for every command that connects to a database. SQL Server, for every command that connects to a database, with `creds check` on a Linux host only; what SQL Server has no counterpart for, such as `account expire-password`, is refused before anything changes. Azure SQL Database and Azure Synapse are refused when the tool connects. For Oracle, CI runs against the latest Oracle AI Database 26ai Free image; the measurements were made on 23.26.2.0.0 and 23.26.3.0.0, and some on 23.26.3.3.0 on OCI. The maintainer also tests 21.3.0.0.0, 18.4.0.0.0 and 11.2.0.2.0 XE, 19.3.0.0.0 and 12.2.0.1.0 EE, and 19.32.0.0.0 on OCI. For PostgreSQL, the commands run end to end on 16.15, and the probes in `sql/postgres/` ran on 13.23, 14.24, 15.19, 16.15, 17.11 and 18.6, and on Supabase's 17.6. For MySQL, the `creds` commands run end to end on 8.4.13, and the probes in `sql/mysql/` ran on 8.0.46, 8.4.13 and 9.7.4. For MariaDB, the `creds` commands run end to end on 11.8.9, and the probes in `sql/mariadb/` ran on 10.11.19, 11.4.13, 11.8.9 and 12.3.3. One probe also wrote accounts on 10.4.34 and 10.6.28, and created its view on 10.6.28, before upgrading them. For SQL Server, the commands run end to end on 16.0.4325.4, on Linux, and the probes in `sql/mssql/` ran on 15.0.4510.2, 16.0.4325.4 and 17.0.5065.9, and some on 16.0.1000.6 on Windows |
-| **Not tested** | Oracle 12.1, 23ai releases before 23.26, and most 19c release updates. PostgreSQL 12 and earlier, and the commands end to end on any release but 16.15. PostgreSQL on macOS and Linux arm64, where nobody has checked which libpq the `postgres` extra installs. MySQL before 8.0.46, and the `creds` commands end to end on any release but 8.4.13. MariaDB before 10.11 (except as the release one probe's accounts were written by, before an upgrade), and the `creds` commands end to end on any release but 11.8.9. SQL Server before 2019, SQL Server on Windows under a domain's password policy, Azure SQL Managed Instance, and the commands end to end on any release but 16.0.4325.4. [`docs/measurements.md`](https://github.com/villebase/sopuli-dba/blob/main/docs/measurements.md) lists exactly what ran on which release. One release update is not every release update. If you run another one, please report what you find |
-| **Vaults** | HashiCorp Vault, for every command. OCI Vault, for the application-credential commands (UC-1). With one account per secret, a pending password is an OCI PENDING version, which External Secrets Operator does not read, so an application cannot see it before the tool promotes it. The personal-account commands refuse an OCI store. A `file` store, one age-encrypted file, for local development and CI and the application-credential commands; every run that opens one warns that it is not for production. The OS keyring is not a store, but it can hold the tool's own credentials, a vault token or a target's admin password, with `{ keyring: NAME }` and `method: keyring` |
+| **Install** | `pipx install "sopuli-dba[oracle,hashicorp]"`, with your database's extra in place of `oracle` (`postgres`, `mysql`, `mariadb` or `mssql`) and your store's in place of `hashicorp` (`oci` or `file`). SQL Server also needs Microsoft's ODBC Driver 18 for SQL Server as a system package. The *Installing* section below lists the extras and says how to get pipx. `sopuli --version` and `sopuli about` report the installed version. PostgreSQL needs libpq 16 or later: the `postgres` extra's wheels bundle one on Windows and Linux x86_64, and a psycopg built against an older system libpq is not supported |
+| **Databases** | Oracle, for every command. PostgreSQL, MySQL, MariaDB and SQL Server, for every command that connects to a database, with `creds check` on SQL Server on a Linux host only. What a database has no counterpart for, such as a forced password change at next login on PostgreSQL, is refused before anything changes. Azure SQL Database and Azure Synapse are refused when the tool connects |
+| **Not tested** | Each database has releases and platforms that nobody has run the tool on. [`docs/supported-releases.md`](https://github.com/villebase/sopuli-dba/blob/main/docs/supported-releases.md) lists the releases each database ran on, and the ones it has not. If you run another one, please report what you find |
+| **Vaults** | HashiCorp Vault, KV v2 and KV v1, with token, AppRole, Kubernetes and userpass auth, for every command. OCI Vault, with API key, session token, instance principal and resource principal auth, for the application-credential commands (UC-1). With one account per secret, a pending password is an OCI PENDING version, which External Secrets Operator does not read, so an application cannot see it before the tool promotes it. The personal-account commands refuse an OCI store. A `file` store, one age-encrypted file, for local development and CI and the application-credential commands. It has no compare-and-set, so a command that changes it needs `locking: advisory-only` on it, and every run that opens one warns that it is not for production. The OS keyring is not a store, but it can hold the tool's own credentials, a vault token or a target's admin password, with `{ keyring: NAME }` and `method: keyring` |
 | **What works** | The commands `sopuli --help` lists, including a full password rotation from end to end. [`docs/local-testing.md`](https://github.com/villebase/sopuli-dba/blob/main/docs/local-testing.md) runs the usual commands by hand |
 | **Experimental** | The personal-account commands (UC-2), `sopuli account …`. They are the newest part of the tool, so they may change more than the rest |
 
@@ -138,13 +138,13 @@ still open — start at [`docs/README.md`](https://github.com/villebase/sopuli-d
   already.
 - It **does not manage grants, roles or privileges.** That is a separate feature,
   and it is not built.
-- It **never reads a password back out of a database.** Oracle does not store
-  passwords in a form anything can read back, and the tool does not try.
+- It **never reads a password back out of a database.** No database it supports
+  stores a password in a form anything can read back, and the tool does not try.
 - It **is not a general-purpose secrets manager.** It reads and writes the
   passwords of the database accounts your config names, in documents of its own
   shape. Beside them it keeps its own records: a lock, so two runs cannot change
   one password at once, and a record of each personal password reset. A reset
-  delivered through Vault also leaves a wrapping token holding the new
+  delivered through HashiCorp Vault also leaves a wrapping token holding the new
   password, for the owner to unwrap. Everything else in your vault is none
   of its business.
 
@@ -206,7 +206,7 @@ pair of brackets, separated by commas.
 A working install is one store plus one database. For most sites that is:
 
 ```
-pipx install "sopuli-dba[oracle,hashicorp]"      # or [oracle,oci], or [postgres,hashicorp]
+pipx install "sopuli-dba[oracle,hashicorp]"      # or [oracle,oci], [postgres,hashicorp], [mssql,hashicorp]
 ```
 
 `sopuli-dba[all]` exists for CI and the test matrix. It is deliberately not the
@@ -234,17 +234,6 @@ sopuli: vault "vault-dev" declares type "hashicorp", but that backend is not ins
 ```
 
 The rule and what it costs: [ADR-006](https://github.com/villebase/sopuli-dba/blob/main/docs/decisions/adr-006-optional-dependencies.md).
-
-> **Status: alpha.** The extras above are declared in `pyproject.toml` and
-> the registry behind them resolves a backend on first use.
-> **Three secret stores exist.** `hashicorp` is KV v2 and KV v1, with token,
-> AppRole, Kubernetes and userpass auth. Every command that reaches a store
-> can reach it. `oci` is OCI Vault, with API key (`config_file`),
-> `session_token`, instance principal and resource principal auth. The
-> application-credential commands reach it, and the personal-account commands
-> refuse it. `file` is one age-encrypted file for development and CI, opened
-> with an age identity; the application-credential commands reach it, with
-> `locking: advisory-only`, and the personal-account commands refuse it.
 
 Step-by-step, including your first config file:
 [`docs/getting-started.md`](https://github.com/villebase/sopuli-dba/blob/main/docs/getting-started.md).
@@ -279,19 +268,26 @@ a rule the site-wide file turned on. It can only add more.
 
 **A scheduled check is guarded against locking the account out.** To find out
 whether the vault's password still works, the tool has to try logging in — and a
-failed login counts against Oracle's failed-login limit. So before it tries, it
-reads how many failed attempts the account has already collected. If one more
-attempt would come too close to the limit, it does not try. It reports that it
-could not check, and says why. Checking is never worth locking out the account
-you were checking on.
+failed login counts against the database's failed-login limit. So on Oracle,
+and on MySQL 9.7 and later, before it tries, it reads how many failed attempts
+the account has already collected. If one more attempt would come too close to the limit, it
+does not try. It reports that it could not check, and says why. Checking is
+never worth locking out the account you were checking on.
 
-That guard needs one optional grant: `READ ON SYS.USER$`, which lets the tool
-read the failed-login count. Without it, the check still runs. It logs in once
-per account per run (twice with `--include-previous`, which also tries the
-previous password), and every result from a login it attempted says that the
-lockout guard was unavailable.
-The grant is not part of the standard install, because it is a broad read.
+That guard needs one optional grant, which lets the tool read the failed-login
+count: `READ ON SYS.USER$` on Oracle, and `SELECT` on
+`performance_schema.temporary_account_locks` on MySQL. Neither is part of the
+standard install. Without it, the check still runs. It logs in once per account
+per run (twice with `--include-previous`, which also tries the previous
+password), and every result from a login it attempted says that the lockout
+guard was unavailable. On Oracle the grant is a broad read.
 [`docs/security-model.md`](https://github.com/villebase/sopuli-dba/blob/main/docs/security-model.md) §3 explains the trade-off.
+
+The other databases need no guard, or offer none. MySQL 8.0 and 8.4 keep the
+count in no table the tool can read. PostgreSQL has no failed-login lockout. On SQL Server, `creds check` logs in only on a Linux
+host, where no login locks. MariaDB has no count the tool can read, so its
+logins are unguarded, and `creds check` logs in only where no other account can
+answer.
 
 **Passwords do not reach your logs.** A password is held in a wrapper type whose
 text form is `***`, so printing one prints the mask, in ordinary output and in a
@@ -310,17 +306,32 @@ one is asked for on purpose:
 The two that print a password refuse machine-readable JSON output, because JSON
 output is what gets shipped to a log collector.
 
-**A password containing a double quote is rejected, not escaped.** Oracle's
-quoted identifiers have no escape sequence for `"`, so there is no correct way to
-send one. The tool refuses the password rather than mangling it.
+**A password containing a double quote is rejected, not escaped.** The rule
+comes from Oracle, whose quoted identifiers have no escape sequence for `"`, so
+there is no correct way to send one there. The tool applies it on every
+database, and refuses the password rather than mangling it.
 
-**What Oracle itself keeps is measured, not assumed.** `ALTER USER` takes the
-password as a literal — DDL cannot use bind variables — so the question is what
-the server retains afterwards. A probe plants a canary per execution path and
-sweeps every source a statement's text can come to rest in, on each version;
-that is release gate 2, and its results are the reason two of the tool's design
-rules exist. The findings, per version and with their scope:
+**What each database keeps is measured, not assumed.** On Oracle, `ALTER USER`
+takes the password as a literal — DDL cannot use bind variables — so the
+question is what the server retains afterwards. A probe plants a canary per
+execution path and sweeps every source a statement's text can come to rest in,
+on each version; that is release gate 2, and its results are the reason two of
+the tool's design rules exist. The findings, per version and with their scope:
 [`docs/design/02-oracle-privileges.md`](https://github.com/villebase/sopuli-dba/blob/main/docs/design/02-oracle-privileges.md) §4.
+
+On PostgreSQL, MySQL, MariaDB and SQL Server the password never reaches the
+server. The tool computes the value the server stores, on the client, and sends
+that, because each of these servers keeps a statement's text somewhere, in a
+log or a statement history, password included. One exception is accepted: the
+SQL Server personal-account reset that a person reads sends the password in a
+statement the server masks. An audit still keeps one character of the
+password's end for each `'` in it, so the tool refuses that reset when the
+policy's characters include `'`. The measurements are in §6 of
+[`02-postgres-privileges.md`](https://github.com/villebase/sopuli-dba/blob/main/docs/design/02-postgres-privileges.md),
+[`02-mysql-privileges.md`](https://github.com/villebase/sopuli-dba/blob/main/docs/design/02-mysql-privileges.md),
+[`02-mariadb-privileges.md`](https://github.com/villebase/sopuli-dba/blob/main/docs/design/02-mariadb-privileges.md)
+and
+[`02-mssql-privileges.md`](https://github.com/villebase/sopuli-dba/blob/main/docs/design/02-mssql-privileges.md).
 
 The longer version, for deciding whether to trust this with a production
 credential: [`docs/security-model.md`](https://github.com/villebase/sopuli-dba/blob/main/docs/security-model.md).
@@ -423,10 +434,11 @@ How this works in practice, and what it expects of contributors:
 | [examples/](https://github.com/villebase/sopuli-dba/tree/main/examples/) | complete config files with comments, starting with the smallest one that works |
 | [docs/reference/](https://github.com/villebase/sopuli-dba/blob/main/docs/reference/README.md) | look up a command: its usage, its help text and every option |
 | [docs/security-model.md](https://github.com/villebase/sopuli-dba/blob/main/docs/security-model.md) | decide whether to trust this with a production credential |
+| [docs/supported-releases.md](https://github.com/villebase/sopuli-dba/blob/main/docs/supported-releases.md) | see which releases of your database the tool has run on |
 | [docs/local-testing.md](https://github.com/villebase/sopuli-dba/blob/main/docs/local-testing.md) | run the usual commands by hand against the local test stack |
 | [CONTRIBUTING.md](https://github.com/villebase/sopuli-dba/blob/main/CONTRIBUTING.md) | send a change |
 | [SECURITY.md](https://github.com/villebase/sopuli-dba/blob/main/SECURITY.md) | report a security problem privately |
 | [CODE_OF_CONDUCT.md](https://github.com/villebase/sopuli-dba/blob/main/CODE_OF_CONDUCT.md) | know what is expected of everyone taking part |
-| [docs/README.md](https://github.com/villebase/sopuli-dba/blob/main/docs/README.md) | read the full design: principles, configuration reference, Oracle privileges, JSON output contract, testing strategy, and every decision record |
+| [docs/README.md](https://github.com/villebase/sopuli-dba/blob/main/docs/README.md) | read the full design: principles, configuration reference, each database's privileges, JSON output contract, testing strategy, and every decision record |
 
 Licensed under [Apache 2.0](https://github.com/villebase/sopuli-dba/blob/main/LICENSE).

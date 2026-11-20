@@ -139,6 +139,18 @@ class StoreError(Exception):
         return self.message
 
 
+class StoreFaultError(StoreError):
+    """A store was handed something it cannot hold, by sopuli itself: a fault
+    in sopuli, not in the store, so category ``internal`` (#1647).
+
+    A store error still, so every caller that treats a failed write as failed
+    treats this one so too. Only the category changes: ``vault`` would send a
+    consumer to check a store that is fine. A correct build never raises it.
+    """
+
+    category = "internal"
+
+
 class CasConflictError(StoreError):
     """A compare-and-set write was refused: the version had moved.
 

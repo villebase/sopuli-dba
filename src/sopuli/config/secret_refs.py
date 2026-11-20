@@ -70,27 +70,30 @@ TRAVERSAL = frozenset({".", ".."})
 UNSAFE_PATH_CHARACTERS = frozenset("?%\\")
 
 UNSAFE_PATH_HINT = (
-    "a store path or mount may not hold `?`, `%`, a backslash or a control "
-    "character: write it as plain names separated by `/`"
+    "a store path or mount may not hold `?`, `%`, a backslash, a control "
+    "character or a lone surrogate: write it as plain names separated by `/`"
 )
 
 CONFIG_PATH_HINT = (
-    "a store path, prefix or mount may not hold `?`, `#`, `%`, a backslash or a "
-    "control character: write it as plain names separated by `/`"
+    "a store path, prefix or mount may not hold `?`, `#`, `%`, a backslash, a "
+    "control character or a lone surrogate: write it as plain names separated by `/`"
 )
 
 
 def unsafe_path_characters(text: str, *, also: str = "") -> list[str]:
     """The characters in ``text`` that a store path or mount may not hold.
 
-    Control characters are C0, DEL and C1. ``also`` adds characters for one
-    caller. Each one is listed once, in the order it first appears.
+    Control characters are C0, DEL and C1. A lone surrogate, which YAML's
+    ``\\ud800`` escape loads as, is not valid UTF-8, so no store can hold it
+    (#1647). ``also`` adds characters for one caller. Each one is listed once,
+    in the order it first appears.
     """
     found: list[str] = []
     for character in text:
         code = ord(character)
         control = code < 0x20 or 0x7F <= code <= 0x9F
-        refused = control or character in UNSAFE_PATH_CHARACTERS or character in also
+        surrogate = 0xD800 <= code <= 0xDFFF
+        refused = control or surrogate or character in UNSAFE_PATH_CHARACTERS or character in also
         if refused and character not in found:
             found.append(character)
     return found
@@ -297,7 +300,7 @@ def normalise_path(path: str) -> str:
     A ref in a *file* is refused earlier and with a location, by
     :func:`parse_secret_ref` above, so this is the backstop rather than the
     message an operator normally sees. The same holds for the characters in
-    :data:`UNSAFE_PATH_CHARACTERS` and the control characters.
+    :data:`UNSAFE_PATH_CHARACTERS`, the control characters and a lone surrogate.
     """
     segments = [segment for segment in path.split("/") if segment]
     offending = sorted({segment for segment in segments if segment in TRAVERSAL})

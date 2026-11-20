@@ -1,5 +1,5 @@
 """Errors that are a fault in sopuli report category `internal` and exit 1
-(#1640, #1644). Tier 0.
+(#1640, #1644, #1647). Tier 0.
 
 A correct build reaches none of these. Each is what a run says when a check
 that should have come first did not, so the category and the exit code must
@@ -8,6 +8,7 @@ not send the operator to the config, the store or the database.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
 
@@ -17,6 +18,11 @@ from sopuli import cli
 from sopuli.config.model import ExpandedTarget, Target
 from sopuli.driver.protocol import InternalFaultError, Timeouts
 from sopuli.exit_codes import ExitCode
+from sopuli.invocation import _classify
+from sopuli.store.file._document import EMPTY, Document, Version
+from sopuli.store.protocol import StoreError, StoreFaultError
+
+NOW = datetime(2026, 11, 9, 10, 0, tzinfo=UTC)
 
 
 def _is_internal(error: InternalFaultError) -> None:
@@ -110,6 +116,45 @@ def test_a_change_that_keeps_flags_with_no_vault_is_an_internal_fault() -> None:
         cli._keep_flags(binding, session, "acme_app", None)
 
     _is_internal(caught.value)
+
+
+@pytest.mark.parametrize(
+    ("path", "data", "now", "keep", "problem"),
+    [
+        ("acme/app", {"v": 1}, NOW, 0, "max_versions is not a whole number"),
+        ("", {"v": 1}, NOW, None, "a path cannot be stored"),
+        ("acme/app", ["x"], NOW, None, "not a JSON object"),
+        ("acme/app", {"v": {1, 2}}, NOW, None, "cannot be stored: it holds"),
+        ("acme/app", {"v": 1}, datetime(2026, 11, 9, 10, 0), None, "version 1 of"),
+    ],
+    ids=["max-versions", "path", "not-an-object", "not-plain", "no-zone"],
+)
+def test_a_file_store_write_sopuli_built_wrong_is_an_internal_fault(
+    path: Any, data: Any, now: datetime, keep: Any, problem: str
+) -> None:
+    """Still a `StoreError`, so a caller treats the write as failed, and
+    reported as `internal` because the store is fine (#1647)."""
+    with pytest.raises(StoreFaultError) as caught:
+        EMPTY.written(path, data, now=now, max_versions=keep)
+
+    assert isinstance(caught.value, StoreError)
+    assert problem in caught.value.message
+    assert caught.value.category == "internal"
+    assert caught.value.exit_code == ExitCode.FAILURE
+    assert "fault in sopuli" in (caught.value.hint or "")
+    assert _classify(caught.value)[1].category == "internal"
+
+
+def test_a_file_store_at_the_highest_version_stays_a_store_error() -> None:
+    """Only a damaged file reaches it, and the operator restores the file: not
+    sopuli's fault, so not `internal`."""
+    document = Document({"acme/app": (Version(2**63 - 1, NOW, "{}"),)})
+
+    with pytest.raises(StoreError) as caught:
+        document.written("acme/app", {"v": 1}, now=NOW, max_versions=None)
+
+    assert not isinstance(caught.value, StoreFaultError)
+    assert caught.value.category == "vault"
 
 
 def test_a_onepassword_share_with_no_resolved_token_is_an_internal_fault() -> None:

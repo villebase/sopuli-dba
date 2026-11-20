@@ -407,6 +407,8 @@ UNSAFE = [
     pytest.param("apps/acme\x1b]0;x\x07/db", "\x1b", id="escape"),
     pytest.param("apps/acme\x7f/db", "\x7f", id="delete"),
     pytest.param("apps/acme\x85/db", "\x85", id="c1"),
+    # What YAML's `\ud800` escape loads as. No store can hold it (#1647).
+    pytest.param("apps/acme\ud800/db", "\ud800", id="lone-surrogate"),
 ]
 
 

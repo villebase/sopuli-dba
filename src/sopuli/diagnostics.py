@@ -778,9 +778,10 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
         ),
         UNADDRESSABLE_LOCK_PATH: (
             "`lock status` listed a lock record at a path the tool refuses in every store "
-            "path: one holding `?`, `%`, a backslash or a control character, or a `.` or "
-            "`..` segment. The record is not in the report. Only a record written by hand "
-            "can have such a path, and the tool can neither read nor break it. The message "
+            "path: one holding `?`, `%`, a backslash, a control character or a lone "
+            "surrogate, or a `.` or `..` segment. The record is not in the report. Only a "
+            "record written by hand can have such a path, and the tool can neither read nor "
+            "break it. The message "
             "names the store and the path. Remove the record with the vault's own tools if "
             "nothing uses it. `vault orphans` skips a secret path like that too, because it "
             "cannot read the record to tell whether this tool wrote it."

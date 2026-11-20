@@ -322,7 +322,7 @@ def test_a_path_at_the_highest_version_number_is_not_called_a_tool_fault() -> No
 
     assert "has reached the highest version number" in str(caught.value)
     assert str(2**63) not in str(caught.value)
-    assert "fault in the tool" not in (caught.value.hint or "")
+    assert "fault in sopuli" not in (caught.value.hint or "")
 
 
 def test_a_document_is_not_hashable_by_design() -> None:

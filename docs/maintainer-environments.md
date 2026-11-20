@@ -217,9 +217,9 @@ offers: one `VM.BaseDB.x86` node with 4 ECPU, Enterprise Edition, CDB `ORCLCDB`
 and PDB `ORCLPDB1`, in a VCN of its own. SSH is open to your address only, and
 the listener to the VCN only.
 
-**Run it from an interactive PowerShell window.** It asks for the SYS password
-at a prompt, and refuses to run without a terminal. To run it without one, put
-the password on one line of a file and name the file:
+**It asks for the SYS password at a prompt, or reads it from a file.** Run the
+first form from an interactive PowerShell window. The second needs no terminal:
+put the password on one line of a file that only you can read.
 
 ```powershell
 .\test\oci-dbcs\new-db-system.ps1 -CompartmentName <name>

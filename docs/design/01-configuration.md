@@ -2957,7 +2957,8 @@ escape in the template. A `~` that a name brings is refused earlier, by the name
 rule below.
 
 A path may not hold a `.` or `..` segment ([#344](../decisions/log.md#344)), and
-it may not hold `?`, `%`, a backslash or a control character (C0, DEL or C1).
+it may not hold `?`, `%`, a backslash, a control character (C0, DEL or C1), or
+a lone surrogate, which YAML's `\ud800` escape loads as and no store can hold.
 In a URL a `?` starts a query, so `apps/acme?x/db` would read `apps/acme`, and
 a `%` lets `%2e%2e` reach the server as a `..` that the segment check never saw.
 Both rules apply to a vault's `mount`, to an auth `mount`, and to

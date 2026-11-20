@@ -128,7 +128,7 @@ MYSQL_RULES: dict[int, Rule] = {
     # hint says whose fault it is.
     PASSWORD_FORMAT: Rule(
         "database",
-        hint="the server refused the hash's form. This is a fault in the tool: report it",
+        hint="the server refused the hash's form. This is a fault in sopuli: report it",
     ),
     PLUGIN_NOT_LOADED: Rule(
         "database", hint="the server does not have the authentication plugin loaded"

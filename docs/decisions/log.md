@@ -6666,14 +6666,17 @@ the register.
 - **Question:** two more groups of errors called themselves a fault in the
   tool and kept another category. The file store's five write refusals
   (a `max_versions` that is not a whole number, a path, data that is not a
-  JSON object, and a version that cannot be stored) were a `StoreError`
+  JSON object, data that is not plain, and a version that cannot be stored)
+  were a `StoreError`
   with category `vault`. MySQL's `PASSWORD_FORMAT`, the server refusing the
   form of the hash the client computed, has category `database`. Should
   they report `internal`, as #1644's errors do?
 - **Decision:** the maintainer's, option B. The file store's refusals raise
   `StoreFaultError`, a `StoreError` with category `internal` and exit 1.
   `PASSWORD_FORMAT` stays `database`, and its hint says the fault is
-  sopuli's.
+  sopuli's. A lone surrogate in a store path, which YAML's `\ud800` escape
+  loads as, reached the file store's path refusal from a config. The config
+  now refuses it where it is written, as it refuses a control character.
 - **Why:** the file store is handed what sopuli built, so `vault` would send
   a consumer to check a store that is fine. The error stays a `StoreError`
   so every caller still treats the write as failed. On MySQL the server

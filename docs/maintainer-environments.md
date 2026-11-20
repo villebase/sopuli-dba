@@ -218,10 +218,12 @@ and PDB `ORCLPDB1`, in a VCN of its own. SSH is open to your address only, and
 the listener to the VCN only.
 
 **Run it from an interactive PowerShell window.** It asks for the SYS password
-at a prompt, and refuses to run without a terminal.
+at a prompt, and refuses to run without a terminal. To run it without one, put
+the password on one line of a file and name the file:
 
 ```powershell
 .\test\oci-dbcs\new-db-system.ps1 -CompartmentName <name>
+.\test\oci-dbcs\new-db-system.ps1 -CompartmentName <name> -SysPasswordFile <file> -Yes
 ```
 
 It prints a plan and asks before it creates anything. Provisioning takes about
@@ -277,11 +279,12 @@ nothing. The database goes with the DB system, and there are no backups.
 - **Rollover works.** Create `SOPULI_ROLLOVER` in the PDB as
   `test/oracle-init/` does, and the guide's rollover steps run unchanged.
 
-A run on 19.32.0.0.0, as the least-privilege service account:
+A run on 19.33.0.0.0, as the least-privilege service account: `doctor`, then
+`creds apply`, then `creds finish-rollover --confirm`:
 
 ```
-TARGET   REACHABLE  SCOPE  CONTAINER  OPEN MODE   CAPABILITIES
-oci-pdb  yes        pdb    ORCLPDB1   READ WRITE  6
+TARGET   REACHABLE  SCOPE  CONTAINER  OPEN MODE   CAPABILITIES  ENCRYPTION
+oci-pdb  yes        pdb    ORCLPDB1   READ WRITE  7             native AES256
 ```
 ```
 ACCOUNT          TARGET   STATE            DETAIL
@@ -291,10 +294,10 @@ acme_batch_user  oci-pdb  ROLLOVER_ACTIVE  changed and verified; a rollover wind
 ```
 ```
 ACCOUNT          TARGET   WINDOW
-acme_batch_user  oci-pdb  open, 58m left
+acme_batch_user  oci-pdb  open, 59m left
 
 ACCOUNT          TARGET   STATE    DETAIL
-acme_batch_user  oci-pdb  IN_SYNC  rollover window closed, 58m early
+acme_batch_user  oci-pdb  IN_SYNC  rollover window closed, 59m early
 
 1 closed
 ```

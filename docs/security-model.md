@@ -244,15 +244,18 @@ confirmation, and a lock that has not yet expired needs `--force` on top.
 work on this database? By default it answers by trying to log in. On Oracle,
 `--method hash` compares the vault's password with the account's stored 12C
 verifier instead, and does not log in. Where it cannot run, such as without
-the optional `SELECT ON SYS.USER$` grant or on Autonomous Database, the run is
-refused before it checks anything; it never falls back to a login.
-`--method both` compares first and then logs in. This section is about the
-login.
+the optional `READ ON SYS.USER$` grant (`SELECT` before 12.1.0.2) or on
+Autonomous Database, the run is refused before it checks anything; it never
+falls back to a login. `--method both` compares first and then logs in. The
+other databases have no hash mode, because the tool account cannot read their
+stored verifiers. This section is about the login.
 
-That is the risk. A failed login counts against Oracle's `FAILED_LOGIN_ATTEMPTS`
-limit. A check that runs every hour against an account whose password has drifted
-would eventually lock out the production application account — which is worse than
-the problem it was detecting.
+That is the risk. A failed login can count against the database's failed-login
+limit: Oracle's `FAILED_LOGIN_ATTEMPTS`, MySQL's `FAILED_LOGIN_ATTEMPTS` with
+`PASSWORD_LOCK_TIME`, MariaDB's `max_password_errors`, or a Windows host's
+lockout threshold for a SQL Server login. A check that runs every hour against
+an account whose password has drifted would eventually lock out the production
+application account — which is worse than the problem it was detecting.
 
 Four things prevent that:
 
@@ -260,16 +263,18 @@ Four things prevent that:
    first.** `creds check` and `creds finish-rollover` log in once.
    `creds check --include-previous` logs in up to twice, because it also tries
    the previous password. `creds apply` and `creds rotate` log in up to twice:
-   before they change the password, and after, to confirm it. No retries and no
+   before they change the password, and after, to confirm it. On MySQL, on
+   MariaDB, and on SQL Server on a host that is not Linux, they make no login
+   before the change, only the one after. No retries and no
    back-off loop: each password is tried once, never five times.
-2. **The tool looks before it leaps.** Where it has been granted
-   `READ ON SYS.USER$`, it reads how many failed attempts the account has
-   already collected and compares that with the profile's limit. If one more
-   attempt would leave less than the margin you asked for — `--lockout-margin`,
-   two attempts by default — it does not try. The result is reported as
-   `UNVERIFIABLE`, with the count that stopped it, and the run exits 0. Here is
-   what that looks like on an account with two of its three attempts already
-   spent:
+2. **The tool looks before it leaps, on Oracle and on MySQL 9.7 and later.**
+   Where it has the optional grant that reads the failed-login count, it reads
+   how many failed attempts the account has already collected and compares
+   that with its limit. If one more attempt would leave less than the margin
+   you asked for — `--lockout-margin`, two attempts by default — it does not
+   try. The result is reported as `UNVERIFIABLE`, with the count that stopped
+   it, and the run exits 0. Here is what that looks like on an Oracle account
+   with two of its three attempts already spent:
 
    ```
    ACCOUNT        TARGET    STATE         DETAIL
@@ -282,22 +287,57 @@ Four things prevent that:
 
    `UNVERIFIABLE` is the honest answer. The tool declines to find out, and names
    the fact that stopped it.
-3. **It says when the guard is unavailable.** `READ ON SYS.USER$` is an optional
-   grant, not part of the standard install, because it is a broad read: it
-   shows every password verifier to the tool account, and to every account
-   with the `DBA` role through a view in the tool account's schema. Where it
-   has not been granted the tool cannot read the counter — and it reports that
-   plainly instead of quietly skipping the check. The other three mitigations
-   still apply.
-4. **Success cleans up after itself.** A successful login resets Oracle's failed
-   attempt counter, so the normal path never accumulates anything.
+
+   The grant is `READ ON SYS.USER$` on Oracle, and `SELECT` on
+   `performance_schema.temporary_account_locks` on MySQL. On Oracle the guard
+   runs before every login the tool makes. On MySQL it runs before
+   `creds check`'s login only, because the other commands log in with the
+   password the run just set or keeps. A MySQL account that is already blocked
+   is not logged in as, and the detail names the date the block ends.
+3. **It says when the guard is unavailable.** Neither grant is part of the
+   standard install. On Oracle the grant is a broad read: it shows every
+   password verifier to the tool account, and to every account with the `DBA`
+   role through a view in the tool account's schema. Where the tool cannot
+   read the counter, it reports that plainly in each result instead of quietly
+   skipping the check. The other mitigations still apply.
+4. **Success cleans up after itself.** On Oracle and MySQL, a successful login
+   resets the failed attempt counter, so the normal path never accumulates
+   anything.
+
+The other databases need no guard, or offer none:
+
+- **MySQL 8.0 and 8.4** keep the count in no table the tool can read. The login
+  goes ahead, and each result says the guard is unavailable, as in
+  mitigation 3.
+- **PostgreSQL** has no failed-login lockout, so there is nothing to guard.
+- **SQL Server**: `creds check` logs in only on a Linux host, where no login
+  locks. On Windows a wrong password counts toward the host's lockout
+  threshold, which the tool cannot read. So a target that does not run on
+  Linux ends the run at plan time, exit 5, naming `lockout_threshold`. A host
+  that names no platform counts as Windows. The login that `creds apply`,
+  `creds rotate` and `creds finish-rollover` make after a change still runs on
+  Windows, with the password the run just set or keeps. It reads whether the
+  login is locked first, and does not log in to a locked one, but it has no
+  lockout margin.
+- **MariaDB** has no count the tool can read, so its logins are unguarded. Its
+  limit is the server's `max_password_errors`, which sets no limit by default.
+  `creds check` logs in only where no other account can answer, so the answer
+  is always the declared account's.
 
 One more thing `check` does that is easy to miss: it reads the account's status —
-locked, expired, locked with a timer — separately, from a view that needs no
-special grant. A login attempt on its own cannot tell an expired password from a
-locked account from a genuinely wrong one; Oracle answers `ORA-01017` to all
-three. Reading the status separately is what lets the tool report `LOCKED` or
-`EXPIRED` as themselves rather than folding them into "drift".
+locked, expired, locked with a timer — separately, from a view or table that
+needs no special grant, and does not log in to an account whose status already
+answers. A login attempt on its own often cannot tell an expired password from
+a locked account from a genuinely wrong one. Oracle answers `ORA-01017` to all
+three. PostgreSQL answers `28P01` to a wrong password, and to the right
+password of a role whose `VALID UNTIL` has passed. MySQL and MariaDB answer
+`1045` to a wrong password, and SQL Server `18456`. On those three, an
+administrative lock or an expired password has its own answer, which comes
+only to the right password. A block after failed logins does not: MySQL
+answers `3955` and MariaDB `4150` to every password, and on Windows a locked
+SQL Server login answers `18456` even to its right one. Reading the status
+separately is what lets the tool report `LOCKED` or `EXPIRED` as themselves
+rather than folding them into "drift".
 
 ---
 

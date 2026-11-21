@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.92.0](https://github.com/villebase/sopuli-dba/compare/v0.91.0...v0.92.0) (2026-11-21)
+
+
+### Features
+
+* **driver:** run creds status on a SQL Server target ([#1631](https://github.com/villebase/sopuli-dba/issues/1631)) ([#1634](https://github.com/villebase/sopuli-dba/issues/1634)) ([956265c](https://github.com/villebase/sopuli-dba/commit/956265cf95c7295bfed5228db48a035bee637ac5))
+* **store:** allow SQL Server credentials under OCI native staging ([#1584](https://github.com/villebase/sopuli-dba/issues/1584)) ([#1614](https://github.com/villebase/sopuli-dba/issues/1614)) ([da92c67](https://github.com/villebase/sopuli-dba/commit/da92c673a1e154e898bf685721dcda5914272e55))
+
+
+### Bug Fixes
+
+* **driver:** raise an internal fault, not SOPULI-20006, from calls a capability refuses first ([#1640](https://github.com/villebase/sopuli-dba/issues/1640)) ([#1643](https://github.com/villebase/sopuli-dba/issues/1643)) ([d2e178d](https://github.com/villebase/sopuli-dba/commit/d2e178dfd639cef261c06998d5d76e8fde7f62e8))
+* **driver:** say a MySQL or MariaDB account attribute call is a fault in sopuli ([#1630](https://github.com/villebase/sopuli-dba/issues/1630)) ([#1638](https://github.com/villebase/sopuli-dba/issues/1638)) ([acaf054](https://github.com/villebase/sopuli-dba/commit/acaf054e043464c06c7423c459fdcf750b958ec7))
+* report every error that says "a fault in sopuli" as internal ([#1644](https://github.com/villebase/sopuli-dba/issues/1644)) ([#1645](https://github.com/villebase/sopuli-dba/issues/1645)) ([5645cb4](https://github.com/villebase/sopuli-dba/commit/5645cb4479aa2a34f77fedaf9e2c13c96d48f46e))
+* **status:** count an account-only refusal as refused, not unreachable ([#1635](https://github.com/villebase/sopuli-dba/issues/1635)) ([#1646](https://github.com/villebase/sopuli-dba/issues/1646)) ([8dffd34](https://github.com/villebase/sopuli-dba/commit/8dffd34f7f2a9c2829c4a0605a3accfa6909095b))
+* **store:** report the file store's write refusals as internal ([#1647](https://github.com/villebase/sopuli-dba/issues/1647)) ([#1648](https://github.com/villebase/sopuli-dba/issues/1648)) ([f28e2fb](https://github.com/villebase/sopuli-dba/commit/f28e2fb643c5497bfe5f2867a3f2092c0d4aa0b6))
+
 ## [0.91.0](https://github.com/villebase/sopuli-dba/compare/v0.90.0...v0.91.0) (2026-11-18)
 
 

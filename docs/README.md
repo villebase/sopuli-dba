@@ -18,7 +18,7 @@ on which Oracle release, and what it showed.
 |---|---|
 | [getting-started.md](getting-started.md) | first run: install, a first config file, `config validate`, `doctor`, and one command under `--dry-run` |
 | [upgrading.md](upgrading.md) | what to do when a release changes the config format, the vault records, an exit code or a JSON schema |
-| [supported-releases.md](supported-releases.md) | which releases of each database the tool has run on, and which it has not |
+| [tested-releases.md](tested-releases.md) | which releases of each database the tool has run on, and which it has not |
 | [security-model.md](security-model.md) | what the tool can and cannot do to a database, and what stops a mistake from being silent — plain English, for deciding whether to trust it |
 | [scenarios/rotate-and-sync.md](scenarios/rotate-and-sync.md) | one password rotation end to end: stage, apply, check, roll back, and close the rollover window |
 | [scenarios/kubernetes-eso.md](scenarios/kubernetes-eso.md) | the vault-write side of an External Secrets Operator setup, and the division of responsibility that makes it safe |

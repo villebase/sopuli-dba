@@ -11,10 +11,11 @@ It is written in plain language on purpose. The precise versions live in
 §8. Nothing here is new behaviour; it is the same behaviour, explained for a
 reader who is outside the project.
 
-A note on the current state before anything else: this is alpha software.
-This document describes Oracle. PostgreSQL, MySQL, MariaDB and SQL Server
-are supported too. What a target lacks, such as a password rollover window or, on
-PostgreSQL, a forced password change at next login, is refused before anything
+A note on the current state before anything else: only part of the tool is
+beta, and the README's *Status* says which. This document describes Oracle.
+PostgreSQL, MySQL, MariaDB and SQL Server are supported too. What a target
+lacks, such as a password rollover window or, on PostgreSQL, a forced password
+change at next login, is refused before anything
 changes.
 [`design/02-postgres-privileges.md`](design/02-postgres-privileges.md),
 [`design/02-mysql-privileges.md`](design/02-mysql-privileges.md),

@@ -106,17 +106,37 @@ see [`docs/scenarios/kubernetes-eso.md`](https://github.com/villebase/sopuli-dba
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/villebase/sopuli-dba/badge)](https://scorecard.dev/viewer/?uri=github.com/villebase/sopuli-dba)
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/15767/badge)](https://www.bestpractices.dev/projects/15767)
 
-**Alpha. Do not point this at a production database.**
+**Beta: the application-credential commands (UC-1), `sopuli creds …`, on
+Oracle and PostgreSQL, with HashiCorp Vault. The rest is experimental.**
 
-Alpha means you can install it and run the application-credential commands
-(UC-1) against a test database, and anything that goes wrong is a bug, not an
-unfinished part. It promises three things:
+The version stays `0.x`. Beta promises three things for the beta part:
 
-- **Bugs are expected**, and production use is still off-limits.
-- **Configuration and JSON output may still change**, but every change is in
-  [the changelog](https://github.com/villebase/sopuli-dba/blob/main/CHANGELOG.md). The JSON output's schemas are versioned, so a
-  change is never silent.
-- **What is not covered is named** below, not left for you to discover.
+- **You may use it on production databases, with care.** A bug is still
+  possible. The `--dry-run` and the plan a command prints first are there to
+  catch one before it changes anything.
+- **A change you have to act on comes with an upgrade note.** A change to the
+  config format, to where and how the tool stores records in the vault, to an
+  exit code, or to the JSON output's schemas is in
+  [the changelog](https://github.com/villebase/sopuli-dba/blob/main/CHANGELOG.md),
+  and [`docs/upgrading.md`](https://github.com/villebase/sopuli-dba/blob/main/docs/upgrading.md)
+  says what to do about it. A change that only adds something optional, such
+  as a new JSON field or config key, is in the changelog and needs no note.
+  The JSON output's schemas are versioned too, so a change is never silent.
+- **No silent loss of vault data.** What a release from 0.86.0 on wrote in the
+  vault is still read by later releases, or the release that changes it says
+  how to move it. [UC-1 §3](https://github.com/villebase/sopuli-dba/blob/main/docs/use-cases/uc-01-app-credential-sync.md#records-in-the-store)
+  lists what the tool writes there.
+
+**Experimental** parts work, and anything that goes wrong in them is a bug,
+but they make none of the promises above. They are:
+
+- the personal-account commands (UC-2), `sopuli account …`, on every database;
+- the fleet reports (UC-5), `sopuli report …`, which read and change nothing;
+- MySQL, MariaDB and SQL Server;
+- OCI Vault, the `file` store, and the tool's own credentials in the OS
+  keyring.
+
+Each can become beta in its own release, once it has had the runs.
 
 | | |
 |---|---|
@@ -125,7 +145,6 @@ unfinished part. It promises three things:
 | **Not tested** | Each database has releases and platforms that nobody has run the tool on. [`docs/supported-releases.md`](https://github.com/villebase/sopuli-dba/blob/main/docs/supported-releases.md) lists the releases each database ran on, and the ones it has not. If you run another one, please report what you find |
 | **Vaults** | HashiCorp Vault, KV v2 and KV v1, with token, AppRole, Kubernetes and userpass auth, for every command. OCI Vault, with API key, session token, instance principal and resource principal auth, for the application-credential commands (UC-1). With one account per secret, a pending password is an OCI PENDING version, which External Secrets Operator does not read, so an application cannot see it before the tool promotes it. The personal-account commands refuse an OCI store. A `file` store, one age-encrypted file, for local development and CI and the application-credential commands. It has no compare-and-set, so a command that changes it needs `locking: advisory-only` on it, and every run that opens one warns that it is not for production. The OS keyring is not a store, but it can hold the tool's own credentials, a vault token or a target's admin password, with `{ keyring: NAME }` and `method: keyring` |
 | **What works** | The commands `sopuli --help` lists, including a full password rotation from end to end. [`docs/local-testing.md`](https://github.com/villebase/sopuli-dba/blob/main/docs/local-testing.md) runs the usual commands by hand |
-| **Experimental** | The personal-account commands (UC-2), `sopuli account …`. They are the newest part of the tool, so they may change more than the rest |
 
 If you want the full design picture — every decision, and every question that is
 still open — start at [`docs/README.md`](https://github.com/villebase/sopuli-dba/blob/main/docs/README.md).
@@ -242,9 +261,9 @@ Step-by-step, including your first config file:
 
 ## Is this safe to use?
 
-The honest answer for today is in the status box above: it is alpha, so treat
-it as something to try against a test database first. What follows is what the
-tool does to protect you once you do trust it with something that matters.
+The status above says which parts are beta and which are experimental. Either
+way, try a part against a test database before you trust it with a production
+one. What follows is what the tool does to protect you once you do.
 
 **You can always see a change before it happens.** Every command that changes
 something takes `--dry-run`, which prints exactly what the command would do and
@@ -434,6 +453,7 @@ How this works in practice, and what it expects of contributors:
 | [examples/](https://github.com/villebase/sopuli-dba/tree/main/examples/) | complete config files with comments, starting with the smallest one that works |
 | [docs/reference/](https://github.com/villebase/sopuli-dba/blob/main/docs/reference/README.md) | look up a command: its usage, its help text and every option |
 | [docs/security-model.md](https://github.com/villebase/sopuli-dba/blob/main/docs/security-model.md) | decide whether to trust this with a production credential |
+| [docs/upgrading.md](https://github.com/villebase/sopuli-dba/blob/main/docs/upgrading.md) | find out what to do when you move to a new release |
 | [docs/supported-releases.md](https://github.com/villebase/sopuli-dba/blob/main/docs/supported-releases.md) | see which releases of your database the tool has run on |
 | [docs/local-testing.md](https://github.com/villebase/sopuli-dba/blob/main/docs/local-testing.md) | run the usual commands by hand against the local test stack |
 | [CONTRIBUTING.md](https://github.com/villebase/sopuli-dba/blob/main/CONTRIBUTING.md) | send a change |

@@ -6,8 +6,9 @@ Oracle and it does **not** assume you have installed a Python program before.
 By the end you will have installed the tool, written a config file, checked that
 the file is valid, and previewed a change without making one.
 
-**Do this against a test database.** The tool is alpha, and the last step of
-this guide is deliberately a preview rather than a change.
+**Do this against a test database.** Only part of the tool is beta (the
+README's *Status* says which), and the last step of this guide is deliberately
+a preview rather than a change.
 
 What you need before you start:
 

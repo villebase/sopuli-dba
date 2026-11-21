@@ -6,7 +6,9 @@ specification. [CONTRIBUTING.md](../CONTRIBUTING.md#how-this-project-is-built-an
 explains why they record rejected options and name the issue behind each
 decision.
 
-The project is alpha. Each use-case document says which parts of it are
+The application-credential commands (UC-1) on Oracle and PostgreSQL, with
+HashiCorp Vault, are beta; the rest is experimental. The README's *Status*
+says what beta promises. Each use-case document says which parts of it are
 built. [measurements.md](measurements.md) says which script in `sql/oracle/` ran
 on which Oracle release, and what it showed.
 
@@ -15,6 +17,7 @@ on which Oracle release, and what it showed.
 | Document | Contents |
 |---|---|
 | [getting-started.md](getting-started.md) | first run: install, a first config file, `config validate`, `doctor`, and one command under `--dry-run` |
+| [upgrading.md](upgrading.md) | what to do when a release changes the config format, the vault records, an exit code or a JSON schema |
 | [supported-releases.md](supported-releases.md) | which releases of each database the tool has run on, and which it has not |
 | [security-model.md](security-model.md) | what the tool can and cannot do to a database, and what stops a mistake from being silent — plain English, for deciding whether to trust it |
 | [scenarios/rotate-and-sync.md](scenarios/rotate-and-sync.md) | one password rotation end to end: stage, apply, check, roll back, and close the rollover window |

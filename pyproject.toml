@@ -15,9 +15,9 @@ license-files = ["LICENSE"]
 authors = [
   { name = "Ville Rönkkö", email = "320240774+villebase@users.noreply.github.com" },
 ]
-keywords = ["oracle", "dba", "credentials", "vault", "rotation"]
+keywords = ["oracle", "postgresql", "mysql", "mariadb", "sql-server", "dba", "credentials", "vault", "rotation"]
 classifiers = [
-  "Development Status :: 3 - Alpha",
+  "Development Status :: 4 - Beta",
   "Environment :: Console",
   "Intended Audience :: System Administrators",
   "Programming Language :: Python :: 3.11",

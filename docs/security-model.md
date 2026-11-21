@@ -263,7 +263,9 @@ Four things prevent that:
    first.** `creds check` and `creds finish-rollover` log in once.
    `creds check --include-previous` logs in up to twice, because it also tries
    the previous password. `creds apply` and `creds rotate` log in up to twice:
-   before they change the password, and after, to confirm it. No retries and no
+   before they change the password, and after, to confirm it. On MySQL, on
+   MariaDB, and on SQL Server on a host that is not Linux, they make no login
+   before the change, only the one after. No retries and no
    back-off loop: each password is tried once, never five times.
 2. **The tool looks before it leaps, on Oracle and on MySQL 9.7 and later.**
    Where it has the optional grant that reads the failed-login count, it reads
@@ -312,7 +314,11 @@ The other databases need no guard, or offer none:
   locks. On Windows a wrong password counts toward the host's lockout
   threshold, which the tool cannot read. So a target that does not run on
   Linux ends the run at plan time, exit 5, naming `lockout_threshold`. A host
-  that names no platform counts as Windows.
+  that names no platform counts as Windows. The login that `creds apply`,
+  `creds rotate` and `creds finish-rollover` make after a change still runs on
+  Windows, with the password the run just set or keeps. It reads whether the
+  login is locked first, and does not log in to a locked one, but it has no
+  lockout margin.
 - **MariaDB** has no count the tool can read, so its logins are unguarded. Its
   limit is the server's `max_password_errors`, which sets no limit by default.
   `creds check` logs in only where no other account can answer, so the answer
@@ -325,8 +331,11 @@ answers. A login attempt on its own often cannot tell an expired password from
 a locked account from a genuinely wrong one. Oracle answers `ORA-01017` to all
 three. PostgreSQL answers `28P01` to a wrong password, and to the right
 password of a role whose `VALID UNTIL` has passed. MySQL and MariaDB answer
-`1045` to a wrong password, and SQL Server `18456`. Their answers for a locked
-or expired account come only to the right password. Reading the status
+`1045` to a wrong password, and SQL Server `18456`. On those three, an
+administrative lock or an expired password has its own answer, which comes
+only to the right password. A block after failed logins does not: MySQL
+answers `3955` and MariaDB `4150` to every password, and on Windows a locked
+SQL Server login answers `18456` even to its right one. Reading the status
 separately is what lets the tool report `LOCKED` or `EXPIRED` as themselves
 rather than folding them into "drift".
 

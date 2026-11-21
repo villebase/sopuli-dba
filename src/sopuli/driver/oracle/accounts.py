@@ -1143,8 +1143,8 @@ SURVEY_LIMITS_QUERY_LEGACY = (
 
 #: Every account's failed-login count, behind the optional ``READ ON
 #: SYS.USER$`` grant (``SELECT`` before 12.1.0.2) and sent only with
-#: ``offline_verify``. ``NAME`` and
-#: ``LCOUNT`` only: no verifier column. ``TYPE# = 1`` is a user; roles are 0.
+#: ``offline_verify``. ``NAME`` and ``LCOUNT`` only: no verifier column.
+#: ``TYPE# = 1`` is a user; roles are 0.
 SURVEY_LCOUNT_QUERY = "select name, lcount from sys.user$ where type# = 1"
 
 PASSWORD_LIFE_TIME = "PASSWORD_LIFE_TIME"

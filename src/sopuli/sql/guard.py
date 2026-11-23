@@ -17,6 +17,12 @@ class RowGuard:
     expect: int | None = None
     maximum: int | None = None
 
+    def __post_init__(self) -> None:
+        if (self.expect is None) == (self.maximum is None):
+            raise ValueError("a RowGuard sets exactly one of expect and maximum")
+        if (self.expect or 0) < 0 or (self.maximum or 0) < 0:
+            raise ValueError("a RowGuard count cannot be negative")
+
     def passes(self, count: int) -> bool:
         if self.expect is not None:
             return count == self.expect

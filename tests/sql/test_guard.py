@@ -5,7 +5,16 @@ from __future__ import annotations
 import click
 import pytest
 
-from sopuli.sql.guard import row_guard
+from sopuli.sql.guard import RowGuard, row_guard
+
+
+@pytest.mark.parametrize(
+    ("expect", "maximum"),
+    [(None, None), (1, 1), (-1, None), (None, -1)],
+)
+def test_a_row_guard_built_by_hand_is_checked(expect: int | None, maximum: int | None) -> None:
+    with pytest.raises(ValueError, match="RowGuard"):
+        RowGuard(expect=expect, maximum=maximum)
 
 
 def test_expect_rows_passes_only_exact() -> None:

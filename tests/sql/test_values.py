@@ -55,4 +55,41 @@ def test_non_finite_floats_and_large_ints_are_strings(value: object, expected: o
 
 
 def test_unknown_type_is_its_str() -> None:
-    assert to_json(timedelta(hours=1)) == "1:00:00"
+    assert to_json(1 + 2j) == "(1+2j)"
+
+
+class _IntervalYM:
+    """Stands in for `oracledb.IntervalYM`, which has integer years and months."""
+
+    def __init__(self, years: int, months: int) -> None:
+        self.years = years
+        self.months = months
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (timedelta(days=1, hours=2), "P1DT2H0M0S"),
+        (timedelta(0), "P0DT0H0M0S"),
+        (timedelta(days=3, minutes=4, seconds=5, microseconds=500000), "P3DT0H4M5.5S"),
+        (timedelta(microseconds=1), "P0DT0H0M0.000001S"),
+        (-timedelta(days=1, hours=2), "-P1DT2H0M0S"),
+        (-timedelta(seconds=1, microseconds=250000), "-P0DT0H0M1.25S"),
+        (_IntervalYM(1, 2), "P1Y2M"),
+        (_IntervalYM(-1, -2), "-P1Y2M"),
+        (_IntervalYM(0, 0), "P0Y0M"),
+    ],
+)
+def test_intervals_are_iso_durations(value: object, expected: str) -> None:
+    assert to_json(value) == expected
+
+
+def test_an_object_with_non_integer_years_is_its_str() -> None:
+    class Odd:
+        years = "x"
+        months = 1
+
+        def __str__(self) -> str:
+            return "odd"
+
+    assert to_json(Odd()) == "odd"

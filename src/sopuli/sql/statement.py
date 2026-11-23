@@ -40,6 +40,10 @@ class Statement:
     keyword: str
 
 
+#: ASCII whitespace only. `str.strip` would also remove Unicode spaces.
+_SPACE = " \t\n\r\f\v"
+
+
 def _first_word(text: str) -> tuple[str, str]:
     """The first word after any whitespace and comments, and why there is none.
 
@@ -49,7 +53,7 @@ def _first_word(text: str) -> tuple[str, str]:
     """
     i, n = 0, len(text)
     while i < n:
-        if text[i].isspace():
+        if text[i] in _SPACE:
             i += 1
         elif text.startswith("--", i):
             end = text.find("\n", i)
@@ -62,7 +66,7 @@ def _first_word(text: str) -> tuple[str, str]:
         else:
             break
     start = i
-    while i < n and (text[i].isalnum() or text[i] == "_"):
+    while i < n and text[i].isascii() and (text[i].isalnum() or text[i] == "_"):
         i += 1
     if i > start:
         return text[start:i], ""
@@ -70,12 +74,12 @@ def _first_word(text: str) -> tuple[str, str]:
 
 
 def _strip_terminators(raw: str) -> str:
-    text = raw.replace("\r\n", "\n").replace("\r", "\n").rstrip()
+    text = raw.replace("\r\n", "\n").replace("\r", "\n").rstrip(_SPACE)
     lines = text.split("\n")
-    if lines[-1].strip() == "/":
-        text = "\n".join(lines[:-1]).rstrip()
+    if lines[-1].strip(_SPACE) == "/":
+        text = "\n".join(lines[:-1]).rstrip(_SPACE)
     if text.endswith(";"):
-        text = text[:-1].rstrip()
+        text = text[:-1].rstrip(_SPACE)
     return text
 
 
@@ -106,6 +110,11 @@ def classify(raw: str) -> Statement:
         raise StatementRefusedError(
             f"the statement starts with {keyword}, which `sql run` does not run",
             hint="it runs SELECT, WITH, UPDATE, INSERT, MERGE and DELETE only",
+        )
+    if text.rsplit("\n", 1)[-1].strip(_SPACE) == "/":
+        raise StatementRefusedError(
+            "the statement has a '/' alone on its last line",
+            hint="give one statement, with at most one ';' or one '/' line at its end",
         )
     if ";" in text:
         raise StatementRefusedError(

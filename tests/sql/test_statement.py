@@ -86,6 +86,27 @@ def test_refusal_is_a_refused_error_with_code_and_exit_8() -> None:
     assert int(raised.value.exit_code) == 8
 
 
+def test_a_slash_left_after_the_terminators_is_refused() -> None:
+    with pytest.raises(StatementRefusedError, match="'/'"):
+        classify("select 1 from dual\n/\n;")
+
+
+@pytest.mark.parametrize("raw", ["ſelect 1 from dual", "ınsert into t values (1)"])
+def test_a_non_ascii_first_word_is_refused(raw: str) -> None:
+    # upper() would turn these into SELECT and INSERT.
+    with pytest.raises(StatementRefusedError, match="does not start with a keyword"):
+        classify(raw)
+
+
+def test_whitespace_before_the_semicolon_does_not_matter() -> None:
+    assert classify("select 1 ;").text == classify("select 1;").text == "select 1"
+
+
+def test_only_ascii_whitespace_is_stripped() -> None:
+    # U+00A0 is not ASCII whitespace, so it stays in the text.
+    assert classify("select 1 ").text == "select 1 "
+
+
 def test_classify_strips_terminators() -> None:
     assert classify("SELECT 1 FROM dual;\r\n/\r\n").text == "SELECT 1 FROM dual"
 

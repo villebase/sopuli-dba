@@ -56,7 +56,7 @@ _PASSWORD_CLAUSE = re.compile(r"(identified)\b.*", re.IGNORECASE | re.DOTALL)
 class TracedCursor:
     """A database cursor that writes a debug line for each call.
 
-    It has the four methods the driver calls, and no others. It does not forward
+    It has the methods the driver calls, and no others. It does not forward
     other attributes to the cursor it wraps: ``oracledb``'s ``Cursor.statement``
     holds the text last executed, which after a password change is the revealed
     ``ALTER USER``.
@@ -100,6 +100,22 @@ class TracedCursor:
 
     def fetchall(self) -> Any:
         return self._cursor.fetchall()
+
+    def fetchmany(self, size: int) -> Any:
+        return self._cursor.fetchmany(size)
+
+    def set_output_type_handler(self, handler: Any) -> None:
+        """Choose the Python type of a fetched column, for this cursor only."""
+        self._cursor.outputtypehandler = handler
+
+    @property
+    def description(self) -> Any:
+        """The columns of the last query. Not the statement text, which stays hidden."""
+        return self._cursor.description
+
+    @property
+    def rowcount(self) -> int:
+        return int(self._cursor.rowcount)
 
 
 @contextmanager

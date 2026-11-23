@@ -67,13 +67,20 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from sopuli.config.model import ExpandedTarget, Runtime
 from sopuli.exit_codes import ExitCode
 from sopuli.passwords import ByteLimit
 from sopuli.secrets import Secret
 from sopuli.settings.registry import DEFAULT_CONNECT_TIMEOUT_S, NO_QUERY_TIMEOUT
+from sopuli.sql.values import JsonValue
+
+if TYPE_CHECKING:
+    # Imported for the annotations only: `sopuli.sql.statement` reaches
+    # `sopuli.safety`, which imports this module.
+    from sopuli.sql.guard import RowGuard
+    from sopuli.sql.statement import Statement
 
 # ------------------------------------------------------------- capabilities ---
 #
@@ -1687,6 +1694,72 @@ class Session(Protocol):
 
     def close(self) -> None:
         """Release the connection. Called on every path, including failure."""
+        ...
+
+
+@dataclass(frozen=True)
+class StatementResult:
+    """What `sql run` got back from one statement (UC-3)."""
+
+    #: The column names of a read. Empty for a write.
+    columns: tuple[str, ...]
+    #: The rows of a read, already in JSON form. Empty for a write.
+    rows: tuple[tuple[JsonValue, ...], ...]
+    #: The rows a read returned, or the rows a write changed.
+    row_count: int
+    #: A read stopped at ``max_rows``, or a value was cut at the LOB limit.
+    truncated: bool
+    #: The write was committed. A read never is.
+    committed: bool
+    #: Whether the guard passed. ``None`` for a read, or when there was no guard.
+    guard_passed: bool | None
+
+
+@runtime_checkable
+class StatementRunner(Protocol):
+    """A session that runs one statement in a guarded transaction (UC-3).
+
+    Oracle's session only. A product whose session lacks it is refused at plan
+    time by :func:`sopuli.driver.registry.require_command`.
+    """
+
+    @property
+    def connection_lost(self) -> bool:
+        """A statement left the connection closed, such as on a call timeout.
+
+        The session can run nothing more, and only ``close`` is safe to call.
+        """
+        ...
+
+    def session_user(self) -> str:
+        """The account this session is logged in as, as the server spells it."""
+        ...
+
+    def database_identity(self) -> tuple[str, str]:
+        """``(DB_UNIQUE_NAME, CON_NAME)`` of the database the session reached."""
+        ...
+
+    def run_statement(
+        self,
+        statement: Statement,
+        *,
+        guard: RowGuard | None,
+        commit: bool,
+        max_rows: int,
+        timeout_ms: int,
+    ) -> StatementResult:
+        """Run ``statement`` and leave nothing behind unless it was meant to stay.
+
+        A read runs in a read-only transaction and is rolled back. A write is
+        committed only when ``commit`` is true, the guard passes and the row
+        count is above zero; otherwise it is rolled back. The read-only
+        transaction and the rollback cover this statement's own transaction,
+        not work an autonomous transaction committed. ``timeout_ms`` bounds the
+        call; ``0`` means no bound. ``commit=True`` needs a ``guard``, or
+        ``ValueError`` is raised before anything is sent. Raises
+        :class:`DriverError`, with the server's code and message, for anything
+        the server refuses, and for a session whose connection is lost.
+        """
         ...
 
 

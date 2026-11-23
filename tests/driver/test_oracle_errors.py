@@ -36,6 +36,7 @@ from sopuli.driver.oracle.errors import (
     MappedError,
     classify,
     from_error,
+    statement_timeout,
 )
 from sopuli.driver.protocol import AuthenticationError, DriverError
 from sopuli.exit_codes import ExitCode
@@ -335,6 +336,64 @@ def test_a_lost_session_is_connectivity_and_says_why_it_may_have_gone() -> None:
     assert "creds apply" not in found.hint, "every verb meets it, not only apply"
     assert found.retryable is False
     assert found.message == SESSION_LOST
+
+
+#: What python-oracledb 26.0.0 raised in thick mode when `sql run`'s call timeout
+#: fired on a statement waiting for a row lock (#1661), on 23.26.3.0.0.
+CALL_TIMED_OUT = (
+    "DPY-4011: the database or network closed the connection\n"
+    "DPI-1080: connection was closed by ORA-03156\n"
+    "ORA-03156: OCI call timed out\n"
+    "Help: https://docs.oracle.com/error-help/db/ora-03156/"
+)
+
+
+def test_a_call_timeout_stays_a_lost_session_for_every_other_verb() -> None:
+    """#1661: `classify` is shared with `creds apply`, `rotate` and `account
+    reset-password`, whose ALTER USER is DDL and auto-commits. A timeout there
+    must keep the lost-session wording, "unknown whether it took effect", and
+    must never say the transaction was rolled back."""
+    found = classify("DPY-4011", CALL_TIMED_OUT)
+
+    assert found.code == "DPY-4011"
+    assert found.kind == UNREACHABLE
+    assert found.category == "connectivity"
+    assert found.hint is not None
+    assert "Whether a statement in flight took effect is unknown" in found.hint
+    assert "rolled" not in found.hint
+    assert found.message == CALL_TIMED_OUT
+
+
+def test_sql_run_words_its_call_timeout_as_a_rolled_back_transaction() -> None:
+    """#1661: `sql run` only ever has DML in an open transaction, so its own
+    path says nothing was committed. The vendor code and message stay."""
+    found = statement_timeout(classify("DPY-4011", CALL_TIMED_OUT))
+
+    assert found.code == "DPY-4011"
+    assert found.kind == "call_timeout"
+    assert found.category == "database"
+    assert found.hint is not None
+    assert "rolls this statement's transaction back" in found.hint
+    assert "autonomous transaction" in found.hint
+    assert "Nothing was committed" not in found.hint
+    assert found.message == CALL_TIMED_OUT
+
+
+def test_sql_run_leaves_any_other_failure_alone() -> None:
+    lost = classify("DPY-4011", SESSION_LOST)
+
+    assert statement_timeout(lost) == lost
+
+
+def test_a_statement_that_needs_a_read_write_transaction_says_so() -> None:
+    """Measured on 23.26.3.0.0: an UPDATE and a `SELECT ... FOR UPDATE` both
+    get ORA-01456 inside `SET TRANSACTION READ ONLY` (#1661)."""
+    found = classify("ORA-01456", "ORA-01456: may not perform insert, delete, update operation")
+
+    assert found.kind == "read_only_violation"
+    assert found.hint is not None
+    assert "read-write transaction" in found.hint
+    assert "locks rows" in found.hint
 
 
 @pytest.mark.parametrize("code", ["ORA-12528", "ORA-01033"])

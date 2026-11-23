@@ -45,7 +45,7 @@ have in the open, not a default this module sets on the way past.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from sopuli.driver import errors
@@ -77,6 +77,8 @@ UNREACHABLE = "unreachable"
 VERIFIER_MISMATCH = "verifier_mismatch"
 CLIENT_LIBRARY = "client_library"
 WALLET = "wallet"
+CALL_TIMEOUT = "call_timeout"
+READ_ONLY_VIOLATION = "read_only_violation"
 UNKNOWN = "unknown"
 
 #: Run-document states a code implies on its own. Spelled here as strings and
@@ -177,6 +179,18 @@ RULES: dict[str, _Rule] = {
         hint=(
             "the service account is missing a grant -- ALTER USER for a rotation, "
             f"SELECT on DBA_USERS/DBA_PROFILES for a read. See {INSTALL_SCRIPT}"
+        ),
+    ),
+    # `sql run` (UC-3, #1661). A read runs after SET TRANSACTION READ ONLY, so a
+    # statement that changes data is refused by the server with ORA-01456,
+    # measured on 23.26.3.0.0.
+    "ORA-01456": _Rule(
+        READ_ONLY_VIOLATION,
+        "database",
+        hint=(
+            "the statement needs a read-write transaction: it changes data or locks "
+            "rows, as SELECT ... FOR UPDATE does. `sql run` runs a SELECT or WITH "
+            "query in a read-only one"
         ),
     ),
     "ORA-65040": _Rule(
@@ -507,6 +521,35 @@ def from_error(exc: Any) -> Diagnosis:
     code = _normalise(str(getattr(detail, "full_code", "") or ""))
 
     return classify(code or _leading_code(message), message)
+
+
+def statement_timeout(diagnosis: Diagnosis) -> Diagnosis:
+    """``sql run``'s own wording for its call timeout, and nobody else's.
+
+    python-oracledb in thick mode closes the connection when a call timeout
+    fires and raises ``DPY-4011``, with ``ORA-03156`` in the message. Every verb
+    shares :func:`classify`'s reading of that code: a lost session, where it is
+    unknown whether a statement took effect. That is right for ``ALTER USER``,
+    which is DDL and commits itself. It is wrong for ``sql run``, whose
+    statement is always DML in an open transaction, so the server rolls that
+    transaction back when the session goes. Work a function or trigger
+    committed in an autonomous transaction stays (UC-3 §3). ``sql run`` calls
+    this on what it caught. The code and the server's message are kept.
+    """
+    if diagnosis.code != "DPY-4011" or "ORA-03156" not in diagnosis.message:
+        return diagnosis
+    return replace(
+        diagnosis,
+        kind=CALL_TIMEOUT,
+        category="database",
+        hint=(
+            "the statement ran longer than the timeout. The client closed the "
+            "connection, and the server rolls this statement's transaction back when "
+            "it ends the session, which can wait for a lock to be released. Work that "
+            "an autonomous transaction committed is not undone. Raise the timeout, "
+            "or find what holds the lock or makes the statement slow"
+        ),
+    )
 
 
 def _normalise(code: str) -> str:

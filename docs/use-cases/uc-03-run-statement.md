@@ -4,13 +4,14 @@ Depends on: `../design/00-principles.md`, `../design/01-configuration.md`,
 `../design/02-oracle-privileges.md`
 
 This document specifies a command that runs one statement against a selected
-set of declared targets and shows what each target returned. **Nothing in it is
-built yet.** The command name, `sopuli sql run`, is a working name. The parts
-are built in this order, each by its own issue:
+set of declared targets and shows what each target returned. **The statement
+check, the row guard, the plan fingerprint and the value conversion are built
+(#1659). No command uses them yet.** The command name, `sopuli sql run`, is a
+working name. The parts are built in this order, each by its own issue:
 
 | Part | Issue |
 |---|---|
-| The pure layer: the statement check, the plan fingerprint and the row guards | (open: #1659) |
+| The pure layer: the statement check, the plan fingerprint and the row guards | #1659, built |
 | The `run_as:` configuration | (open: #1660) |
 | The Oracle runner | (open: #1661) |
 | `sql run` for reads | (open: #1662) |
@@ -191,8 +192,9 @@ targets, never all of them. `max_targets` applies unchanged (invariant 10).
   `DB_UNIQUE_NAME` and `CON_NAME`, read when the tool connects.
 
 **Normalisation.** The tool turns CRLF and CR into LF. It removes trailing
-whitespace, one trailing line that holds only `/`, and one trailing `;`. Nothing
-else changes: case, whitespace and literals inside the statement stay as written.
+ASCII whitespace (space, tab, line feed, form feed, vertical tab), one trailing
+line that holds only `/`, and one trailing `;`, and the whitespace around each
+of them. A `/` or a `;` still left at the end is refused. Nothing else changes: case, whitespace and literals inside the statement stay as written.
 
 Both the dry run and the real run connect to every target first, check the
 session user (§2), and read the database identity. They compute the hash before

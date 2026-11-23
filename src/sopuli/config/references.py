@@ -611,6 +611,19 @@ def _check_run_as(config: Config) -> None:
         external = run_as.auth is not None and run_as.auth.method == EXTERNAL
         at = run_as_at(expanded)
 
+        if run_as.auth is None:
+            # Not left to fail at run time as "no account": a block with no `auth:`
+            # replaces a complete `defaults.run_as` as a whole and then names no source.
+            raise ConfigError(
+                f"target {target.name!r} has a `run_as:` that names no `auth:`",
+                at=at.key("auth"),
+                hint=(
+                    "name where the password comes from: `auth: prompt`, "
+                    "`auth: { method: keyring, entry: … }`, `auth: { method: env, "
+                    "password_env: … }` or `auth: external`"
+                ),
+            )
+
         if external and run_as.username is not None:
             raise ConfigError(
                 f"target {target.name!r} runs statements with external authentication, so "
@@ -639,8 +652,6 @@ def _check_run_as(config: Config) -> None:
                         "alias -- name one resolvable through TNS_ADMIN"
                     ),
                 )
-        if run_as.auth is None:
-            continue
         for key in ("entry", "password_env"):
             value = getattr(run_as.auth, key)
             if value is not None and PLACEHOLDER.search(value):

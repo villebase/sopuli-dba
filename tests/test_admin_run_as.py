@@ -169,6 +169,107 @@ def test_service_account_name_refused() -> None:
     assert caught.value.category == "policy"
 
 
+def from_defaults(
+    declared: AdminCredential, *, admin: AdminCredential | None = None, dsn: str = DSN
+) -> ExpandedTarget:
+    """A target with no `run_as:` of its own, which `defaults.run_as` filled."""
+    return ExpandedTarget(
+        target=Target(name="cdb-root-qa", type="oracle", dsn=dsn, admin=admin),
+        index=0,
+        run_as=declared,
+    )
+
+
+def test_errors_from_defaults_point_at_defaults() -> None:
+    with pytest.raises(NobodyToAskError) as caught:
+        resolve_run_as(
+            from_defaults(credential("dba_alpha", "prompt")),
+            env=env(),
+            prompt=None,
+            as_user=None,
+        )
+
+    assert "defaults.run_as.auth" in str(caught.value)
+    assert "targets[0]" not in str(caught.value)
+
+
+def test_a_nobody_to_ask_error_for_as_does_not_name_a_run_as_key() -> None:
+    declared = target(run_as=credential("acme_owner", "keyring", entry="owner"))
+
+    with pytest.raises(NobodyToAskError) as caught:
+        resolve_run_as(declared, env=env(), prompt=None, as_user="alice_personal")
+
+    rendered = str(caught.value)
+    assert "--as" in rendered
+    assert "run_as" not in rendered
+    assert "targets[0]" not in rendered
+
+
+def test_env_error_from_defaults_points_at_defaults() -> None:
+    declared = from_defaults(credential("dba_alpha", "env", password_env="NOT_SET_HERE"))
+
+    with pytest.raises(AdminCredentialError) as caught:
+        resolve_run_as(declared, env=env(), prompt=None, as_user=None)
+
+    assert "defaults.run_as.auth.password_env" in str(caught.value)
+
+
+def test_a_keyring_with_no_entry_names_its_block() -> None:
+    declared = target(run_as=AdminCredential(username="u", auth=AdminAuth(method="keyring")))
+
+    with pytest.raises(AdminCredentialError) as caught:
+        resolve_run_as(declared, env=env(), prompt=None, as_user=None)
+
+    assert "run_as" in str(caught.value)
+    assert "targets[0].run_as.auth.entry" in str(caught.value)
+
+
+def test_the_service_account_refusal_points_at_the_run_as_side() -> None:
+    declared = from_defaults(
+        credential("C##SOPULI_SVC", "prompt"),
+        admin=credential("c##sopuli_svc", "keyring", entry="svc"),
+    )
+
+    with pytest.raises(RefusedError) as caught:
+        refuse_service_account(declared, None)
+
+    assert "defaults.run_as.username" in str(caught.value)
+    assert "targets[0].admin" not in str(caught.value)
+
+
+def test_the_service_account_refusal_through_as_says_as() -> None:
+    declared = target(admin=credential("c##sopuli_svc", "keyring", entry="svc"))
+
+    with pytest.raises(RefusedError) as caught:
+        refuse_service_account(declared, "C##Sopuli_Svc")
+
+    rendered = str(caught.value)
+    assert "--as" in rendered
+    assert "run_as" not in rendered.split("hint:")[0]
+
+
+def test_the_service_account_refusal_says_when_the_variable_named_the_admin() -> None:
+    declared = target(
+        admin=credential("c##sopuli_svc", "keyring", entry="svc"),
+        run_as=credential("dba_alpha", "prompt"),
+    )
+
+    with pytest.raises(RefusedError) as caught:
+        refuse_service_account(declared, None, env=env(SOPULI_DB_ADMIN_USER="DBA_ALPHA"))
+
+    assert "SOPULI_DB_ADMIN_USER" in str(caught.value)
+
+
+def test_the_external_refusal_points_at_the_run_as_block() -> None:
+    wallet = AdminCredential(auth=AdminAuth(method="external"))
+    declared = from_defaults(wallet, admin=wallet, dsn="CDBQA")
+
+    with pytest.raises(RefusedError) as caught:
+        refuse_service_account(declared, None)
+
+    assert "defaults.run_as" in str(caught.value)
+
+
 def test_service_account_name_refused_through_as() -> None:
     declared = target(admin=credential("c##sopuli_svc", "keyring", entry="svc"))
 

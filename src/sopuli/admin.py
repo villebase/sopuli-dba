@@ -46,8 +46,8 @@ from dataclasses import dataclass, field
 
 from sopuli import os_keyring
 from sopuli.config.bindings import admin_store_in_file
-from sopuli.config.errors import ConfigError, KeyPath
-from sopuli.config.expansion import declared_at
+from sopuli.config.errors import ROOT, ConfigError, KeyPath
+from sopuli.config.expansion import declared_at, run_as_at
 from sopuli.config.model import AdminAuth, AdminCredential, Config, ExpandedTarget, MaterialRef
 from sopuli.config.secret_refs import SecretRef
 from sopuli.config.targets import ADMIN_METHODS, ADMIN_PASSWORD_ENV, EXTERNAL
@@ -65,6 +65,8 @@ ADMIN_USER_ENV = "SOPULI_DB_ADMIN_USER"
 #: The config keys a credential is written under, for an error's location and words.
 ADMIN_BLOCK = "admin"
 RUN_AS_BLOCK = "run_as"
+#: Not a key: the account came from the command line, so no key in the file is at fault.
+AS_BLOCK = "--as"
 
 VAULT = "vault"
 PROMPT = "prompt"
@@ -478,7 +480,7 @@ def resolve_run_as(
     return _resolve_auth(
         target,
         declared.auth,
-        block=RUN_AS_BLOCK,
+        block=AS_BLOCK if as_user is not None else RUN_AS_BLOCK,
         username=declared.username,
         env=env,
         prompt=prompt,
@@ -520,16 +522,19 @@ def refuse_service_account(
             raise ServiceAccountRefusedError(
                 f"target {target.name!r} would run statements through the same external "
                 f"credential the tool uses for its own work",
-                at=declared_at(target, "run_as"),
+                at=run_as_at(target),
                 hint="name an account with `run_as: { username: …, auth: … }` or `--as USER`",
             )
         return
-    admin_user = (env or {}).get(ADMIN_USER_ENV) or admin.username
+    from_variable = (env or {}).get(ADMIN_USER_ENV)
+    admin_user = from_variable or admin.username
     if admin_user is not None and who != EXTERNAL and who.upper() == admin_user.upper():
+        source = f"named by ${ADMIN_USER_ENV}" if from_variable else "named by `admin.username`"
+        came_from = "`--as`" if as_user is not None else "`run_as.username`"
         raise ServiceAccountRefusedError(
-            f"target {target.name!r} would run statements as {who!r}, the account the "
-            f"tool uses for its own work",
-            at=declared_at(target, "admin").key("username"),
+            f"target {target.name!r} would run statements as {who!r} (from {came_from}), "
+            f"the account the tool uses for its own work ({source})",
+            at=ROOT if as_user is not None else run_as_at(target).key("username"),
             hint="name a personal or owner account with `run_as:` or `--as USER`",
         )
 
@@ -617,8 +622,8 @@ def _from_keyring(
     entry = auth.entry
     if entry is None:  # pragma: no cover - `Method(required=("entry",))` guarantees one
         raise AdminCredentialError(
-            f"target {target.name!r} authenticates from the OS keyring and names no entry",
-            at=_at(target, "auth", "entry"),
+            f"target {target.name!r} {block} authenticates from the OS keyring and names no entry",
+            at=_at(target, "auth", "entry", block=block),
         )
     where = f"target {target.name!r} {block} credential"
     try:
@@ -671,7 +676,10 @@ def _at(target: ExpandedTarget, *parts: str, block: str = ADMIN_BLOCK) -> KeyPat
     admin checks; a shared one would have to live somewhere both can import, and
     two callers is not yet a module.
     """
-    at = declared_at(target, block)
+    if block == AS_BLOCK:
+        # `--as` wrote nothing in the file, so no key is the line to edit.
+        return ROOT
+    at = run_as_at(target) if block == RUN_AS_BLOCK else declared_at(target, block)
     for part in parts:
         at = at.key(part)
     return at

@@ -196,6 +196,48 @@ def test_placeholder_in_defaults_run_as_refused() -> None:
     assert "defaults.run_as.auth.entry" in str(caught.value)
 
 
+def test_run_as_without_auth_on_a_target_is_refused() -> None:
+    """It would hide a complete `defaults.run_as` and fail later as "no account"."""
+    with pytest.raises(ConfigError) as caught:
+        build_config(
+            document(
+                defaults={"run_as": RUN_AS},
+                targets=[{**TARGET, "run_as": {"username": "acme_owner"}}],
+            )
+        )
+
+    assert "targets[0].run_as.auth" in str(caught.value)
+
+
+def test_run_as_without_auth_in_defaults_is_refused() -> None:
+    with pytest.raises(ConfigError) as caught:
+        build_config(document(defaults={"run_as": {"username": "dba_alpha"}}, targets=[TARGET]))
+
+    assert "defaults.run_as.auth" in str(caught.value)
+
+
+def test_run_as_without_auth_in_an_override_is_refused() -> None:
+    template = {
+        **TARGET,
+        "name": "appdb-{env}",
+        "dsn": "db-{env}.example.com:1521/APP.pdb.example.com",
+    }
+    with pytest.raises(ConfigError) as caught:
+        build_config(
+            document(
+                target_sets={
+                    "appdb": {
+                        **template,
+                        "for_each": FOR_EACH,
+                        "overrides": {"appdb-qa": {"run_as": {"username": "acme_owner"}}},
+                    }
+                }
+            )
+        )
+
+    assert "overrides.appdb-qa.run_as.auth" in str(caught.value)
+
+
 def test_groups_do_not_carry_run_as() -> None:
     with pytest.raises(ConfigError):
         build_config(

@@ -1621,7 +1621,9 @@ holds for another purpose, and it does not manage this account.
 variable, `SOPULI_DB_ADMIN_PASSWORD`, holds the admin's password, and a statement
 would then run as one account with the password of another. For the same reason
 `SOPULI_DB_ADMIN_USER` does not rename the `run_as:` user. `username:` is
-required unless the method is `external`.
+required unless the method is `external`, and `auth:` is always required: a
+block with no `auth:` would replace a complete `defaults.run_as` and name no
+source, so it is refused when the file loads.
 
 ```yaml
 defaults:

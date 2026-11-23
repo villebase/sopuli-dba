@@ -185,11 +185,21 @@ def _exact_numbers(cursor: Any, metadata: Any) -> Any:
     return None
 
 
-def _cell(value: Any) -> tuple[JsonValue, bool]:
-    """One fetched value in JSON form, and whether a LOB was cut to get there."""
+#: The column types the client returns whole, with no LOB to read in pieces.
+_LONG_TYPES = (oracledb.DB_TYPE_LONG, oracledb.DB_TYPE_LONG_RAW)
+
+
+def _cell(value: Any, *, long: bool = False) -> tuple[JsonValue, bool]:
+    """One fetched value in JSON form, and whether it was cut to get there.
+
+    A LOB is read in part. A ``LONG`` or ``LONG RAW`` (``long``) is fetched
+    whole and cut here, at the same limit.
+    """
     if isinstance(value, oracledb.LOB):
         content = value.read(1, LOB_LIMIT + 1)
         return to_json(content[:LOB_LIMIT]), len(content) > LOB_LIMIT
+    if long and isinstance(value, str | bytes) and len(value) > LOB_LIMIT:
+        return to_json(value[:LOB_LIMIT]), True
     return to_json(value), False
 
 
@@ -199,11 +209,12 @@ def _read_result(cursor: Any, max_rows: int) -> StatementResult:
     The LOBs are read here, before the read-only transaction ends.
     """
     columns = tuple(str(column[0]) for column in cursor.description)
+    longs = tuple(column[1] in _LONG_TYPES for column in cursor.description)
     fetched = cursor.fetchmany(max_rows + 1)
     truncated = len(fetched) > max_rows
     rows: list[tuple[JsonValue, ...]] = []
     for row in fetched[:max_rows]:
-        cells = [_cell(value) for value in row]
+        cells = [_cell(value, long=is_long) for value, is_long in zip(row, longs, strict=True)]
         truncated = truncated or any(cut for _, cut in cells)
         rows.append(tuple(value for value, _ in cells))
     return StatementResult(columns, tuple(rows), len(rows), truncated, False, None)
@@ -1161,7 +1172,18 @@ class OracleSession(ClosesConnection):
         row = self._select_one(IDENTITY_QUERY)
         return str(row[0]), str(row[1])
 
+    def _require_open(self) -> None:
+        """Refuse to send on a connection a call timeout closed."""
+        if self._connection_lost:
+            raise DriverError(
+                "DPY-1001: not connected to database. The connection was closed by the "
+                "call timeout of an earlier statement (ORA-03156)",
+                hint="close this session and open another",
+                code="DPY-1001",
+            )
+
     def _select_one(self, query: str) -> Any:
+        self._require_open()
         with traced_cursor(self.connection) as cursor:
             try:
                 cursor.execute(query)
@@ -1181,24 +1203,30 @@ class OracleSession(ClosesConnection):
         """Run one statement in a transaction that ends the way UC-3 says.
 
         A read starts ``SET TRANSACTION READ ONLY``, so the server refuses a
-        write that got past the keyword check (``ORA-01456``). It is rolled
-        back. A write is committed only when ``commit`` is true, the guard
-        passes and a row changed; any other outcome rolls back, and a failure
-        rolls back before it is raised. The statement is sent as written, with
-        no bind. ``connection.call_timeout`` is ``timeout_ms`` for the call and
-        is put back afterwards.
+        write that got past the keyword check, and a ``SELECT ... FOR UPDATE``
+        (``ORA-01456``). It is rolled back. A write is committed only when
+        ``commit`` is true, the guard passes and a row changed; any other
+        outcome rolls back, and a failure rolls back before it is raised. The
+        read-only transaction and the rollback cover this statement's own
+        transaction. Work that a function or trigger commits in an autonomous
+        transaction is not undone (UC-3 §3). The statement is sent as written,
+        with no bind. ``connection.call_timeout`` is ``timeout_ms`` for the
+        call and is put back afterwards. A session whose connection a timeout
+        closed refuses at once.
         """
         if commit and guard is None:
             raise ValueError("run_statement commits only with a row guard")
-        previous = self.connection.call_timeout
+        self._require_open()
+        previous: int | None = None
         committed = False
         try:
-            self.connection.call_timeout = timeout_ms
             with traced_cursor(self.connection) as cursor:
                 try:
                     # End a transaction an earlier caller left open: READ ONLY
                     # must be the first statement of its transaction (ORA-01453).
                     self.connection.rollback()
+                    previous = self.connection.call_timeout
+                    self.connection.call_timeout = timeout_ms
                     if statement.kind is StatementKind.READ:
                         cursor.execute("SET TRANSACTION READ ONLY")
                         cursor.set_output_type_handler(_exact_numbers)
@@ -1221,8 +1249,9 @@ class OracleSession(ClosesConnection):
             if not committed:
                 with suppress(Exception):
                     self.connection.rollback()
-            with suppress(Exception):
-                self.connection.call_timeout = previous
+            if previous is not None:
+                with suppress(Exception):
+                    self.connection.call_timeout = previous
 
     def _issue(self, statement: Statement, *, password: bool = False) -> None:
         """Execute one built statement, classifying whatever the server says.

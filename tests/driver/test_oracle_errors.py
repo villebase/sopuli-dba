@@ -373,8 +373,9 @@ def test_sql_run_words_its_call_timeout_as_a_rolled_back_transaction() -> None:
     assert found.kind == "call_timeout"
     assert found.category == "database"
     assert found.hint is not None
-    assert "rolls the transaction back" in found.hint
-    assert "Nothing was committed" in found.hint
+    assert "rolls this statement's transaction back" in found.hint
+    assert "autonomous transaction" in found.hint
+    assert "Nothing was committed" not in found.hint
     assert found.message == CALL_TIMED_OUT
 
 
@@ -384,12 +385,15 @@ def test_sql_run_leaves_any_other_failure_alone() -> None:
     assert statement_timeout(lost) == lost
 
 
-def test_a_write_in_a_read_only_transaction_says_nothing_was_changed() -> None:
-    found = classify("ORA-01456", "ORA-01456: may not perform insert/delete/update operation")
+def test_a_statement_that_needs_a_read_write_transaction_says_so() -> None:
+    """Measured on 23.26.3.0.0: an UPDATE and a `SELECT ... FOR UPDATE` both
+    get ORA-01456 inside `SET TRANSACTION READ ONLY` (#1661)."""
+    found = classify("ORA-01456", "ORA-01456: may not perform insert, delete, update operation")
 
     assert found.kind == "read_only_violation"
     assert found.hint is not None
-    assert "Nothing was changed" in found.hint
+    assert "read-write transaction" in found.hint
+    assert "locks rows" in found.hint
 
 
 @pytest.mark.parametrize("code", ["ORA-12528", "ORA-01033"])

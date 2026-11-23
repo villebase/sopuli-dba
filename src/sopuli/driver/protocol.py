@@ -1752,10 +1752,13 @@ class StatementRunner(Protocol):
 
         A read runs in a read-only transaction and is rolled back. A write is
         committed only when ``commit`` is true, the guard passes and the row
-        count is above zero; otherwise it is rolled back. ``timeout_ms`` bounds
-        the call; ``0`` means no bound. ``commit=True`` needs a ``guard``, or
-        ``ValueError`` is raised before anything is sent. Raises :class:`DriverError`, with the
-        server's code and message, for anything the server refuses.
+        count is above zero; otherwise it is rolled back. The read-only
+        transaction and the rollback cover this statement's own transaction,
+        not work an autonomous transaction committed. ``timeout_ms`` bounds the
+        call; ``0`` means no bound. ``commit=True`` needs a ``guard``, or
+        ``ValueError`` is raised before anything is sent. Raises
+        :class:`DriverError`, with the server's code and message, for anything
+        the server refuses, and for a session whose connection is lost.
         """
         ...
 

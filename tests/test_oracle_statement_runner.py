@@ -62,11 +62,21 @@ def _table_name(oracle_target: Environment) -> Iterator[str]:
     connection = oracledb.connect(user=USER, password=PASSWORD, dsn=oracle_target.dsn)
     try:
         _execute(connection, f"CREATE TABLE {name} (k NUMBER, v VARCHAR2(20))")
+        _execute(connection, f"CREATE TABLE {name}_L (k NUMBER, body LONG)")
+        _execute(connection, f"CREATE SEQUENCE {name}_S")
+        with connection.cursor() as cursor:
+            cursor.execute(f"INSERT INTO {name}_L VALUES (1, :text)", text="y" * 5000)
+        connection.commit()
         time.sleep(2)
         yield name
     finally:
-        with contextlib.suppress(Exception):
-            _execute(connection, f"DROP TABLE {name} PURGE")
+        for drop in (
+            f"DROP TABLE {name} PURGE",
+            f"DROP TABLE {name}_L PURGE",
+            f"DROP SEQUENCE {name}_S",
+        ):
+            with contextlib.suppress(Exception):
+                _execute(connection, drop)
         connection.close()
 
 
@@ -132,6 +142,28 @@ def test_read_cannot_write(session: Any, table: str) -> None:
     assert raised.value.code == "ORA-01456"
     assert "ORA-01456" in raised.value.message
     assert _count(session.connection, f"SELECT COUNT(*) FROM {table} WHERE v = 'changed'") == 0
+
+
+def test_select_for_update_is_refused_by_the_server(session: Any, table: str) -> None:
+    """Measured on 23.26.3.0.0: ORA-01456, so no row is locked."""
+    with pytest.raises(DriverError) as raised:
+        _run(session, f"SELECT k FROM {table} FOR UPDATE")
+    assert raised.value.code == "ORA-01456"
+
+
+def test_a_sequence_can_be_read_in_a_read_only_transaction(session: Any, table: str) -> None:
+    """Measured on 23.26.3.0.0: NEXTVAL is not refused, and the sequence moves.
+    UC-3 §3 accepts that."""
+    first = _run(session, f"SELECT {table}_S.NEXTVAL FROM dual").rows[0][0]
+    second = _run(session, f"SELECT {table}_S.NEXTVAL FROM dual").rows[0][0]
+    assert isinstance(first, int)
+    assert second == first + 1
+
+
+def test_a_long_column_is_cut_and_marked(session: Any, table: str) -> None:
+    result = _run(session, f"SELECT body FROM {table}_L")
+    assert result.rows == (("y" * 4000,),)
+    assert result.truncated is True
 
 
 def test_write_commits_when_guard_passes(session: Any, table: str, second_connection: Any) -> None:
@@ -245,7 +277,7 @@ def test_lock_wait_times_out(session: Any, table: str, second_connection: Any) -
         # ORA-03156 is in its message, and the mapped hint says what happened.
         assert raised.value.code == "DPY-4011"
         assert "ORA-03156" in raised.value.message
-        assert "rolls the transaction back" in (raised.value.hint or "")
+        assert "rolls this statement's transaction back" in (raised.value.hint or "")
         assert session.connection_lost is True
     finally:
         # The server process of the closed session is still waiting on row 5. It

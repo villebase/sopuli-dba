@@ -188,8 +188,9 @@ RULES: dict[str, _Rule] = {
         READ_ONLY_VIOLATION,
         "database",
         hint=(
-            "the statement tried to change data in a read-only transaction; "
-            "`sql run` runs a SELECT or WITH query in one. Nothing was changed"
+            "the statement needs a read-write transaction: it changes data or locks "
+            "rows, as SELECT ... FOR UPDATE does. `sql run` runs a SELECT or WITH "
+            "query in a read-only one"
         ),
     ),
     "ORA-65040": _Rule(
@@ -530,9 +531,10 @@ def statement_timeout(diagnosis: Diagnosis) -> Diagnosis:
     shares :func:`classify`'s reading of that code: a lost session, where it is
     unknown whether a statement took effect. That is right for ``ALTER USER``,
     which is DDL and commits itself. It is wrong for ``sql run``, whose
-    statement is always DML in an open transaction, so the server rolls it back
-    when the session goes. ``sql run`` calls this on what it caught. The code
-    and the server's message are kept.
+    statement is always DML in an open transaction, so the server rolls that
+    transaction back when the session goes. Work a function or trigger
+    committed in an autonomous transaction stays (UC-3 §3). ``sql run`` calls
+    this on what it caught. The code and the server's message are kept.
     """
     if diagnosis.code != "DPY-4011" or "ORA-03156" not in diagnosis.message:
         return diagnosis
@@ -541,11 +543,11 @@ def statement_timeout(diagnosis: Diagnosis) -> Diagnosis:
         kind=CALL_TIMEOUT,
         category="database",
         hint=(
-            "the statement ran longer than the timeout, so the client closed the "
-            "connection, so the server rolls the transaction back when it ends the "
-            "session, which can wait for a lock to be released. Nothing was "
-            "committed. Raise the timeout, or find what holds the lock or makes the "
-            "statement slow"
+            "the statement ran longer than the timeout. The client closed the "
+            "connection, and the server rolls this statement's transaction back when "
+            "it ends the session, which can wait for a lock to be released. Work that "
+            "an autonomous transaction committed is not undone. Raise the timeout, "
+            "or find what holds the lock or makes the statement slow"
         ),
     )
 

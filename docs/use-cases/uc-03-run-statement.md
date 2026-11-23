@@ -151,8 +151,11 @@ and it is acceptable.
 **The autonomous-transaction gap.** A function that uses an autonomous
 transaction, called from a `SELECT`, gets past both guards. The read-only
 transaction does not cover an autonomous transaction, and the keyword check sees
-only a `SELECT`. This is accepted. The rights of the run-as account are the real
-limit, as §1 says.
+only a `SELECT`. Work that transaction commits is not undone by the rollback.
+A `SELECT seq.NEXTVAL FROM dual` also runs in a read-only transaction and moves
+the sequence (measured on 23.26.3.0.0); `SELECT ... FOR UPDATE` does not, because
+the server refuses it with `ORA-01456`. This is accepted. The rights of the
+run-as account are the real limit, as §1 says.
 
 **`readonly: true`** (`../design/00-principles.md`) refuses `--write`, with or
 without `--dry-run`.
@@ -218,8 +221,8 @@ A write that affects 0 rows is rolled back, and reports `changed: false` (§6).
 A write, dry or real, sets a call timeout on its session, so a row that the
 application holds locked cannot hang the run. The target that times out fails,
 and the write stops there (§5). On Oracle the client closes the connection when
-the timeout fires, and the server rolls the transaction back once it ends the
-session. A session that waits on a lock ends when the wait does. The session
+the timeout fires, and the server rolls this statement's transaction back once
+it ends the session. The rollback does not undo an autonomous transaction (§3). A session that waits on a lock ends when the wait does. The session
 reports `connection_lost`, and nothing more can be sent on it. The client reports
 `DPY-4011`, with `ORA-03156` in its message, and the tool keeps both. The
 timeout does not bound the commit, so a commit is never abandoned half done.

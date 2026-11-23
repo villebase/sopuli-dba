@@ -1145,8 +1145,11 @@ first question is where their test database runs.
   not break invariant 5: the config whitelists what the tool may change, and a
   survey changes nothing. UC-5's `report` commands read every account on a
   declared target on the same reasoning, and they are the only commands that
-  list the accounts the config does not declare
-  ([#1376](../decisions/log.md#1376)).
+  list the accounts the config does not declare on their own.
+  `sql run` (UC-3) reads whatever the connecting account may read, so a
+  statement the operator writes can list undeclared accounts. The tool lists
+  nothing itself, and DDL is refused, so a write cannot change an account
+  ([#1376](../decisions/log.md#1376), [#1658](../decisions/log.md#1658)).
 - **Breaking a lock is a verb, and it is not self-service.**
   `sopuli lock break <vault>:<path>` writes a `released` record over the held
   one, with `cas` set to the version it read. It never deletes the record: a
@@ -1176,8 +1179,10 @@ outside this rule: `creds generate` and `account reset-password`. So is
 `sql run --write` (UC-3). It cannot see whether its statement already took
 effect, because Oracle reports the rows a statement matched and not the rows it
 changed. A second `UPDATE t SET flag = 1` commits again and reports the same
-count. So it reports `changed: true` for every committed write, and never
-`changed: false`. The reasons are in [#1658](../decisions/log.md#1658).
+count. So it reports `changed: true` for every committed write that affects
+rows. A write that affects 0 rows is rolled back and reports `changed: false`,
+because the count proves nothing changed. The reasons are in
+[#1658](../decisions/log.md#1658).
 
 **Observability**
 

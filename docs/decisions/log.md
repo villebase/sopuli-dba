@@ -6720,21 +6720,34 @@ the register.
 ## #1658
 
 - **Decided:** 2026-11-23, #1658
-- **Question:** invariant 9 says a convergent command reports `changed: false`
-  the second time. UC-3's `sql run --write` runs a statement the tool does not
-  parse. Is it convergent?
-- **Decision:** the maintainer's. No. `sql run --write` is a third verb outside
-  invariant 9, with `creds generate` and `account reset-password`. It reports
-  `changed: true` for every committed write, and never `changed: false`. The
-  exception is added to invariant 9 in CLAUDE.md and in `00-principles.md`.
-  A DBA who wants a repeatable write writes one, for example with
-  `WHERE flag = 0`.
-- **Why:** Oracle reports the rows a statement matched, not the rows it
-  changed. A second `UPDATE t SET flag = 1` commits again and reports the same
-  count, so the tool cannot see that the first run already did the work.
-  Reporting `changed: false` would be a guess, and a wrong guess hides a
-  committed write. The cost accepted: a second run of the same write reports
-  `changed: true` again.
+- **Question:** two questions about UC-3's `sql run`. Invariant 9 says a
+  convergent command reports `changed: false` the second time, and `sql run
+  --write` runs a statement the tool does not parse: is it convergent?
+  Invariant 5 limits the tool to declared accounts, and `sql run` runs a
+  statement the operator writes: may it read accounts the config does not
+  declare?
+- **Decision:** the maintainer's.
+  1. Invariant 9: not convergent. `sql run --write` is a third verb outside
+     the rule, with `creds generate` and `account reset-password`. A committed
+     write that affects more than 0 rows reports `changed: true`, every time. A
+     write that affects 0 rows is rolled back and reports `changed: false`.
+     A DBA who wants a repeatable write writes one, for example with
+     `WHERE flag = 0`.
+  2. Invariant 5: `sql run` reads whatever the connecting account may read, so
+     a statement can list undeclared accounts. The tool lists nothing on its
+     own, and the operator's statement and the account's own grants decide.
+     DDL is refused, so a write cannot change an account.
+  Both exceptions are added to CLAUDE.md and to `00-principles.md`.
+- **Why:**
+  1. Oracle reports the rows a statement matched, not the rows it changed. A
+     second `UPDATE t SET flag = 1` commits again and reports the same count,
+     so the tool cannot see that the first run already did the work. A count of
+     0 is the one case that proves nothing changed. The cost accepted: a second
+     run of the same write reports `changed: true` again.
+  2. The statement is free-form and the tool does not parse it, so it cannot
+     tell a read of an account from any other read. Refusing such a statement
+     would need a parser. The account's grants are the real limit, as for any
+     DBA tool.
 - **Rejected:** parsing the statement to find out whether it converges. It
   would need a SQL parser for a free-form statement, and it still could not
   read the target's state. Running the statement twice and comparing counts.

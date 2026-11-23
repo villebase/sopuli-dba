@@ -77,9 +77,12 @@ statement run as the service account would need whatever privilege that
 statement needs, which breaks ADR-001. UC-3 adds no grant to any account
 (`../design/02-oracle-privileges.md` §9).
 
-**The default is the DBA's personal account**, such as `dba_alpha`. A DBA who
-wants the application's owner account, or another account, names it in the
-config and puts its password in the keyring.
+**The run-as account has no default.** With no `run_as:` and no `--as`, the tool
+refuses the target with exit 9, and the message names both ways to fix it. The
+usual choice is the DBA's personal account, such as `dba_alpha`, set in a
+`run_as:` block under `defaults:`. A DBA who wants the application's owner
+account, or another account, names it in the config and puts its password in the
+keyring.
 
 **`run_as:`** is a block with the grammar of `admin:`
 (`../design/01-configuration.md` §3a). It goes on a target or under `defaults:`.
@@ -98,21 +101,22 @@ that UC-1 manages, and UC-1 does not manage this account.
 **Refusing the service account.** The tool checks the run-as account twice.
 
 1. At plan time, from the config. A target whose run-as user name equals its
-   `admin:` user name is refused. A wallet holds one credential for each alias,
-   so a target whose `run_as` and `admin` are both `external` on the same alias
-   is refused too.
-2. Before any statement runs, from the database. Where either side uses
-   `auth: external`, the config has no user name to compare. So the tool
-   connects to every selected target first, reads
+   `admin:` user name is refused. The comparison uses `upper()`, as invariant 5
+   does. A wallet holds one credential for each alias, so a target whose
+   `run_as` and `admin` are both `external` on the same `dsn` is refused too.
+2. Before any statement runs, from the database. The tool connects to every
+   selected target as the run-as account, reads
    `SYS_CONTEXT('USERENV','SESSION_USER')`, and compares it with the service
-   account's user name. One match refuses the run on every target, before any
-   statement runs. The error is `SOPULI-20010`.
+   account's user name from the config. One match refuses the run on every
+   target, before any statement runs. The error is `SOPULI-20010`.
 
-   There is a gap here. When `admin:` is `external` and `run_as` names a user,
-   the config holds no user name for `admin:`, so the plan-time check cannot
-   compare. Only the session check covers this case. It works because it asks
-   the database who the session is, and so it sees the service account whatever
-   the config says.
+   There is a gap here, and it is accepted. When `admin:` is `external`, the
+   config holds no service-account name, so the session check has nothing to
+   compare and does not run. The tool never opens a connection with `admin:` to
+   learn the name, because UC-3 never uses that credential (ADR-001). The
+   plan-time check still refuses `run_as` and `admin` both `external` on the
+   same `dsn`. A `run_as` that names a user, on a target whose `admin:` is
+   `external`, is not checked against the service account.
 
 ---
 
@@ -123,8 +127,11 @@ A run is read-only unless the operator passes `--write`.
 - **A read** runs in `SET TRANSACTION READ ONLY` and always ends with a
   rollback. The first keyword must be `SELECT` or `WITH`.
 - **A write** needs `--write`. The first keyword must be `UPDATE`, `INSERT`,
-  `MERGE` or `DELETE`. A write keyword without `--write` is a usage error and
-  exits 2.
+  `MERGE` or `DELETE`. A write keyword without `--write`, and a read keyword
+  with `--write`, are refused with exit 8 and `SOPULI-20009`. Exit 2 is only for
+  argv that did not resolve, and it never comes with a run document. A
+  `--write` without a row guard, and a `--write` without a selector, are pure
+  argv errors and exit 2.
 - **Everything else is refused at plan time:** DDL, `ALTER SYSTEM`, `BEGIN`,
   `DECLARE`, `CALL`, `EXEC`, `COMMIT`, `ROLLBACK`, `LOCK`, and more than one
   statement. A refused statement exits 8 with `SOPULI-20009`.
@@ -143,7 +150,8 @@ transaction does not cover an autonomous transaction, and the keyword check sees
 only a `SELECT`. This is accepted. The rights of the run-as account are the real
 limit, as §1 says.
 
-**`readonly: true`** (`../design/00-principles.md`) refuses `--write`.
+**`readonly: true`** (`../design/00-principles.md`) refuses `--write`, with or
+without `--dry-run`.
 
 ---
 
@@ -160,22 +168,45 @@ commits only if the count passes the guard. Otherwise it rolls back and reports
 that target as refused by the guard.
 
 `--dry-run` does the same on every target and always rolls back. So a dry run
-shows the real row counts and changes nothing.
+shows the real row counts. It does not stop at a failing target: it runs every
+selected target and reports every count. Only a real write stops at the first
+failure (§5).
+
+A dry run is not free of effects. A trigger, a sequence's `NEXTVAL` and an
+autonomous transaction commit their own work, and the rollback does not undo it.
+Row locks stay held until the rollback.
 
 ### Wrong targets
 
 `--write` needs an explicit selector. With no selector, a write means no
-targets, never all of them. `max_targets` and `confirm_environments` apply
-unchanged (invariant 10).
+targets, never all of them. `max_targets` applies unchanged (invariant 10).
+`confirm_environments` asks only on a real run.
 
-**The plan fingerprint.** A dry run prints a short hash of two things: the
-normalised statement text, and the sorted list of resolved targets, each with
-its name, its `dsn` and its run-as user name (or `external`). A real `--write`
-run must be given `--plan HASH`. It is refused at plan time, with `SOPULI-20011`
-and exit 8, as `readonly` and `max_targets` are, when the hash it computes
-differs. The hash differs when the config adds a
-target, when a target points at another database or another account, and when
-the statement differs by one character.
+**The plan fingerprint.** A dry run prints a short hash of these things:
+
+- the normalised statement text;
+- the row guard: its kind (`expect` or `max`) and its value;
+- the sorted list of resolved targets, each with its name, its `dsn`, its run-as
+  user name (or `external`), and its database identity, which is
+  `DB_UNIQUE_NAME` and `CON_NAME`, read when the tool connects.
+
+**Normalisation.** The tool turns CRLF and CR into LF. It removes trailing
+whitespace, one trailing line that holds only `/`, and one trailing `;`. Nothing
+else changes: case, whitespace and literals inside the statement stay as written.
+
+Both the dry run and the real run connect to every target first, check the
+session user (§2), and read the database identity. They compute the hash before
+any statement runs anywhere. A TNS alias that points at another database then
+changes the hash.
+
+A real `--write` run must be given `--plan HASH`. It is refused at plan time,
+with `SOPULI-20011` and exit 8, as `readonly` and `max_targets` are, when the
+hash it computes differs. The hash differs when the config adds a target, when a
+target points at another database or another account, when the row guard
+changes, and when the statement differs by one character that normalisation
+keeps.
+
+A write that affects 0 rows is rolled back, and reports `changed: false` (§6).
 
 ### Lock waits
 
@@ -190,7 +221,7 @@ and the write stops there (§5).
 Targets run one after another. Each write commits on its own target. There is no
 atomic commit across targets.
 
-**A write stops at the first target that fails**, whether by its row guard, a
+**A real write stops at the first target that fails**, whether by its row guard, a
 database error or a failed connection. The targets after it are reported as not
 attempted. A guard that fails on a real run means the data changed since the dry
 run. The operator fixes the cause, dry-runs the remaining targets again, and runs
@@ -207,19 +238,27 @@ could not.
 ## 6. Invariants, read for UC-3
 
 **Invariant 5: the config is the whitelist for changes.** UC-3 changes data,
-never accounts. For UC-3, the config is the whitelist of the targets it may
-connect to, not of the rows it may touch. Invariant 5 itself does not change.
-Selectors filter the declared targets and cannot extend them.
+never accounts: DDL is refused, so a write cannot change an account. For UC-3,
+the config is the whitelist of the targets it may connect to, not of the rows it
+may touch. Selectors filter the declared targets and cannot extend them.
+
+UC-3 adds one reading exception. `sql run` reads whatever the run-as account may
+read, so a statement can list accounts that the config does not declare. The tool
+lists nothing on its own. The operator's statement and the account's own grants
+decide what is read. The exception is recorded in CLAUDE.md and in
+`../design/00-principles.md`, with the reasons in
+[#1658](../decisions/log.md#1658).
 
 **Invariant 9: a write does not converge.** The tool cannot see whether a
 statement has already taken effect. Oracle reports the rows a statement matched,
 not the rows it changed. A second `UPDATE t SET flag = 1` commits again and
-reports the same count. So `sql run --write` reports `changed: true` for every
-committed write, and `changed: false` never appears for it. It is outside the
-rule, like `creds generate` and `account reset-password`. A DBA who wants a
-repeatable write writes one, for example with `WHERE flag = 0`. The exception is
-recorded in `../design/00-principles.md` and in CLAUDE.md, with the reasons in
-[#1658](../decisions/log.md#1658).
+reports the same count. So a committed write that affects more than 0 rows
+reports `changed: true`, every time. A write that affects 0 rows is rolled back,
+and reports `changed: false`, because the count proves nothing changed. The verb
+is outside the rule, like `creds generate` and `account reset-password`. A DBA
+who wants a repeatable write writes one, for example with `WHERE flag = 0`. The
+exception is recorded in `../design/00-principles.md` and in CLAUDE.md, with the
+reasons in [#1658](../decisions/log.md#1658).
 
 **Invariant 8: `--dry-run` and a plan.** A write prints its plan first and
 supports `--dry-run`. A read changes nothing and needs neither.
@@ -229,8 +268,7 @@ check, the missing row guard, the missing selector and the plan fingerprint all
 refuse at plan time, before any target is touched.
 
 **The run lock is not taken.** The run lock (P5, Q2) is keyed on a vault secret
-path. UC-3 writes no vault document, so there is nothing to lock. The roadmap
-said "the same lock", but no lock fits. A write that two operators start at the
+path. UC-3 writes no vault document, so there is nothing to lock. A write that two operators start at the
 same time is guarded by the row guard on each target, and by the database's own
 row locks. The plan fingerprint tells each operator which targets and statement
 they ran.
@@ -273,10 +311,10 @@ and adds no mutation record.
 |---|---|
 | Which account does the tool connect as? | The run-as account, never the service account (§2) |
 | May a statement change data? | Yes, with `--write`, a row guard, a selector and a plan fingerprint (§3, §4) |
-| What does `--dry-run` mean for SQL the tool does not parse? | It runs the statement on every target and always rolls back, so it shows real row counts (§4) |
+| What does `--dry-run` mean for SQL the tool does not parse? | It runs the statement on every target and always rolls back, so it shows real row counts. Triggers, sequences and autonomous transactions can still commit their own work (§4) |
 | What is a result when targets return different rows? | One result for each target (§7) |
 | Does it take the run lock? | No. There is no vault document to lock (§6) |
-| Is it convergent? | No. A committed write reports `changed: true` (§6) |
+| Is it convergent? | No. A committed write that affects rows reports `changed: true`; a write that affects 0 rows is rolled back and reports `changed: false` (§6) |
 
 The maintainer decided these in #1657. Error codes `SOPULI-20009`,
 `SOPULI-20010` and `SOPULI-20011` are planned and are not in the error table yet.

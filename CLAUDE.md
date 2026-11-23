@@ -40,7 +40,7 @@ so. That is a design decision, not an implementation detail.
 | `docs/use-cases/uc-01-app-credential-sync.md` | application credentials: `creds generate`, `apply`, `check`, `rotate` |
 | `docs/use-cases/uc-02-personal-account-passwords.md` | personal accounts: `account` verbs, password reset, delivery methods |
 | `docs/use-cases/uc-03-run-statement.md` | `sql run`: one statement across many targets. Specified, not built |
-| `docs/use-cases/uc-05-fleet-reports.md` | the `report` commands, the only commands that list the accounts the config does not declare |
+| `docs/use-cases/uc-05-fleet-reports.md` | the `report` commands, the only commands that list the accounts the config does not declare on their own |
 | `docs/measurements.md` | quoting or adding a result measured on an Oracle release |
 | `docs/decisions/log.md` | why a decision was made, and what was rejected |
 | `docs/decisions/adr-001-privilege-model.md` | before proposing a definer-rights package. It was considered and rejected |
@@ -121,7 +121,11 @@ detail.
    every account on a declared target, declared or not, and change nothing.
    Another command reads an undeclared account only where a check on a
    declared one needs it, such as a MySQL user name at a second host, which
-   its message then names. A personal account may be declared by a predicate
+   its message then names. `sql run` (UC-3) reads whatever the connecting
+   account may read, so a statement can list undeclared accounts. The tool
+   lists nothing on its own, the operator's statement and the account's own
+   grants decide, and DDL is refused, so a write cannot change an account
+   ([#1658](docs/decisions/log.md#1658)). A personal account may be declared by a predicate
    over a profile or role; a mutating verb then still requires the account
    named on the command line. A name may not be declared
    twice. One database user on one target is bound to one place, in one
@@ -159,7 +163,8 @@ detail.
    `creds generate` and `account reset-password` report `changed: true` and say
    what they replaced. `sql run --write` is outside this rule too: it cannot
    see whether its statement already took effect, so it reports
-   `changed: true` for every committed write
+   `changed: true` for every committed write that affects rows. A write that
+   affects 0 rows is rolled back and reports `changed: false`
    ([#1658](docs/decisions/log.md#1658)). Any verb with an observable target
    state is convergent. Three exceptions. On MySQL and MariaDB, and on SQL Server on a host that
    is not Linux, `creds apply` does not log in before a change, so while a

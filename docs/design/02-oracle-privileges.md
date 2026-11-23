@@ -1854,13 +1854,14 @@ each header says what it creates and leaves behind.
 
 UC-3 (`../use-cases/uc-03-run-statement.md`) runs a statement the operator
 writes. That statement needs whatever privilege it needs, so UC-3 never runs it
-as the service account. It connects as the run-as account, which is the DBA's
-personal account unless the config names another.
+as the service account. It connects as the run-as account, which the config
+names in `run_as:`. The usual choice is the DBA's personal account.
 
 - UC-3 adds no grant to the service account, and `00_install.sql` does not
   change.
 - UC-3 never connects as the service account. The tool checks this twice: from
   the config at plan time, and from `SYS_CONTEXT('USERENV','SESSION_USER')`
-  before any statement runs.
+  before any statement runs. The second check runs only where `admin:` names a
+  user, because the tool never opens a connection with `admin:` to learn one.
 - ADR-001 is unchanged. The service account still holds `ALTER USER` and
   nothing else, and §3 still lists what it must never hold.

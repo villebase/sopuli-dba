@@ -1284,8 +1284,8 @@ vault document.
 
 A verb that runs any SQL needs whatever privilege that SQL needs, and ADR-001
 rests on the service account holding `ALTER USER` and nothing else. So UC-3
-connects as a run-as account, the DBA's personal account unless the config names
-another, and never as the service account. A statement may change data, with
+connects as a run-as account, set in `run_as:`, and never as the service
+account. The usual choice is the DBA's personal account, set under `defaults:`. A statement may change data, with
 `--write`, a row guard and a plan fingerprint. `--dry-run` runs the statement on
 every target and rolls back. Each target returns its own result.
 

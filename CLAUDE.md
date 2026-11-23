@@ -39,6 +39,7 @@ so. That is a design decision, not an implementation detail.
 | `docs/design/04-testing.md` | tests and the test stack |
 | `docs/use-cases/uc-01-app-credential-sync.md` | application credentials: `creds generate`, `apply`, `check`, `rotate` |
 | `docs/use-cases/uc-02-personal-account-passwords.md` | personal accounts: `account` verbs, password reset, delivery methods |
+| `docs/use-cases/uc-03-run-statement.md` | `sql run`: one statement across many targets. Specified, not built |
 | `docs/use-cases/uc-05-fleet-reports.md` | the `report` commands, the only commands that list the accounts the config does not declare |
 | `docs/measurements.md` | quoting or adding a result measured on an Oracle release |
 | `docs/decisions/log.md` | why a decision was made, and what was rejected |
@@ -156,8 +157,11 @@ detail.
    the second time and emits no mutation audit record. A verb that draws a fresh
    random password has nothing to converge on, so it is outside this rule:
    `creds generate` and `account reset-password` report `changed: true` and say
-   what they replaced. Any verb with an observable target state is convergent.
-   Three exceptions. On MySQL and MariaDB, and on SQL Server on a host that
+   what they replaced. `sql run --write` is outside this rule too: it cannot
+   see whether its statement already took effect, so it reports
+   `changed: true` for every committed write
+   ([#1658](docs/decisions/log.md#1658)). Any verb with an observable target
+   state is convergent. Three exceptions. On MySQL and MariaDB, and on SQL Server on a host that
    is not Linux, `creds apply` does not log in before a change, so while a
    rotation's promotion is held it sets the staged `pending` again on each
    run, until the rotation completes. On MariaDB a

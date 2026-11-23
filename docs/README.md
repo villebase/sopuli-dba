@@ -1266,7 +1266,8 @@ No 1Password store exists. These answer #1193, whether one could. The probe is
 
 ## Next use cases
 
-UC-5 has a document and is built. The others are not specified. Each has
+UC-5 has a document and is built. UC-3 has a document and is specified, not
+built. The others are not specified. Each has
 a number so that work deferred from a
 specified use case can name where it goes. A number does not change once it is
 written down, because documents, issues and pull requests cite it. A new use case
@@ -1276,20 +1277,17 @@ takes the next free number.
 
 Run one statement against a selected set of targets and report what each one
 returned: "run this against all twenty-one PDBs and tell me what each one said".
-It would use the run document's per-target results, the same selectors, and the
-same lock and safety ratchets.
+[UC-3](use-cases/uc-03-run-statement.md) specifies it, on Oracle. **It is
+specified and not built.** It uses the run document's per-target results and the
+same selectors and safety ratchets. It takes no run lock, because it writes no
+vault document.
 
-The hard part is the privilege model, not the fan-out. ADR-001 rests on the
-service account holding `ALTER USER` and nothing else.
-`02-oracle-privileges.md` §3 lists what must never be granted, and the guardrails
-in §4 exist because even `ALTER USER` reaches `SYS`. A verb that runs any SQL
-needs whatever privilege that SQL needs. So it either connects as a different
-principal or it breaks the model. That is the first question this use case must
-answer.
-
-Also open: whether a statement may change data or only read it; what
-`--dry-run` means for SQL the tool does not understand; and what a result is
-when twenty targets each return different rows.
+A verb that runs any SQL needs whatever privilege that SQL needs, and ADR-001
+rests on the service account holding `ALTER USER` and nothing else. So UC-3
+connects as a run-as account, the DBA's personal account unless the config names
+another, and never as the service account. A statement may change data, with
+`--write`, a row guard and a plan fingerprint. `--dry-run` runs the statement on
+every target and rolls back. Each target returns its own result.
 
 ### UC-4 — user provisioning
 

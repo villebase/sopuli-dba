@@ -1171,6 +1171,14 @@ Running a command twice must not make things worse. `apply` against an
 already-correct state is a no-op reporting `unchanged`. This is what makes the
 tool safe to run from a scheduler.
 
+A verb that draws a fresh random password has nothing to converge on, and is
+outside this rule: `creds generate` and `account reset-password`. So is
+`sql run --write` (UC-3). It cannot see whether its statement already took
+effect, because Oracle reports the rows a statement matched and not the rows it
+changed. A second `UPDATE t SET flag = 1` commits again and reports the same
+count. So it reports `changed: true` for every committed write, and never
+`changed: false`. The reasons are in [#1658](../decisions/log.md#1658).
+
 **Observability**
 
 - Human output by default; `--output json` for one machine-readable object,

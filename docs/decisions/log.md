@@ -6716,3 +6716,26 @@ the register.
   release only, which would leave the data already written unprotected.
   Upgrade notes written by hand into the release PR's text. 1.0, which is a
   separate decision for later.
+
+## #1658
+
+- **Decided:** 2026-11-23, #1658
+- **Question:** invariant 9 says a convergent command reports `changed: false`
+  the second time. UC-3's `sql run --write` runs a statement the tool does not
+  parse. Is it convergent?
+- **Decision:** the maintainer's. No. `sql run --write` is a third verb outside
+  invariant 9, with `creds generate` and `account reset-password`. It reports
+  `changed: true` for every committed write, and never `changed: false`. The
+  exception is added to invariant 9 in CLAUDE.md and in `00-principles.md`.
+  A DBA who wants a repeatable write writes one, for example with
+  `WHERE flag = 0`.
+- **Why:** Oracle reports the rows a statement matched, not the rows it
+  changed. A second `UPDATE t SET flag = 1` commits again and reports the same
+  count, so the tool cannot see that the first run already did the work.
+  Reporting `changed: false` would be a guess, and a wrong guess hides a
+  committed write. The cost accepted: a second run of the same write reports
+  `changed: true` again.
+- **Rejected:** parsing the statement to find out whether it converges. It
+  would need a SQL parser for a free-form statement, and it still could not
+  read the target's state. Running the statement twice and comparing counts.
+  It would commit a write the operator did not ask for.

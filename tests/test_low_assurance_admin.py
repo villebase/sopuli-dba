@@ -104,6 +104,25 @@ def test_the_message_names_the_variable_and_not_the_method() -> None:
     assert "orders-pdb" in message
 
 
+def test_the_admin_message_keeps_its_words() -> None:
+    """The admin's wording is quoted in `03-json-output.md` and unchanged."""
+    (warning,) = admin_diagnostics("orders-pdb", resolved(ENV))
+
+    assert warning.message == (
+        f"orders-pdb: the admin credential came from the environment variable "
+        f"{ADMIN_PASSWORD_ENV}, which P2 supports and flags as low assurance"
+    )
+
+
+def test_a_run_as_credential_is_named_as_such() -> None:
+    """`sql run`'s credential is flagged with the same code, and says whose it is."""
+    (warning,) = admin_diagnostics("orders-pdb", resolved(ENV), label="run-as")
+
+    assert warning.code == LOW_ASSURANCE_ADMIN
+    assert warning.message.startswith("orders-pdb: the run-as credential came from")
+    assert ADMIN_PASSWORD_ENV in warning.message
+
+
 @pytest.mark.parametrize("method", [VAULT, PROMPT, EXTERNAL])
 def test_the_sources_p2_prefers_are_silent(method: str) -> None:
     """A warning on every source is one a reader learns to filter past."""

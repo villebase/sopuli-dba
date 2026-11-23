@@ -92,10 +92,13 @@ keyring.
 (`../design/01-configuration.md` §3a). It goes on a target or under `defaults:`.
 It does not go on a group: a group carries only `match` and `safety`, as it does
 for `admin:`. The allowed `auth:` methods are `keyring`, `prompt`, `external` and
-`env`. `env` carries the same warning as it does for `admin:`. `vault` is not
+`env`. `env` carries the same warning as it does for `admin:`: `SOPULI-W022`,
+naming the run-as credential. `vault` is not
 allowed, so that the tool never logs in with a password that a store holds for
 another purpose. `--as USER` with `auth: prompt` covers a run that the config
-does not configure.
+does not configure. It asks once for the run, whatever the number of targets.
+It needs a terminal on stdin, so the statement then comes from `--file`; a run
+with `--as` and no terminal is refused with exit 2 before anything connects.
 
 The password is read from the sources the tool already has for its own
 credentials. It is never read from stdin, because `admin:` does not offer stdin

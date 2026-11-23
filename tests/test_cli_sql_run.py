@@ -17,6 +17,7 @@ from click.testing import CliRunner, Result
 from jsonschema import Draft202012Validator
 
 from conftest import WriteConfig
+from sopuli.admin import PasswordPrompt
 from sopuli.cli import cli
 from sopuli.driver.protocol import DriverError, StatementResult
 from sopuli.exit_codes import ExitCode
@@ -69,22 +70,32 @@ class FakeSession:
         result: StatementResult | None = None,
         error: Exception | None = None,
         user: str = "DBA_ALPHA",
+        identity_error: Exception | None = None,
+        user_error: Exception | None = None,
     ) -> None:
         self.target = target
         self.result = result or answer()
         self.error = error
         self.user = user
+        self.identity_error = identity_error
+        self.user_error = user_error
         self.calls: list[dict[str, Any]] = []
         self.closed = False
+        #: The ``--as`` the opener was given, set by the fixture.
+        self.as_user: str | None = None
 
     @property
     def connection_lost(self) -> bool:
         return False
 
     def session_user(self) -> str:
+        if self.user_error is not None:
+            raise self.user_error
         return self.user
 
     def database_identity(self) -> tuple[str, str]:
+        if self.identity_error is not None:
+            raise self.identity_error
         return "FREE", "FREEPDB1"
 
     def run_statement(self, statement: Statement, **options: Any) -> StatementResult:
@@ -109,6 +120,7 @@ def sessions(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         if isinstance(one, Exception):
             raise one
         session = one if one is not None else FakeSession(target.name)
+        session.as_user = as_user
         opened.append(session)
         return session
 
@@ -116,6 +128,44 @@ def sessions(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     monkeypatch.setenv("DBA_ALPHA_PW", "not-used-by-a-fake")
     given["opened"] = opened
     return given
+
+
+class Asker:
+    """A terminal that answers every question, and counts them."""
+
+    def __init__(self) -> None:
+        self.questions: list[str] = []
+
+    def __call__(self, question: str) -> str:
+        self.questions.append(question)
+        return "typed-at-the-terminal"
+
+
+@pytest.fixture
+def terminal(monkeypatch: pytest.MonkeyPatch) -> Asker:
+    """A run with somebody at the terminal, so `--as` may prompt."""
+    asker = Asker()
+    monkeypatch.setattr("sopuli.invocation.terminal_prompter", lambda _: PasswordPrompt(ask=asker))
+    return asker
+
+
+class FakeDriver:
+    """Stands in for the Oracle driver, so `_open_sql_session` itself runs."""
+
+    def __init__(self) -> None:
+        self.credentials: list[Any] = []
+
+    def connect(self, target: Any, credential: Any) -> FakeSession:
+        self.credentials.append(credential)
+        return FakeSession(target.name)
+
+
+@pytest.fixture
+def driver(monkeypatch: pytest.MonkeyPatch) -> FakeDriver:
+    fake = FakeDriver()
+    monkeypatch.setattr("sopuli.cli.driver_for", lambda *_: fake)
+    monkeypatch.setenv("DBA_ALPHA_PW", "from-the-environment")
+    return fake
 
 
 def sql_run(
@@ -310,7 +360,7 @@ def test_no_run_as_and_no_as_exit_9(write_config: WriteConfig, sessions: dict[st
 
 
 def test_run_as_equal_to_admin_refused_at_plan_time(
-    write_config: WriteConfig, sessions: dict[str, Any]
+    write_config: WriteConfig, sessions: dict[str, Any], terminal: Asker
 ) -> None:
     result = sql_run(write_config, "--as", "c##sopuli_svc", json_out=True)
 
@@ -392,3 +442,118 @@ def test_timeout_is_given_in_milliseconds(
 
     assert result.exit_code == ExitCode.SUCCESS, result.output
     assert sessions["opened"][-1].calls[0]["timeout_ms"] == 5000
+
+
+def query_file(tmp_path: Path) -> str:
+    path = tmp_path / "query.sql"
+    path.write_text(QUERY, encoding="utf-8")
+    return str(path)
+
+
+def test_as_reaches_the_opener(
+    write_config: WriteConfig, sessions: dict[str, Any], terminal: Asker, tmp_path: Path
+) -> None:
+    result = sql_run(
+        write_config, "--as", "dba_beta", "--file", query_file(tmp_path), statement=None
+    )
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert [session.as_user for session in sessions["opened"]] == ["dba_beta", "dba_beta"]
+
+
+def test_as_with_the_statement_on_stdin_is_a_usage_error(
+    write_config: WriteConfig, sessions: dict[str, Any]
+) -> None:
+    """`--as` asks at the terminal, and a piped statement leaves none (UC-3 §2)."""
+    result = sql_run(write_config, "--as", "dba_beta")
+
+    assert result.exit_code == ExitCode.USAGE, result.output
+    assert "--file" in result.output
+    assert sessions["opened"] == []
+
+
+THREE_TARGETS = (
+    f"{CONFIG}  - name: dev-alpha\n"
+    "    type: oracle\n"
+    "    dsn: db-dev.example.com:1521/ALPHA\n"
+    "    admin: { username: C##SOPULI_SVC, auth: { method: env } }\n"
+)
+
+
+def test_as_asks_once_for_every_target(
+    write_config: WriteConfig, driver: FakeDriver, terminal: Asker, tmp_path: Path
+) -> None:
+    result = sql_run(
+        write_config,
+        "--as",
+        "dba_beta",
+        "--file",
+        query_file(tmp_path),
+        statement=None,
+        config=THREE_TARGETS,
+    )
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert len(terminal.questions) == 1
+    assert [credential.username for credential in driver.credentials] == ["dba_beta"] * 3
+
+
+def test_an_env_run_as_is_flagged_low_assurance(
+    write_config: WriteConfig, driver: FakeDriver
+) -> None:
+    loaded = document(sql_run(write_config, json_out=True))
+
+    flagged = [one for one in loaded["diagnostics"] if one.get("code") == "SOPULI-W022"]
+    assert [one["target"] for one in flagged] == ["prod-alpha", "qa-alpha"]
+    assert (
+        "the run-as credential came from the environment variable DBA_ALPHA_PW"
+        in (flagged[0]["message"])
+    )
+
+
+@pytest.mark.parametrize("failing", ["user_error", "identity_error"])
+def test_a_failed_session_read_is_that_targets_error(
+    write_config: WriteConfig, sessions: dict[str, Any], failing: str
+) -> None:
+    broken = FakeSession("qa-alpha")
+    setattr(broken, failing, DriverError("ORA-03113: end-of-file", code="ORA-03113"))
+    sessions["qa-alpha"] = broken
+
+    loaded = document(sql_run(write_config, json_out=True))
+
+    by_target = {entry["target"]: entry for entry in loaded["results"]}
+    assert by_target["prod-alpha"]["state"] == "READ"
+    assert by_target["qa-alpha"]["state"] == "ERROR"
+    assert by_target["qa-alpha"]["error"]["code"] == "ORA-03113"
+    assert broken.calls == []
+    assert broken.closed
+    assert loaded["exit_code"] == ExitCode.PARTIAL
+
+
+def test_a_column_named_target_gets_a_block_per_target(
+    write_config: WriteConfig, sessions: dict[str, Any]
+) -> None:
+    for name in ("prod-alpha", "qa-alpha"):
+        sessions[name] = FakeSession(name, result=answer(("TARGET",), (("x",),)))
+
+    text = click.unstyle(sql_run(write_config).output)
+
+    assert text.count("TARGET") == 2
+    assert "\nprod-alpha  1 row\n  TARGET\n  x\n" in text
+
+
+def test_a_long_or_multiline_value_is_marked_in_text_and_whole_in_json(
+    write_config: WriteConfig, sessions: dict[str, Any]
+) -> None:
+    long = "a" * 60
+    rows = ((long,), ("first\nsecond",))
+    sessions["prod-alpha"] = FakeSession("prod-alpha", result=answer(("V",), rows))
+
+    text = click.unstyle(sql_run(write_config, "--target", "prod-alpha").output)
+    assert "a" * 37 + "..." in text
+    assert long not in text
+    assert "first\\nsecond" in text
+
+    sessions["prod-alpha"] = FakeSession("prod-alpha", result=answer(("V",), rows))
+    loaded = document(sql_run(write_config, "--target", "prod-alpha", json_out=True))
+    assert loaded["results"][0]["rows"] == [[long], ["first\nsecond"]]

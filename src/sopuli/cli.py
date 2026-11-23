@@ -100,7 +100,7 @@ from sopuli import report_privileges as privilege_states
 from sopuli import rotate as rotation
 from sopuli import status as status_states
 from sopuli import strategy as strategies
-from sopuli.admin import AdminCredentialError, RefReader, resolve_run_as
+from sopuli.admin import AdminCredentialError, RefReader, ask_once_per_user, resolve_run_as
 from sopuli.admin import Resolved as AdminResolved
 from sopuli.admin import resolve as admin_resolve
 from sopuli.admin import store_name as admin_store_name
@@ -6369,6 +6369,16 @@ def sql_run_command(
     Oracle only.
     """
     document = run.document
+    if as_user is not None:
+        if run.prompt is None:
+            # stdin is not a terminal, so there is nobody to type the password.
+            raise click.UsageError(
+                "--as asks for the password at the terminal; run it from a terminal "
+                "and give the statement with --file PATH"
+            )
+        # One account named on the command line is one password, however many
+        # targets the run covers.
+        run = replace(run, prompt=ask_once_per_user(run.prompt))
     statement = classify(_read_statement(path))
     if statement.kind is not StatementKind.READ:
         raise StatementRefusedError(
@@ -6421,10 +6431,18 @@ def _open_sql_session(
     """One connection to ``target`` as the run-as account (UC-3 §2).
 
     Never with ``admin:``. :func:`~sopuli.admin.resolve_run_as` reads the
-    password, and it goes only to the driver's ``connect``.
+    password, and it goes only to the driver's ``connect``. A password from an
+    environment variable is flagged with `SOPULI-W022`, once per target, as
+    :func:`_admin_credential` flags the admin's.
     """
     driver = driver_for(target.target, _driver_context(run, config))
     resolved = resolve_run_as(target, env=os.environ, prompt=run.prompt, as_user=as_user)
+    already = {(one.code, one.target) for one in run.document.diagnostics if one.code is not None}
+    run.document.diagnostics.extend(
+        one
+        for one in admin_diagnostics(target.name, resolved, label="run-as")
+        if (one.code, one.target) not in already
+    )
     return driver.connect(target, resolved.credential)
 
 

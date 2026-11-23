@@ -2,7 +2,10 @@
 
 The text starts with the statement as sent. When every target that answered
 returned the same columns, the rows are one table with a ``TARGET`` column;
-otherwise each target has a block of its own. A line per target then gives its
+otherwise, or when the statement returns a column named ``TARGET``, each target
+has a block of its own. The shared table cuts a value longer than 40
+characters with ``...`` and shows a line break as ``\\n``; the JSON keeps the
+whole value. A line per target then gives its
 row count, ``truncated`` where the rows were cut, or why it gave no answer.
 """
 
@@ -22,6 +25,7 @@ from sopuli.sql_run import READ, TargetOutcome
 #: The widest a target name or a value is shown. The whole value is in the JSON.
 _TARGET = 30
 _VALUE = 40
+_TARGET_HEADING = "TARGET"
 
 
 def statement_section(statement: Statement, fingerprint: str | None = None) -> dict[str, Any]:
@@ -81,7 +85,11 @@ def render_text(statement: Statement, outcomes: Sequence[TargetOutcome]) -> str:
         return "\n".join(lines)
     answered = [outcome for outcome in outcomes if outcome.result is not None]
     shapes = {outcome.result.columns for outcome in answered if outcome.result is not None}
-    if len(shapes) == 1:
+    # A result column of that name would read as the target's own column.
+    shared = len(shapes) == 1 and not any(
+        column.upper() == _TARGET_HEADING for shape in shapes for column in shape
+    )
+    if shared:
         lines.extend(_one_table(answered))
         if any(outcome.result is not None and outcome.result.rows for outcome in answered):
             lines.append("")
@@ -98,7 +106,7 @@ def _one_table(answered: Sequence[TargetOutcome]) -> list[str]:
     """Every answering target's rows under one heading, with the target first."""
     first = answered[0].result
     assert first is not None
-    columns = [Column("TARGET", _TARGET), *(Column(name, _VALUE) for name in first.columns)]
+    columns = [Column(_TARGET_HEADING, _TARGET), *(Column(name, _VALUE) for name in first.columns)]
     rows: list[list[Cell | str]] = [
         [outcome.target, *(_text(value) for value in row)]
         for outcome in answered

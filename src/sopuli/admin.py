@@ -99,6 +99,13 @@ UNATTENDED_SOURCES = (
     "with a wallet"
 )
 
+#: The same for `run_as:`, which has no `vault` method and never reads the
+#: admin's variable (UC-3 §2).
+RUN_AS_UNATTENDED_SOURCES = (
+    "name a source that needs no one: `auth: { method: keyring, entry: … }`, "
+    "`auth: { method: env, password_env: … }`, or `auth: external` with a wallet"
+)
+
 #: Shows a line and reads a password without echoing it. Returns a ``str``, and
 #: that is deliberate: :func:`getpass.getpass` is the obvious implementation and
 #: this makes it usable *as it is*, with :class:`PasswordPrompt` wrapping the
@@ -487,6 +494,24 @@ def resolve_run_as(
     )
 
 
+def ask_once_per_user(prompt: Prompter) -> Prompter:
+    """``prompt``, asking once per user name for the whole run.
+
+    For `sql run --as USER`. :class:`PasswordPrompt` asks once per declared
+    credential, and ``--as`` is declared nowhere in the file: it is one account
+    the operator named once, so one password covers every target.
+    """
+    answers: dict[str, Secret] = {}
+
+    def ask(target: ExpandedTarget, username: str | None) -> Secret:
+        key = username or ""
+        if key not in answers:
+            answers[key] = prompt(target, username)
+        return answers[key]
+
+    return ask
+
+
 def run_as_user(target: ExpandedTarget, as_user: str | None) -> str:
     """The name `sql run` connects as, or ``"external"``. Pure, for the fingerprint."""
     declared = _declared_run_as(target, as_user)
@@ -593,7 +618,10 @@ def _from_prompt(
             f"target {target.name!r} asks for its {block} password interactively, "
             f"and there is nobody here to ask",
             at=_at(target, "auth", block=block),
-            hint=f"run it from a terminal, or {UNATTENDED_SOURCES}",
+            hint=(
+                f"run it from a terminal, or "
+                f"{RUN_AS_UNATTENDED_SOURCES if block != ADMIN_BLOCK else UNATTENDED_SOURCES}"
+            ),
         )
     return prompt(target, username), "an interactive prompt"
 

@@ -115,6 +115,13 @@ def test_a_run_as_without_a_prompter_says_nobody_is_there() -> None:
 
     assert caught.value.exit_code == ExitCode.ABORTED
     assert "run_as" in str(caught.value)
+    # The advice fits `run_as:`, which has no vault method and never reads the
+    # admin's variable.
+    hint = caught.value.hint or ""
+    assert "keyring" in hint
+    assert "password_env" in hint
+    assert "vault" not in hint
+    assert "SOPULI_DB_ADMIN_PASSWORD" not in hint
 
 
 def test_env_method_is_low_assurance() -> None:

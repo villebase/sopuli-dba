@@ -46,9 +46,9 @@ from dataclasses import dataclass, field
 
 from sopuli import os_keyring
 from sopuli.config.bindings import admin_store_in_file
-from sopuli.config.errors import ConfigError, KeyPath
-from sopuli.config.expansion import declared_at
-from sopuli.config.model import AdminAuth, Config, ExpandedTarget, MaterialRef
+from sopuli.config.errors import ROOT, ConfigError, KeyPath
+from sopuli.config.expansion import declared_at, run_as_at
+from sopuli.config.model import AdminAuth, AdminCredential, Config, ExpandedTarget, MaterialRef
 from sopuli.config.secret_refs import SecretRef
 from sopuli.config.targets import ADMIN_METHODS, ADMIN_PASSWORD_ENV, EXTERNAL
 from sopuli.config.vault_env import DEFAULT_STORE_VARIABLE
@@ -61,6 +61,12 @@ from sopuli.secrets import Secret
 #: §6's username variable. Overrides a target's ``username:`` per execution
 #: context, and is ignored under ``external`` -- see :func:`_username`.
 ADMIN_USER_ENV = "SOPULI_DB_ADMIN_USER"
+
+#: The config keys a credential is written under, for an error's location and words.
+ADMIN_BLOCK = "admin"
+RUN_AS_BLOCK = "run_as"
+#: Not a key: the account came from the command line, so no key in the file is at fault.
+AS_BLOCK = "--as"
 
 VAULT = "vault"
 PROMPT = "prompt"
@@ -387,7 +393,33 @@ def resolve(
     auth = _auth(target)
     if auth is None:
         raise _no_source(target)
+    return _resolve_auth(
+        target,
+        auth,
+        block=ADMIN_BLOCK,
+        username=_username(target, env=env),
+        env=env,
+        read_ref=read_ref,
+        prompt=prompt,
+    )
 
+
+def _resolve_auth(
+    target: ExpandedTarget,
+    auth: AdminAuth,
+    *,
+    block: str,
+    username: str | None,
+    env: Mapping[str, str],
+    read_ref: RefReader | None = None,
+    prompt: Prompter | None = None,
+) -> Resolved:
+    """Work from one ``auth:`` block, whichever of ``admin:`` or ``run_as:`` wrote it.
+
+    The one code path both :func:`resolve` and :func:`resolve_run_as` use, so a
+    source is read one way for both. ``block`` is the key the block was written
+    under, for the message and the location of an error.
+    """
     if auth.method == EXTERNAL:
         # No username, and none read from the environment either: the wallet
         # supplies both halves, and `Credential.external` is what says so.
@@ -397,21 +429,19 @@ def resolve(
             source="an external password store",
         )
 
-    username = _username(target, env=env)
-
     if auth.method == VAULT:
         secret = _read_ref(auth.secret, target=target, read_ref=read_ref)
         source = f"vault ref {auth.secret}"
     elif auth.method == PROMPT:
-        secret, source = _from_prompt(target, username=username, prompt=prompt)
+        secret, source = _from_prompt(target, username=username, prompt=prompt, block=block)
     elif auth.method == ENV:
-        secret, source = _from_env(auth, target=target, env=env)
+        secret, source = _from_env(auth, target=target, env=env, block=block)
     elif auth.method == KEYRING:
-        secret, source = _from_keyring(auth, target=target, env=env)
+        secret, source = _from_keyring(auth, target=target, env=env, block=block)
     else:  # pragma: no cover - `ADMIN_METHODS` is a closed set the builder checks
         raise AdminCredentialError(
-            f"target {target.name!r} names an unknown admin auth method {auth.method!r}",
-            at=_at(target, "auth", "method"),
+            f"target {target.name!r} names an unknown {block} auth method {auth.method!r}",
+            at=_at(target, "auth", "method", block=block),
         )
 
     return Resolved(
@@ -421,11 +451,103 @@ def resolve(
     )
 
 
+def _declared_run_as(target: ExpandedTarget, as_user: str | None) -> AdminCredential | None:
+    """What `sql run` connects as, before any source is read: ``--as``, else ``run_as:``."""
+    if as_user is not None:
+        return AdminCredential(username=as_user, auth=AdminAuth(method=PROMPT))
+    return target.run_as
+
+
+def resolve_run_as(
+    target: ExpandedTarget,
+    *,
+    env: Mapping[str, str],
+    prompt: Prompter | None,
+    as_user: str | None,
+) -> Resolved:
+    """The credential `sql run` connects to ``target`` with (UC-3 §5).
+
+    ``as_user``, from ``--as``, wins over any ``run_as:`` and means the named
+    account with a prompt. Without it the target's ``run_as:`` is used, and
+    without that this refuses and says both ways to fix it. There is no
+    ``vault`` source: the config never names one for ``run_as:``.
+
+    The admin's ``SOPULI_DB_ADMIN_USER`` does not apply here. It names the admin.
+    """
+    declared = _declared_run_as(target, as_user)
+    if declared is None or declared.auth is None:
+        raise _no_run_as(target)
+    return _resolve_auth(
+        target,
+        declared.auth,
+        block=AS_BLOCK if as_user is not None else RUN_AS_BLOCK,
+        username=declared.username,
+        env=env,
+        prompt=prompt,
+    )
+
+
+def run_as_user(target: ExpandedTarget, as_user: str | None) -> str:
+    """The name `sql run` connects as, or ``"external"``. Pure, for the fingerprint."""
+    declared = _declared_run_as(target, as_user)
+    if declared is None or declared.auth is None:
+        raise _no_run_as(target)
+    if declared.auth.method == EXTERNAL:
+        return EXTERNAL
+    if declared.username is None:  # pragma: no cover - references refuses a `run_as` with none
+        raise _no_run_as(target)
+    return declared.username
+
+
+def refuse_service_account(
+    target: ExpandedTarget, as_user: str | None, *, env: Mapping[str, str] | None = None
+) -> None:
+    """`sql run` never connects as the account the tool itself uses (UC-3 §5).
+
+    Refused with ``SOPULI-20010`` when the run-as name equals the admin's by
+    ``upper()``, or when both are ``external`` on one ``dsn``, where one wallet
+    entry would be both. ``env`` adds ``SOPULI_DB_ADMIN_USER``, which overrides
+    the admin's written name. An ``external`` admin has no name to compare, so a
+    run-as name is allowed there. That is the one gap, and the document says so.
+    """
+    # Here and not at the top: `sopuli.safety` imports this module.
+    from sopuli.safety import ServiceAccountRefusedError
+
+    who = run_as_user(target, as_user)
+    admin = target.target.admin
+    if admin is None:
+        return
+    if admin.auth is not None and admin.auth.method == EXTERNAL:
+        if who == EXTERNAL:
+            raise ServiceAccountRefusedError(
+                f"target {target.name!r} would run statements through the same external "
+                f"credential the tool uses for its own work",
+                at=run_as_at(target),
+                hint="name an account with `run_as: { username: …, auth: … }` or `--as USER`",
+            )
+        return
+    from_variable = (env or {}).get(ADMIN_USER_ENV)
+    admin_user = from_variable or admin.username
+    if admin_user is not None and who != EXTERNAL and who.upper() == admin_user.upper():
+        source = f"named by ${ADMIN_USER_ENV}" if from_variable else "named by `admin.username`"
+        came_from = "`--as`" if as_user is not None else "`run_as.username`"
+        raise ServiceAccountRefusedError(
+            f"target {target.name!r} would run statements as {who!r} (from {came_from}), "
+            f"the account the tool uses for its own work ({source})",
+            at=ROOT if as_user is not None else run_as_at(target).key("username"),
+            hint="name a personal or owner account with `run_as:` or `--as USER`",
+        )
+
+
 # ------------------------------------------------------------------ sources ---
 
 
 def _from_prompt(
-    target: ExpandedTarget, *, username: str | None, prompt: Prompter | None
+    target: ExpandedTarget,
+    *,
+    username: str | None,
+    prompt: Prompter | None,
+    block: str = ADMIN_BLOCK,
 ) -> tuple[Secret, str]:
     """``method: prompt`` -- and the refusal when there is nobody there.
 
@@ -443,16 +565,16 @@ def _from_prompt(
     """
     if prompt is None:
         raise NobodyToAskError(
-            f"target {target.name!r} asks for its admin password interactively, "
+            f"target {target.name!r} asks for its {block} password interactively, "
             f"and there is nobody here to ask",
-            at=_at(target, "auth"),
+            at=_at(target, "auth", block=block),
             hint=f"run it from a terminal, or {UNATTENDED_SOURCES}",
         )
     return prompt(target, username), "an interactive prompt"
 
 
 def _from_env(
-    auth: AdminAuth, *, target: ExpandedTarget, env: Mapping[str, str]
+    auth: AdminAuth, *, target: ExpandedTarget, env: Mapping[str, str], block: str = ADMIN_BLOCK
 ) -> tuple[Secret, str]:
     """``method: env`` -- ``password_env:``, or §6's pair.
 
@@ -471,20 +593,24 @@ def _from_env(
     descriptions of one rule.
     """
     name = auth.password_env or ADMIN_PASSWORD_ENV
-    where = f"target {target.name!r} admin credential"
+    where = f"target {target.name!r} {block} credential"
     try:
         secret = resolve_material(MaterialRef(kind="env", location=name), env=env, where=where)
     except MaterialError as error:
         # Where `password_env:` was written, that is the key to point at. Where
         # it was not, the variable is a default and no such key exists -- naming
         # one would send the reader looking for a line that is not there.
-        at = _at(target, "auth", "password_env") if auth.password_env else _at(target, "auth")
+        at = (
+            _at(target, "auth", "password_env", block=block)
+            if auth.password_env
+            else _at(target, "auth", block=block)
+        )
         raise AdminCredentialError(error.message, at=at, hint=error.hint) from error
     return secret, f"the environment variable {name}"
 
 
 def _from_keyring(
-    auth: AdminAuth, *, target: ExpandedTarget, env: Mapping[str, str]
+    auth: AdminAuth, *, target: ExpandedTarget, env: Mapping[str, str], block: str = ADMIN_BLOCK
 ) -> tuple[Secret, str]:
     """``method: keyring`` -- one entry under the service ``sopuli`` (#1417).
 
@@ -496,15 +622,15 @@ def _from_keyring(
     entry = auth.entry
     if entry is None:  # pragma: no cover - `Method(required=("entry",))` guarantees one
         raise AdminCredentialError(
-            f"target {target.name!r} authenticates from the OS keyring and names no entry",
-            at=_at(target, "auth", "entry"),
+            f"target {target.name!r} {block} authenticates from the OS keyring and names no entry",
+            at=_at(target, "auth", "entry", block=block),
         )
-    where = f"target {target.name!r} admin credential"
+    where = f"target {target.name!r} {block} credential"
     try:
         secret = resolve_material(MaterialRef(kind=KEYRING, location=entry), env=env, where=where)
     except MaterialError as error:
         raise AdminCredentialError(
-            error.message, at=_at(target, "auth", "entry"), hint=error.hint
+            error.message, at=_at(target, "auth", "entry", block=block), hint=error.hint
         ) from error
     return secret, os_keyring.describe(entry)
 
@@ -540,7 +666,7 @@ def _auth(target: ExpandedTarget) -> AdminAuth | None:
     return None if admin is None else admin.auth
 
 
-def _at(target: ExpandedTarget, *parts: str) -> KeyPath:
+def _at(target: ExpandedTarget, *parts: str, block: str = ADMIN_BLOCK) -> KeyPath:
     """Where inside a target's ``admin:`` block something was written.
 
     :func:`~sopuli.config.expansion.declared_at` points at the target -- or at
@@ -550,7 +676,10 @@ def _at(target: ExpandedTarget, *parts: str) -> KeyPath:
     admin checks; a shared one would have to live somewhere both can import, and
     two callers is not yet a module.
     """
-    at = declared_at(target, "admin")
+    if block == AS_BLOCK:
+        # `--as` wrote nothing in the file, so no key is the line to edit.
+        return ROOT
+    at = run_as_at(target) if block == RUN_AS_BLOCK else declared_at(target, block)
     for part in parts:
         at = at.key(part)
     return at
@@ -574,6 +703,22 @@ def _username(target: ExpandedTarget, *, env: Mapping[str, str]) -> str | None:
     """
     declared = target.target.admin.username if target.target.admin is not None else None
     return env.get(ADMIN_USER_ENV) or declared
+
+
+def _no_run_as(target: ExpandedTarget) -> AdminCredentialError:
+    """Neither ``--as`` nor a ``run_as:`` says who `sql run` connects as.
+
+    It never falls back to the admin: the admin is the tool's own account, and a
+    statement run as it is the case `refuse_service_account` exists to stop.
+    """
+    return AdminCredentialError(
+        f"target {target.name!r} has no account to run the statement as",
+        at=declared_at(target, RUN_AS_BLOCK),
+        hint=(
+            "pass `--as USER`, which asks for that account's password, or declare "
+            "`run_as: { username: …, auth: … }` on the target or in `defaults:`"
+        ),
+    )
 
 
 def _no_source(target: ExpandedTarget) -> AdminCredentialError:

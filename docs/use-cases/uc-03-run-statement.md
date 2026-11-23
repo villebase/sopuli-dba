@@ -6,13 +6,15 @@ Depends on: `../design/00-principles.md`, `../design/01-configuration.md`,
 This document specifies a command that runs one statement against a selected
 set of declared targets and shows what each target returned. **The statement
 check, the row guard, the plan fingerprint and the value conversion are built
-(#1659). No command uses them yet.** The command name, `sopuli sql run`, is a
-working name. The parts are built in this order, each by its own issue:
+(#1659), and so is the `run_as:` configuration with its plan-time refusal of the
+service account (#1660). No command uses them yet.** The command name,
+`sopuli sql run`, is a working name. The parts are built in this order, each by
+its own issue:
 
 | Part | Issue |
 |---|---|
 | The pure layer: the statement check, the plan fingerprint and the row guards | #1659, built |
-| The `run_as:` configuration | (open: #1660) |
+| The `run_as:` configuration | #1660, built. The session check of §2 is part of the runner |
 | The Oracle runner | (open: #1661) |
 | `sql run` for reads | (open: #1662) |
 | `--write` | (open: #1663) |
@@ -318,5 +320,5 @@ and adds no mutation record.
 | Does it take the run lock? | No. There is no vault document to lock (§6) |
 | Is it convergent? | No. A committed write that affects rows reports `changed: true`; a write that affects 0 rows is rolled back and reports `changed: false` (§6) |
 
-The maintainer decided these in #1657. Error codes `SOPULI-20009`,
-`SOPULI-20010` and `SOPULI-20011` are planned and are not in the error table yet.
+The maintainer decided these in #1657. Error code `SOPULI-20011` is planned and
+is not in the error table yet.

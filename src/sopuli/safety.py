@@ -96,6 +96,16 @@ class RefusedError(ConfigError):
     category = "policy"
 
 
+#: ``error.code`` for `sql run` naming the tool's own account (`03-json-output.md` §3).
+SERVICE_ACCOUNT_REFUSED = "SOPULI-20010"
+
+
+class ServiceAccountRefusedError(RefusedError):
+    """`sql run` was told to connect as the account the tool uses for its own work."""
+
+    code = SERVICE_ACCOUNT_REFUSED
+
+
 @dataclass(frozen=True)
 class ReadonlyTarget:
     """One target this run reaches whose ``safety:`` block refuses mutation."""

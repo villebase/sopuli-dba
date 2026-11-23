@@ -638,6 +638,8 @@ class Target:
     environment: str | None = None
     vault: str | None = None
     admin: AdminCredential | None = None
+    #: The account `sql run` connects as (UC-3 §5). Unset means `defaults.run_as`.
+    run_as: AdminCredential | None = None
     oracle: TargetOracle = field(default_factory=TargetOracle)
     postgres: TargetPostgres | None = None
     mysql: TargetMysql | None = None
@@ -686,6 +688,7 @@ class TargetPatch:
     environment: str | None = None
     vault: str | None = None
     admin: AdminCredential | None = None
+    run_as: AdminCredential | None = None
     oracle: TargetOracle | None = None
     postgres: PostgresPatch | None = None
     mysql: MysqlPatch | None = None
@@ -783,6 +786,10 @@ class ExpandedTarget:
     #: contributions, and the one resolver takes the safest (invariant 10, §9;
     #: decision #424).
     template_safety: Safety | None = None
+    #: The account `sql run` connects as: the target's own ``run_as:``, else
+    #: ``defaults.run_as``, else ``None`` (UC-3 §5). Set where the estate is
+    #: expanded, because that is where both are in hand.
+    run_as: AdminCredential | None = None
 
     @property
     def name(self) -> str:
@@ -906,6 +913,8 @@ class Defaults:
     profile: str | None = None
     safety: Safety | None = None
     locking: Locking | None = None
+    #: The account `sql run` connects as, where a target names none (UC-3 §5).
+    run_as: AdminCredential | None = None
     #: Partial entries patching stores declared at the top level (C13).
     #:
     #: Layer 5, so these are **outranked by the declaration itself**: they supply

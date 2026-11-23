@@ -1,0 +1,236 @@
+"""`sql run`'s Oracle runner against a real server (UC-3, #1661). Tier 1.
+
+A throwaway table is created in the test schema for each test and dropped
+afterwards. The runner's contract is what the tests pin: a read cannot write, a
+write commits only when the caller says so, the guard passes and a row changed,
+and a call that waits too long is rolled back and mapped.
+"""
+
+from __future__ import annotations
+
+import contextlib
+import os
+import time
+import uuid
+from collections.abc import Iterator
+from typing import Any
+
+import pytest
+
+from oracle_harness import Environment
+from sopuli.driver.protocol import DriverError
+from sopuli.sql.guard import RowGuard
+from sopuli.sql.statement import classify
+
+USER = os.environ.get("SOPULI_TEST_ORACLE_USER", "system")
+PASSWORD = os.environ.get("SOPULI_TEST_ORACLE_PASSWORD", "sopuli-test")
+
+
+def _run(runner: Any, text: str, **options: Any) -> Any:
+    settings: dict[str, Any] = {"guard": None, "commit": False, "max_rows": 100, "timeout_ms": 0}
+    settings.update(options)
+    return runner.run_statement(classify(text), **settings)
+
+
+def _hand_built_read(text: str) -> Any:
+    """A read `Statement` over text `classify` would call a write.
+
+    The check is by keyword and runs before the runner. This builds the case
+    the check cannot see, so the test shows the server is the second guard.
+    """
+    from sopuli.sql.statement import Statement, StatementKind
+
+    return Statement(text=text, kind=StatementKind.READ, keyword="SELECT")
+
+
+def _execute(connection: Any, text: str) -> None:
+    with connection.cursor() as cursor:
+        cursor.execute(text)
+
+
+@pytest.fixture(scope="module")
+def _table_name(oracle_target: Environment) -> Iterator[str]:
+    """``(k NUMBER, v VARCHAR2)``, created once for the module and dropped at its end.
+
+    Once, because a read-only transaction that touches a table created in the
+    same second fails with ORA-01466. The rows are put back before each test.
+    """
+    oracledb = pytest.importorskip("oracledb")
+    if oracle_target.unreachable_reason:
+        pytest.skip(oracle_target.unreachable_reason)
+    name = f"SOPULI_RUN_{uuid.uuid4().hex[:8].upper()}"
+    connection = oracledb.connect(user=USER, password=PASSWORD, dsn=oracle_target.dsn)
+    try:
+        _execute(connection, f"CREATE TABLE {name} (k NUMBER, v VARCHAR2(20))")
+        time.sleep(2)
+        yield name
+    finally:
+        with contextlib.suppress(Exception):
+            _execute(connection, f"DROP TABLE {name} PURGE")
+        connection.close()
+
+
+@pytest.fixture
+def table(live_oracle: Environment, _table_name: str) -> str:
+    """The module's table holding rows 1 to 5."""
+    oracledb = pytest.importorskip("oracledb")
+    connection = oracledb.connect(user=USER, password=PASSWORD, dsn=live_oracle.dsn)
+    try:
+        _execute(connection, f"DELETE FROM {_table_name}")
+        for k in range(1, 6):
+            _execute(connection, f"INSERT INTO {_table_name} VALUES ({k}, 'v{k}')")
+        connection.commit()
+    finally:
+        connection.close()
+    return _table_name
+
+
+@pytest.fixture
+def second_connection(live_oracle: Environment) -> Iterator[Any]:
+    oracledb = pytest.importorskip("oracledb")
+    connection = oracledb.connect(user=USER, password=PASSWORD, dsn=live_oracle.dsn)
+    try:
+        yield connection
+    finally:
+        connection.close()
+
+
+def _count(connection: Any, text: str) -> int:
+    with connection.cursor() as cursor:
+        cursor.execute(text)
+        return int(cursor.fetchone()[0])
+
+
+def test_the_session_is_a_statement_runner(session: Any) -> None:
+    from sopuli.driver.protocol import StatementRunner
+
+    assert isinstance(session, StatementRunner)
+
+
+def test_read_returns_columns_and_rows(session: Any, table: str) -> None:
+    result = _run(session, f"SELECT k, v FROM {table} ORDER BY k")
+    assert result.columns == ("K", "V")
+    assert result.rows[0] == (1, "v1")
+    assert len(result.rows) == 5
+    assert result.row_count == 5
+    assert result.truncated is False
+    assert result.committed is False
+    assert result.guard_passed is None
+
+
+def test_read_truncates(session: Any, table: str) -> None:
+    result = _run(session, f"SELECT k FROM {table} ORDER BY k", max_rows=3)
+    assert [row[0] for row in result.rows] == [1, 2, 3]
+    assert result.row_count == 3
+    assert result.truncated is True
+
+
+def test_read_cannot_write(session: Any, table: str) -> None:
+    statement = _hand_built_read(f"UPDATE {table} SET v = 'changed'")
+    with pytest.raises(DriverError) as raised:
+        session.run_statement(statement, guard=None, commit=True, max_rows=10, timeout_ms=0)
+    assert raised.value.code == "ORA-01456"
+    assert "ORA-01456" in raised.value.message
+    assert _count(session.connection, f"SELECT COUNT(*) FROM {table} WHERE v = 'changed'") == 0
+
+
+def test_write_commits_when_guard_passes(session: Any, table: str, second_connection: Any) -> None:
+    result = _run(
+        session,
+        f"UPDATE {table} SET v = 'changed' WHERE k = 2",
+        guard=RowGuard(expect=1),
+        commit=True,
+    )
+    assert (result.row_count, result.committed, result.guard_passed) == (1, True, True)
+    assert result.columns == ()
+    assert result.rows == ()
+    assert _count(second_connection, f"SELECT COUNT(*) FROM {table} WHERE v = 'changed'") == 1
+
+
+def test_write_rolls_back_when_guard_fails(
+    session: Any, table: str, second_connection: Any
+) -> None:
+    result = _run(
+        session,
+        f"UPDATE {table} SET v = 'changed' WHERE k IN (1, 2)",
+        guard=RowGuard(expect=1),
+        commit=True,
+    )
+    assert (result.row_count, result.committed, result.guard_passed) == (2, False, False)
+    assert _count(second_connection, f"SELECT COUNT(*) FROM {table} WHERE v = 'changed'") == 0
+    assert _count(session.connection, f"SELECT COUNT(*) FROM {table} WHERE v = 'changed'") == 0
+
+
+def test_dry_run_write_never_commits(session: Any, table: str, second_connection: Any) -> None:
+    result = _run(
+        session, f"DELETE FROM {table} WHERE k <= 3", guard=RowGuard(maximum=3), commit=False
+    )
+    assert (result.row_count, result.committed, result.guard_passed) == (3, False, True)
+    assert _count(second_connection, f"SELECT COUNT(*) FROM {table}") == 5
+    assert _count(session.connection, f"SELECT COUNT(*) FROM {table}") == 5
+
+
+def test_write_of_zero_rows_rolls_back(session: Any, table: str) -> None:
+    result = _run(session, f"UPDATE {table} SET v = 'x' WHERE k = 99", commit=True)
+    assert (result.row_count, result.committed, result.guard_passed) == (0, False, None)
+
+
+def test_database_identity(session: Any) -> None:
+    unique_name, container = session.database_identity()
+    assert unique_name
+    assert container
+
+
+def test_session_user(session: Any) -> None:
+    assert session.session_user() == USER.upper()
+
+
+def test_values_convert(session: Any) -> None:
+    result = _run(
+        session,
+        "SELECT CAST(NULL AS VARCHAR2(5)) AS nul,"
+        " DATE '2026-11-23' AS d,"
+        " TIMESTAMP '2026-11-23 10:11:12.5' AS ts,"
+        " CAST(12.50 AS NUMBER(10,2)) AS dec,"
+        " CAST(7 AS NUMBER(38)) AS whole,"
+        " TO_CLOB(RPAD('x', 4000, 'x')) || TO_CLOB(RPAD('y', 1000, 'y')) AS big,"
+        " HEXTORAW('DEADBEEF') AS r"
+        " FROM dual",
+    )
+    assert result.columns == ("NUL", "D", "TS", "DEC", "WHOLE", "BIG", "R")
+    nul, day, stamp, dec, whole, big, raw = result.rows[0]
+    assert nul is None
+    assert day == "2026-11-23T00:00:00"
+    assert stamp == "2026-11-23T10:11:12.500000"
+    assert dec == "12.5"
+    assert whole == 7
+    assert isinstance(big, str)
+    assert len(big) == 4000
+    assert raw == "deadbeef"
+    assert result.truncated is True
+
+
+def test_lock_wait_times_out(session: Any, table: str, second_connection: Any) -> None:
+    _execute(second_connection, f"UPDATE {table} SET v = 'held' WHERE k = 1")
+    try:
+        with pytest.raises(DriverError) as raised:
+            _run(
+                session,
+                f"UPDATE {table} SET v = 'mine' WHERE k = 1",
+                commit=True,
+                timeout_ms=2000,
+            )
+        # The client closes the connection on a call timeout and reports DPY-4011;
+        # ORA-03156 is in its message, and the mapped hint says what happened.
+        assert raised.value.code == "DPY-4011"
+        assert "ORA-03156" in raised.value.message
+        assert "rolled the transaction back" in (raised.value.hint or "")
+    finally:
+        second_connection.rollback()
+    assert _count(second_connection, f"SELECT COUNT(*) FROM {table} WHERE v = 'mine'") == 0
+
+
+def test_the_call_timeout_is_restored(session: Any, table: str) -> None:
+    before = session.connection.call_timeout
+    _run(session, f"SELECT k FROM {table}", timeout_ms=5000)
+    assert session.connection.call_timeout == before

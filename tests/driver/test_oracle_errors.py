@@ -337,6 +337,37 @@ def test_a_lost_session_is_connectivity_and_says_why_it_may_have_gone() -> None:
     assert found.message == SESSION_LOST
 
 
+#: What python-oracledb 26.0.0 raised in thick mode when `sql run`'s call timeout
+#: fired on a statement waiting for a row lock (#1661), on 23.26.3.0.0.
+CALL_TIMED_OUT = (
+    "DPY-4011: the database or network closed the connection\n"
+    "DPI-1080: connection was closed by ORA-03156\n"
+    "ORA-03156: OCI call timed out\n"
+    "Help: https://docs.oracle.com/error-help/db/ora-03156/"
+)
+
+
+def test_a_call_timeout_is_not_read_as_a_lost_session() -> None:
+    """#1661: the client closes the connection on a call timeout, so the code
+    read is DPY-4011. Its message names ORA-03156, and the hint says the
+    transaction was rolled back, which the lost-session hint cannot say."""
+    found = classify("DPY-4011", CALL_TIMED_OUT)
+
+    assert found.code == "DPY-4011"
+    assert found.kind == "call_timeout"
+    assert found.hint is not None
+    assert "rolled the transaction back" in found.hint
+    assert found.message == CALL_TIMED_OUT
+
+
+def test_a_write_in_a_read_only_transaction_says_nothing_was_changed() -> None:
+    found = classify("ORA-01456", "ORA-01456: may not perform insert/delete/update operation")
+
+    assert found.kind == "read_only_violation"
+    assert found.hint is not None
+    assert "Nothing was changed" in found.hint
+
+
 @pytest.mark.parametrize("code", ["ORA-12528", "ORA-01033"])
 def test_a_database_starting_is_connectivity_and_retryable(code: str) -> None:
     """#775: a logon while the CDB starts, in NOMOUNT (ORA-12528) or MOUNT

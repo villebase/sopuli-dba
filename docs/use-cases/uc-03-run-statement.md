@@ -7,7 +7,8 @@ This document specifies a command that runs one statement against a selected
 set of declared targets and shows what each target returned. **The statement
 check, the row guard, the plan fingerprint and the value conversion are built
 (#1659), and so is the `run_as:` configuration with its plan-time refusal of the
-service account (#1660). No command uses them yet.** The command name,
+service account (#1660), and so is the Oracle runner (#1661). No command uses
+them yet.** The command name,
 `sopuli sql run`, is a working name. The parts are built in this order, each by
 its own issue:
 
@@ -15,7 +16,7 @@ its own issue:
 |---|---|
 | The pure layer: the statement check, the plan fingerprint and the row guards | #1659, built |
 | The `run_as:` configuration | #1660, built. The session check of §2 is part of the runner |
-| The Oracle runner | (open: #1661) |
+| The Oracle runner | #1661, built. `OracleSession.run_statement`, with `session_user()` for the check of §2. `sql.run` is not in the shared command set, so every other product is refused |
 | `sql run` for reads | (open: #1662) |
 | `--write` | (open: #1663) |
 
@@ -216,7 +217,10 @@ A write that affects 0 rows is rolled back, and reports `changed: false` (§6).
 
 A write, dry or real, sets a call timeout on its session, so a row that the
 application holds locked cannot hang the run. The target that times out fails,
-and the write stops there (§5).
+and the write stops there (§5). On Oracle the client closes the connection when
+the timeout fires, and the server rolls the transaction back. The client reports
+`DPY-4011`, with `ORA-03156` in its message, and the tool keeps both. The
+timeout does not bound the commit, so a commit is never abandoned half done.
 
 ---
 
@@ -305,7 +309,9 @@ and adds no mutation record.
   `--max-result-rows` changes the cap. A truncated target is marked in the
   output.
 - **Value types.** Dates, numbers and LOBs become strings or numbers that JSON
-  can carry. A LOB above a size cap is refused or truncated.
+  can carry. A LOB is read as text or bytes, cut at 4000 characters or bytes,
+  and the target is marked truncated when one was cut. Oracle `NUMBER` is read
+  as a `Decimal`, so a value with a scale is not rounded to a float.
 
 ---
 

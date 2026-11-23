@@ -35,6 +35,7 @@ import time
 from collections.abc import Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass, field, replace
+from decimal import Decimal
 from typing import Any
 
 import oracledb
@@ -141,6 +142,7 @@ from sopuli.driver.protocol import (
     PartialAccountChangeError,
     PrivilegeAudit,
     Scope,
+    StatementResult,
     Timeouts,
     UnsupportedCapabilityError,
     UserState,
@@ -152,8 +154,52 @@ from sopuli.exit_codes import ExitCode
 from sopuli.output.debug import logger
 from sopuli.passwords import ByteLimit
 from sopuli.secrets import Secret
+from sopuli.sql.guard import RowGuard
+from sopuli.sql.statement import Statement as RunStatement
+from sopuli.sql.statement import StatementKind
+from sopuli.sql.values import JsonValue, to_json
 
 LOG = logger("oracle")
+
+#: The longest LOB `sql run` returns, in characters or bytes. A longer one is cut.
+LOB_LIMIT = 4000
+
+#: What `sql run` reports about the database it reached.
+IDENTITY_QUERY = (
+    "SELECT SYS_CONTEXT('USERENV', 'DB_UNIQUE_NAME'), SYS_CONTEXT('USERENV', 'CON_NAME') FROM dual"
+)
+
+
+def _exact_numbers(cursor: Any, metadata: Any) -> Any:
+    """Fetch every NUMBER as a ``Decimal``, so ``NUMBER(10,2)`` is not rounded to a float."""
+    if metadata.type_code is oracledb.DB_TYPE_NUMBER:
+        return cursor.var(Decimal, arraysize=cursor.arraysize)
+    return None
+
+
+def _cell(value: Any) -> tuple[JsonValue, bool]:
+    """One fetched value in JSON form, and whether a LOB was cut to get there."""
+    if isinstance(value, oracledb.LOB):
+        content = value.read(1, LOB_LIMIT + 1)
+        return to_json(content[:LOB_LIMIT]), len(content) > LOB_LIMIT
+    return to_json(value), False
+
+
+def _read_result(cursor: Any, max_rows: int) -> StatementResult:
+    """The rows of a query, at most ``max_rows`` of them, with every LOB read.
+
+    The LOBs are read here, before the read-only transaction ends.
+    """
+    columns = tuple(str(column[0]) for column in cursor.description)
+    fetched = cursor.fetchmany(max_rows + 1)
+    truncated = len(fetched) > max_rows
+    rows: list[tuple[JsonValue, ...]] = []
+    for row in fetched[:max_rows]:
+        cells = [_cell(value) for value in row]
+        truncated = truncated or any(cut for _, cut in cells)
+        rows.append(tuple(value for value, _ in cells))
+    return StatementResult(columns, tuple(rows), len(rows), truncated, False, None)
+
 
 #: Guards :func:`initialise`. ``init_oracle_client`` mutates process-global
 #: state, and nothing in this codebase promises a connection is only ever opened
@@ -1085,6 +1131,74 @@ class OracleSession(ClosesConnection):
             status=state.status,
             detail=f"account was {was}; password expired",
         )
+
+    def session_user(self) -> str:
+        """The account this session is logged in as, read once and cached."""
+        if self._session_user is None:
+            self._session_user = str(self._select_one(SESSION_USER_QUERY)[0])
+        return self._session_user
+
+    def database_identity(self) -> tuple[str, str]:
+        """``(DB_UNIQUE_NAME, CON_NAME)`` of the database this session reached."""
+        row = self._select_one(IDENTITY_QUERY)
+        return str(row[0]), str(row[1])
+
+    def _select_one(self, query: str) -> Any:
+        with traced_cursor(self.connection) as cursor:
+            try:
+                cursor.execute(query)
+                return cursor.fetchone()
+            except Exception as error:  # noqa: BLE001 -- classified, never swallowed
+                raise from_error(error).as_error() from error
+
+    def run_statement(
+        self,
+        statement: RunStatement,
+        *,
+        guard: RowGuard | None,
+        commit: bool,
+        max_rows: int,
+        timeout_ms: int,
+    ) -> StatementResult:
+        """Run one statement in a transaction that ends the way UC-3 says.
+
+        A read starts ``SET TRANSACTION READ ONLY``, so the server refuses a
+        write that got past the keyword check (``ORA-01456``). It is rolled
+        back. A write is committed only when ``commit`` is true, the guard
+        passes and a row changed; any other outcome rolls back, and a failure
+        rolls back before it is raised. The statement is sent as written, with
+        no bind. ``connection.call_timeout`` is ``timeout_ms`` for the call and
+        is put back afterwards.
+        """
+        previous = self.connection.call_timeout
+        committed = False
+        try:
+            self.connection.call_timeout = timeout_ms
+            with traced_cursor(self.connection) as cursor:
+                try:
+                    if statement.kind is StatementKind.READ:
+                        cursor.execute("SET TRANSACTION READ ONLY")
+                        cursor.set_output_type_handler(_exact_numbers)
+                        cursor.execute(statement.text)
+                        return _read_result(cursor, max_rows)
+                    cursor.execute(statement.text)
+                    count = cursor.rowcount
+                    passed = None if guard is None else guard.passes(count)
+                    if commit and passed is not False and count > 0:
+                        # No bound on the commit: a commit the client abandons
+                        # leaves the outcome unknown.
+                        self.connection.call_timeout = 0
+                        self.connection.commit()
+                        committed = True
+                    return StatementResult((), (), count, False, committed, passed)
+                except Exception as error:  # noqa: BLE001 -- classified, never swallowed
+                    raise from_error(error).as_error() from error
+        finally:
+            if not committed:
+                with suppress(Exception):
+                    self.connection.rollback()
+            with suppress(Exception):
+                self.connection.call_timeout = previous
 
     def _issue(self, statement: Statement, *, password: bool = False) -> None:
         """Execute one built statement, classifying whatever the server says.

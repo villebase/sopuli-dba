@@ -77,6 +77,8 @@ UNREACHABLE = "unreachable"
 VERIFIER_MISMATCH = "verifier_mismatch"
 CLIENT_LIBRARY = "client_library"
 WALLET = "wallet"
+CALL_TIMEOUT = "call_timeout"
+READ_ONLY_VIOLATION = "read_only_violation"
 UNKNOWN = "unknown"
 
 #: Run-document states a code implies on its own. Spelled here as strings and
@@ -177,6 +179,31 @@ RULES: dict[str, _Rule] = {
         hint=(
             "the service account is missing a grant -- ALTER USER for a rotation, "
             f"SELECT on DBA_USERS/DBA_PROFILES for a read. See {INSTALL_SCRIPT}"
+        ),
+    ),
+    # `sql run` (UC-3, #1661). A read runs after SET TRANSACTION READ ONLY, so a
+    # statement that changes data is refused by the server with ORA-01456,
+    # measured on 23.26.3.0.0.
+    "ORA-01456": _Rule(
+        READ_ONLY_VIOLATION,
+        "database",
+        hint=(
+            "the statement tried to change data in a read-only transaction; "
+            "`sql run` runs a SELECT or WITH query in one. Nothing was changed"
+        ),
+    ),
+    # The call timeout `sql run` sets. python-oracledb in thick mode raises
+    # DPY-4011 for it, with DPI-1080 and ORA-03156 in the message; `classify`
+    # reads it as this row. The client closes the connection, so the server
+    # rolls the transaction back.
+    "ORA-03156": _Rule(
+        CALL_TIMEOUT,
+        "database",
+        hint=(
+            "the statement ran longer than the timeout, so the client closed the "
+            "connection and the server rolled the transaction back. Nothing was "
+            "committed. Raise the timeout, or find what holds the lock or makes the "
+            "statement slow"
         ),
     ),
     "ORA-65040": _Rule(
@@ -451,6 +478,10 @@ def classify(code: str, message: str) -> Diagnosis:
     state on the strength of a guess.
     """
     named = RULES.get(code)
+    if code == "DPY-4011" and "ORA-03156" in message:
+        # A call timeout closes the connection, so the client reports a closed
+        # connection. Its message names the real cause.
+        named = RULES["ORA-03156"]
     rule = named if named is not None else _by_family(code)
 
     return Diagnosis(

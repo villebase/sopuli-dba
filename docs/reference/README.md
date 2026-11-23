@@ -17,6 +17,7 @@ generated from the same definitions that `--help` reads.
 - [`sopuli lock`](lock.md): Show the advisory locks, and break one.
 - [`sopuli policy`](policy.md): Inspect password policies.
 - [`sopuli report`](report.md): Read-only reports across the declared targets (UC-5).
+- [`sopuli sql`](sql.md): Run one statement on the selected targets (UC-3).
 - [`sopuli target`](target.md): Inspect the estate.
 - [`sopuli vault`](vault.md): Look at what the stores hold beyond what the config declares.
 

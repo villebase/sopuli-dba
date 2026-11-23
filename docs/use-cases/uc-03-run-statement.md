@@ -7,8 +7,8 @@ This document specifies a command that runs one statement against a selected
 set of declared targets and shows what each target returned. **The statement
 check, the row guard, the plan fingerprint and the value conversion are built
 (#1659), and so is the `run_as:` configuration with its plan-time refusal of the
-service account (#1660), and so is the Oracle runner (#1661). No command uses
-them yet.** The command name,
+service account (#1660), and so is the Oracle runner (#1661), and so is `sql
+run` for reads (#1662). `--write` is not built yet.** The command name,
 `sopuli sql run`, is a working name. The parts are built in this order, each by
 its own issue:
 
@@ -17,7 +17,7 @@ its own issue:
 | The pure layer: the statement check, the plan fingerprint and the row guards | #1659, built |
 | The `run_as:` configuration | #1660, built. The session check of §2 is part of the runner |
 | The Oracle runner | #1661, built. `OracleSession.run_statement`, with `session_user()` for the check of §2. `sql.run` is not in the shared command set, so every other product is refused |
-| `sql run` for reads | (open: #1662) |
+| `sql run` for reads | #1662, built. A write keyword is refused with `SOPULI-20009` until `--write` is built |
 | `--write` | (open: #1663) |
 
 The first release of UC-3 covers Oracle only. A target of another product is

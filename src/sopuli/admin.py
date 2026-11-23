@@ -539,6 +539,31 @@ def refuse_service_account(
         )
 
 
+def refuse_session_user(
+    target: ExpandedTarget, session_user: str, as_user: str | None, *, env: Mapping[str, str]
+) -> None:
+    """`sql run`'s second check, on the account the session actually reached (UC-3 §2).
+
+    ``session_user`` is what the database says the run-as login became. It is
+    refused with ``SOPULI-20010`` when it equals the admin's name by ``upper()``.
+    An ``external`` admin has no name to compare, so nothing is checked there:
+    the accepted gap of UC-3 §2. The tool never logs in as the admin to learn it.
+    """
+    from sopuli.safety import ServiceAccountRefusedError
+
+    admin = target.target.admin
+    if admin is None or (admin.auth is not None and admin.auth.method == EXTERNAL):
+        return
+    admin_user = _username(target, env=env)
+    if admin_user is not None and session_user.upper() == admin_user.upper():
+        raise ServiceAccountRefusedError(
+            f"target {target.name!r}: the run-as login reached {session_user!r}, the "
+            f"account the tool uses for its own work. No statement ran on any target",
+            at=ROOT if as_user is not None else run_as_at(target),
+            hint="name a personal or owner account with `run_as:` or `--as USER`",
+        )
+
+
 # ------------------------------------------------------------------ sources ---
 
 

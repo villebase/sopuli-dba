@@ -42,10 +42,12 @@ sopuli lock status          sopuli creds status           sopuli doctor
 sopuli lock break           sopuli creds finish-rollover  sopuli about
 sopuli vault orphans        sopuli report accounts        sopuli report privileges
 sopuli report history       sopuli keyring set            sopuli keyring delete
+sopuli sql run
 ```
 
 The `creds` commands manage application credentials (UC-1). The `account`
-commands manage personal accounts (UC-2). `vault orphans` lists vault records
+commands manage personal accounts (UC-2). `sql run` runs one query on many
+targets (UC-3, §9b). `vault orphans` lists vault records
 the tool wrote at paths the config no longer declares (§13).
 
 There is no `sopuli admin` command. To install the Oracle service account, run
@@ -1367,9 +1369,9 @@ too, so `--color never` and `NO_COLOR=1` lose nothing:
 | Looks like | Means | States |
 |---|---|---|
 | cyan | nothing to do | `IN_SYNC` |
-| yellow | somebody has to act, the run is fine | `DRIFT`, `PENDING_APPLY`, `ROLLOVER_ACTIVE`, `VAULT_ONLY`, `RESET` |
-| red, bold | the tool could not do the job, or the estate is not in a state it can | `ERROR`, `ACCOUNT_MISSING`, `LOCKED`, `EXPIRED`, `REPORT_PROBLEM`, `PROFILE_MISSING` |
-| dim | nothing could be concluded | `UNVERIFIABLE`, `SKIPPED`, `DECLARED`, `NOT_CHECKED`, `NO_RULE`, `UNDECLARED`, `REPORT_OK` |
+| yellow | somebody has to act, the run is fine | `DRIFT`, `PENDING_APPLY`, `ROLLOVER_ACTIVE`, `VAULT_ONLY`, `RESET`, `COMMITTED` |
+| red, bold | the tool could not do the job, or the estate is not in a state it can | `ERROR`, `ACCOUNT_MISSING`, `LOCKED`, `EXPIRED`, `REPORT_PROBLEM`, `PROFILE_MISSING`, `GUARD_FAILED` |
+| dim | nothing could be concluded | `UNVERIFIABLE`, `SKIPPED`, `DECLARED`, `NOT_CHECKED`, `NO_RULE`, `UNDECLARED`, `REPORT_OK`, `READ`, `ROLLED_BACK`, `NOT_ATTEMPTED` |
 
 ### 8.1 `status`: what is there
 
@@ -3542,6 +3544,111 @@ mariadb-dev  (11.8.9, 1 account)
 It exits 0. MySQL's date is `mysql.user.password_last_changed`. PostgreSQL
 keeps no such date, and MariaDB keeps it where the tool does not read it, so
 there the date is `unknown`, with the reason; the history is still complete.
+
+---
+
+## 9b. Run one query on many targets (UC-3)
+
+`sql run` runs one `SELECT` or `WITH` statement on each selected target and
+shows the rows. It runs on Oracle only. It never connects as the account in
+`admin:`. It connects as the account in `run_as:`, here a personal account. As
+SYS in the PDB:
+
+```sql
+CREATE USER dba_alpha IDENTIFIED BY "<PASSWORD>";
+GRANT CREATE SESSION TO dba_alpha;
+GRANT SELECT ON sys.v_$parameter TO dba_alpha;
+```
+
+A config with the same PDB twice, under two names, and a third target on a
+port where nothing listens:
+
+```yaml
+version: 1
+defaults:
+  run_as:
+    username: dba_alpha
+    auth: { method: env, password_env: DBA_ALPHA_PASSWORD }
+targets:
+  - name: free-pdb
+    type: oracle
+    dsn: localhost:1521/FREEPDB1
+    admin: { username: system, auth: { method: env } }
+  - name: free-pdb-again
+    type: oracle
+    dsn: 127.0.0.1:1521/FREEPDB1
+    admin: { username: system, auth: { method: env } }
+  - name: free-pdb-down
+    type: oracle
+    dsn: localhost:1599/FREEPDB1
+    admin: { username: system, auth: { method: env } }
+```
+
+The statement comes from stdin, or from a file with `--file`:
+
+```
+$ export DBA_ALPHA_PASSWORD='<PASSWORD>'
+$ cat cursors.sql
+SELECT name, value FROM v$parameter WHERE name IN ('open_cursors', 'processes')
+ORDER BY name;
+$ sopuli --config sql-run.yaml sql run --target free-pdb --target free-pdb-again < cursors.sql
+read statement:
+  SELECT name, value FROM v$parameter WHERE name IN ('open_cursors', 'processes')
+  ORDER BY name
+
+TARGET          NAME          VALUE
+free-pdb        open_cursors  300
+free-pdb        processes     200
+free-pdb-again  open_cursors  300
+free-pdb-again  processes     200
+
+free-pdb        2 rows
+free-pdb-again  2 rows
+```
+
+It exits 0. The targets return the same columns, so the rows are one table.
+Where they differ, each target has a block of its own. Without a selector, the
+run covers every target, and the one that is down is reported with its error:
+
+```
+$ sopuli --config sql-run.yaml sql run < cursors.sql
+...
+free-pdb        2 rows
+free-pdb-again  2 rows
+free-pdb-down   ERROR: ORA-12541: Cannot connect. No listener at host 127.0.0.1 port 1599.
+
+1 hint:
+  ORA-12541 on free-pdb-down: no listener at that address; it may be down rather than wrong
+```
+
+It exits 4, because some targets answered and one did not. A target shows at
+most 100 rows. `--max-result-rows` changes that, and a target with more rows
+says `truncated`:
+
+```
+$ sopuli --config sql-run.yaml sql run --target free-pdb --max-result-rows 1 --file cursors.sql
+...
+free-pdb  1 row, truncated
+```
+
+A write is refused before anything connects, and so is the account in
+`admin:`:
+
+```
+$ echo "update t set x = 1" | sopuli --config sql-run.yaml sql run
+sopuli: the statement starts with UPDATE, which changes data, and `--write` was not given
+  hint: `sql run` runs SELECT and WITH. A write needs `--write`, which this build does not have yet
+$ echo "select 1 from dual" | sopuli --config sql-run.yaml sql run --as system
+sopuli: target 'free-pdb' would run statements as 'system' (from `--as`), the account the tool uses for its own work (named by `admin.username`)
+  hint: name a personal or owner account with `run_as:` or `--as USER`
+```
+
+Both exit 8. `--as USER` asks for the password at the terminal, so give the
+statement with `--file` then. Afterwards, as SYS in the PDB:
+
+```sql
+DROP USER dba_alpha;
+```
 
 ---
 

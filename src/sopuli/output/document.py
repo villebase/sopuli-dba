@@ -27,7 +27,7 @@ from typing import Any, Literal
 # `sopuli.clock`, and `sopuli.output.emit` and the tests import them from here.
 from sopuli.clock import to_rfc3339, utc_now
 
-SCHEMA_VERSION = "1.108"
+SCHEMA_VERSION = "1.109"
 TOOL_NAME = "sopuli"  # schema pins this to the binary name (D1), not the distribution
 
 
@@ -484,6 +484,10 @@ class RunDocument:
     #: ``driver/oracle/privileges.py`` states about an unreadable view, two layers
     #: up. :mod:`sopuli.output.constraints_view` owns the shape.
     constraints: dict[str, Any] | None = None
+    #: The ``statement`` section, emitted by `sql run` (UC-3): the text sent,
+    #: its kind, and a write's plan fingerprint. :mod:`sopuli.output.sql_view`
+    #: owns the shape.
+    statement: dict[str, Any] | None = None
     #: Why the run failed as a whole. Absent on success, and absent on exit 2 --
     #: which never produces a document at all (J7, ``03-json-output.md`` §6).
     error: Error | None = None
@@ -579,6 +583,8 @@ class RunDocument:
             document["vaults"] = self.vaults
         if self.constraints is not None:
             document["constraints"] = self.constraints
+        if self.statement is not None:
+            document["statement"] = self.statement
         if self.error is not None:
             document["error"] = self.error.to_dict()
         return document

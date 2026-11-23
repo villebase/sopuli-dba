@@ -61,6 +61,7 @@ from sopuli.report_accounts import (
     UNDECLARED,
 )
 from sopuli.reset import RESET
+from sopuli.sql_run import COMMITTED, GUARD_FAILED, NOT_ATTEMPTED, READ, ROLLED_BACK
 from sopuli.store.protocol import DEGRADED, OK, UNREACHABLE
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -195,6 +196,14 @@ _STATE_ROLES: dict[str, Role] = {
     NO_RULE: Role.INCONCLUSIVE,
     UNDECLARED: Role.INCONCLUSIVE,
     REPORT_OK: Role.INCONCLUSIVE,
+    # `sql run` (UC-3). A read and a write that left nothing behind are dim:
+    # neither is news. A commit is `ATTENTION` for `RESET`'s reason: data
+    # changed, and somebody may have to answer for it. A failed guard is `BAD`.
+    READ: Role.INCONCLUSIVE,
+    ROLLED_BACK: Role.INCONCLUSIVE,
+    NOT_ATTEMPTED: Role.INCONCLUSIVE,
+    COMMITTED: Role.ATTENTION,
+    GUARD_FAILED: Role.BAD,
 }
 
 

@@ -6,7 +6,7 @@ for text output that keep it consistent with both.
 `sopuli/output/` produces them, and CI validates the output against the
 published schemas.
 
-Schemas: [`../schemas/sopuli-run-1.108.schema.json`](../schemas/sopuli-run-1.108.schema.json),
+Schemas: [`../schemas/sopuli-run-1.109.schema.json`](../schemas/sopuli-run-1.109.schema.json),
 [`../schemas/sopuli-event-1.25.schema.json`](../schemas/sopuli-event-1.25.schema.json)
 Examples, each from a real run:
 [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json),
@@ -372,9 +372,9 @@ its `config` section emits.
 | `notable` | an overridden target, a `non_production` store, a warning | `overridden`, `non_production` |
 | `production` | the `prod` environment wherever it appears | `environment` |
 | `good` | a state a reader can stop reading at | `state` = `IN_SYNC` |
-| `attention` | something true that a person has to act on, the run being fine | `state` ∈ `DRIFT`, `PENDING_APPLY`, `ROLLOVER_ACTIVE`, `VAULT_ONLY`, `RESET` |
-| `bad` | the tool could not do the job, or the estate is not in a state it can | `state` ∈ `ERROR`, `ACCOUNT_MISSING`, `LOCKED`, `EXPIRED`, `REPORT_PROBLEM`, `PROFILE_MISSING` |
-| `inconclusive` | no answer, and the absence is the finding | `state` ∈ `UNVERIFIABLE`, `SKIPPED`, `DECLARED`, `NOT_CHECKED`, `NO_RULE`, `UNDECLARED`, `REPORT_OK` |
+| `attention` | something true that a person has to act on, the run being fine | `state` ∈ `DRIFT`, `PENDING_APPLY`, `ROLLOVER_ACTIVE`, `VAULT_ONLY`, `RESET`, `COMMITTED` |
+| `bad` | the tool could not do the job, or the estate is not in a state it can | `state` ∈ `ERROR`, `ACCOUNT_MISSING`, `LOCKED`, `EXPIRED`, `REPORT_PROBLEM`, `PROFILE_MISSING`, `GUARD_FAILED` |
+| `inconclusive` | no answer, and the absence is the finding | `state` ∈ `UNVERIFIABLE`, `SKIPPED`, `DECLARED`, `NOT_CHECKED`, `NO_RULE`, `UNDECLARED`, `REPORT_OK`, `READ`, `ROLLED_BACK`, `NOT_ATTEMPTED` |
 
 The same roles also colour a second vocabulary, the health of a store or an
 install. There is no separate palette for it:
@@ -477,7 +477,8 @@ This sketch shows the run document's shape:
                  password_age_days, started_at, duration_ms, error, warnings[],
                  overridden[], redraws, kind, findings[], failed_logins,
                  privileges, history, failed_logins_reason, missing_profile,
-                 expected_by[], declared_by, reset_at } ],
+                 expected_by[], declared_by, reset_at, columns[], rows[],
+                 row_count, truncated } ],
   targets    [ { target, reachable, scope, asserted, duration_ms, privileges,
                  error, warnings[] } ],
   install    { backends[], drivers[] },
@@ -490,6 +491,7 @@ This sketch shows the run document's shape:
                  error, … } ],
   constraints { source, max_password_bytes, character_set, strictest_target,
                 targets[], accounts[] },
+  statement  { text, kind, fingerprint },
   summary    { total, ok, changed, unchanged, drift, unverifiable, skipped,
                failed, by_state },
   diagnostics[],
@@ -2388,6 +2390,57 @@ is not issued again, and the row reports `changed: true`. A row that never
 reached the driver (refused, missing, unreachable or previewed) carries one
 `password_expire` action with `applied: false`, as `account suspend`'s rows do.
 
+### `statement` and `results[]` from `sql run`
+
+From run schema 1.109. `sql run` (UC-3) emits a top-level `statement` and one
+`results[]` entry per selected target, in the config's order.
+
+**`statement`** holds the statement as sent: `text`, with CRLF turned into LF
+and a trailing `;` or `/` line removed, and `kind`, `read` or `write`. A write
+will also carry its plan `fingerprint`; a read has none. The statement is not a
+secret, so it is shown whole (UC-3 §6). It is present on a run the session
+check refused (`SOPULI-20010`), so the record says what was not run. It is
+absent where the statement itself was refused (`SOPULI-20009`).
+
+**A result's `account`** is the account the run connected as: the `run_as:` or
+`--as` user name as written, or `external`. It is `-` on a target of another
+product, which is refused before an account is chosen. `changed` is `false` on
+every read.
+
+**`columns`, `rows`, `row_count` and `truncated`** are present on a target that
+answered. `rows` holds one array per row, in the order of `columns`. A value is
+converted as UC-3 §7 says: a whole number within plus or minus 2^53 is a
+number, any other number is a string so nothing is rounded, a date is ISO 8601,
+and bytes are hex. `truncated` is `true` when the target had more rows than
+`--max-result-rows`, or a LOB value was cut at 4000 characters or bytes.
+`row_count` is the rows shown, so on a truncated read it is the cap.
+
+A target that could not be reached, or whose statement failed, is `ERROR` with
+the server's code in `error.code`. One of another product is `SKIPPED` with
+`SOPULI-20006`. From a run on two names for one PDB:
+
+```json
+"results": [
+  {
+    "account": "dba_alpha",
+    "target": "free-pdb",
+    "state": "READ",
+    "changed": false,
+    "columns": ["NAME", "VALUE"],
+    "rows": [["open_cursors", "300"], ["processes", "200"]],
+    "row_count": 2,
+    "truncated": false
+  },
+  ...
+],
+"statement": {
+  "text": "SELECT name, value FROM v$parameter WHERE name IN ('open_cursors', 'processes')\nORDER BY name",
+  "kind": "read"
+}
+```
+
+`V$PARAMETER.VALUE` is a string column, so `300` is a string.
+
 ---
 
 ## 3. Enumerations
@@ -2399,7 +2452,17 @@ or renaming one is major.
 **`state`** — `IN_SYNC`, `DRIFT`, `PENDING_APPLY`, `ROLLOVER_ACTIVE`,
 `ACCOUNT_MISSING`, `LOCKED`, `EXPIRED`, `UNVERIFIABLE`, `SKIPPED`, `ERROR`,
 `VAULT_ONLY`, `DECLARED`, `RESET`, `REPORT_OK`, `REPORT_PROBLEM`, `NOT_CHECKED`,
-`NO_RULE`, `UNDECLARED`, `PROFILE_MISSING`
+`NO_RULE`, `UNDECLARED`, `PROFILE_MISSING`, `READ`, `COMMITTED`, `ROLLED_BACK`,
+`GUARD_FAILED`, `NOT_ATTEMPTED`
+
+**`sql run` has five states of its own** (UC-3), from run schema 1.109: a read
+answered (`READ`); a write was committed (`COMMITTED`); a write was rolled
+back, on a dry run or because it changed no row (`ROLLED_BACK`); a write was
+rolled back because its row count failed the row guard (`GUARD_FAILED`); a real
+write stopped at an earlier target and did not run here (`NOT_ATTEMPTED`). A
+target that could not be reached, or whose statement failed, is `ERROR`, and a
+target of a product `sql run` does not run on is `SKIPPED`. This build runs
+reads only, so it reports `READ`, `ERROR` and `SKIPPED`.
 
 **`report accounts` has six states of its own** (UC-5 §3): every check had a
 rule, ran and passed (`REPORT_OK`); a check found a problem
@@ -2681,11 +2744,11 @@ records its highest number too.
 | `SOPULI-20003` | `config` | 9 | `delivery.notify.method` names a channel whose client is not installed. The same shape again (ADR-006 E5, E7): `webhook` posts with `httpx` from `sopuli-dba[notify]`. Only a run that has something to send reaches it. `config validate` reports the same condition as a warning at load, which is where an operator meets it first |
 | `SOPULI-20004` | `config` | 9 | Oracle Instant Client cannot be used, and thick mode needs it (D3): it was not found (`DPI-1047`), it is older than the driver needs (`DPI-1050`), or its version is not supported (`DPI-1072`). The message keeps the driver's own diagnosis, and the hint says how to install the client on this platform. Installing a working client fixes it, or pointing `runtime.oracle.client_lib_dir` or `SOPULI_ORACLE_CLIENT_LIB_DIR` at one that is installed. A target whose credential resolved no username or password is also refused before connecting, and has no code, because the file or a variable fixes it |
 | `SOPULI-20005` | `config` | 9 | A `vaults:` entry names a `type` that `01-configuration.md` §3a accepts and this build has no module for. Neither editing the file nor installing anything fixes it, so the message never carries an install line |
-| `SOPULI-20006` | `config` | 9 | A `targets:` entry names a driver type this build has no module for, or one whose driver is not written for this command. The driver equivalent of `SOPULI-20005`, with its own code because a store and a database are different outages. A driver's registry entry lists the commands it is written for, and any other command but `doctor` refuses the target, before a credential is resolved or a connection opened. The message names the commands the driver can run. The Oracle entry has no command list, so it refuses no command. The PostgreSQL, MySQL, MariaDB and SQL Server entries list every command that connects, so the list refuses no command in this build. Every type the config accepts has a module, so this build does not reach the code. In a run over several targets it is that target's error, and the others carry on |
+| `SOPULI-20006` | `config` | 9 | A `targets:` entry names a driver type this build has no module for, or one whose driver is not written for this command. The driver equivalent of `SOPULI-20005`, with its own code because a store and a database are different outages. A driver's registry entry lists the commands it is written for, and any other command but `doctor` refuses the target, before a credential is resolved or a connection opened. The message names the commands the driver can run. The Oracle entry has no command list, so it refuses no command. The PostgreSQL, MySQL, MariaDB and SQL Server entries list every command that connects but `sql run`, so `sql run` is the one command the list refuses in this build. Every type the config accepts has a module. In a run over several targets it is that target's error, and the others carry on. `sql run` reports such a target as `SKIPPED`, and exits 5 when every target is one |
 | `SOPULI-20007` | `config` | 9 | The target's admin holds administrative power the tool does not run with. On PostgreSQL: a superuser, or a member of a superuser role (`02-postgres-privileges.md` §1). On MySQL: an account that can use `SYSTEM_USER`, itself or through any role granted to it, active or not (`02-mysql-privileges.md` §1). The driver reads this in the first reads every session makes, so the target is refused before anything else is asked of it. The fix is in the config, which names an account with only the grants of section 2 of the product's privileges document. It has a code because nothing in the server's answer tells it apart: the login succeeded. `doctor` reports it as the target's error and exits 9 (§2, `targets`) |
 | `SOPULI-20008` | `config` | 9 | Two PostgreSQL targets of one run are one cluster: they share a `system_identifier` (`01-configuration.md` §*`postgres:` on a target*). Two MySQL targets of one run are one server: they share a `server_uuid` (from #1223). Two MariaDB targets of one run are one server: they share a `@@server_uid` (from #1286). Two MariaDB targets on nodes of one Galera cluster are one cluster: they share a `wsrep_cluster_state_uuid`, read on a node that is `Synced`, beside each node's own `@@server_uid` (from #1346). A Galera node in another state claims only its server, and `SOPULI-W068` says so. The second to connect is refused, naming both, and the first is unaffected. It has a code for `SOPULI-20007`'s reason: the logins succeeded, and only the tool sees the conflict. `doctor` reports it as that target's error and exits 9 (§2, `targets`). Where a PostgreSQL role may not run `pg_control_system()`, nothing is refused, and `SOPULI-W068` gives the reason. Any MySQL or MariaDB account reads its server's identifier, so there a failed read is the target's error |
 | `SOPULI-20009` | `policy` | 8 | `sql run` refused the statement before it connected: its first keyword is not `SELECT`, `WITH`, `UPDATE`, `INSERT`, `MERGE` or `DELETE`; the statement is empty; a `/*` comment is not closed; the text does not start with an ASCII keyword (after whitespace and comments); a `;` is left in the text after the one terminator is removed; or a `/` is left alone on the last line (`uc-03-run-statement.md`). The message names the cause, and the keyword where there is one. A `;` inside a string literal is refused too, a known false refusal |
-| `SOPULI-20010` | `policy` | 8 | `sql run` refused to connect as the account the tool uses for its own work. At plan time, the account `run_as:` or `--as` names equals the target's `admin.username` by `upper()` (or `SOPULI_DB_ADMIN_USER`), or both `admin:` and `run_as:` are `external` on one `dsn`. An `external` admin has no name to compare, so a `run_as:` that names a user is not checked against it (`uc-03-run-statement.md` §2) |
+| `SOPULI-20010` | `policy` | 8 | `sql run` refused to connect as the account the tool uses for its own work. At plan time, the account `run_as:` or `--as` names equals the target's `admin.username` by `upper()` (or `SOPULI_DB_ADMIN_USER`), or both `admin:` and `run_as:` are `external` on one `dsn`. Then, once every selected target is connected and before any statement runs, a session whose `SESSION_USER` equals that name by `upper()`; that refuses the run on every target, and every session is closed. An `external` admin has no name to compare, so a `run_as:` that names a user is not checked against it (`uc-03-run-statement.md` §2) |
 
 **The category of `SOPULI-20001` to `SOPULI-20008` is `config`, not `capability`**
 (ADR-006, E5). `SOPULI-20009` and `SOPULI-20010` are the `policy` rows, with exit 8,

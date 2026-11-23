@@ -11,10 +11,15 @@ import pytest
 
 from sopuli.admin import (
     AdminCredentialError,
+    AskOncePerUser,
     NobodyToAskError,
+    PasswordPrompt,
+    forget,
     refuse_service_account,
     resolve_run_as,
+    run_as_prompts,
     run_as_user,
+    run_as_uses_keyring,
 )
 from sopuli.config.model import AdminAuth, AdminCredential, ExpandedTarget, Target
 from sopuli.exit_codes import ExitCode
@@ -326,3 +331,31 @@ def test_admin_external_run_as_named_is_allowed() -> None:
 
     refuse_service_account(declared, None)
     refuse_service_account(declared, "c##sopuli_svc")
+
+
+def test_which_run_as_accounts_are_typed() -> None:
+    assert run_as_prompts(target(), "alice_personal")
+    assert run_as_prompts(target(run_as=credential("dba_alpha", "prompt")), None)
+    assert not run_as_prompts(target(run_as=credential("dba_alpha", "keyring", entry="a")), None)
+    assert run_as_uses_keyring(target(run_as=credential("dba_alpha", "keyring", entry="a")), None)
+    assert not run_as_uses_keyring(
+        target(run_as=credential("dba_alpha", "keyring", entry="a")), "x"
+    )
+
+
+def test_a_refused_typed_password_is_asked_again() -> None:
+    asked: list[str] = []
+
+    def ask(line: str) -> str:
+        asked.append(line)
+        return "typed"
+
+    prompt = AskOncePerUser(PasswordPrompt(ask=ask))
+    one = target()
+
+    prompt(one, "dba_beta")
+    prompt(one, "dba_beta")
+    forget(prompt, one, "dba_beta")
+    prompt(one, "dba_beta")
+
+    assert len(asked) == 2

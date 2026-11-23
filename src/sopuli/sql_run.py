@@ -18,15 +18,20 @@ from collections.abc import Callable, Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
 
-from sopuli.admin import refuse_service_account, refuse_session_user, run_as_user
+from sopuli.admin import (
+    refuse_service_account,
+    refuse_session_user,
+    run_as_prompts,
+    run_as_user,
+)
 from sopuli.apply import SKIPPED
 from sopuli.check import ERROR
 from sopuli.config.model import Config, ExpandedTarget
-from sopuli.driver.protocol import Session, StatementResult, StatementRunner
+from sopuli.driver.protocol import AuthenticationError, Session, StatementResult, StatementRunner
 from sopuli.driver.registry import DriverNotImplementedError, require_command
 from sopuli.exit_codes import ExitCode
 from sopuli.output.document import Error
-from sopuli.safety import ServiceAccountRefusedError
+from sopuli.safety import ServiceAccountRefusedError, refuse_run_as_unattended
 from sopuli.sql.statement import Statement
 
 #: The run document's name for the command, as `require_command` checks it.
@@ -70,6 +75,11 @@ class Connection:
     identity: tuple[str, str] | None = None
     #: The target's product is not written for `sql run` (``SOPULI-20006``).
     unsupported: bool = False
+    #: A typed password was refused on an earlier target, so this one was not
+    #: tried (UC-3 §2). ``error`` says where.
+    not_attempted: bool = False
+    #: The database refused the login itself, such as ``ORA-01017``.
+    login_refused: bool = False
 
 
 @dataclass(frozen=True)
@@ -89,24 +99,32 @@ def connect_all(
     *,
     open_session: Opener,
     finding: Finding,
+    attended: bool,
+    need_identity: bool = False,
     env: Mapping[str, str] | None = None,
 ) -> list[Connection]:
     """Connect every selected target, in the config's order, before any statement runs.
 
     A target of a product `sql run` is not written for is refused here, with
     ``SOPULI-20006``, and never connected. For the others, the plan-time checks
-    of UC-3 §2 run first: no run-as account is exit 9, and the service account
-    is ``SOPULI-20010``. Either refuses the whole run before a socket opens.
+    of UC-3 §2 run first: no run-as account is exit 9, the service account is
+    ``SOPULI-20010``, and a run-as password that nobody can type (``attended``
+    is false) or that is in a keyring this install cannot read is refused too.
+    Each refuses the whole run before a socket opens.
 
     Then each target is connected. One that cannot be reached carries its
-    error, and the others go on. Each session's user is checked against the
-    service account, and one match refuses the whole run with
-    ``SOPULI-20010``, with every session closed. Last, the database identity
-    is read, for a write's fingerprint.
+    error, and the others go on. A typed password that a target refuses is not
+    sent to any later target that would use a typed password: those are
+    :data:`NOT_ATTEMPTED`, so a mistyped password cannot lock the account
+    across the fleet. Each session's user is checked against the service
+    account, and one match refuses the whole run with ``SOPULI-20010``, with
+    every session closed. The database identity is read only where
+    ``need_identity`` asks for it, for a write's fingerprint.
     """
     env = os.environ if env is None else env
     targets = config.expanded_targets
     refused: dict[str, Error] = {}
+    supported: list[ExpandedTarget] = []
     for target in targets:
         try:
             require_command(target.target, COMMAND)
@@ -114,8 +132,11 @@ def connect_all(
             refused[target.name] = finding(error)
             continue
         refuse_service_account(target, as_user, env=env)
+        supported.append(target)
+    refuse_run_as_unattended(supported, as_user, attended=attended)
 
     connections: list[Connection] = []
+    refused_on: str | None = None
     try:
         for target in targets:
             if target.name in refused:
@@ -123,13 +144,43 @@ def connect_all(
                     Connection(target, ABSENT, error=refused[target.name], unsupported=True)
                 )
                 continue
-            connections.append(
-                _connect(target, as_user, open_session=open_session, finding=finding, env=env)
+            typed = run_as_prompts(target, as_user)
+            if refused_on is not None and typed:
+                connections.append(_not_attempted(target, as_user, refused_on))
+                continue
+            one = _connect(
+                target,
+                as_user,
+                open_session=open_session,
+                finding=finding,
+                env=env,
+                need_identity=need_identity,
             )
+            if typed and one.login_refused:
+                refused_on = target.name
+            connections.append(one)
     except BaseException:
         close_all(connections)
         raise
     return connections
+
+
+def _not_attempted(target: ExpandedTarget, as_user: str | None, refused_on: str) -> Connection:
+    """A target left alone because the typed password failed on ``refused_on``."""
+    who = run_as_user(target, as_user)
+    return Connection(
+        target,
+        who,
+        error=Error(
+            category="policy",
+            message=(
+                f"the password typed for {who} was refused on {refused_on}, so it was "
+                "not tried here, where another failed login could lock the account"
+            ),
+            hint="check the password and run it again",
+        ),
+        not_attempted=True,
+    )
 
 
 def _connect(
@@ -139,11 +190,15 @@ def _connect(
     open_session: Opener,
     finding: Finding,
     env: Mapping[str, str],
+    need_identity: bool,
 ) -> Connection:
-    """One target's connection, its session user checked and its identity read."""
+    """One target's connection, its session user checked, and its identity
+    read where ``need_identity`` asks."""
     who = run_as_user(target, as_user)
     try:
         session = open_session(target, as_user)
+    except AuthenticationError as error:
+        return Connection(target, who, error=finding(error), login_refused=True)
     except Exception as error:  # noqa: BLE001 -- a per-target finding
         return Connection(target, who, error=finding(error))
     try:
@@ -154,7 +209,7 @@ def _connect(
                 f"target {target.name!r}: this driver cannot run a statement"
             )
         refuse_session_user(target, session.session_user(), as_user, env=env)
-        identity = session.database_identity()
+        identity = session.database_identity() if need_identity else None
     except DriverNotImplementedError as error:
         with suppress(Exception):
             session.close()
@@ -202,7 +257,7 @@ def _read_one(
 ) -> TargetOutcome:
     name = one.target.name
     if one.session is None:
-        state = SKIPPED if one.unsupported else ERROR
+        state = SKIPPED if one.unsupported else NOT_ATTEMPTED if one.not_attempted else ERROR
         return TargetOutcome(name, one.run_as, state, error=one.error)
     session = one.session
     assert isinstance(session, StatementRunner)  # checked by _connect

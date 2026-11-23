@@ -2459,11 +2459,13 @@ or renaming one is major.
 **`sql run` has five states of its own** (UC-3), from run schema 1.109: a read
 answered (`READ`); a write was committed (`COMMITTED`); a write was rolled
 back, on a dry run or because it changed no row (`ROLLED_BACK`); a write was
-rolled back because its row count failed the row guard (`GUARD_FAILED`); a real
-write stopped at an earlier target and did not run here (`NOT_ATTEMPTED`). A
+rolled back because its row count failed the row guard (`GUARD_FAILED`); the
+target was not tried (`NOT_ATTEMPTED`), because a real write stopped at an
+earlier target, or because an earlier target refused a typed password, which
+is then sent nowhere else (UC-3 §2). A
 target that could not be reached, or whose statement failed, is `ERROR`, and a
 target of a product `sql run` does not run on is `SKIPPED`. This build runs
-reads only, so it reports `READ`, `ERROR` and `SKIPPED`.
+reads only, so it reports `READ`, `NOT_ATTEMPTED`, `ERROR` and `SKIPPED`.
 
 **`report accounts` has six states of its own** (UC-5 §3): every check had a
 rule, ran and passed (`REPORT_OK`); a check found a problem

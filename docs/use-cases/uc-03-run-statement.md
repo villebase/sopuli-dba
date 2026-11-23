@@ -105,6 +105,19 @@ credentials. It is never read from stdin, because `admin:` does not offer stdin
 either, and so stdin stays free for the statement. It is never read from a store
 that UC-1 manages, and UC-1 does not manage this account.
 
+**A run that cannot get the password is refused before it connects.** A
+`run_as:` with `auth: prompt` on a run with no terminal is refused with exit 8,
+and a `run_as:` in the OS keyring on an install without the `keyring` extra
+with exit 9, as the mutating commands refuse an `admin:` of either kind.
+
+**A typed password that a target refuses is not tried again.** The account is
+a person's, and its profile may lock it after a few failed logins. So when a
+target refuses a password typed for `--as` or for `auth: prompt`, the tool
+forgets it and connects no other target with a typed password. Those targets
+are reported `NOT_ATTEMPTED`, with a message naming the target that refused
+it. A password from the keyring, a variable or a wallet is each target's own,
+and a refusal on one target does not stop the others.
+
 **Refusing the service account.** The tool checks the run-as account twice.
 
 1. At plan time, from the config. A target whose run-as user name equals its

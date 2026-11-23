@@ -100,8 +100,9 @@ from sopuli import report_privileges as privilege_states
 from sopuli import rotate as rotation
 from sopuli import status as status_states
 from sopuli import strategy as strategies
-from sopuli.admin import AdminCredentialError, RefReader, ask_once_per_user, resolve_run_as
+from sopuli.admin import PROMPT, AdminCredentialError, AskOncePerUser, RefReader, resolve_run_as
 from sopuli.admin import Resolved as AdminResolved
+from sopuli.admin import forget as forget_typed
 from sopuli.admin import resolve as admin_resolve
 from sopuli.admin import store_name as admin_store_name
 from sopuli.apply import SOURCES, Source
@@ -242,6 +243,7 @@ from sopuli.driver.protocol import (
     AccountChange,
     AttributeChange,
     AuditCoverage,
+    AuthenticationError,
     DriverContext,
     DriverError,
     Encryption,
@@ -6378,8 +6380,8 @@ def sql_run_command(
             )
         # One account named on the command line is one password, however many
         # targets the run covers.
-        run = replace(run, prompt=ask_once_per_user(run.prompt))
-    statement = classify(_read_statement(path))
+        run = replace(run, prompt=AskOncePerUser(run.prompt))
+    statement = classify(_read_statement(path, as_user=as_user))
     if statement.kind is not StatementKind.READ:
         raise StatementRefusedError(
             f"the statement starts with {statement.keyword}, which changes data, "
@@ -6398,6 +6400,7 @@ def sql_run_command(
         as_user,
         open_session=lambda target, who: _open_sql_session(target, run, config, who),
         finding=_finding,
+        attended=run.prompt is not None,
     )
     outcomes = sql_run.run_read(
         connections,
@@ -6411,18 +6414,27 @@ def sql_run_command(
     return sql_view.render_text(statement, outcomes)
 
 
-def _read_statement(path: Path | None) -> str:
-    """The statement, from ``path`` or from stdin. A terminal on stdin is a
-    usage error: the statement is never typed at a prompt. A file's UTF-8 byte
-    order mark, which Windows editors write, is not part of the statement."""
+def _read_statement(path: Path | None, *, as_user: str | None) -> str:
+    """The statement, from ``path`` or from stdin, as UTF-8.
+
+    A terminal on stdin is a usage error: the statement is never typed at a
+    prompt. With ``--as`` the terminal is for the password, so only ``--file``
+    is offered. The bytes are decoded strictly, whatever the console's own
+    encoding, and a UTF-8 byte order mark, which Windows editors and
+    PowerShell write, is not part of the statement.
+    """
     if path is not None:
-        try:
-            return path.read_text(encoding="utf-8-sig")
-        except UnicodeDecodeError as error:
-            raise click.UsageError(f"--file {path}: the file is not UTF-8") from error
-    if is_a_terminal(sys.stdin):
-        raise click.UsageError("give the statement with --file PATH, or pipe it to stdin")
-    return sys.stdin.read()
+        data, source = path.read_bytes(), f"--file {path}"
+    else:
+        if is_a_terminal(sys.stdin):
+            if as_user is not None:
+                raise click.UsageError("with --as, give the statement with --file PATH")
+            raise click.UsageError("give the statement with --file PATH, or pipe it to stdin")
+        data, source = sys.stdin.buffer.read(), "stdin"
+    try:
+        return data.decode("utf-8-sig")
+    except UnicodeDecodeError as error:
+        raise click.UsageError(f"{source}: the statement is not UTF-8") from error
 
 
 def _open_sql_session(
@@ -6443,7 +6455,13 @@ def _open_sql_session(
         for one in admin_diagnostics(target.name, resolved, label="run-as")
         if (one.code, one.target) not in already
     )
-    return driver.connect(target, resolved.credential)
+    try:
+        return driver.connect(target, resolved.credential)
+    except AuthenticationError:
+        if resolved.method == PROMPT:
+            # A refused typed password is not kept for another target (UC-3 §2).
+            forget_typed(run.prompt, target, resolved.credential.username)
+        raise
 
 
 @cli.group("report")

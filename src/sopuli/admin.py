@@ -288,6 +288,14 @@ class PasswordPrompt:
             self._answers[key] = Secret(answer)
         return self._answers[key]
 
+    def forget(self, target: ExpandedTarget, username: str | None) -> None:
+        """Drop the answer for this credential, so it is asked again.
+
+        `sql run` calls this when the database refused the typed password, so
+        a refused password is never sent anywhere else (UC-3 §2).
+        """
+        self._answers.pop(prompt_key(target, username), None)
+
     @staticmethod
     def line(target: ExpandedTarget, username: str | None) -> str:
         """What the operator is asked, naming both halves of the answer.
@@ -494,22 +502,51 @@ def resolve_run_as(
     )
 
 
-def ask_once_per_user(prompt: Prompter) -> Prompter:
-    """``prompt``, asking once per user name for the whole run.
+@dataclass
+class AskOncePerUser:
+    """A :data:`Prompter` that asks once per user name for the whole run.
 
     For `sql run --as USER`. :class:`PasswordPrompt` asks once per declared
     credential, and ``--as`` is declared nowhere in the file: it is one account
     the operator named once, so one password covers every target.
     """
-    answers: dict[str, Secret] = {}
 
-    def ask(target: ExpandedTarget, username: str | None) -> Secret:
+    prompt: Prompter
+    _answers: dict[str, Secret] = field(default_factory=dict, repr=False)
+
+    def __call__(self, target: ExpandedTarget, username: str | None) -> Secret:
         key = username or ""
-        if key not in answers:
-            answers[key] = prompt(target, username)
-        return answers[key]
+        if key not in self._answers:
+            self._answers[key] = self.prompt(target, username)
+        return self._answers[key]
 
-    return ask
+    def forget(self, target: ExpandedTarget, username: str | None) -> None:
+        """Drop the answer, as :meth:`PasswordPrompt.forget` does."""
+        self._answers.pop(username or "", None)
+        forget(self.prompt, target, username)
+
+
+def forget(prompt: Prompter | None, target: ExpandedTarget, username: str | None) -> None:
+    """Drop a typed password the database refused, where ``prompt`` keeps one.
+
+    A prompter that caches nothing has nothing to drop.
+    """
+    drop = getattr(prompt, "forget", None)
+    if drop is not None:
+        drop(target, username)
+
+
+def run_as_prompts(target: ExpandedTarget, as_user: str | None) -> bool:
+    """Whether `sql run` asks for this target's password at the terminal:
+    ``--as``, or a ``run_as:`` with ``auth: prompt``. Pure."""
+    declared = _declared_run_as(target, as_user)
+    return declared is not None and declared.auth is not None and declared.auth.method == PROMPT
+
+
+def run_as_uses_keyring(target: ExpandedTarget, as_user: str | None) -> bool:
+    """Whether `sql run` reads this target's password from the OS keyring. Pure."""
+    declared = _declared_run_as(target, as_user)
+    return declared is not None and declared.auth is not None and declared.auth.method == KEYRING
 
 
 def run_as_user(target: ExpandedTarget, as_user: str | None) -> str:

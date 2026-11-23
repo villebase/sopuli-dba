@@ -17,11 +17,13 @@ from click.testing import CliRunner, Result
 from jsonschema import Draft202012Validator
 
 from conftest import WriteConfig
+from sopuli import sql_run as sql_run_module
 from sopuli.admin import PasswordPrompt
 from sopuli.cli import cli
-from sopuli.driver.protocol import DriverError, StatementResult
+from sopuli.config.loading import build_config
+from sopuli.driver.protocol import AuthenticationError, DriverError, StatementResult
 from sopuli.exit_codes import ExitCode
-from sopuli.output.document import SCHEMA_VERSION
+from sopuli.output.document import SCHEMA_VERSION, Error
 from sopuli.sql.statement import Statement
 
 RUN_SCHEMA = json.loads(
@@ -83,6 +85,7 @@ class FakeSession:
         self.closed = False
         #: The ``--as`` the opener was given, set by the fixture.
         self.as_user: str | None = None
+        self.identity_reads = 0
 
     @property
     def connection_lost(self) -> bool:
@@ -94,6 +97,7 @@ class FakeSession:
         return self.user
 
     def database_identity(self) -> tuple[str, str]:
+        self.identity_reads += 1
         if self.identity_error is not None:
             raise self.identity_error
         return "FREE", "FREEPDB1"
@@ -154,9 +158,13 @@ class FakeDriver:
 
     def __init__(self) -> None:
         self.credentials: list[Any] = []
+        #: An exception to raise when a target of that name is connected.
+        self.refuse: dict[str, Exception] = {}
 
     def connect(self, target: Any, credential: Any) -> FakeSession:
         self.credentials.append(credential)
+        if target.name in self.refuse:
+            raise self.refuse[target.name]
         return FakeSession(target.name)
 
 
@@ -511,12 +519,12 @@ def test_an_env_run_as_is_flagged_low_assurance(
     )
 
 
-@pytest.mark.parametrize("failing", ["user_error", "identity_error"])
 def test_a_failed_session_read_is_that_targets_error(
-    write_config: WriteConfig, sessions: dict[str, Any], failing: str
+    write_config: WriteConfig, sessions: dict[str, Any]
 ) -> None:
-    broken = FakeSession("qa-alpha")
-    setattr(broken, failing, DriverError("ORA-03113: end-of-file", code="ORA-03113"))
+    broken = FakeSession(
+        "qa-alpha", user_error=DriverError("ORA-03113: end-of-file", code="ORA-03113")
+    )
     sessions["qa-alpha"] = broken
 
     loaded = document(sql_run(write_config, json_out=True))
@@ -557,3 +565,182 @@ def test_a_long_or_multiline_value_is_marked_in_text_and_whole_in_json(
     sessions["prod-alpha"] = FakeSession("prod-alpha", result=answer(("V",), rows))
     loaded = document(sql_run(write_config, "--target", "prod-alpha", json_out=True))
     assert loaded["results"][0]["rows"] == [[long], ["first\nsecond"]]
+
+
+def sent_text(sessions: dict[str, Any]) -> str:
+    text: str = sessions["opened"][-1].calls[0]["statement"].text
+    return text
+
+
+def test_a_byte_order_mark_on_stdin_is_not_the_statement(
+    write_config: WriteConfig, sessions: dict[str, Any]
+) -> None:
+    result = sql_run(write_config, "--target", "prod-alpha", statement="﻿SELECT 1 FROM dual")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert sent_text(sessions) == "SELECT 1 FROM dual"
+
+
+def test_a_non_ascii_literal_on_stdin_survives(
+    write_config: WriteConfig, sessions: dict[str, Any]
+) -> None:
+    result = sql_run(
+        write_config, "--target", "prod-alpha", statement="SELECT 'Räty ÅÖ' FROM dual\n"
+    )
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert sent_text(sessions) == "SELECT 'Räty ÅÖ' FROM dual"
+
+
+def test_stdin_that_is_not_utf8_is_a_usage_error(
+    write_config: WriteConfig, sessions: dict[str, Any]
+) -> None:
+    path = write_config(CONFIG)
+    result = CliRunner().invoke(
+        cli, ["--config", str(path), "sql", "run"], input=b"SELECT '\xff' FROM dual"
+    )
+
+    assert result.exit_code == ExitCode.USAGE, result.output
+    assert "not UTF-8" in result.output
+    assert sessions["opened"] == []
+
+
+def test_a_terminal_on_stdin_with_as_names_only_file(
+    write_config: WriteConfig,
+    sessions: dict[str, Any],
+    terminal: Asker,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("sopuli.cli.is_a_terminal", lambda _: True)
+
+    result = sql_run(write_config, "--as", "dba_beta")
+
+    assert result.exit_code == ExitCode.USAGE, result.output
+    assert "--file" in result.output
+    assert "stdin" not in result.output
+
+
+PROMPT_RUN_AS = (
+    f"version: 1\ndefaults:\n  run_as: {{ username: dba_alpha, auth: prompt }}\n{TARGETS}"
+)
+KEYRING_RUN_AS = (
+    "version: 1\ndefaults:\n"
+    "  run_as: { username: dba_alpha, auth: { method: keyring, entry: dba-alpha } }\n"
+    f"{TARGETS}"
+)
+
+
+def test_a_prompt_run_as_with_nobody_to_ask_is_refused_before_connecting(
+    write_config: WriteConfig, sessions: dict[str, Any]
+) -> None:
+    result = sql_run(write_config, config=PROMPT_RUN_AS, json_out=True)
+
+    assert exit_of(result) == ExitCode.ABORTED, result.output
+    error = document(result)["error"]
+    assert "keyring" in error["hint"]
+    assert "SOPULI_DB_ADMIN_PASSWORD" not in error["hint"]
+    assert sessions["opened"] == []
+
+
+def test_a_keyring_run_as_without_the_extra_is_refused_before_connecting(
+    write_config: WriteConfig, sessions: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("sopuli.safety.installed", lambda _: False)
+
+    result = sql_run(write_config, config=KEYRING_RUN_AS, json_out=True)
+
+    assert exit_of(result) == ExitCode.CONFIG_INVALID, result.output
+    assert "keyring" in document(result)["error"]["message"]
+    assert sessions["opened"] == []
+
+
+def refused_login() -> AuthenticationError:
+    return AuthenticationError(
+        "ORA-01017: invalid credential or not authorized; logon denied", code="ORA-01017"
+    )
+
+
+def test_a_typed_password_refused_once_is_not_sent_to_other_targets(
+    write_config: WriteConfig, driver: FakeDriver, terminal: Asker, tmp_path: Path
+) -> None:
+    """A mistyped `--as` password must not count against the account on every target."""
+    driver.refuse["prod-alpha"] = refused_login()
+
+    result = sql_run(
+        write_config,
+        "--as",
+        "dba_beta",
+        "--file",
+        query_file(tmp_path),
+        "--output",
+        "json",
+        statement=None,
+        config=THREE_TARGETS,
+    )
+
+    loaded = document(result)
+    states = {entry["target"]: entry["state"] for entry in loaded["results"]}
+    assert states == {
+        "prod-alpha": "ERROR",
+        "qa-alpha": "NOT_ATTEMPTED",
+        "dev-alpha": "NOT_ATTEMPTED",
+    }
+    assert len(driver.credentials) == 1
+    reason = loaded["results"][1]["error"]["message"]
+    assert "prod-alpha" in reason
+    assert loaded["exit_code"] == ExitCode.FAILURE
+
+
+def test_a_stored_password_refused_on_one_target_does_not_stop_the_others(
+    write_config: WriteConfig, driver: FakeDriver
+) -> None:
+    driver.refuse["prod-alpha"] = refused_login()
+
+    loaded = document(sql_run(write_config, json_out=True))
+
+    states = [entry["state"] for entry in loaded["results"]]
+    assert states == ["ERROR", "READ"]
+    assert len(driver.credentials) == 2
+
+
+def test_a_read_never_asks_for_the_database_identity(
+    write_config: WriteConfig, sessions: dict[str, Any]
+) -> None:
+    result = sql_run(write_config)
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert [session.identity_reads for session in sessions["opened"]] == [0, 0]
+
+
+def test_the_identity_is_read_where_it_is_needed() -> None:
+    """A write's fingerprint needs it; a failed read is that target's error."""
+    config = build_config(
+        {
+            "version": 1,
+            "defaults": {"run_as": {"username": "dba_alpha", "auth": {"method": "prompt"}}},
+            "targets": [
+                {"name": name, "type": "oracle", "dsn": f"{name}.example.com:1521/ALPHA"}
+                for name in ("prod-alpha", "qa-alpha")
+            ],
+        }
+    )
+    broken = FakeSession(
+        "qa-alpha", identity_error=DriverError("ORA-03113: end-of-file", code="ORA-03113")
+    )
+    sessions: dict[str, Any] = {"prod-alpha": FakeSession("prod-alpha"), "qa-alpha": broken}
+
+    connections = sql_run_module.connect_all(
+        config,
+        None,
+        open_session=lambda target, _: sessions[target.name],
+        finding=lambda error: Error(category="database", message=str(error)),
+        attended=True,
+        need_identity=True,
+    )
+
+    assert connections[0].identity == ("FREE", "FREEPDB1")
+    assert connections[1].session is None
+    assert connections[1].error is not None
+    assert "ORA-03113" in connections[1].error.message
+    assert broken.closed
+    sql_run_module.close_all(connections)

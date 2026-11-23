@@ -47,7 +47,7 @@ Invariant 5 makes the config the whitelist for **changes**. A report changes
 nothing, and its first question is which accounts exist. So the `report`
 commands read every account on a declared target, whether the config declares
 the account or not. They are the only commands that list the accounts the
-config does not declare. Every other command keeps what it reads today: an
+config does not declare on their own. Every other command keeps what it reads today: an
 undeclared account only where a check on a declared one needs it. The MySQL
 and MariaDB checks, for example, name a user at a second host that the config
 does not declare, because it could answer the declared account's login

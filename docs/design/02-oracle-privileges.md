@@ -1847,3 +1847,21 @@ each header says what it creates and leaves behind.
 | ~~P6~~ | ~~11.2 support — worth the `DBA_AUDIT_TRAIL` and `ORACLE_MAINTAINED` special cases?~~ | **decided** (#615): keep for now, drop if it starts costing real complexity. Reasons: [P6](../decisions/log.md#p6) |
 | ~~P7~~ | ~~Do the 23-codebase schema privileges cover `ALTER USER`?~~ (§2.1) | **decided: no**, `ORA-00990` on 26ai 23.26.2.0.0; the direct grant in §1 is the model. Reasons: [P7](../decisions/log.md#p7) |
 | ~~P8~~ | ~~On 11.2 the `ALTER USER` text survives in `V$SQLSTATS` (§4). Document it, warn at runtime, or refuse to rotate there?~~ | **decided: document it** (#387), in §4 and `../security-model.md` §5. Reasons: [P8](../decisions/log.md#p8) |
+
+---
+
+## 9. UC-3 adds no grant
+
+UC-3 (`../use-cases/uc-03-run-statement.md`) runs a statement the operator
+writes. That statement needs whatever privilege it needs, so UC-3 never runs it
+as the service account. It connects as the run-as account, which the config
+names in `run_as:`. The usual choice is the DBA's personal account.
+
+- UC-3 adds no grant to the service account, and `00_install.sql` does not
+  change.
+- UC-3 never connects as the service account. The tool checks this twice: from
+  the config at plan time, and from `SYS_CONTEXT('USERENV','SESSION_USER')`
+  before any statement runs. The second check runs only where `admin:` names a
+  user, because the tool never opens a connection with `admin:` to learn one.
+- ADR-001 is unchanged. The service account still holds `ALTER USER` and
+  nothing else, and §3 still lists what it must never hold.

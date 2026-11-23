@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from datetime import date, datetime
 from decimal import Decimal
 
@@ -16,11 +17,17 @@ def to_json(value: object) -> JsonValue:
     """The JSON form of one cell.
 
     A whole ``Decimal`` within plus or minus 2**53 is an ``int``. Any other
-    ``Decimal`` is its ``str``, so nothing is rounded. Bytes are hex. A type
+    ``Decimal`` is its ``str``, so nothing is rounded. An ``int`` outside that
+    range is its ``str`` too. A float that is not finite is its ``str``, because
+    JSON has no ``NaN`` or ``Infinity``. Bytes are hex. A type
     this does not know is its ``str``. The driver reads a LOB before this runs.
     """
-    if value is None or isinstance(value, bool | int | float | str):
+    if value is None or isinstance(value, bool | str):
         return value
+    if isinstance(value, int):
+        return value if abs(value) <= _EXACT else str(value)
+    if isinstance(value, float):
+        return value if math.isfinite(value) else str(value)
     if isinstance(value, Decimal):
         if value.is_finite() and value == value.to_integral_value() and abs(value) <= _EXACT:
             return int(value)

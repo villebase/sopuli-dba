@@ -67,6 +67,17 @@ def test_refusal_of_an_empty_statement_says_so() -> None:
         classify("-- nothing\n")
 
 
+@pytest.mark.parametrize("raw", ["(select 1 from dual)", ";;", "'x'"])
+def test_text_with_no_leading_word_is_not_called_empty(raw: str) -> None:
+    with pytest.raises(StatementRefusedError, match="does not start with a keyword"):
+        classify(raw)
+
+
+def test_an_unclosed_comment_is_named() -> None:
+    with pytest.raises(StatementRefusedError, match="not closed"):
+        classify("/* select 1 from dual")
+
+
 def test_refusal_is_a_refused_error_with_code_and_exit_8() -> None:
     with pytest.raises(StatementRefusedError) as raised:
         classify("drop table t")

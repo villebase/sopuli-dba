@@ -40,8 +40,13 @@ class Statement:
     keyword: str
 
 
-def _first_word(text: str) -> str:
-    """The first word after any whitespace and comments. Empty if there is none."""
+def _first_word(text: str) -> tuple[str, str]:
+    """The first word after any whitespace and comments, and why there is none.
+
+    The reason is ``""`` when there is a word, ``"empty"`` when only whitespace
+    and closed comments remain, ``"unclosed"`` for a ``/*`` with no end, and
+    ``"other"`` when the next character starts no word.
+    """
     i, n = 0, len(text)
     while i < n:
         if text[i].isspace():
@@ -51,13 +56,17 @@ def _first_word(text: str) -> str:
             i = n if end == -1 else end + 1
         elif text.startswith("/*", i):
             end = text.find("*/", i + 2)
-            i = n if end == -1 else end + 2
+            if end == -1:
+                return "", "unclosed"
+            i = end + 2
         else:
             break
     start = i
     while i < n and (text[i].isalnum() or text[i] == "_"):
         i += 1
-    return text[start:i]
+    if i > start:
+        return text[start:i], ""
+    return "", "empty" if start >= n else "other"
 
 
 def _strip_terminators(raw: str) -> str:
@@ -78,10 +87,14 @@ def classify(raw: str) -> Statement:
     false refusal, and UC-3 accepts it.
     """
     text = _strip_terminators(raw)
-    word = _first_word(text)
+    word, reason = _first_word(text)
     if not word:
+        message = {
+            "empty": "the statement is empty",
+            "unclosed": "the statement has a comment that is not closed",
+        }.get(reason, "the statement does not start with a keyword")
         raise StatementRefusedError(
-            "the statement is empty",
+            message,
             hint="give one SELECT, WITH, UPDATE, INSERT, MERGE or DELETE statement",
         )
     keyword = word.upper()

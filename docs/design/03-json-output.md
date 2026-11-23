@@ -2686,7 +2686,9 @@ records its highest number too.
 | `SOPULI-20008` | `config` | 9 | Two PostgreSQL targets of one run are one cluster: they share a `system_identifier` (`01-configuration.md` §*`postgres:` on a target*). Two MySQL targets of one run are one server: they share a `server_uuid` (from #1223). Two MariaDB targets of one run are one server: they share a `@@server_uid` (from #1286). Two MariaDB targets on nodes of one Galera cluster are one cluster: they share a `wsrep_cluster_state_uuid`, read on a node that is `Synced`, beside each node's own `@@server_uid` (from #1346). A Galera node in another state claims only its server, and `SOPULI-W068` says so. The second to connect is refused, naming both, and the first is unaffected. It has a code for `SOPULI-20007`'s reason: the logins succeeded, and only the tool sees the conflict. `doctor` reports it as that target's error and exits 9 (§2, `targets`). Where a PostgreSQL role may not run `pg_control_system()`, nothing is refused, and `SOPULI-W068` gives the reason. Any MySQL or MariaDB account reads its server's identifier, so there a failed read is the target's error |
 | `SOPULI-20009` | `policy` | 8 | `sql run` refused the statement before it connected: its first keyword is not `SELECT`, `WITH`, `UPDATE`, `INSERT`, `MERGE` or `DELETE`, the statement is empty, or it holds a `;` after the one terminator is removed (`uc-03-run-statement.md`). The message names the keyword. A `;` inside a string literal is refused too, a known false refusal |
 
-**The category is `config`, not `capability`** (ADR-006, E5). `capability` names
+**The category of `SOPULI-20001` to `SOPULI-20008` is `config`, not `capability`**
+(ADR-006, E5). `SOPULI-20009` is the one `policy` row, with exit 8, because the
+statement check refuses a request and no setting is wrong. `capability` names
 what a *target* cannot do: a property of the database at the other end, which
 nothing the operator does locally changes, and which `target_capability` reports
 per target. A missing client is fixed on this machine, by the person reading the

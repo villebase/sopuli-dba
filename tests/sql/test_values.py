@@ -37,5 +37,22 @@ def test_float_kept() -> None:
     assert to_json(1.5) == 1.5
 
 
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (float("nan"), "nan"),
+        (float("inf"), "inf"),
+        (float("-inf"), "-inf"),
+        (2**53, 2**53),
+        (-(2**53), -(2**53)),
+        (2**53 + 1, str(2**53 + 1)),
+        (-(2**53) - 1, str(-(2**53) - 1)),
+    ],
+)
+def test_non_finite_floats_and_large_ints_are_strings(value: object, expected: object) -> None:
+    assert to_json(value) == expected
+    assert type(to_json(value)) is type(expected)
+
+
 def test_unknown_type_is_its_str() -> None:
     assert to_json(timedelta(hours=1)) == "1:00:00"

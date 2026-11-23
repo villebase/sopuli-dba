@@ -218,7 +218,9 @@ A write that affects 0 rows is rolled back, and reports `changed: false` (§6).
 A write, dry or real, sets a call timeout on its session, so a row that the
 application holds locked cannot hang the run. The target that times out fails,
 and the write stops there (§5). On Oracle the client closes the connection when
-the timeout fires, and the server rolls the transaction back. The client reports
+the timeout fires, and the server rolls the transaction back once it ends the
+session. A session that waits on a lock ends when the wait does. The session
+reports `connection_lost`, and nothing more can be sent on it. The client reports
 `DPY-4011`, with `ORA-03156` in its message, and the tool keeps both. The
 timeout does not bound the commit, so a commit is never abandoned half done.
 

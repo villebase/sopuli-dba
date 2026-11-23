@@ -74,7 +74,7 @@ from sopuli.driver.oracle.client import (
     missing_client,
     reach_floor,
 )
-from sopuli.driver.oracle.errors import INSTALL_SCRIPT, from_error
+from sopuli.driver.oracle.errors import INSTALL_SCRIPT, from_error, statement_timeout
 from sopuli.driver.oracle.grants import survey_grants
 from sopuli.driver.oracle.limits import resolve as resolve_limit
 from sopuli.driver.oracle.privileges import CDB_ROOT, audit
@@ -168,6 +168,14 @@ LOB_LIMIT = 4000
 IDENTITY_QUERY = (
     "SELECT SYS_CONTEXT('USERENV', 'DB_UNIQUE_NAME'), SYS_CONTEXT('USERENV', 'CON_NAME') FROM dual"
 )
+
+
+def _is_closed(connection: Any) -> bool:
+    """Whether the client no longer holds a usable connection."""
+    try:
+        return not connection.is_healthy()
+    except Exception:  # noqa: BLE001 -- a connection that cannot answer is not usable
+        return True
 
 
 def _exact_numbers(cursor: Any, metadata: Any) -> Any:
@@ -375,6 +383,8 @@ class OracleSession(ClosesConnection):
     _limit: ByteLimit | None = field(default=None, init=False, repr=False)
     #: The account this connection logged in as, cached for the same reason.
     _session_user: str | None = field(default=None, init=False, repr=False)
+    #: Set when a statement left the connection closed. See `connection_lost`.
+    _connection_lost: bool = field(default=False, init=False, repr=False)
 
     def scope(self) -> Scope:
         """What this connection is, and what it can do.
@@ -1132,6 +1142,14 @@ class OracleSession(ClosesConnection):
             detail=f"account was {was}; password expired",
         )
 
+    @property
+    def connection_lost(self) -> bool:
+        """The connection closed under a statement, such as on a call timeout.
+
+        Nothing more can be sent on this session.
+        """
+        return self._connection_lost
+
     def session_user(self) -> str:
         """The account this session is logged in as, read once and cached."""
         if self._session_user is None:
@@ -1170,12 +1188,17 @@ class OracleSession(ClosesConnection):
         no bind. ``connection.call_timeout`` is ``timeout_ms`` for the call and
         is put back afterwards.
         """
+        if commit and guard is None:
+            raise ValueError("run_statement commits only with a row guard")
         previous = self.connection.call_timeout
         committed = False
         try:
             self.connection.call_timeout = timeout_ms
             with traced_cursor(self.connection) as cursor:
                 try:
+                    # End a transaction an earlier caller left open: READ ONLY
+                    # must be the first statement of its transaction (ORA-01453).
+                    self.connection.rollback()
                     if statement.kind is StatementKind.READ:
                         cursor.execute("SET TRANSACTION READ ONLY")
                         cursor.set_output_type_handler(_exact_numbers)
@@ -1192,7 +1215,8 @@ class OracleSession(ClosesConnection):
                         committed = True
                     return StatementResult((), (), count, False, committed, passed)
                 except Exception as error:  # noqa: BLE001 -- classified, never swallowed
-                    raise from_error(error).as_error() from error
+                    self._connection_lost = _is_closed(self.connection)
+                    raise statement_timeout(from_error(error)).as_error() from error
         finally:
             if not committed:
                 with suppress(Exception):

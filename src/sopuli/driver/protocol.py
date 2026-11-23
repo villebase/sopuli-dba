@@ -1723,6 +1723,14 @@ class StatementRunner(Protocol):
     time by :func:`sopuli.driver.registry.require_command`.
     """
 
+    @property
+    def connection_lost(self) -> bool:
+        """A statement left the connection closed, such as on a call timeout.
+
+        The session can run nothing more, and only ``close`` is safe to call.
+        """
+        ...
+
     def session_user(self) -> str:
         """The account this session is logged in as, as the server spells it."""
         ...
@@ -1745,7 +1753,8 @@ class StatementRunner(Protocol):
         A read runs in a read-only transaction and is rolled back. A write is
         committed only when ``commit`` is true, the guard passes and the row
         count is above zero; otherwise it is rolled back. ``timeout_ms`` bounds
-        the call; ``0`` means no bound. Raises :class:`DriverError`, with the
+        the call; ``0`` means no bound. ``commit=True`` needs a ``guard``, or
+        ``ValueError`` is raised before anything is sent. Raises :class:`DriverError`, with the
         server's code and message, for anything the server refuses.
         """
         ...

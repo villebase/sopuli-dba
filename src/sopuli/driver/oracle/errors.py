@@ -45,7 +45,7 @@ have in the open, not a default this module sets on the way past.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from sopuli.driver import errors
@@ -190,20 +190,6 @@ RULES: dict[str, _Rule] = {
         hint=(
             "the statement tried to change data in a read-only transaction; "
             "`sql run` runs a SELECT or WITH query in one. Nothing was changed"
-        ),
-    ),
-    # The call timeout `sql run` sets. python-oracledb in thick mode raises
-    # DPY-4011 for it, with DPI-1080 and ORA-03156 in the message; `classify`
-    # reads it as this row. The client closes the connection, so the server
-    # rolls the transaction back.
-    "ORA-03156": _Rule(
-        CALL_TIMEOUT,
-        "database",
-        hint=(
-            "the statement ran longer than the timeout, so the client closed the "
-            "connection and the server rolled the transaction back. Nothing was "
-            "committed. Raise the timeout, or find what holds the lock or makes the "
-            "statement slow"
         ),
     ),
     "ORA-65040": _Rule(
@@ -478,10 +464,6 @@ def classify(code: str, message: str) -> Diagnosis:
     state on the strength of a guess.
     """
     named = RULES.get(code)
-    if code == "DPY-4011" and "ORA-03156" in message:
-        # A call timeout closes the connection, so the client reports a closed
-        # connection. Its message names the real cause.
-        named = RULES["ORA-03156"]
     rule = named if named is not None else _by_family(code)
 
     return Diagnosis(
@@ -538,6 +520,34 @@ def from_error(exc: Any) -> Diagnosis:
     code = _normalise(str(getattr(detail, "full_code", "") or ""))
 
     return classify(code or _leading_code(message), message)
+
+
+def statement_timeout(diagnosis: Diagnosis) -> Diagnosis:
+    """``sql run``'s own wording for its call timeout, and nobody else's.
+
+    python-oracledb in thick mode closes the connection when a call timeout
+    fires and raises ``DPY-4011``, with ``ORA-03156`` in the message. Every verb
+    shares :func:`classify`'s reading of that code: a lost session, where it is
+    unknown whether a statement took effect. That is right for ``ALTER USER``,
+    which is DDL and commits itself. It is wrong for ``sql run``, whose
+    statement is always DML in an open transaction, so the server rolls it back
+    when the session goes. ``sql run`` calls this on what it caught. The code
+    and the server's message are kept.
+    """
+    if diagnosis.code != "DPY-4011" or "ORA-03156" not in diagnosis.message:
+        return diagnosis
+    return replace(
+        diagnosis,
+        kind=CALL_TIMEOUT,
+        category="database",
+        hint=(
+            "the statement ran longer than the timeout, so the client closed the "
+            "connection, so the server rolls the transaction back when it ends the "
+            "session, which can wait for a lock to be released. Nothing was "
+            "committed. Raise the timeout, or find what holds the lock or makes the "
+            "statement slow"
+        ),
+    )
 
 
 def _normalise(code: str) -> str:

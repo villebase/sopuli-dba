@@ -128,7 +128,7 @@ def test_read_truncates(session: Any, table: str) -> None:
 def test_read_cannot_write(session: Any, table: str) -> None:
     statement = _hand_built_read(f"UPDATE {table} SET v = 'changed'")
     with pytest.raises(DriverError) as raised:
-        session.run_statement(statement, guard=None, commit=True, max_rows=10, timeout_ms=0)
+        session.run_statement(statement, guard=None, commit=False, max_rows=10, timeout_ms=0)
     assert raised.value.code == "ORA-01456"
     assert "ORA-01456" in raised.value.message
     assert _count(session.connection, f"SELECT COUNT(*) FROM {table} WHERE v = 'changed'") == 0
@@ -171,8 +171,24 @@ def test_dry_run_write_never_commits(session: Any, table: str, second_connection
 
 
 def test_write_of_zero_rows_rolls_back(session: Any, table: str) -> None:
-    result = _run(session, f"UPDATE {table} SET v = 'x' WHERE k = 99", commit=True)
-    assert (result.row_count, result.committed, result.guard_passed) == (0, False, None)
+    result = _run(
+        session, f"UPDATE {table} SET v = 'x' WHERE k = 99", guard=RowGuard(maximum=5), commit=True
+    )
+    assert (result.row_count, result.committed, result.guard_passed) == (0, False, True)
+
+
+def test_commit_without_a_guard_is_refused(session: Any, table: str) -> None:
+    with pytest.raises(ValueError, match="guard"):
+        _run(session, f"UPDATE {table} SET v = 'x' WHERE k = 1", commit=True)
+    assert _count(session.connection, f"SELECT COUNT(*) FROM {table} WHERE v = 'x'") == 0
+
+
+def test_a_transaction_left_open_does_not_break_a_read(session: Any, table: str) -> None:
+    """The runner ends any open transaction first, or SET TRANSACTION READ ONLY
+    would be ORA-01453."""
+    _execute(session.connection, f"UPDATE {table} SET v = 'left' WHERE k = 1")
+    result = _run(session, f"SELECT COUNT(*) FROM {table}")
+    assert result.rows == ((5,),)
 
 
 def test_database_identity(session: Any) -> None:
@@ -211,12 +227,17 @@ def test_values_convert(session: Any) -> None:
 
 
 def test_lock_wait_times_out(session: Any, table: str, second_connection: Any) -> None:
-    _execute(second_connection, f"UPDATE {table} SET v = 'held' WHERE k = 1")
+    """One UPDATE changes rows 1 to 4 and then waits on row 5, which another
+    session holds. After the timeout the rows it had changed are locked by
+    nobody, which only a rollback does, and nothing is committed."""
+    assert session.connection_lost is False
+    _execute(second_connection, f"UPDATE {table} SET v = 'held' WHERE k = 5")
     try:
         with pytest.raises(DriverError) as raised:
             _run(
                 session,
-                f"UPDATE {table} SET v = 'mine' WHERE k = 1",
+                f"UPDATE {table} SET v = 'mine'",
+                guard=RowGuard(expect=5),
                 commit=True,
                 timeout_ms=2000,
             )
@@ -224,9 +245,25 @@ def test_lock_wait_times_out(session: Any, table: str, second_connection: Any) -
         # ORA-03156 is in its message, and the mapped hint says what happened.
         assert raised.value.code == "DPY-4011"
         assert "ORA-03156" in raised.value.message
-        assert "rolled the transaction back" in (raised.value.hint or "")
+        assert "rolls the transaction back" in (raised.value.hint or "")
+        assert session.connection_lost is True
     finally:
+        # The server process of the closed session is still waiting on row 5. It
+        # notices the lost client when the wait ends, and only then rolls back.
         second_connection.rollback()
+    # Rows 1 to 4 become free, and unchanged: the abandoned transaction is gone.
+    deadline = time.monotonic() + 15
+    while True:
+        try:
+            with second_connection.cursor() as cursor:
+                cursor.execute(f"SELECT k FROM {table} WHERE k < 5 FOR UPDATE NOWAIT")
+                assert len(cursor.fetchall()) == 4
+            break
+        except Exception:
+            if time.monotonic() > deadline:
+                raise
+            time.sleep(0.5)
+    second_connection.rollback()
     assert _count(second_connection, f"SELECT COUNT(*) FROM {table} WHERE v = 'mine'") == 0
 
 

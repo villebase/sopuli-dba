@@ -36,6 +36,7 @@ from sopuli.driver.oracle.errors import (
     MappedError,
     classify,
     from_error,
+    statement_timeout,
 )
 from sopuli.driver.protocol import AuthenticationError, DriverError
 from sopuli.exit_codes import ExitCode
@@ -347,17 +348,40 @@ CALL_TIMED_OUT = (
 )
 
 
-def test_a_call_timeout_is_not_read_as_a_lost_session() -> None:
-    """#1661: the client closes the connection on a call timeout, so the code
-    read is DPY-4011. Its message names ORA-03156, and the hint says the
-    transaction was rolled back, which the lost-session hint cannot say."""
+def test_a_call_timeout_stays_a_lost_session_for_every_other_verb() -> None:
+    """#1661: `classify` is shared with `creds apply`, `rotate` and `account
+    reset-password`, whose ALTER USER is DDL and auto-commits. A timeout there
+    must keep the lost-session wording, "unknown whether it took effect", and
+    must never say the transaction was rolled back."""
     found = classify("DPY-4011", CALL_TIMED_OUT)
 
     assert found.code == "DPY-4011"
-    assert found.kind == "call_timeout"
+    assert found.kind == UNREACHABLE
+    assert found.category == "connectivity"
     assert found.hint is not None
-    assert "rolled the transaction back" in found.hint
+    assert "Whether a statement in flight took effect is unknown" in found.hint
+    assert "rolled" not in found.hint
     assert found.message == CALL_TIMED_OUT
+
+
+def test_sql_run_words_its_call_timeout_as_a_rolled_back_transaction() -> None:
+    """#1661: `sql run` only ever has DML in an open transaction, so its own
+    path says nothing was committed. The vendor code and message stay."""
+    found = statement_timeout(classify("DPY-4011", CALL_TIMED_OUT))
+
+    assert found.code == "DPY-4011"
+    assert found.kind == "call_timeout"
+    assert found.category == "database"
+    assert found.hint is not None
+    assert "rolls the transaction back" in found.hint
+    assert "Nothing was committed" in found.hint
+    assert found.message == CALL_TIMED_OUT
+
+
+def test_sql_run_leaves_any_other_failure_alone() -> None:
+    lost = classify("DPY-4011", SESSION_LOST)
+
+    assert statement_timeout(lost) == lost
 
 
 def test_a_write_in_a_read_only_transaction_says_nothing_was_changed() -> None:

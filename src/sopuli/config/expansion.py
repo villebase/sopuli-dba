@@ -30,7 +30,7 @@ says (``04-testing.md`` §4).
 from __future__ import annotations
 
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from sopuli.config.errors import ROOT, ConfigError, KeyPath
 from sopuli.config.model import (
@@ -90,7 +90,11 @@ def expand_targets(config: Config) -> tuple[ExpandedTarget, ...]:
         expanded.extend(_expand(target_set))
 
     _reject_duplicate_names(expanded)
-    return tuple(expanded)
+    # A target's own `run_as:` wins over `defaults.run_as` as a whole: the two
+    # blocks are not merged key by key, because a username belongs to its auth.
+    return tuple(
+        replace(item, run_as=item.target.run_as or config.defaults.run_as) for item in expanded
+    )
 
 
 def declared_at(expanded: ExpandedTarget, field: str | None = None) -> KeyPath:
@@ -110,6 +114,13 @@ def declared_at(expanded: ExpandedTarget, field: str | None = None) -> KeyPath:
     if field is not None and field in expanded.patched and expanded.target_set is not None:
         at = at.key("overrides").key(expanded.name)
     return at if field is None else at.key(field)
+
+
+def run_as_at(expanded: ExpandedTarget) -> KeyPath:
+    """Where the ``run_as:`` this target uses was written: its own, or ``defaults:``."""
+    if expanded.target.run_as is None:
+        return ROOT.key("defaults").key("run_as")
+    return declared_at(expanded, "run_as")
 
 
 def block_key_at(expanded: ExpandedTarget, block: str, key: str) -> KeyPath:
@@ -264,6 +275,7 @@ def _render_target(template: Target, combination: _Combination, *, at: KeyPath) 
         environment=_maybe(template.environment, variables, at=at.key("environment")),
         vault=_maybe(template.vault, variables, at=at.key("vault")),
         admin=_render_admin(template.admin, variables, at=at.key("admin")),
+        run_as=_render_admin(template.run_as, variables, at=at.key("run_as")),
         oracle=_render_oracle(template.oracle, variables, at=at.key("oracle")),
         postgres=_render_postgres(template.postgres, variables, at=at.key("postgres")),
         mysql=_render_mysql(template.mysql, variables, at=at.key("mysql")),
@@ -491,6 +503,7 @@ def _patched_keys(patch: TargetPatch) -> tuple[str, ...]:
         "environment": patch.environment is not None,
         "vault": patch.vault is not None,
         "admin": patch.admin is not None,
+        "run_as": patch.run_as is not None,
         "oracle": patch.oracle is not None,
         "postgres": patch.postgres is not None,
         "mysql": patch.mysql is not None,
@@ -565,6 +578,7 @@ def _patch_target(
             else _substitute(patch.vault, variables, at=at.key("vault"))
         ),
         admin=_patch_admin(target.admin, patch.admin, variables, at=at.key("admin")),
+        run_as=_patch_admin(target.run_as, patch.run_as, variables, at=at.key("run_as")),
         oracle=_patch_oracle(target.oracle, patch.oracle, variables, at=at.key("oracle")),
         postgres=_patch_postgres(target.postgres, patch.postgres, variables, at=at.key("postgres")),
         mysql=_patch_mysql(target.mysql, patch.mysql, variables, at=at.key("mysql")),

@@ -31,7 +31,7 @@ the intended division.
 
 Regenerate the committed artefact with::
 
-    python -m sopuli.config.schema > docs/schemas/sopuli-config-5.3.schema.json
+    python -m sopuli.config.schema > docs/schemas/sopuli-config-5.4.schema.json
 """
 
 from __future__ import annotations
@@ -65,7 +65,7 @@ from sopuli.config import (
 #: `01-configuration.md` §9b says when it changes. What each shape accepts and
 #: refuses, and why, is in the function that builds it: its docstring or its
 #: ``description``.
-SCHEMA_VERSION = "5.3"
+SCHEMA_VERSION = "5.4"
 
 SCHEMA_FILENAME = f"sopuli-config-{SCHEMA_VERSION}.schema.json"
 
@@ -602,6 +602,7 @@ _TARGET_TYPES: dict[str, Schema] = {
     "environment": STRING,
     "vault": {**STRING, "description": "The name of an entry in `vaults:`."},
     "admin": _ref("admin"),
+    "run_as": _ref("run_as"),
     "oracle": _ref("target_oracle"),
     "postgres": _ref("target_postgres"),
     "mysql": _ref("target_mysql"),
@@ -679,6 +680,58 @@ def _admin_auth() -> Schema:
         description=(
             "P2's bootstrap sources, in its order of preference: external "
             "authentication, a vault path, an interactive prompt, the OS keyring, an "
+            "environment variable."
+        ),
+    )
+
+
+def _run_as() -> Schema:
+    return _object(
+        keys=targets.ADMIN_KEYS,
+        types={
+            "username": {
+                **STRING,
+                "description": (
+                    "The account `sql run` connects as. Required, except under "
+                    "`auth: external`, where the wallet supplies it. "
+                    "SOPULI_DB_ADMIN_USER does not apply."
+                ),
+            },
+            "auth": _method_or_shorthand("run_as_auth", targets.RUN_AS_METHODS),
+        },
+        min_properties=1,
+        description=(
+            "The account `sql run` connects as, never the password. The same shape as "
+            "`admin:` without the `vault` source. `--as USER` on the command line "
+            "wins over it."
+        ),
+    )
+
+
+def _run_as_auth() -> Schema:
+    """``run_as.auth`` -- the sources of ``admin.auth`` except ``vault``."""
+    return _object(
+        keys=targets.RUN_AS_AUTH_KEYS,
+        types={
+            "method": _enum(tuple(targets.RUN_AS_METHODS)),
+            "password_env": {
+                **STRING,
+                "description": (
+                    "The variable holding the password, for `method: env`. Required "
+                    "there: the admin's variable is not a default. Low-assurance (P2)."
+                ),
+            },
+            "entry": {
+                **STRING,
+                "description": (
+                    "For `method: keyring`: the name of an entry under the service "
+                    "`sopuli` in the OS keyring."
+                ),
+            },
+        },
+        required=("method",),
+        description=(
+            "External authentication, an interactive prompt, the OS keyring or an "
             "environment variable."
         ),
     )
@@ -988,6 +1041,7 @@ def _defaults() -> Schema:
             "profile": STRING,
             "safety": _ref("safety"),
             "locking": _ref("locking"),
+            "run_as": _ref("run_as"),
         },
         description="Precedence layer 5 (P3): the bottom of the config file.",
     )
@@ -1570,6 +1624,8 @@ def build_schema() -> Schema:
             "target": _target(),
             "admin": _admin(),
             "admin_auth": _admin_auth(),
+            "run_as": _run_as(),
+            "run_as_auth": _run_as_auth(),
             "target_oracle": _target_oracle(),
             "target_postgres": _target_postgres(),
             "target_mysql": _target_mysql(),

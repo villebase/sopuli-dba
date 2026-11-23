@@ -11,7 +11,7 @@ Put the binding keys at the top level and the file reads like a straightforward
 target list. This is the shape most users will ever need.
 
 ```yaml
-# yaml-language-server: $schema=./sopuli-config-5.3.schema.json
+# yaml-language-server: $schema=./sopuli-config-5.4.schema.json
 version: 1
 
 vaults: {}          # named secret stores
@@ -487,7 +487,7 @@ PDB per tenant across three environments, HashiCorp Vault as master. It needs no
 `applications:` section.
 
 ```yaml
-# yaml-language-server: $schema=./sopuli-config-5.3.schema.json
+# yaml-language-server: $schema=./sopuli-config-5.4.schema.json
 version: 1
 
 runtime:
@@ -1596,6 +1596,68 @@ wallet is somebody claiming something about *this* target and is worth stopping
 for, while the variable is ambient and set once for a whole run — refusing a run
 because one target of thirty-four uses a wallet would make the variable unusable
 in a mixed estate.
+
+### `run_as:` — the account `sql run` connects as
+
+`sopuli sql run` (UC-3) never connects with `admin:`. It connects as the account
+`run_as:` names, so that a statement runs with the privileges of a person or of
+an application's owner and not with the tool's own. `run_as:` has the grammar of
+`admin:`. It goes on a target, on a target set or in an `overrides:` entry, or
+under `defaults:`. It does not go on a group, as `admin:` does not. A new optional
+key is a minor bump of the schema (§9b): `run_as:` was added in config schema 5.4
+(#1660).
+
+| `method` | Its keys | |
+|---|---|---|
+| `external` | none | a wallet. No `username:`, as for `admin:`, and the `dsn` must be a TNS alias. Oracle only |
+| `prompt` | none | interactive |
+| `keyring` | `entry` | an entry under the service `sopuli` in the OS keyring |
+| `env` | `password_env` | flagged low-assurance in output (P2) |
+
+There is no `vault` method. The tool never logs in with a password that a store
+holds for another purpose, and it does not manage this account.
+
+`env` differs from `admin:` in one way: `password_env` is required. The default
+variable, `SOPULI_DB_ADMIN_PASSWORD`, holds the admin's password, and a statement
+would then run as one account with the password of another. For the same reason
+`SOPULI_DB_ADMIN_USER` does not rename the `run_as:` user. `username:` is
+required unless the method is `external`.
+
+```yaml
+defaults:
+  run_as:
+    username: dba_alpha
+    auth: { method: keyring, entry: dba-alpha }
+
+targets:
+  - name: cdb-root-dev
+    type: oracle
+    dsn: db-dev.example.com:1521/CDBDEV.pdb.example.com
+
+  # This target's own block wins over the default. The two are not merged key by key.
+  - name: cdb-root-qa
+    type: oracle
+    dsn: db-qa.example.com:1521/CDBQA.pdb.example.com
+    run_as:
+      username: acme_owner
+      auth: { method: keyring, entry: acme-owner-qa }
+```
+
+In a target set, `entry` and `password_env` take the placeholders of `for_each:`,
+as `admin.auth` does. On an explicit target, and under `defaults:`, a
+`{placeholder}` has nothing to substitute from and is refused.
+
+**`--as USER` wins over both** and means `{ username: USER, auth: prompt }`. With
+neither, the target is refused with exit 9. The message names the target and both
+ways to fix it. There is no default account, and the tool never falls back to
+`admin:`.
+
+**The service account is refused.** A `run_as:` user, or an `--as` user, equal to
+`admin.username` by `upper()` is refused at plan time with `SOPULI-20010`, and so
+is a target whose `admin:` and `run_as:` are both `external`: a wallet holds one
+credential for each alias. When `admin:` is `external` the config holds no name to
+compare, and a `run_as:` that names a user is allowed
+(`../use-cases/uc-03-run-statement.md` §2).
 
 ### `oracle:` on a target — assertions, not settings
 
@@ -3936,7 +3998,7 @@ error message for a file this long.
 ## 9b. The published schema
 
 P3 requires a published JSON Schema. It is
-[`docs/schemas/sopuli-config-5.3.schema.json`](../schemas/sopuli-config-5.3.schema.json),
+[`docs/schemas/sopuli-config-5.4.schema.json`](../schemas/sopuli-config-5.4.schema.json),
 Draft 2020-12, and it exists for the editor rather than for the tool: pointed at
 from a YAML language server, it gives completion and inline errors while somebody
 is editing a 130-line file, which is worth more than the validation itself.
@@ -3947,7 +4009,7 @@ the same constants the builders validate with — `TARGET_KEYS`, `VAULT_TYPES`,
 a section's keys and its type table disagree. Regenerate with:
 
 ```
-python -m sopuli.config.schema > docs/schemas/sopuli-config-5.3.schema.json
+python -m sopuli.config.schema > docs/schemas/sopuli-config-5.4.schema.json
 ```
 
 `tests/config/test_schema.py` fails when the committed file is not what the model
@@ -3987,6 +4049,7 @@ match instead:
 | `secret` and `secret_template` are mutually exclusive | §3 |
 | an `auth:` block carries only the keys its own `method:` takes | §3a |
 | `admin.auth: external` requires a TNS-alias `dsn` and no `username` | yes |
+| `run_as.auth: external` has the same rules, and `run_as:` needs a `username` under every other method | yes |
 | `oracle:` only on an Oracle target, `postgres:` only on a PostgreSQL target, `mysql:` only on a MySQL target, `mariadb:` only on a MariaDB target, and `mssql:` only on a SQL Server target | yes |
 | a PostgreSQL, MySQL, MariaDB or SQL Server target has a `host:port` `dsn` and no `admin.auth: external` | yes |
 | `postgres.sslrootcert` only with `sslmode: verify-ca` or `verify-full` | yes |
@@ -4033,7 +4096,7 @@ A schema nothing is pointed at is a file in a directory. The association is made
 from the config file itself, with a comment on the first line:
 
 ```yaml
-# yaml-language-server: $schema=./sopuli-config-5.3.schema.json
+# yaml-language-server: $schema=./sopuli-config-5.4.schema.json
 version: 1
 ```
 
@@ -4044,7 +4107,7 @@ description the generator wrote for it, and an unknown key is underlined where i
 was typed.
 
 **The path is relative to the YAML file**, not to the repository. Copy the schema
-next to the config, or point at it where it lives — `$schema=../sopuli-dba/docs/schemas/sopuli-config-5.3.schema.json`
+next to the config, or point at it where it lives — `$schema=../sopuli-dba/docs/schemas/sopuli-config-5.4.schema.json`
 is as valid as the form above.
 
 **The `$id` inside the schema is an identifier, not an address.** It reads like a

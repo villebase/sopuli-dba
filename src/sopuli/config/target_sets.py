@@ -56,6 +56,7 @@ from sopuli.config.targets import (
     read_mysql,
     read_oracle,
     read_postgres,
+    read_run_as,
     read_target,
 )
 
@@ -265,6 +266,7 @@ def _build_patch(raw: Any, *, at: KeyPath) -> TargetPatch:
         environment=optional_string(patch, "environment", at=at),
         vault=optional_string(patch, "vault", at=at),
         admin=read_admin(patch.get("admin"), at=at.key("admin")),
+        run_as=read_run_as(patch.get("run_as"), at=at.key("run_as")),
         oracle=(
             None if "oracle" not in patch else read_oracle(patch["oracle"], at=at.key("oracle"))
         ),

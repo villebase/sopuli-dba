@@ -27,7 +27,7 @@ from dataclasses import dataclass
 
 from sopuli.config.codes import HOSTLESS_REPORT_NAME
 from sopuli.config.errors import ROOT, ConfigError, KeyPath
-from sopuli.config.expansion import block_key_at, declared_at
+from sopuli.config.expansion import block_key_at, declared_at, run_as_at
 from sopuli.config.model import (
     Application,
     Config,
@@ -351,6 +351,14 @@ def _check_host_and_port_product(expanded: ExpandedTarget) -> None:
             f"authentication is an Oracle wallet",
             at=declared_at(expanded, "admin").key("auth"),
             hint="use `vault`, `prompt` or `env`",
+        )
+    run_as = None if expanded.run_as is None else expanded.run_as.auth
+    if run_as is not None and run_as.method == EXTERNAL:
+        raise ConfigError(
+            f"target {expanded.name!r} is {product.a_name} target, and external "
+            f"authentication is an Oracle wallet",
+            at=run_as_at(expanded).key("auth"),
+            hint="use `prompt`, `keyring` or `env`",
         )
     _check_dsn(expanded, product)
 

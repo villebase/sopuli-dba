@@ -39,7 +39,7 @@ from sopuli.config.codes import (
     UNVERIFIED_TRANSPORT,
 )
 from sopuli.config.errors import ROOT, ConfigError, KeyPath
-from sopuli.config.expansion import declared_at
+from sopuli.config.expansion import declared_at, run_as_at
 from sopuli.config.locking import LOCK_ADVISORY_ONLY, LOCK_REQUIRED
 from sopuli.config.model import Config, ConfigWarning, ExpandedTarget, Locking, VaultPatch
 from sopuli.config.products import tls_setting
@@ -106,6 +106,7 @@ def check_references(config: Config) -> tuple[ConfigWarning, ...]:
     _check_breaking_locks_without_a_fence(config)
     _check_external_admin(config)
     _check_admin_refs(config)
+    _check_run_as(config)
     _check_personal_stores(config)
     return (
         *_warn_about_profile_names(config),
@@ -591,6 +592,64 @@ def _check_admin_refs(config: Config) -> None:
                 "so §7's per-account tokens never reach it"
             ),
         )
+
+
+def _check_run_as(config: Config) -> None:
+    """What ``run_as:`` requires of the rest of the target (UC-3 §5).
+
+    The rules of ``admin:`` that apply to it, checked on the expanded estate
+    because a patch or ``defaults:`` may write half of the pair: a name unless
+    the method is ``external``, no name with ``external``, a TNS alias for
+    ``external``, and no ``{placeholder}`` left in a name that points at a
+    credential. There is no ref, as ``vault`` is not a method here.
+    """
+    for expanded in config.expanded_targets:
+        run_as = expanded.run_as
+        if run_as is None:
+            continue
+        target = expanded.target
+        external = run_as.auth is not None and run_as.auth.method == EXTERNAL
+        at = run_as_at(expanded)
+
+        if external and run_as.username is not None:
+            raise ConfigError(
+                f"target {target.name!r} runs statements with external authentication, so "
+                f"its `run_as.username:` cannot be honoured",
+                at=at.key("username"),
+                hint=(
+                    "a wallet supplies the username for the alias it is keyed on -- drop "
+                    "`username:`, or use a method that takes one"
+                ),
+            )
+        if run_as.username is None and not external:
+            raise ConfigError(
+                f"target {target.name!r} has a `run_as:` that names no `username:`",
+                at=at.key("username"),
+                hint="name the account the statement runs as; only `auth: external` takes none",
+            )
+        if external:
+            offending = _not_in_an_alias(target.dsn)
+            if offending is not None:
+                raise ConfigError(
+                    f"target {target.name!r} runs statements with external authentication, so "
+                    f"its `dsn:` must be a TNS alias, and {target.dsn!r} contains {offending!r}",
+                    at=declared_at(expanded, "dsn"),
+                    hint=(
+                        "external auth connects as `/@alias`, and the wallet is keyed on that "
+                        "alias -- name one resolvable through TNS_ADMIN"
+                    ),
+                )
+        if run_as.auth is None:
+            continue
+        for key in ("entry", "password_env"):
+            value = getattr(run_as.auth, key)
+            if value is not None and PLACEHOLDER.search(value):
+                raise ConfigError(
+                    f"run_as {key} {value!r} still contains a placeholder",
+                    at=at.key("auth").key(key),
+                    hint="a target set's `for_each:` variables render one (§4); elsewhere "
+                    "there is nothing to substitute from",
+                )
 
 
 def _not_in_an_alias(dsn: str) -> str | None:

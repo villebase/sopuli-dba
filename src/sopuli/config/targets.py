@@ -57,6 +57,7 @@ TARGET_KEYS = (
     "environment",
     "vault",
     "admin",
+    "run_as",
     "oracle",
     "postgres",
     "mysql",
@@ -111,6 +112,23 @@ ADMIN_METHODS: dict[str, Method] = {
 }
 
 ADMIN_AUTH_KEYS = ("method", *sorted({key for spec in ADMIN_METHODS.values() for key in spec.keys}))
+
+#: The sources `run_as:` may name (UC-3 §5): `ADMIN_METHODS` without `vault`.
+#: `run_as:` names the account a person runs a statement as, and a vault ref
+#: would let a scheduled run fetch that person's password. Two differences
+#: from `admin:`, both for the same reason: `env` must name its variable,
+#: because the default, :data:`ADMIN_PASSWORD_ENV`, holds the admin's password,
+#: and a statement would then run as one account with the other's password.
+RUN_AS_METHODS: dict[str, Method] = {
+    name: (Method(required=("password_env",)) if name == "env" else spec)
+    for name, spec in ADMIN_METHODS.items()
+    if name != "vault"
+}
+
+RUN_AS_AUTH_KEYS = (
+    "method",
+    *sorted({key for spec in RUN_AS_METHODS.values() for key in spec.keys}),
+)
 
 #: §6's variable, and the default for `method: env` when `password_env:` is not
 #: given. Named here rather than resolved into the model: an unset value has to
@@ -230,6 +248,7 @@ def read_target(entry: dict[str, Any], *, at: KeyPath) -> Target:
         environment=optional_string(entry, "environment", at=at),
         vault=optional_string(entry, "vault", at=at),
         admin=read_admin(entry.get("admin"), at=at.key("admin")),
+        run_as=read_run_as(entry.get("run_as"), at=at.key("run_as")),
         oracle=read_oracle(entry.get("oracle"), at=at.key("oracle")),
         postgres=(
             None
@@ -285,6 +304,34 @@ def read_admin(raw: Any, *, at: KeyPath) -> AdminCredential | None:
     )
 
 
+def read_run_as(raw: Any, *, at: KeyPath) -> AdminCredential | None:
+    """``run_as:`` -- the account `sql run` connects as (UC-3 §5).
+
+    The same model as ``admin:`` with fewer methods (:data:`RUN_AS_METHODS`).
+    Whether a name is written is checked once the estate is expanded, because
+    an ``overrides:`` patch may supply it. The environment variable
+    ``SOPULI_DB_ADMIN_USER`` does not apply: it names the admin.
+    """
+    if raw is None:
+        return None
+    run_as = mapping(raw, at=at)
+    reject_unknown_keys(
+        run_as,
+        allowed=ADMIN_KEYS,
+        at=at,
+        hint=(
+            "known keys here: auth, username -- the password is never written in this "
+            "file (P2); `auth:` says where it comes from"
+        ),
+    )
+    _reject_empty(run_as, at=at, block_name="run_as")
+
+    auth = _read_auth(
+        run_as.get("auth"), at=at.key("auth"), methods=RUN_AS_METHODS, noun="run_as auth method"
+    )
+    return AdminCredential(username=optional_string(run_as, "username", at=at), auth=auth)
+
+
 def read_admin_auth(raw: Any, *, at: KeyPath) -> AdminAuth | None:
     """``admin.auth`` -- one of P2's sources, and what it needs to say.
 
@@ -293,12 +340,15 @@ def read_admin_auth(raw: Any, *, at: KeyPath) -> AdminAuth | None:
     smaller addressing syntax for one credential would be a parser that disagrees
     with the first one somewhere nobody looks.
     """
+    return _read_auth(raw, at=at, methods=ADMIN_METHODS, noun="admin auth method")
+
+
+def _read_auth(raw: Any, *, at: KeyPath, methods: dict[str, Method], noun: str) -> AdminAuth | None:
+    """One ``auth:`` block of ``admin:`` or ``run_as:``, which differ in `methods`."""
     if raw is None:
         return None
 
-    method, auth = read_method(
-        raw, at=at, methods=ADMIN_METHODS, noun="admin auth method", shape=_shape
-    )
+    method, auth = read_method(raw, at=at, methods=methods, noun=noun, shape=_shape)
     ref = optional_string(auth, "secret", at=at)
     return AdminAuth(
         method=method,
@@ -320,7 +370,9 @@ def _shape(key: str) -> str:
         return "a SecretRef -- `[vault:]path#field`, in the target's vault by default (§7)"
     if key == "entry":
         return "the name of an entry under the service `sopuli` in the OS keyring"
-    return "written inline"  # pragma: no cover - no other admin key is required
+    if key == "password_env":
+        return "the name of the environment variable that holds the password"
+    return "written inline"  # pragma: no cover - no other key is required
 
 
 def read_oracle(raw: Any, *, at: KeyPath) -> TargetOracle:

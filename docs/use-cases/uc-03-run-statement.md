@@ -16,7 +16,9 @@ are built in this order, each by its own issue:
 | `sql run` for reads | (open: #1662) |
 | `--write` | (open: #1663) |
 
-The first release of UC-3 covers Oracle only. The umbrella issue is #1657.
+The first release of UC-3 covers Oracle only. A target of another product is
+refused at plan time by `require_command`, with `SOPULI-20006`, never by a
+version check (invariant 4). The umbrella issue is #1657.
 
 ---
 

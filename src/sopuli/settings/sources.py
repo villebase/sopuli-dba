@@ -183,7 +183,8 @@ def reached_targets(config: Config, *, every_target: bool = False) -> set[str]:
 
     The targets its bindings name, unless ``every_target`` says the run
     reaches each selected target whether or not a binding names it. `sql run
-    --write` says so: it acts on targets, not on bound accounts (UC-3).
+    --write` says so, and so do the `account` verbs: they act on targets, and
+    the account is named on the command line, not by a binding (UC-3, UC-2).
     """
     if every_target:
         return {expanded.name for expanded in config.expanded_targets}
@@ -205,7 +206,9 @@ def estate_contributions(
     boundary where :func:`config_contributions` is.
 
     **The targets are the ones the plan names**, which is the ones bindings name
-    rather than everything still in ``expanded_targets``. A declared target this
+    rather than everything still in ``expanded_targets``, except for a verb that
+    binds no account (``every_target``: `sql run --write` and the `account`
+    verbs), whose plan names every selected target. A declared target this
     run touches nothing on is not reached, and it has to be read that way:
     ``max_targets`` is compared against :class:`~sopuli.plan.BlastRadius`, which
     counts the same set. Two different answers to "which targets does this run

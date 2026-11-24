@@ -73,8 +73,53 @@ def _first_word(text: str) -> tuple[str, str]:
     return "", "empty" if start >= n else "other"
 
 
+def _code_end(text: str) -> int:
+    """The length of ``text`` up to its last character that is not whitespace and
+    not in a comment, so what follows is whitespace and comments only.
+
+    String literals and quoted names are skipped whole, so a ``--`` or a ``/*`` in
+    one is not a comment. Text this cannot read, an unclosed comment or literal,
+    is all code: its length comes back and nothing is cut.
+    """
+    i, n, end = 0, len(text), 0
+    while i < n:
+        char = text[i]
+        if char in _SPACE:
+            i += 1
+        elif text.startswith("--", i):
+            found = text.find("\n", i)
+            i = n if found == -1 else found + 1
+        elif text.startswith("/*", i):
+            found = text.find("*/", i + 2)
+            if found == -1:
+                return n
+            i = found + 2
+        elif char in "'\"":
+            found = text.find(char, i + 1)
+            if found == -1:
+                return n
+            i = end = found + 1
+        else:
+            i += 1
+            end = i
+    return end
+
+
+def _without_trailing_comments(text: str) -> str:
+    """``text`` without the comments after its terminator.
+
+    Only a comment that follows a ``;`` or a line holding only ``/`` goes, with
+    that terminator left for :func:`_strip_terminators`. A comment after a
+    statement with no terminator stays where the operator wrote it.
+    """
+    code = text[: _code_end(text)].rstrip(_SPACE)
+    if code.endswith(";") or code.rsplit("\n", 1)[-1].strip(_SPACE) == "/":
+        return code
+    return text
+
+
 def _strip_terminators(raw: str) -> str:
-    text = raw.replace("\r\n", "\n").replace("\r", "\n").rstrip(_SPACE)
+    text = _without_trailing_comments(raw.replace("\r\n", "\n").replace("\r", "\n")).rstrip(_SPACE)
     lines = text.split("\n")
     if lines[-1].strip(_SPACE) == "/":
         text = "\n".join(lines[:-1]).rstrip(_SPACE)

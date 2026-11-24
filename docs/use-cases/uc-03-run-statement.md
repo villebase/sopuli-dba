@@ -165,7 +165,7 @@ A run is read-only unless the operator passes `--write`.
 
 **The keyword check.** The tool skips leading whitespace and comments (`--` and
 `/* */`) and compares the first word with `upper()`. It refuses a `;` anywhere
-except one at the end. A `;` inside a string literal is a known false refusal,
+except one at the end, which only comments may follow. A `;` inside a string literal is a known false refusal,
 and it is acceptable.
 
 **Why the keyword check exists.** Oracle commits before any DDL, so
@@ -241,7 +241,10 @@ targets, never all of them. `max_targets` applies unchanged (invariant 10).
 **Normalisation.** The tool turns CRLF and CR into LF. It removes trailing
 ASCII whitespace (space, tab, line feed, form feed, vertical tab), one trailing
 line that holds only `/`, and one trailing `;`, and the whitespace around each
-of them. A second line that holds only `/`, left at the end, is refused, and so
+of them. Comments (`--` and `/* */`) that follow the `;` or the `/` line are
+removed with it, so `SELECT 1 FROM dual; -- note` runs. A comment after a
+statement with no terminator stays in the text, and a statement after a comment
+that follows a `;` is still refused. A second line that holds only `/`, left at the end, is refused, and so
 is a `;` still left in the text. A `/` inside the statement, such as a
 division, stays. Nothing else changes: case, whitespace and literals inside the
 statement stay as written.

@@ -116,6 +116,43 @@ def test_classify_keeps_the_text_inside_unchanged() -> None:
     assert classify(raw).text == raw
 
 
+@pytest.mark.parametrize(
+    ("raw", "text"),
+    [
+        ("SELECT 1 FROM dual; -- note", "SELECT 1 FROM dual"),
+        ("SELECT 1 FROM dual;-- note\n", "SELECT 1 FROM dual"),
+        ("SELECT 1 FROM dual; /* note */", "SELECT 1 FROM dual"),
+        ("SELECT 1 FROM dual;\n-- one\n/* two\nlines */\n-- three\n", "SELECT 1 FROM dual"),
+        ("SELECT 1 FROM dual\n/\n-- note", "SELECT 1 FROM dual"),
+        ("UPDATE t SET v = 'a--b' WHERE k = 1; -- note", "UPDATE t SET v = 'a--b' WHERE k = 1"),
+        ("SELECT '/*' FROM dual; /* x */", "SELECT '/*' FROM dual"),
+        ('SELECT "a--b" FROM dual; -- x', 'SELECT "a--b" FROM dual'),
+    ],
+)
+def test_a_comment_after_the_terminator_is_dropped_with_it(raw: str, text: str) -> None:
+    assert classify(raw).text == text
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "SELECT 1 FROM dual; -- note\nDELETE FROM t",
+        "SELECT 1 FROM dual; /* a */ DELETE FROM t",
+        "SELECT 1 FROM dual; /* a */ -- b\nDELETE FROM t -- c",
+        "SELECT 1 FROM dual; /* never closed",
+        "SELECT 'it' FROM dual; -- a\n; DELETE FROM t",
+    ],
+)
+def test_a_second_statement_after_a_comment_is_still_refused(raw: str) -> None:
+    with pytest.raises(StatementRefusedError):
+        classify(raw)
+
+
+def test_a_comment_with_no_terminator_before_it_stays_in_the_text() -> None:
+    raw = "SELECT 1 FROM dual -- note"
+    assert classify(raw).text == raw
+
+
 def test_a_semicolon_inside_a_literal_is_refused() -> None:
     # A known false refusal, accepted by the spec.
     with pytest.raises(StatementRefusedError):

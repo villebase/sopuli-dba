@@ -179,7 +179,9 @@ run-as account are the real limit, as §1 says.
 **`readonly: true`** (`../design/00-principles.md`) refuses `--write`, with or
 without `--dry-run`. A `safety:` block on a target, or on a group that matches
 one, applies to a write that selects that target. A write binds no account, so
-every selected target counts as reached, for `readonly` and for `max_targets`.
+every selected target counts as reached for `readonly`, and every selected
+target of a product `sql run` runs on counts for `max_targets` (§5). The
+refusal offers a read without `--write` instead.
 
 ---
 
@@ -199,9 +201,11 @@ that target as refused by the guard.
 shows the real row counts. It does not stop at a failing target: it runs every
 selected target and reports every count. Only a real write stops at the first
 failure (§5). A dry run offers the `--plan` to run it with only when every
-target connected and passed its guard. Otherwise it names the targets that
-did not pass, and the target where a real run would stop. The run document
-still carries the fingerprint.
+target connected and passed its guard, and then says when the real run will
+ask for a confirmation (`confirm_environments`). Otherwise it names the
+targets that did not pass, and the target where a real run would stop. Where
+no selected target is of a product `sql run` runs on, it says nothing would
+run. The run document carries the fingerprint in every case.
 
 A dry run is not free of effects. A trigger, a sequence's `NEXTVAL` and an
 autonomous transaction commit their own work, and the rollback does not undo it.
@@ -286,7 +290,16 @@ committed, or affected 0 rows and rolled back, exits `0`. A run where no target
 committed exits `1`. A dry run exits `0` when every target passed its guard,
 `4` when some did, and `1` when none did. A target of another product is
 `SKIPPED` (`SOPULI-20006`). It does not stop a real write, and the exit code
-leaves it out; a run where every target is one exits `5`.
+leaves it out; a run where every target is one exits `5`. Nothing runs on it,
+so the plan leaves it out too, and it counts for neither `max_targets` nor
+`confirm_environments`.
+
+**A commit that fails has an unknown outcome.** The statement ran and the
+commit was sent, so the change may have taken effect. The target is `ERROR`,
+with a message that says the outcome is unknown and to check the rows before
+running again, and the server's code and message. The run stops there, and the
+exit code counts the target as possibly committed: a failed commit on the
+first target exits `4`, not `1`.
 
 **An interrupt keeps the record.** When Ctrl-C stops a real write, the
 targets that finished keep their outcome. The target in flight is `ERROR`,
@@ -361,7 +374,8 @@ and adds no mutation record.
   target. This is a minor schema bump, and a sample is checked against the schema
   (invariant 12).
 - **Row cap.** The tool returns up to 100 rows for each target by default.
-  `--max-result-rows` changes the cap. A truncated target is marked in the
+  `--max-result-rows` changes the cap, for a read only: a write returns no
+  rows, so `--write` refuses it as an argv error. A truncated target is marked in the
   output.
 - **Value types.** Dates, numbers and LOBs become strings or numbers that JSON
   can carry. A LOB is read as text or bytes, cut at 4000 characters or bytes,

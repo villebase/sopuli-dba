@@ -1212,13 +1212,15 @@ class OracleSession(ClosesConnection):
         transaction is not undone (UC-3 §3). The statement is sent as written,
         with no bind. ``connection.call_timeout`` is ``timeout_ms`` for the
         call and is put back afterwards. A session whose connection a timeout
-        closed refuses at once.
+        closed refuses at once. An error the commit itself raised has
+        ``commit_failed`` set, because the commit may still have taken effect.
         """
         if commit and guard is None:
             raise ValueError("run_statement commits only with a row guard")
         self._require_open()
         previous: int | None = None
         committed = False
+        committing = False
         try:
             with traced_cursor(self.connection) as cursor:
                 try:
@@ -1239,12 +1241,16 @@ class OracleSession(ClosesConnection):
                         # No bound on the commit: a commit the client abandons
                         # leaves the outcome unknown.
                         self.connection.call_timeout = 0
+                        committing = True
                         self.connection.commit()
                         committed = True
                     return StatementResult((), (), count, False, committed, passed)
                 except Exception as error:  # noqa: BLE001 -- classified, never swallowed
                     self._connection_lost = _is_closed(self.connection)
-                    raise statement_timeout(from_error(error)).as_error() from error
+                    raised = statement_timeout(from_error(error)).as_error()
+                    # A commit that raised may still have taken effect.
+                    raised.commit_failed = committing
+                    raise raised from error
         finally:
             if not committed:
                 with suppress(Exception):

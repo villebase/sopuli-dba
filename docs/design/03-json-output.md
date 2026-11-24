@@ -2452,8 +2452,11 @@ row guard, and `error.message` gives the count and the guard. A real write
 where a target did not connect is refused before anything runs, with exit 8
 and no `results[]`. Otherwise it stops at the first target that does not end
 `COMMITTED` or `ROLLED_BACK`, and the targets after it are `NOT_ATTEMPTED`,
-with `error.message` naming that target. A dry run given `--plan` adds an
-`info` diagnostic saying whether it matches. `summary.ok` counts `COMMITTED` and `ROLLED_BACK`, and
+with `error.message` naming that target. A target whose commit failed is
+`ERROR`, and `error.message` says the outcome is unknown, before the server's
+message; the exit code counts it as possibly committed. A target of another
+product is `SKIPPED` and has no `plan.units[]` entry. A dry run given `--plan`
+adds an `info` diagnostic saying whether it matches. `summary.ok` counts `COMMITTED` and `ROLLED_BACK`, and
 `summary.changed` counts `COMMITTED`. Each target has a `plan.units[]` entry
 with the intent `sql_write`. From a real run on two names for one PDB, where
 the statement changed the row on the first name, so the second found none:

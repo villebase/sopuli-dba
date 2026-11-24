@@ -17,7 +17,7 @@ from __future__ import annotations
 import os
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from sopuli.admin import (
     refuse_service_account,
@@ -105,6 +105,10 @@ class TargetOutcome:
     state: str
     result: StatementResult | None = None
     error: Error | None = None
+    #: A write whose commit was sent and then failed or was interrupted: it may
+    #: have taken effect. Its state is ``ERROR``, and the exit code counts it as
+    #: possibly committed.
+    outcome_unknown: bool = False
 
 
 def connect_all(
@@ -296,15 +300,16 @@ def _read_one(
 def planned_accounts(config: Config, as_user: str | None) -> list[tuple[str, str]]:
     """(run-as user, target) for each selected target, in sorted order, for the plan.
 
-    A target of a product `sql run` is not written for has :data:`ABSENT` as
-    its account, as its result does. Pure: the config and ``--as`` decide it.
+    A target of a product `sql run` is not written for is left out: nothing
+    runs there, so it counts for neither ``max_targets`` nor
+    ``confirm_environments``. Its result is still reported, as ``SKIPPED``.
+    Pure: the config and ``--as`` decide it.
     """
     pairs: list[tuple[str, str]] = []
     for target in sorted(config.expanded_targets, key=lambda one: one.name):
         try:
             require_command(target.target, COMMAND)
         except DriverNotImplementedError:
-            pairs.append((ABSENT, target.name))
             continue
         pairs.append((run_as_user(target, as_user), target.name))
     return pairs
@@ -402,28 +407,37 @@ def run_write(
     caller closes the sessions.
     """
     outcomes: list[TargetOutcome] = [] if into is None else into
-    stopped_at: str | None = None
     ordered = sorted(connections, key=lambda each: each.target.name)
-    for index, one in enumerate(ordered):
-        if stopped_at is not None:
-            stopped = _stopped(stopped_at)
-            name = one.target.name
-            outcomes.append(TargetOutcome(name, one.run_as, NOT_ATTEMPTED, error=stopped))
-            continue
-        try:
+    stopped_at: str | None = None
+    # The target whose statement is running, between its start and the
+    # outcome being recorded.
+    in_flight: str | None = None
+    try:
+        for one in ordered:
+            if stopped_at is not None:
+                stopped = _stopped(stopped_at)
+                name = one.target.name
+                outcomes.append(TargetOutcome(name, one.run_as, NOT_ATTEMPTED, error=stopped))
+                continue
+            in_flight = one.target.name
             outcome = _write_one(one, statement, guard, commit, timeout_ms, finding)
-        except BaseException:
-            # _write_one keeps every Exception, so this is Ctrl-C or an exit.
-            outcomes.append(_interrupted(one, commit=commit))
-            stopped = _stopped_by_interrupt(one.target.name)
-            outcomes.extend(
-                TargetOutcome(rest.target.name, rest.run_as, NOT_ATTEMPTED, error=stopped)
-                for rest in ordered[index + 1 :]
-            )
-            raise
-        outcomes.append(outcome)
-        if commit and outcome.state not in (COMMITTED, ROLLED_BACK, SKIPPED):
-            stopped_at = one.target.name
+            outcomes.append(outcome)
+            in_flight = None
+            if commit and outcome.state not in (COMMITTED, ROLLED_BACK, SKIPPED):
+                stopped_at = one.target.name
+    except BaseException:
+        # _write_one keeps every Exception, so this is Ctrl-C or an exit. The
+        # targets already recorded stay as they are.
+        at = in_flight or (ordered[len(outcomes) - 1].target.name if outcomes else "")
+        for rest in ordered[len(outcomes) :]:
+            if rest.target.name == in_flight:
+                outcomes.append(_interrupted(rest, commit=commit))
+            else:
+                stopped = _stopped_by_interrupt(at)
+                outcomes.append(
+                    TargetOutcome(rest.target.name, rest.run_as, NOT_ATTEMPTED, error=stopped)
+                )
+        raise
     return outcomes
 
 
@@ -438,6 +452,7 @@ def _interrupted(one: Connection, *, commit: bool) -> TargetOutcome:
             message=f"interrupted while the statement ran here; {said}",
             hint="check the rows on this target before you run it again",
         ),
+        outcome_unknown=commit,
     )
 
 
@@ -468,7 +483,16 @@ def _write_one(
             statement, guard=guard, commit=commit, max_rows=0, timeout_ms=timeout_ms
         )
     except Exception as error:  # noqa: BLE001 -- a per-target finding
-        return TargetOutcome(name, one.run_as, ERROR, error=finding(error))
+        found = finding(error)
+        if not getattr(error, "commit_failed", False):
+            return TargetOutcome(name, one.run_as, ERROR, error=found)
+        # The commit was sent and raised: it may have taken effect.
+        unknown = replace(
+            found,
+            message="the commit failed; whether it took effect is unknown, so check the "
+            f"rows before running again: {found.message}",
+        )
+        return TargetOutcome(name, one.run_as, ERROR, error=unknown, outcome_unknown=True)
     if result.guard_passed is False:
         changed = "1 row" if result.row_count == 1 else f"{result.row_count} rows"
         return TargetOutcome(
@@ -498,8 +522,8 @@ def write_exit_code(outcomes: Sequence[TargetOutcome], *, dry_run: bool) -> int:
     """5 when every target is of a product `sql run` is not written for. The
     others decide the rest, and a skipped target is left out: 0 when each
     committed or rolled back a write that changed no row (on a dry run, passed
-    its guard); otherwise 4 when some target committed (on a dry run, passed),
-    and 1 when none did."""
+    its guard); otherwise 4 when some target committed, or may have, because
+    its commit failed (on a dry run, passed), and 1 when none did."""
     if not outcomes:
         return int(ExitCode.SUCCESS)
     counted = [outcome for outcome in outcomes if outcome.state != SKIPPED]
@@ -508,7 +532,12 @@ def write_exit_code(outcomes: Sequence[TargetOutcome], *, dry_run: bool) -> int:
     passed = sum(1 for outcome in counted if outcome.state in (COMMITTED, ROLLED_BACK))
     if passed == len(counted):
         return int(ExitCode.SUCCESS)
-    progressed = passed if dry_run else sum(1 for outcome in counted if outcome.state == COMMITTED)
+    # A commit whose outcome is unknown may have taken effect, so it counts.
+    progressed = (
+        passed
+        if dry_run
+        else sum(1 for one in counted if one.state == COMMITTED or one.outcome_unknown)
+    )
     return int(ExitCode.PARTIAL if progressed else ExitCode.FAILURE)
 
 

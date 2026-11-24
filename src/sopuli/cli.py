@@ -6347,10 +6347,11 @@ def sql_group() -> None:
 @click.option(
     "--max-result-rows",
     type=click.IntRange(min=0),
-    default=sql_run.DEFAULT_MAX_ROWS,
-    show_default=True,
     metavar="N",
-    help="Show at most N rows from each target. A target with more is marked truncated.",
+    help=(
+        f"Show at most N rows from each target, {sql_run.DEFAULT_MAX_ROWS} unless given. A "
+        "target with more is marked truncated. A read only."
+    ),
 )
 @click.option(
     "--timeout",
@@ -6400,7 +6401,7 @@ def sql_run_command(
     groups: tuple[str, ...],
     path: Path | None,
     as_user: str | None,
-    max_result_rows: int,
+    max_result_rows: int | None,
     timeout: int,
     write: bool,
     expect_rows: int | None,
@@ -6437,6 +6438,10 @@ def sql_run_command(
     It runs on Oracle only.
     """
     if write:
+        if max_result_rows is not None:
+            raise click.UsageError(
+                "--max-result-rows applies to a read only; a write returns no rows"
+            )
         return _sql_write(
             (selectors, targets, groups),
             path,
@@ -6485,7 +6490,7 @@ def sql_run_command(
     outcomes = sql_run.run_read(
         connections,
         statement,
-        max_rows=max_result_rows,
+        max_rows=sql_run.DEFAULT_MAX_ROWS if max_result_rows is None else max_result_rows,
         timeout_ms=timeout * 1000,
         finding=_finding,
     )
@@ -6523,7 +6528,11 @@ def _sql_write(
     """
     document = run.document
     action = "running a write statement"
-    refuse_if_readonly(run.resolved, action=action)
+    reads = (
+        "read instead with `sopuli sql run` and a SELECT, without --write; a --dry-run "
+        "write is refused too"
+    )
+    refuse_if_readonly(run.resolved, action=action, reads=reads)
     guard = row_guard(*guard_options)
     if guard is None:
         raise click.UsageError(
@@ -6547,7 +6556,7 @@ def _sql_write(
     config = _narrow(run.config, selection)
     document.selection = selection.as_json() or None
     run = _with_estate_safety(run, config, every_target=True)
-    refuse_if_readonly(run.resolved, action=action, estate=config, every_target=True)
+    refuse_if_readonly(run.resolved, action=action, estate=config, every_target=True, reads=reads)
 
     statement = _sql_statement(path, config, as_user)
     if statement.kind is not StatementKind.WRITE:
@@ -6613,11 +6622,15 @@ def _sql_write(
         sql_run.write_exit_code(outcomes, dry_run=run.dry_run),
         sql_view.summarise_write(outcomes),
     )
-    return (
-        render_plan(plan, noun="write")
-        + "\n\n"
-        + sql_view.render_write(statement, outcomes, computed, dry_run=run.dry_run, note=note)
+    text = sql_view.render_write(
+        statement,
+        outcomes,
+        computed,
+        dry_run=run.dry_run,
+        note=note,
+        asks=_asks_environments(plan, run),
     )
+    return render_plan(plan, noun="write") + "\n\n" + text
 
 
 def _ask_once_for_as(run: Invocation, as_user: str | None) -> Invocation:

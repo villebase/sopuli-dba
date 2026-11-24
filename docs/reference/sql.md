@@ -47,7 +47,7 @@ Options:
 - `--group` `NAME` (repeatable): Keep only targets in this group. Repeat to add more.
 - `--file` `PATH`: Read the statement from this UTF-8 file. Without it, from stdin.
 - `--as` `USER`: Connect as this account, and ask for its password at the terminal. Wins over `run_as:`. Give the statement with `--file`, as stdin is the terminal then.
-- `--max-result-rows` `N` (at least 0, default `100`): Show at most N rows from each target. A target with more is marked truncated.
+- `--max-result-rows` `N` (at least 0): Show at most N rows from each target, 100 unless given. A target with more is marked truncated. A read only.
 - `--timeout` `SECONDS` (at least 1, default `30`): Stop a statement that runs longer than this on a target.
 - `--write`: Run an UPDATE, INSERT, MERGE or DELETE. Needs a selector, a row guard, and, on a real run, `--plan`.
 - `--expect-rows` `N`: With `--write`: commit on a target only when the statement changed exactly N rows.

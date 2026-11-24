@@ -102,11 +102,13 @@ def render_write(
     *,
     dry_run: bool,
     note: str | None = None,
+    asks: bool = False,
 ) -> str:
     """A write's text: the statement, a line per target, and the plan fingerprint.
 
-    A dry run ends with the `--plan` the real run needs, and ``note`` says
-    whether a `--plan` it was given matches.
+    A dry run ends with what to do next (:func:`_next_step`), and ``note``
+    says whether a `--plan` it was given matches. ``asks`` is whether the real
+    run will ask for a confirmation.
     """
     lines = [paint(f"{statement.kind} statement:", Role.HEADING)]
     lines.extend(f"  {line}" for line in statement.text.splitlines())
@@ -122,18 +124,28 @@ def render_write(
         lines.append(f"{name}  {state}  {_write_detail(outcome, dry_run=dry_run)}")
     lines.extend(["", f"plan fingerprint: {plan}"])
     if dry_run:
-        lines.extend(_next_step(outcomes, plan))
+        lines.extend(_next_step(outcomes, plan, asks=asks))
     if note is not None:
         lines.append(note)
     return "\n".join(lines)
 
 
-def _next_step(outcomes: Sequence[TargetOutcome], plan: str) -> list[str]:
+def _next_step(outcomes: Sequence[TargetOutcome], plan: str, *, asks: bool) -> list[str]:
     """After a dry run: the `--plan` to run it with, where a real run could
-    finish on every target; otherwise where it would stop, and why."""
+    finish on every target, and whether it will ask first (``asks``);
+    otherwise where it would stop, and why. Nothing is offered where every
+    target is of a product `sql run` does not run on."""
+    if all(outcome.state == SKIPPED for outcome in outcomes):
+        return ["nothing would run: no selected target is of a product `sql run` runs on"]
     failing = [outcome for outcome in outcomes if outcome.state not in (ROLLED_BACK, SKIPPED)]
     if not failing:
-        return [f"to run it, drop --dry-run and add:  --plan {plan}"]
+        lines = [f"to run it, drop --dry-run and add:  --plan {plan}"]
+        if asks:
+            lines.append(
+                "`safety.confirm_environments` covers these targets, so the real run will "
+                "ask before it runs; where nobody can answer, add --confirm"
+            )
+        return lines
     named = ", ".join(f"{outcome.target} ({outcome.state})" for outcome in failing)
     return [
         f"a real run would stop at {failing[0].target}. These targets did not pass: {named}",

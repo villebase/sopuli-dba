@@ -855,6 +855,179 @@ def test_confirm_without_write_is_a_usage_error(
     assert fleet["opened"] == []
 
 
+def commit_failed() -> DriverError:
+    error = DriverError("ORA-03113: end-of-file on communication channel", code="ORA-03113")
+    error.commit_failed = True
+    return error
+
+
+def test_a_failed_commit_is_unknown_and_stops_the_run(
+    write_config: WriteConfig, fleet: dict[str, Any]
+) -> None:
+    """The commit itself failed, so the first target may have changed: exit 4."""
+    fleet["a-alpha"] = WriteSession("a-alpha", error=commit_failed())
+
+    result = real(write_config, fleet, "--expect-rows", "1")
+
+    loaded = document(result)
+    assert states(loaded) == [
+        ("a-alpha", "ERROR"),
+        ("b-beta", "NOT_ATTEMPTED"),
+        ("c-gamma", "NOT_ATTEMPTED"),
+        ("d-delta", "NOT_ATTEMPTED"),
+    ]
+    error = loaded["results"][0]["error"]
+    assert "whether it took effect is unknown" in error["message"]
+    assert "ORA-03113" in error["message"]
+    assert error["code"] == "ORA-03113"
+    assert loaded["exit_code"] == ExitCode.PARTIAL
+
+
+def test_an_interrupt_right_after_a_commit_keeps_it(
+    write_config: WriteConfig, fleet: dict[str, Any]
+) -> None:
+    """Ctrl-C between two targets: the commit that returned is kept, and the
+    next target, which never started, is not attempted."""
+    from sopuli import sql_run as sql_run_module
+    from sopuli.config.loading import build_config
+    from sopuli.output.document import Error
+
+    config = build_config(
+        {
+            "version": 1,
+            "defaults": {"run_as": {"username": "dba_alpha", "auth": {"method": "prompt"}}},
+            "targets": [
+                {"name": name, "type": "oracle", "dsn": f"{name}.example.com:1521/ALPHA"}
+                for name in ("a-alpha", "b-beta", "c-gamma")
+            ],
+        }
+    )
+    sessions: dict[str, Any] = {
+        name: WriteSession(name) for name in ("a-alpha", "b-beta", "c-gamma")
+    }
+    connections = sql_run_module.connect_all(
+        config,
+        None,
+        open_session=lambda target, _: sessions[target.name],
+        finding=lambda error: Error(category="database", message=str(error)),
+        attended=True,
+        need_identity=True,
+    )
+
+    class Interrupting(list[Any]):
+        def append(self, item: Any) -> None:
+            super().append(item)
+            if len(self) == 1:
+                raise KeyboardInterrupt
+
+    into = Interrupting()
+    with pytest.raises(KeyboardInterrupt):
+        sql_run_module.run_write(
+            connections,
+            classify(UPDATE),
+            RowGuard(expect=1),
+            commit=True,
+            timeout_ms=1000,
+            finding=lambda error: Error(category="database", message=str(error)),
+            into=into,
+        )
+
+    assert [(one.target, one.state) for one in into] == [
+        ("a-alpha", "COMMITTED"),
+        ("b-beta", "NOT_ATTEMPTED"),
+        ("c-gamma", "NOT_ATTEMPTED"),
+    ]
+    assert sessions["b-beta"].calls == []
+
+
+def test_a_skipped_target_is_not_in_the_plan(
+    write_config: WriteConfig, fleet: dict[str, Any]
+) -> None:
+    """It never runs, so it counts for neither `max_targets` nor
+    `confirm_environments`."""
+    config = WITH_PG.replace(
+        "defaults:\n",
+        "defaults:\n  safety: { max_targets: 4, confirm_environments: [prod] }\n",
+    ).replace("  - name: e-pg\n", "  - name: e-pg\n    environment: prod\n")
+
+    loaded = document(
+        sql(
+            write_config,
+            "--write",
+            "--dry-run",
+            *ALL,
+            "--expect-rows",
+            "1",
+            config=config,
+            json_out=True,
+        )
+    )
+
+    assert [unit["target"] for unit in loaded["plan"]["units"]] == ORDER
+    assert loaded["plan"]["confirmation_required"] is False
+    assert states(loaded)[-1] == ("e-pg", "SKIPPED")
+
+
+def test_readonly_on_a_write_names_the_read_instead(
+    write_config: WriteConfig, fleet: dict[str, Any]
+) -> None:
+    config = CONFIG.replace(
+        "  - name: a-alpha\n", "  - name: a-alpha\n    safety: { readonly: true }\n"
+    )
+
+    for refused in (
+        sql(write_config, "--write", "--dry-run", *ALL, "--expect-rows", "1", config=config),
+        sql(write_config, "--write", "--dry-run", *ALL, "--expect-rows", "1", config=READONLY),
+    ):
+        hint = getattr(refused.exception, "hint", "") or ""
+        assert "without --write" in hint
+        assert "creds check" not in hint
+        assert "lock status" not in hint
+
+
+def test_a_dry_run_where_every_target_is_skipped_says_nothing_would_run(
+    write_config: WriteConfig, fleet: dict[str, Any]
+) -> None:
+    result = sql(
+        write_config,
+        "--write",
+        "--dry-run",
+        "--target",
+        "e-pg",
+        "--expect-rows",
+        "1",
+        config=WITH_PG,
+    )
+    text = click.unstyle(result.output)
+
+    assert "nothing would run" in text
+    assert "to run it" not in text
+
+
+def test_a_dry_run_says_the_real_run_will_ask(
+    write_config: WriteConfig, fleet: dict[str, Any]
+) -> None:
+    text = click.unstyle(
+        sql(write_config, "--write", "--dry-run", *ALL, "--expect-rows", "1", config=PROD).output
+    )
+
+    assert "to run it, drop --dry-run" in text
+    assert "the real run will ask before it runs" in text
+    assert "--confirm" in text
+
+
+def test_max_result_rows_with_write_is_a_usage_error(
+    write_config: WriteConfig, fleet: dict[str, Any]
+) -> None:
+    result = sql(
+        write_config, "--write", "--dry-run", *ALL, "--expect-rows", "1", "--max-result-rows", "5"
+    )
+
+    assert result.exit_code == ExitCode.USAGE, result.output
+    assert "--max-result-rows" in result.output
+    assert fleet["opened"] == []
+
+
 @pytest.mark.parametrize(("given", "said"), [(None, "matches"), ("0" * 12, "does not match")])
 def test_plan_on_a_dry_run_is_compared(
     write_config: WriteConfig, fleet: dict[str, Any], given: str | None, said: str

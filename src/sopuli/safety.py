@@ -266,6 +266,7 @@ def refuse_if_readonly(
     action: str,
     estate: Config | None = None,
     every_target: bool = False,
+    reads: str | None = None,
 ) -> None:
     """Stop a mutating command when any layer asked for ``readonly``.
 
@@ -296,7 +297,8 @@ def refuse_if_readonly(
     before a bad ``--target`` is judged: exit 8 for a run that was never going to
     write, rather than exit 2 for a typo in it. ``every_target`` is
     :func:`~sopuli.settings.sources.reached_targets`', for a verb that acts
-    on targets rather than on bound accounts.
+    on targets rather than on bound accounts. ``reads`` is what the hint
+    offers to read instead, for a verb whose read is not the default one.
 
     **Refusing the whole run is the decision, not skipping the readonly targets**
     (decision #424). Skipping would make ``readonly`` mean two different things
@@ -318,13 +320,13 @@ def refuse_if_readonly(
         reached = len(reached_targets(estate, every_target=every_target))
         raise RefusedError(
             _marked_message(marked, reached, action=action),
-            hint=_marked_hint(marked, escapable=len(marked) < reached),
+            hint=_marked_hint(marked, escapable=len(marked) < reached, reads=reads),
         )
     raise RefusedError(
         f"{action} is a mutation, and `{READONLY}` is set",
         hint=(
             f"set at {answer.location}; no layer can relax it (invariant 10) -- "
-            f"`sopuli lock status` reads without writing"
+            f"{reads or '`sopuli lock status` reads without writing'}"
         ),
     )
 
@@ -346,7 +348,9 @@ def _marked_message(marked: tuple[ReadonlyTarget, ...], reached: int, *, action:
     return f"{action} is a mutation, and `{READONLY}` is set on {scope}"
 
 
-def _marked_hint(marked: tuple[ReadonlyTarget, ...], *, escapable: bool) -> str:
+def _marked_hint(
+    marked: tuple[ReadonlyTarget, ...], *, escapable: bool, reads: str | None = None
+) -> str:
     """Where each readonly target was marked, and what to do about it.
 
     ``escapable`` is whether any of the plan survives a narrowing. Where it does,
@@ -355,11 +359,12 @@ def _marked_hint(marked: tuple[ReadonlyTarget, ...], *, escapable: bool) -> str:
     refusal (decision #424) is there so that the operator makes that
     call rather than the tool making it silently. Where it does not, saying
     "narrow the run" would be advice that cannot work, so the message says so and
-    names the verbs that read instead.
+    names the verbs that read instead: ``reads``, where the caller has its own,
+    else the credential verbs.
     """
     named = _named([f"{one.name} ({one.location})" for one in marked])
     them = "it" if len(marked) == 1 else "them"
-    reads = "read instead with `sopuli creds check` or `sopuli creds status`"
+    reads = reads or "read instead with `sopuli creds check` or `sopuli creds status`"
     escape = (
         f"narrow the run with --target, --group or --select so it does not reach {them}, or {reads}"
         if escapable

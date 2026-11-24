@@ -99,6 +99,13 @@ UNATTENDED_SOURCES = (
     "with a wallet"
 )
 
+#: The same for `run_as:`, which has no `vault` method and never reads the
+#: admin's variable (UC-3 §2).
+RUN_AS_UNATTENDED_SOURCES = (
+    "name a source that needs no one: `auth: { method: keyring, entry: … }`, "
+    "`auth: { method: env, password_env: … }`, or `auth: external` with a wallet"
+)
+
 #: Shows a line and reads a password without echoing it. Returns a ``str``, and
 #: that is deliberate: :func:`getpass.getpass` is the obvious implementation and
 #: this makes it usable *as it is*, with :class:`PasswordPrompt` wrapping the
@@ -280,6 +287,14 @@ class PasswordPrompt:
                 )
             self._answers[key] = Secret(answer)
         return self._answers[key]
+
+    def forget(self, target: ExpandedTarget, username: str | None) -> None:
+        """Drop the answer for this credential, so it is asked again.
+
+        `sql run` calls this when the database refused the typed password, so
+        a refused password is never sent anywhere else (UC-3 §2).
+        """
+        self._answers.pop(prompt_key(target, username), None)
 
     @staticmethod
     def line(target: ExpandedTarget, username: str | None) -> str:
@@ -487,6 +502,63 @@ def resolve_run_as(
     )
 
 
+@dataclass
+class AskOncePerUser:
+    """A :data:`Prompter` that asks once per user name for the whole run.
+
+    For `sql run --as USER`. :class:`PasswordPrompt` asks once per declared
+    credential, and ``--as`` is declared nowhere in the file: it is one account
+    the operator named once, so one password covers every target.
+    """
+
+    prompt: Prompter
+    _answers: dict[str, Secret] = field(default_factory=dict, repr=False)
+    #: The target each user's password was asked for, which is the key the
+    #: inner prompter cached it under.
+    _asked_for: dict[str, ExpandedTarget] = field(default_factory=dict, repr=False)
+
+    def __call__(self, target: ExpandedTarget, username: str | None) -> Secret:
+        key = username or ""
+        if key not in self._answers:
+            self._answers[key] = self.prompt(target, username)
+            self._asked_for[key] = target
+        return self._answers[key]
+
+    def forget(self, target: ExpandedTarget, username: str | None) -> None:
+        """Drop the answer, whichever target the database refused it on.
+
+        The inner prompter is told to forget under the target it was asked
+        for, so the next ask prompts again.
+        """
+        key = username or ""
+        self._answers.pop(key, None)
+        asked_for = self._asked_for.pop(key, target)
+        forget(self.prompt, asked_for, username)
+
+
+def forget(prompt: Prompter | None, target: ExpandedTarget, username: str | None) -> None:
+    """Drop a typed password the database refused, where ``prompt`` keeps one.
+
+    A prompter that caches nothing has nothing to drop.
+    """
+    drop = getattr(prompt, "forget", None)
+    if drop is not None:
+        drop(target, username)
+
+
+def run_as_prompts(target: ExpandedTarget, as_user: str | None) -> bool:
+    """Whether `sql run` asks for this target's password at the terminal:
+    ``--as``, or a ``run_as:`` with ``auth: prompt``. Pure."""
+    declared = _declared_run_as(target, as_user)
+    return declared is not None and declared.auth is not None and declared.auth.method == PROMPT
+
+
+def run_as_uses_keyring(target: ExpandedTarget, as_user: str | None) -> bool:
+    """Whether `sql run` reads this target's password from the OS keyring. Pure."""
+    declared = _declared_run_as(target, as_user)
+    return declared is not None and declared.auth is not None and declared.auth.method == KEYRING
+
+
 def run_as_user(target: ExpandedTarget, as_user: str | None) -> str:
     """The name `sql run` connects as, or ``"external"``. Pure, for the fingerprint."""
     declared = _declared_run_as(target, as_user)
@@ -539,6 +611,31 @@ def refuse_service_account(
         )
 
 
+def refuse_session_user(
+    target: ExpandedTarget, session_user: str, as_user: str | None, *, env: Mapping[str, str]
+) -> None:
+    """`sql run`'s second check, on the account the session actually reached (UC-3 §2).
+
+    ``session_user`` is what the database says the run-as login became. It is
+    refused with ``SOPULI-20010`` when it equals the admin's name by ``upper()``.
+    An ``external`` admin has no name to compare, so nothing is checked there:
+    the accepted gap of UC-3 §2. The tool never logs in as the admin to learn it.
+    """
+    from sopuli.safety import ServiceAccountRefusedError
+
+    admin = target.target.admin
+    if admin is None or (admin.auth is not None and admin.auth.method == EXTERNAL):
+        return
+    admin_user = _username(target, env=env)
+    if admin_user is not None and session_user.upper() == admin_user.upper():
+        raise ServiceAccountRefusedError(
+            f"target {target.name!r}: the run-as login reached {session_user!r}, the "
+            f"account the tool uses for its own work. No statement ran on any target",
+            at=ROOT if as_user is not None else run_as_at(target),
+            hint="name a personal or owner account with `run_as:` or `--as USER`",
+        )
+
+
 # ------------------------------------------------------------------ sources ---
 
 
@@ -568,7 +665,10 @@ def _from_prompt(
             f"target {target.name!r} asks for its {block} password interactively, "
             f"and there is nobody here to ask",
             at=_at(target, "auth", block=block),
-            hint=f"run it from a terminal, or {UNATTENDED_SOURCES}",
+            hint=(
+                f"run it from a terminal, or "
+                f"{RUN_AS_UNATTENDED_SOURCES if block != ADMIN_BLOCK else UNATTENDED_SOURCES}"
+            ),
         )
     return prompt(target, username), "an interactive prompt"
 

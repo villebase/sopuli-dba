@@ -84,6 +84,7 @@ from sopuli import (
     preflight,
     reset,
     reset_record,
+    sql_run,
     suspend,
 )
 from sopuli import apply as apply_states
@@ -99,8 +100,16 @@ from sopuli import report_privileges as privilege_states
 from sopuli import rotate as rotation
 from sopuli import status as status_states
 from sopuli import strategy as strategies
-from sopuli.admin import AdminCredentialError, RefReader
+from sopuli.admin import (
+    PROMPT,
+    AdminCredentialError,
+    AskOncePerUser,
+    RefReader,
+    resolve_run_as,
+    run_as_prompts,
+)
 from sopuli.admin import Resolved as AdminResolved
+from sopuli.admin import forget as forget_typed
 from sopuli.admin import resolve as admin_resolve
 from sopuli.admin import store_name as admin_store_name
 from sopuli.apply import SOURCES, Source
@@ -241,6 +250,7 @@ from sopuli.driver.protocol import (
     AccountChange,
     AttributeChange,
     AuditCoverage,
+    AuthenticationError,
     DriverContext,
     DriverError,
     Encryption,
@@ -312,7 +322,7 @@ from sopuli.orphans import commands as orphan_commands
 from sopuli.orphans import declared_by as orphans_declared_by
 from sopuli.orphans import find as find_orphans
 from sopuli.orphans import survey_prefix
-from sopuli.output import history_view, privileges_view, report_view
+from sopuli.output import history_view, privileges_view, report_view, sql_view
 from sopuli.output.about_view import render as render_about
 from sopuli.output.account_list_view import build_result as build_account_list_result
 from sopuli.output.account_list_view import render_account_list
@@ -431,6 +441,7 @@ from sopuli.safety import (
     refuse_unconfirmed,
 )
 from sopuli.secrets import Secret
+from sopuli.sql.statement import StatementKind, StatementRefusedError, classify
 from sopuli.status import Row
 from sopuli.store import CasConflictError, SecretStore, StoreError, connect
 from sopuli.store import registry as store_registry
@@ -6298,6 +6309,176 @@ def _keyring_done(run: Invocation, change: Change) -> str:
             lines.append(f"note: {one.message}")
     document.finish(ExitCode.SUCCESS, Summary(total=1, ok=1, changed=int(change.changed), failed=0))
     return "\n".join(lines).rstrip("\n")
+
+
+@cli.group("sql")
+def sql_group() -> None:
+    """Run one statement on the selected targets (UC-3). Oracle only.
+
+    The statement runs as the account `run_as:` or `--as` names, never as the
+    account the tool uses for its own work.
+    """
+
+
+@sql_group.command("run")
+@target_selector_options
+@click.option(
+    "--file",
+    "path",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    metavar="PATH",
+    help="Read the statement from this UTF-8 file. Without it, from stdin.",
+)
+@click.option(
+    "--as",
+    "as_user",
+    metavar="USER",
+    help=(
+        "Connect as this account, and ask for its password at the terminal. Wins over "
+        "`run_as:`. Give the statement with `--file`, as stdin is the terminal then."
+    ),
+)
+@click.option(
+    "--max-result-rows",
+    type=click.IntRange(min=0),
+    default=sql_run.DEFAULT_MAX_ROWS,
+    show_default=True,
+    metavar="N",
+    help="Show at most N rows from each target. A target with more is marked truncated.",
+)
+@click.option(
+    "--timeout",
+    type=click.IntRange(min=1),
+    default=sql_run.DEFAULT_TIMEOUT,
+    show_default=True,
+    metavar="SECONDS",
+    help="Stop a statement that runs longer than this on a target.",
+)
+@global_options
+def sql_run_command(
+    selectors: tuple[str, ...],
+    targets: tuple[str, ...],
+    groups: tuple[str, ...],
+    path: Path | None,
+    as_user: str | None,
+    max_result_rows: int,
+    timeout: int,
+    run: Invocation,
+) -> str:
+    """Run one SELECT or WITH statement on each selected target, and show the rows.
+
+    The statement comes from `--file`, or from stdin. It runs in a read-only
+    transaction that is always rolled back. It runs as the account `run_as:`
+    names, or as `--as USER`, and never as the account in `admin:`. Every target
+    is connected first, and if any session turns out to be that account, no
+    statement runs anywhere.
+
+    Exit 0 when every target answered, 4 when some did not, 1 when none did,
+    and 5 when no target is of a product this command runs on. It runs on
+    Oracle only.
+    """
+    document = run.document
+    if as_user is not None:
+        if run.prompt is None:
+            # stdin is not a terminal, so there is nobody to type the password.
+            raise click.UsageError(
+                "--as asks for the password at the terminal; run it from a terminal "
+                "and give the statement with --file PATH"
+            )
+        # One account named on the command line is one password, however many
+        # targets the run covers.
+        run = replace(run, prompt=AskOncePerUser(run.prompt))
+    selection = selected(selectors, targets, (), groups, ())
+    refuse_unknown(run.config, selection)
+    config = _narrow(run.config, selection)
+    document.selection = selection.as_json() or None
+    typed = any(run_as_prompts(target, as_user) for target in config.expanded_targets)
+    statement = classify(_read_statement(path, typed=typed or as_user is not None))
+    if statement.kind is not StatementKind.READ:
+        raise StatementRefusedError(
+            f"the statement starts with {statement.keyword}, which changes data, "
+            "and `--write` was not given",
+            hint="`sql run` runs SELECT and WITH. A write needs `--write`, which this "
+            "build does not have yet",
+        )
+    document.statement = sql_view.statement_section(statement)
+
+    connections = sql_run.connect_all(
+        config,
+        as_user,
+        open_session=lambda target, who: _open_sql_session(target, run, config, who),
+        finding=_finding,
+        attended=run.prompt is not None,
+    )
+    outcomes = sql_run.run_read(
+        connections,
+        statement,
+        max_rows=max_result_rows,
+        timeout_ms=timeout * 1000,
+        finding=_finding,
+    )
+    document.results = sql_view.build_results(outcomes)
+    document.finish(sql_run.exit_code(outcomes), sql_view.summarise(outcomes))
+    return sql_view.render_text(statement, outcomes)
+
+
+def _read_statement(path: Path | None, *, typed: bool) -> str:
+    """The statement, from ``path`` or from stdin, as UTF-8.
+
+    A terminal on stdin is a usage error: the statement is never typed at a
+    prompt. Where a password is typed (``typed``: ``--as``, or a ``run_as:``
+    with ``auth: prompt``), the terminal is for the password, so only
+    ``--file`` is offered. A run with no stdin at all, or one that cannot be
+    read, is the same usage error. The bytes are decoded strictly, whatever
+    the console's own encoding, and a UTF-8 byte order mark, which Windows
+    editors and PowerShell write, is not part of the statement.
+    """
+    only_file = "give the statement with --file PATH"
+    either = f"{only_file}, or pipe it to stdin"
+    if path is not None:
+        data, source = path.read_bytes(), f"--file {path}"
+    else:
+        if is_a_terminal(sys.stdin):
+            raise click.UsageError(only_file if typed else either)
+        stream = getattr(sys.stdin, "buffer", None)
+        if stream is None:
+            raise click.UsageError(f"there is no stdin to read; {only_file}")
+        try:
+            data = stream.read()
+        except (OSError, ValueError) as error:
+            raise click.UsageError(f"stdin cannot be read ({error}); {only_file}") from error
+        source = "stdin"
+    try:
+        return data.decode("utf-8-sig")
+    except UnicodeDecodeError as error:
+        raise click.UsageError(f"{source}: the statement is not UTF-8") from error
+
+
+def _open_sql_session(
+    target: ExpandedTarget, run: Invocation, config: Config, as_user: str | None
+) -> Session:
+    """One connection to ``target`` as the run-as account (UC-3 §2).
+
+    Never with ``admin:``. :func:`~sopuli.admin.resolve_run_as` reads the
+    password, and it goes only to the driver's ``connect``. A password from an
+    environment variable is flagged with `SOPULI-W022`, once per target, as
+    :func:`_admin_credential` flags the admin's.
+    """
+    driver = driver_for(target.target, _driver_context(run, config))
+    resolved = resolve_run_as(target, env=os.environ, prompt=run.prompt, as_user=as_user)
+    already = {(one.code, one.target) for one in run.document.diagnostics if one.code is not None}
+    run.document.diagnostics.extend(
+        one
+        for one in admin_diagnostics(target.name, resolved, label="run-as")
+        if (one.code, one.target) not in already
+    )
+    try:
+        return driver.connect(target, resolved.credential)
+    except AuthenticationError:
+        if resolved.method == PROMPT:
+            # A refused typed password is not kept for another target (UC-3 §2).
+            forget_typed(run.prompt, target, resolved.credential.username)
+        raise
 
 
 @cli.group("report")

@@ -11,10 +11,15 @@ import pytest
 
 from sopuli.admin import (
     AdminCredentialError,
+    AskOncePerUser,
     NobodyToAskError,
+    PasswordPrompt,
+    forget,
     refuse_service_account,
     resolve_run_as,
+    run_as_prompts,
     run_as_user,
+    run_as_uses_keyring,
 )
 from sopuli.config.model import AdminAuth, AdminCredential, ExpandedTarget, Target
 from sopuli.exit_codes import ExitCode
@@ -115,6 +120,13 @@ def test_a_run_as_without_a_prompter_says_nobody_is_there() -> None:
 
     assert caught.value.exit_code == ExitCode.ABORTED
     assert "run_as" in str(caught.value)
+    # The advice fits `run_as:`, which has no vault method and never reads the
+    # admin's variable.
+    hint = caught.value.hint or ""
+    assert "keyring" in hint
+    assert "password_env" in hint
+    assert "vault" not in hint
+    assert "SOPULI_DB_ADMIN_PASSWORD" not in hint
 
 
 def test_env_method_is_low_assurance() -> None:
@@ -319,3 +331,56 @@ def test_admin_external_run_as_named_is_allowed() -> None:
 
     refuse_service_account(declared, None)
     refuse_service_account(declared, "c##sopuli_svc")
+
+
+def test_which_run_as_accounts_are_typed() -> None:
+    assert run_as_prompts(target(), "alice_personal")
+    assert run_as_prompts(target(run_as=credential("dba_alpha", "prompt")), None)
+    assert not run_as_prompts(target(run_as=credential("dba_alpha", "keyring", entry="a")), None)
+    assert run_as_uses_keyring(target(run_as=credential("dba_alpha", "keyring", entry="a")), None)
+    assert not run_as_uses_keyring(
+        target(run_as=credential("dba_alpha", "keyring", entry="a")), "x"
+    )
+
+
+def test_a_password_refused_on_another_target_is_forgotten() -> None:
+    """Target 1 asked and logged in; target 2 refused the same answer; the next
+    ask prompts again, whichever target asked first."""
+    asked: list[str] = []
+
+    def ask(line: str) -> str:
+        asked.append(line)
+        return "typed"
+
+    prompt = AskOncePerUser(PasswordPrompt(ask=ask))
+    # The first and the third share a declaration site, so the inner prompter
+    # keys them alike, and the second does not.
+    first, second, third = (
+        ExpandedTarget(target=Target(name=name, type="oracle", dsn=DSN), index=index)
+        for index, name in ((0, "one-qa"), (1, "two-qa"), (0, "three-qa"))
+    )
+
+    prompt(first, "dba_beta")
+    prompt(second, "dba_beta")
+    forget(prompt, second, "dba_beta")
+    prompt(third, "dba_beta")
+
+    assert len(asked) == 2
+
+
+def test_a_refused_typed_password_is_asked_again() -> None:
+    asked: list[str] = []
+
+    def ask(line: str) -> str:
+        asked.append(line)
+        return "typed"
+
+    prompt = AskOncePerUser(PasswordPrompt(ask=ask))
+    one = target()
+
+    prompt(one, "dba_beta")
+    prompt(one, "dba_beta")
+    forget(prompt, one, "dba_beta")
+    prompt(one, "dba_beta")
+
+    assert len(asked) == 2

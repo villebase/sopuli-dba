@@ -1709,8 +1709,14 @@ def _age(age: timedelta) -> str:
     return f"{hours // 24} days"
 
 
-def admin_diagnostics(target: str, credential: Resolved) -> list[Diagnostic]:
+def admin_diagnostics(
+    target: str, credential: Resolved, *, label: str = "admin"
+) -> list[Diagnostic]:
     """What a run says about where a target's admin credential came from.
+
+    ``label`` names whose credential it is in the message: ``admin``, or
+    ``run-as`` for the account `sql run` connects as (UC-3), which is flagged
+    with the same code for the same reason.
 
     Empty for every source but the low-assurance one, which is the whole design
     of a warning somebody is meant to keep reading. `external`, `vault` and
@@ -1740,7 +1746,7 @@ def admin_diagnostics(target: str, credential: Resolved) -> list[Diagnostic]:
             code=LOW_ASSURANCE_ADMIN,
             target=target,
             message=(
-                f"{target}: the admin credential came from {credential.source}, "
+                f"{target}: the {label} credential came from {credential.source}, "
                 f"which P2 supports and flags as low assurance"
             ),
         )

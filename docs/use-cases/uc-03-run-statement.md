@@ -7,8 +7,8 @@ This document specifies a command that runs one statement against a selected
 set of declared targets and shows what each target returned. **The statement
 check, the row guard, the plan fingerprint and the value conversion are built
 (#1659), and so is the `run_as:` configuration with its plan-time refusal of the
-service account (#1660), and so is the Oracle runner (#1661). No command uses
-them yet.** The command name,
+service account (#1660), and so is the Oracle runner (#1661), and so is `sql
+run` for reads (#1662). `--write` is not built yet.** The command name,
 `sopuli sql run`, is a working name. The parts are built in this order, each by
 its own issue:
 
@@ -17,7 +17,7 @@ its own issue:
 | The pure layer: the statement check, the plan fingerprint and the row guards | #1659, built |
 | The `run_as:` configuration | #1660, built. The session check of §2 is part of the runner |
 | The Oracle runner | #1661, built. `OracleSession.run_statement`, with `session_user()` for the check of §2. `sql.run` is not in the shared command set, so every other product is refused |
-| `sql run` for reads | (open: #1662) |
+| `sql run` for reads | #1662, built. A write keyword is refused with `SOPULI-20009` until `--write` is built |
 | `--write` | (open: #1663) |
 
 The first release of UC-3 covers Oracle only. A target of another product is
@@ -92,15 +92,34 @@ keyring.
 (`../design/01-configuration.md` §3a). It goes on a target or under `defaults:`.
 It does not go on a group: a group carries only `match` and `safety`, as it does
 for `admin:`. The allowed `auth:` methods are `keyring`, `prompt`, `external` and
-`env`. `env` carries the same warning as it does for `admin:`. `vault` is not
+`env`. `env` carries the same warning as it does for `admin:`: `SOPULI-W022`,
+naming the run-as credential. `vault` is not
 allowed, so that the tool never logs in with a password that a store holds for
 another purpose. `--as USER` with `auth: prompt` covers a run that the config
-does not configure.
+does not configure. It asks once for the run, whatever the number of targets.
+It needs a terminal on stdin, so the statement then comes from `--file`; a run
+with `--as` and no terminal is refused with exit 2 before anything connects.
 
 The password is read from the sources the tool already has for its own
 credentials. It is never read from stdin, because `admin:` does not offer stdin
 either, and so stdin stays free for the statement. It is never read from a store
 that UC-1 manages, and UC-1 does not manage this account.
+
+**A run that cannot get the password is refused before it connects.** A
+`run_as:` with `auth: prompt` on a run with no terminal is refused with exit 8,
+and a `run_as:` in the OS keyring on an install without the `keyring` extra
+with exit 9, as the mutating commands refuse an `admin:` of either kind.
+
+**A typed password that a target refuses is not tried again.** The account is
+a person's, and its profile may lock it after a few failed logins. So when a
+target refuses a password typed for `--as` or for `auth: prompt`, the tool
+forgets it and connects no later target where a password would be typed for
+the same user, compared by `upper()`. Those targets are reported
+`NOT_ATTEMPTED`, with a message naming the user and the target that refused
+the password. A typed password for another user was never refused, so it is
+asked for and tried as usual. A password from the keyring, a variable or a
+wallet is each target's own, and a refusal on one target does not stop the
+others.
 
 **Refusing the service account.** The tool checks the run-as account twice.
 

@@ -32,15 +32,18 @@ from dataclasses import dataclass
 
 from sopuli import os_keyring
 from sopuli.admin import (
+    RUN_AS_UNATTENDED_SOURCES,
     UNATTENDED_SOURCES,
     NobodyToAskError,
     Prompter,
     auth_at,
     needs_prompt,
+    run_as_prompts,
+    run_as_uses_keyring,
     uses_keyring,
 )
 from sopuli.config.errors import ROOT, ConfigError
-from sopuli.config.expansion import declared_at
+from sopuli.config.expansion import declared_at, run_as_at
 from sopuli.config.model import Config, ExpandedTarget
 from sopuli.config.selection import matches
 from sopuli.driver.protocol import ENCRYPTION_NATIVE, ENCRYPTION_TLS
@@ -483,6 +486,40 @@ def refuse_if_nobody_to_ask(
         message,
         at=at,
         hint=f"nothing was changed; run it from a terminal, {narrow}or {UNATTENDED_SOURCES}",
+    )
+
+
+def refuse_run_as_unattended(
+    targets: Sequence[ExpandedTarget], as_user: str | None, *, attended: bool
+) -> None:
+    """:func:`refuse_if_nobody_to_ask` for `sql run`'s run-as account (UC-3 §2).
+
+    Asked over the selected targets of a product `sql run` runs on, before any
+    connection opens. A ``run_as:`` in the OS keyring on an install without the
+    ``keyring`` extra is exit 9, and one with ``auth: prompt`` on a run with
+    nobody at the terminal (``attended`` false) is exit 8. Without this, a read
+    would report every target as failed one by one, for a reason the config
+    settles before anything connects. ``--as`` with nobody to ask is refused
+    earlier, as a usage error, because the command line is what to change.
+    """
+    reading = [target for target in targets if run_as_uses_keyring(target, as_user)]
+    if reading and not installed(os_keyring.PROVIDES):
+        raise ConfigError(
+            f"`sql run` reaches {_named([target.name for target in reading])}, whose "
+            "run_as password is in the OS keyring, and the keyring package is not installed",
+            at=run_as_at(reading[0]).key("auth"),
+            hint=f"nothing was run; install it with:  {install_hint(os_keyring.EXTRA)}",
+        )
+    if attended:
+        return
+    asking = [target for target in targets if run_as_prompts(target, as_user)]
+    if not asking:
+        return
+    raise NobodyToAskError(
+        f"`sql run` reaches {_named([target.name for target in asking])}, whose run_as "
+        "password is asked for interactively, and there is nobody here to ask",
+        at=run_as_at(asking[0]).key("auth"),
+        hint=f"nothing was run; run it from a terminal, or {RUN_AS_UNATTENDED_SOURCES}",
     )
 
 

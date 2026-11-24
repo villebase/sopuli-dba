@@ -321,6 +321,31 @@ def test_both_external_same_dsn_refused() -> None:
     assert caught.value.code == "SOPULI-20010"
 
 
+def test_a_user_named_external_is_not_a_wallet_login() -> None:
+    """The check branches on the auth method, not on the string (#1674). An
+    Oracle user named EXTERNAL with a password is a named account."""
+    wallet = AdminCredential(auth=AdminAuth(method="external"))
+    declared = target(dsn="CDBQA", admin=wallet, run_as=credential("external", "prompt"))
+
+    refuse_service_account(declared, None)
+    refuse_service_account(declared, "external")
+
+
+def test_a_user_named_external_that_is_the_admin_is_refused_by_name() -> None:
+    """The admin is the user EXTERNAL, with a password. A run-as login of the same
+    name, with a password, is that account, and not a wallet login (#1674)."""
+    declared = target(
+        admin=credential("EXTERNAL", "keyring", entry="svc"),
+        run_as=credential("external", "prompt"),
+    )
+
+    with pytest.raises(RefusedError) as caught:
+        refuse_service_account(declared, None)
+
+    assert caught.value.code == "SOPULI-20010"
+    assert "run_as.username" in str(caught.value)
+
+
 def test_admin_external_run_as_named_is_allowed() -> None:
     """The documented gap: a wallet has no name to compare."""
     declared = target(

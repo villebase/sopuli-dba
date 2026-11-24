@@ -606,11 +606,17 @@ def refuse_service_account(
     from sopuli.safety import ServiceAccountRefusedError
 
     who = run_as_user(target, as_user)
+    # The method says it is a wallet login. `who` is the word "external" for one,
+    # and also what an account literally named EXTERNAL is called (#1674).
+    declared = _declared_run_as(target, as_user)
+    wallet_login = (
+        declared is not None and declared.auth is not None and (declared.auth.method == EXTERNAL)
+    )
     admin = target.target.admin
     if admin is None:
         return
     if admin.auth is not None and admin.auth.method == EXTERNAL:
-        if who == EXTERNAL:
+        if wallet_login:
             raise ServiceAccountRefusedError(
                 f"target {target.name!r} would run statements through the same external "
                 f"credential the tool uses for its own work",
@@ -620,7 +626,7 @@ def refuse_service_account(
         return
     from_variable = (env or {}).get(ADMIN_USER_ENV)
     admin_user = from_variable or admin.username
-    if admin_user is not None and who != EXTERNAL and who.upper() == admin_user.upper():
+    if admin_user is not None and not wallet_login and who.upper() == admin_user.upper():
         source = f"named by ${ADMIN_USER_ENV}" if from_variable else "named by `admin.username`"
         came_from = "`--as`" if as_user is not None else "`run_as.username`"
         raise ServiceAccountRefusedError(

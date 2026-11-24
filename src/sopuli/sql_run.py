@@ -113,12 +113,14 @@ def connect_all(
     Each refuses the whole run before a socket opens.
 
     Then each target is connected. One that cannot be reached carries its
-    error, and the others go on. A typed password that a target refuses is not
-    sent to any later target that would use a typed password: those are
-    :data:`NOT_ATTEMPTED`, so a mistyped password cannot lock the account
-    across the fleet. Each session's user is checked against the service
-    account, and one match refuses the whole run with ``SOPULI-20010``, with
-    every session closed. The database identity is read only where
+    error, and the others go on. When a target refuses a typed password, no
+    later target that would use a typed password for the same user, by
+    ``upper()``, is connected: those are :data:`NOT_ATTEMPTED`, so a mistyped
+    password cannot lock the account across the fleet. Another user's typed
+    password was never refused, and is asked for and tried as usual. Each
+    session's user is checked against the service account, and one match
+    refuses the whole run with ``SOPULI-20010``, with every session closed.
+    The database identity is read only where
     ``need_identity`` asks for it, for a write's fingerprint.
     """
     env = os.environ if env is None else env
@@ -136,7 +138,9 @@ def connect_all(
     refuse_run_as_unattended(supported, as_user, attended=attended)
 
     connections: list[Connection] = []
-    refused_on: str | None = None
+    # Each user whose typed password a target refused, by upper(), with the
+    # name as typed and the target that refused it.
+    refused_typed: dict[str, tuple[str, str]] = {}
     try:
         for target in targets:
             if target.name in refused:
@@ -145,8 +149,10 @@ def connect_all(
                 )
                 continue
             typed = run_as_prompts(target, as_user)
-            if refused_on is not None and typed:
-                connections.append(_not_attempted(target, as_user, refused_on))
+            who = run_as_user(target, as_user)
+            if typed and who.upper() in refused_typed:
+                user, refused_on = refused_typed[who.upper()]
+                connections.append(_not_attempted(target, who, user, refused_on))
                 continue
             one = _connect(
                 target,
@@ -157,7 +163,7 @@ def connect_all(
                 need_identity=need_identity,
             )
             if typed and one.login_refused:
-                refused_on = target.name
+                refused_typed[who.upper()] = (who, target.name)
             connections.append(one)
     except BaseException:
         close_all(connections)
@@ -165,17 +171,17 @@ def connect_all(
     return connections
 
 
-def _not_attempted(target: ExpandedTarget, as_user: str | None, refused_on: str) -> Connection:
-    """A target left alone because the typed password failed on ``refused_on``."""
-    who = run_as_user(target, as_user)
+def _not_attempted(target: ExpandedTarget, who: str, user: str, refused_on: str) -> Connection:
+    """A target left alone because ``refused_on`` refused the password typed for
+    ``user``, the same account by ``upper()`` as this target's ``who``."""
     return Connection(
         target,
         who,
         error=Error(
             category="policy",
             message=(
-                f"the password typed for {who} was refused on {refused_on}, so it was "
-                "not tried here, where another failed login could lock the account"
+                f"the password typed for {user} was refused on {refused_on}, so it was "
+                f"not tried here, where another failed login could lock {user}"
             ),
             hint="check the password and run it again",
         ),

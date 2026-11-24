@@ -2461,8 +2461,8 @@ answered (`READ`); a write was committed (`COMMITTED`); a write was rolled
 back, on a dry run or because it changed no row (`ROLLED_BACK`); a write was
 rolled back because its row count failed the row guard (`GUARD_FAILED`); the
 target was not tried (`NOT_ATTEMPTED`), because a real write stopped at an
-earlier target, or because an earlier target refused a typed password, which
-is then sent nowhere else (UC-3 §2). A
+earlier target, or because an earlier target refused the password typed for
+the same user, which is then not tried again (UC-3 §2). A
 target that could not be reached, or whose statement failed, is `ERROR`, and a
 target of a product `sql run` does not run on is `SKIPPED`. This build runs
 reads only, so it reports `READ`, `NOT_ATTEMPTED`, `ERROR` and `SKIPPED`.

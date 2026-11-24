@@ -100,7 +100,14 @@ from sopuli import report_privileges as privilege_states
 from sopuli import rotate as rotation
 from sopuli import status as status_states
 from sopuli import strategy as strategies
-from sopuli.admin import PROMPT, AdminCredentialError, AskOncePerUser, RefReader, resolve_run_as
+from sopuli.admin import (
+    PROMPT,
+    AdminCredentialError,
+    AskOncePerUser,
+    RefReader,
+    resolve_run_as,
+    run_as_prompts,
+)
 from sopuli.admin import Resolved as AdminResolved
 from sopuli.admin import forget as forget_typed
 from sopuli.admin import resolve as admin_resolve
@@ -6381,7 +6388,12 @@ def sql_run_command(
         # One account named on the command line is one password, however many
         # targets the run covers.
         run = replace(run, prompt=AskOncePerUser(run.prompt))
-    statement = classify(_read_statement(path, as_user=as_user))
+    selection = selected(selectors, targets, (), groups, ())
+    refuse_unknown(run.config, selection)
+    config = _narrow(run.config, selection)
+    document.selection = selection.as_json() or None
+    typed = any(run_as_prompts(target, as_user) for target in config.expanded_targets)
+    statement = classify(_read_statement(path, typed=typed or as_user is not None))
     if statement.kind is not StatementKind.READ:
         raise StatementRefusedError(
             f"the statement starts with {statement.keyword}, which changes data, "
@@ -6390,10 +6402,6 @@ def sql_run_command(
             "build does not have yet",
         )
     document.statement = sql_view.statement_section(statement)
-    selection = selected(selectors, targets, (), groups, ())
-    refuse_unknown(run.config, selection)
-    config = _narrow(run.config, selection)
-    document.selection = selection.as_json() or None
 
     connections = sql_run.connect_all(
         config,
@@ -6414,23 +6422,32 @@ def sql_run_command(
     return sql_view.render_text(statement, outcomes)
 
 
-def _read_statement(path: Path | None, *, as_user: str | None) -> str:
+def _read_statement(path: Path | None, *, typed: bool) -> str:
     """The statement, from ``path`` or from stdin, as UTF-8.
 
     A terminal on stdin is a usage error: the statement is never typed at a
-    prompt. With ``--as`` the terminal is for the password, so only ``--file``
-    is offered. The bytes are decoded strictly, whatever the console's own
-    encoding, and a UTF-8 byte order mark, which Windows editors and
-    PowerShell write, is not part of the statement.
+    prompt. Where a password is typed (``typed``: ``--as``, or a ``run_as:``
+    with ``auth: prompt``), the terminal is for the password, so only
+    ``--file`` is offered. A run with no stdin at all, or one that cannot be
+    read, is the same usage error. The bytes are decoded strictly, whatever
+    the console's own encoding, and a UTF-8 byte order mark, which Windows
+    editors and PowerShell write, is not part of the statement.
     """
+    only_file = "give the statement with --file PATH"
+    either = f"{only_file}, or pipe it to stdin"
     if path is not None:
         data, source = path.read_bytes(), f"--file {path}"
     else:
         if is_a_terminal(sys.stdin):
-            if as_user is not None:
-                raise click.UsageError("with --as, give the statement with --file PATH")
-            raise click.UsageError("give the statement with --file PATH, or pipe it to stdin")
-        data, source = sys.stdin.buffer.read(), "stdin"
+            raise click.UsageError(only_file if typed else either)
+        stream = getattr(sys.stdin, "buffer", None)
+        if stream is None:
+            raise click.UsageError(f"there is no stdin to read; {only_file}")
+        try:
+            data = stream.read()
+        except (OSError, ValueError) as error:
+            raise click.UsageError(f"stdin cannot be read ({error}); {only_file}") from error
+        source = "stdin"
     try:
         return data.decode("utf-8-sig")
     except UnicodeDecodeError as error:

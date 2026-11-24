@@ -19,7 +19,7 @@ from jsonschema import Draft202012Validator
 from conftest import WriteConfig
 from sopuli import sql_run as sql_run_module
 from sopuli.admin import PasswordPrompt
-from sopuli.cli import cli
+from sopuli.cli import _read_statement, cli
 from sopuli.config.loading import build_config
 from sopuli.driver.protocol import AuthenticationError, DriverError, StatementResult
 from sopuli.exit_codes import ExitCode
@@ -689,6 +689,85 @@ def test_a_typed_password_refused_once_is_not_sent_to_other_targets(
     reason = loaded["results"][1]["error"]["message"]
     assert "prod-alpha" in reason
     assert loaded["exit_code"] == ExitCode.FAILURE
+
+
+PER_TARGET_PROMPTS = """version: 1
+targets:
+  - name: a-alpha
+    type: oracle
+    dsn: db-a.example.com:1521/ALPHA
+    run_as: { username: dba_alpha, auth: prompt }
+  - name: b-alpha
+    type: oracle
+    dsn: db-b.example.com:1521/ALPHA
+    run_as: { username: DBA_ALPHA, auth: prompt }
+  - name: c-alpha
+    type: oracle
+    dsn: db-c.example.com:1521/ALPHA
+    run_as: { username: dba_beta, auth: prompt }
+"""
+
+
+def test_only_the_refused_users_typed_password_is_held_back(
+    write_config: WriteConfig, driver: FakeDriver, terminal: Asker
+) -> None:
+    """Another user's typed password was never refused, so it is asked for and tried."""
+    driver.refuse["a-alpha"] = refused_login()
+
+    loaded = document(sql_run(write_config, config=PER_TARGET_PROMPTS, json_out=True))
+
+    states = {entry["target"]: entry["state"] for entry in loaded["results"]}
+    assert states == {"a-alpha": "ERROR", "b-alpha": "NOT_ATTEMPTED", "c-alpha": "READ"}
+    reason = loaded["results"][1]["error"]["message"]
+    assert "dba_alpha" in reason
+    assert "a-alpha" in reason
+    assert [credential.username for credential in driver.credentials] == [
+        "dba_alpha",
+        "dba_beta",
+    ]
+    assert len(terminal.questions) == 2
+
+
+def test_long_target_names_are_not_cut_in_the_shared_table(
+    write_config: WriteConfig, sessions: dict[str, Any]
+) -> None:
+    first, second = "acme-orders-production-eu-west-01", "acme-orders-production-eu-west-02"
+    config = CONFIG.replace("prod-alpha", first).replace("qa-alpha", second)
+
+    text = click.unstyle(sql_run(write_config, config=config).output)
+
+    assert f"\n{first}  open_cursors" in text
+    assert f"\n{second}  open_cursors" in text
+
+
+def test_a_terminal_on_stdin_with_a_prompt_run_as_names_only_file(
+    write_config: WriteConfig, sessions: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("sopuli.cli.is_a_terminal", lambda _: True)
+
+    result = sql_run(write_config, config=PROMPT_RUN_AS)
+
+    assert result.exit_code == ExitCode.USAGE, result.output
+    assert "--file" in result.output
+    assert "stdin" not in result.output
+
+
+class _Unreadable:
+    class buffer:  # noqa: N801 -- stands in for the stream's attribute
+        @staticmethod
+        def read() -> bytes:
+            raise OSError("the handle is invalid")
+
+
+@pytest.mark.parametrize("stdin", [None, object(), _Unreadable()])
+def test_a_missing_or_unreadable_stdin_is_a_usage_error(
+    monkeypatch: pytest.MonkeyPatch, stdin: object
+) -> None:
+    monkeypatch.setattr("sopuli.cli.is_a_terminal", lambda _: False)
+    monkeypatch.setattr("sys.stdin", stdin)
+
+    with pytest.raises(click.UsageError, match="--file"):
+        _read_statement(None, typed=False)
 
 
 def test_a_stored_password_refused_on_one_target_does_not_stop_the_others(

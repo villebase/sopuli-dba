@@ -513,17 +513,27 @@ class AskOncePerUser:
 
     prompt: Prompter
     _answers: dict[str, Secret] = field(default_factory=dict, repr=False)
+    #: The target each user's password was asked for, which is the key the
+    #: inner prompter cached it under.
+    _asked_for: dict[str, ExpandedTarget] = field(default_factory=dict, repr=False)
 
     def __call__(self, target: ExpandedTarget, username: str | None) -> Secret:
         key = username or ""
         if key not in self._answers:
             self._answers[key] = self.prompt(target, username)
+            self._asked_for[key] = target
         return self._answers[key]
 
     def forget(self, target: ExpandedTarget, username: str | None) -> None:
-        """Drop the answer, as :meth:`PasswordPrompt.forget` does."""
-        self._answers.pop(username or "", None)
-        forget(self.prompt, target, username)
+        """Drop the answer, whichever target the database refused it on.
+
+        The inner prompter is told to forget under the target it was asked
+        for, so the next ask prompts again.
+        """
+        key = username or ""
+        self._answers.pop(key, None)
+        asked_for = self._asked_for.pop(key, target)
+        forget(self.prompt, asked_for, username)
 
 
 def forget(prompt: Prompter | None, target: ExpandedTarget, username: str | None) -> None:

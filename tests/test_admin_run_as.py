@@ -343,6 +343,31 @@ def test_which_run_as_accounts_are_typed() -> None:
     )
 
 
+def test_a_password_refused_on_another_target_is_forgotten() -> None:
+    """Target 1 asked and logged in; target 2 refused the same answer; the next
+    ask prompts again, whichever target asked first."""
+    asked: list[str] = []
+
+    def ask(line: str) -> str:
+        asked.append(line)
+        return "typed"
+
+    prompt = AskOncePerUser(PasswordPrompt(ask=ask))
+    # The first and the third share a declaration site, so the inner prompter
+    # keys them alike, and the second does not.
+    first, second, third = (
+        ExpandedTarget(target=Target(name=name, type="oracle", dsn=DSN), index=index)
+        for index, name in ((0, "one-qa"), (1, "two-qa"), (0, "three-qa"))
+    )
+
+    prompt(first, "dba_beta")
+    prompt(second, "dba_beta")
+    forget(prompt, second, "dba_beta")
+    prompt(third, "dba_beta")
+
+    assert len(asked) == 2
+
+
 def test_a_refused_typed_password_is_asked_again() -> None:
     asked: list[str] = []
 

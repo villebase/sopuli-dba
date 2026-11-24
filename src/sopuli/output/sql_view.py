@@ -22,8 +22,7 @@ from sopuli.sql.statement import Statement
 from sopuli.sql.values import JsonValue
 from sopuli.sql_run import READ, TargetOutcome
 
-#: The widest a target name or a value is shown. The whole value is in the JSON.
-_TARGET = 30
+#: The widest a value is shown. The whole value is in the JSON.
 _VALUE = 40
 _TARGET_HEADING = "TARGET"
 
@@ -106,7 +105,9 @@ def _one_table(answered: Sequence[TargetOutcome]) -> list[str]:
     """Every answering target's rows under one heading, with the target first."""
     first = answered[0].result
     assert first is not None
-    columns = [Column(_TARGET_HEADING, _TARGET), *(Column(name, _VALUE) for name in first.columns)]
+    # The target column is never cut: two long names that differ only at the
+    # end would otherwise read as one target.
+    columns = [Column(_TARGET_HEADING), *(Column(name, _VALUE) for name in first.columns)]
     rows: list[list[Cell | str]] = [
         [outcome.target, *(_text(value) for value in row)]
         for outcome in answered

@@ -113,10 +113,13 @@ with exit 9, as the mutating commands refuse an `admin:` of either kind.
 **A typed password that a target refuses is not tried again.** The account is
 a person's, and its profile may lock it after a few failed logins. So when a
 target refuses a password typed for `--as` or for `auth: prompt`, the tool
-forgets it and connects no other target with a typed password. Those targets
-are reported `NOT_ATTEMPTED`, with a message naming the target that refused
-it. A password from the keyring, a variable or a wallet is each target's own,
-and a refusal on one target does not stop the others.
+forgets it and connects no later target where a password would be typed for
+the same user, compared by `upper()`. Those targets are reported
+`NOT_ATTEMPTED`, with a message naming the user and the target that refused
+the password. A typed password for another user was never refused, so it is
+asked for and tried as usual. A password from the keyring, a variable or a
+wallet is each target's own, and a refusal on one target does not stop the
+others.
 
 **Refusing the service account.** The tool checks the run-as account twice.
 

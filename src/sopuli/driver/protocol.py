@@ -534,6 +534,11 @@ class DriverError(Exception):
     #: target's.
     about_account = False
 
+    #: Whether the commit itself raised, in `sql run`'s write (UC-3). The
+    #: statement ran and the commit was sent, so whether it took effect is
+    #: unknown. ``False`` on the class; the Oracle runner sets it.
+    commit_failed = False
+
     def __init__(
         self,
         message: str,

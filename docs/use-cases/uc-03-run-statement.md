@@ -8,17 +8,17 @@ set of declared targets and shows what each target returned. **The statement
 check, the row guard, the plan fingerprint and the value conversion are built
 (#1659), and so is the `run_as:` configuration with its plan-time refusal of the
 service account (#1660), and so is the Oracle runner (#1661), and so is `sql
-run` for reads (#1662). `--write` is not built yet.** The command name,
-`sopuli sql run`, is a working name. The parts are built in this order, each by
-its own issue:
+run` for reads (#1662) and for writes (#1663). UC-3 on Oracle is built.** The
+command name, `sopuli sql run`, is a working name. The parts were built in this
+order, each by its own issue:
 
 | Part | Issue |
 |---|---|
 | The pure layer: the statement check, the plan fingerprint and the row guards | #1659, built |
 | The `run_as:` configuration | #1660, built. The session check of §2 is part of the runner |
 | The Oracle runner | #1661, built. `OracleSession.run_statement`, with `session_user()` for the check of §2. `sql.run` is not in the shared command set, so every other product is refused |
-| `sql run` for reads | #1662, built. A write keyword is refused with `SOPULI-20009` until `--write` is built |
-| `--write` | (open: #1663) |
+| `sql run` for reads | #1662, built |
+| `--write` | #1663, built |
 
 The first release of UC-3 covers Oracle only. A target of another product is
 refused at plan time by `require_command`, with `SOPULI-20006`, never by a
@@ -177,7 +177,11 @@ the server refuses it with `ORA-01456`. This is accepted. The rights of the
 run-as account are the real limit, as §1 says.
 
 **`readonly: true`** (`../design/00-principles.md`) refuses `--write`, with or
-without `--dry-run`.
+without `--dry-run`. A `safety:` block on a target, or on a group that matches
+one, applies to a write that selects that target. A write binds no account, so
+every selected target counts as reached for `readonly`, and every selected
+target of a product `sql run` runs on counts for `max_targets` (§5). The
+refusal offers a read without `--write` instead.
 
 ---
 
@@ -196,7 +200,12 @@ that target as refused by the guard.
 `--dry-run` does the same on every target and always rolls back. So a dry run
 shows the real row counts. It does not stop at a failing target: it runs every
 selected target and reports every count. Only a real write stops at the first
-failure (§5).
+failure (§5). A dry run offers the `--plan` to run it with only when every
+target connected and passed its guard, and then says when the real run will
+ask for a confirmation (`confirm_environments`). Otherwise it names the
+targets that did not pass, and the target where a real run would stop. Where
+no selected target is of a product `sql run` runs on, it says nothing would
+run. The run document carries the fingerprint in every case.
 
 A dry run is not free of effects. A trigger, a sequence's `NEXTVAL` and an
 autonomous transaction commit their own work, and the rollback does not undo it.
@@ -224,14 +233,20 @@ of them. A `/` or a `;` still left at the end is refused. Nothing else changes: 
 Both the dry run and the real run connect to every target first, check the
 session user (§2), and read the database identity. They compute the hash before
 any statement runs anywhere. A TNS alias that points at another database then
-changes the hash.
+changes the hash. A target that could not be connected is in the hash with no
+identity, so a target that was down in the dry run and is up in the real run
+changes it too.
 
 A real `--write` run must be given `--plan HASH`. It is refused at plan time,
 with `SOPULI-20011` and exit 8, as `readonly` and `max_targets` are, when the
 hash it computes differs. The hash differs when the config adds a target, when a
 target points at another database or another account, when the row guard
 changes, and when the statement differs by one character that normalisation
-keeps.
+keeps. A real `--write` without `--plan` is an argv error, exit 2. A dry run
+given `--plan` says whether it matches the dry run's hash, and changes nothing
+else. Where
+`confirm_environments` asks, it asks after the hash matched and before any
+statement runs.
 
 A write that affects 0 rows is rolled back, and reports `changed: false` (§6).
 
@@ -250,17 +265,46 @@ timeout does not bound the commit, so a commit is never abandoned half done.
 
 ## 5. Order and failure
 
-Targets run one after another. Each write commits on its own target. There is no
-atomic commit across targets.
+Targets run one after another, sorted by name. Each write commits on its own
+target. There is no atomic commit across targets.
 
-**A real write stops at the first target that fails**, whether by its row guard, a
-database error or a failed connection. The targets after it are reported as not
+**A real write runs only when every selected target connected.** The tool
+connects every target before any statement runs. If one did not connect,
+whether it could not be reached, refused the login, or was not tried because
+another target refused the same typed password (§2), the write could not
+finish everywhere. So the tool refuses the run with exit 8, names each target
+that did not connect, closes every session, and runs nothing. Committing on
+the targets before it would leave a partial change the tool could have
+avoided. A dry run never commits, so it runs every connected target and
+reports the others.
+
+**A real write stops at the first target that fails while it runs**, by its row
+guard, a database error or a timeout. The targets after it are reported as not
 attempted. A guard that fails on a real run means the data changed since the dry
 run. The operator fixes the cause, dry-runs the remaining targets again, and runs
 again.
 
 A run where some targets committed and others did not exits `4` (partial
-success), and its output names each target's outcome.
+success), and its output names each target's outcome. A run where every target
+committed, or affected 0 rows and rolled back, exits `0`. A run where no target
+committed exits `1`. A dry run exits `0` when every target passed its guard,
+`4` when some did, and `1` when none did. A target of another product is
+`SKIPPED` (`SOPULI-20006`). It does not stop a real write, and the exit code
+leaves it out; a run where every target is one exits `5`. Nothing runs on it,
+so the plan leaves it out too, and it counts for neither `max_targets` nor
+`confirm_environments`.
+
+**A commit that fails has an unknown outcome.** The statement ran and the
+commit was sent, so the change may have taken effect. The target is `ERROR`,
+with a message that says the outcome is unknown and to check the rows before
+running again, and the server's code and message. The run stops there, and the
+exit code counts the target as possibly committed: a failed commit on the
+first target exits `4`, not `1`.
+
+**An interrupt keeps the record.** When Ctrl-C stops a real write, the
+targets that finished keep their outcome. The target in flight is `ERROR`,
+because whether it committed is unknown, and the targets after it are
+`NOT_ATTEMPTED`. The tool prints them before it exits.
 
 **A read does not stop.** It reports every target it could read, and the ones it
 could not.
@@ -330,7 +374,8 @@ and adds no mutation record.
   target. This is a minor schema bump, and a sample is checked against the schema
   (invariant 12).
 - **Row cap.** The tool returns up to 100 rows for each target by default.
-  `--max-result-rows` changes the cap. A truncated target is marked in the
+  `--max-result-rows` changes the cap, for a read only: a write returns no
+  rows, so `--write` refuses it as an argv error. A truncated target is marked in the
   output.
 - **Value types.** Dates, numbers and LOBs become strings or numbers that JSON
   can carry. A LOB is read as text or bytes, cut at 4000 characters or bytes,
@@ -350,5 +395,4 @@ and adds no mutation record.
 | Does it take the run lock? | No. There is no vault document to lock (§6) |
 | Is it convergent? | No. A committed write that affects rows reports `changed: true`; a write that affects 0 rows is rolled back and reports `changed: false` (§6) |
 
-The maintainer decided these in #1657. Error code `SOPULI-20011` is planned and
-is not in the error table yet.
+The maintainer decided these in #1657.

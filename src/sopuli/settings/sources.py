@@ -178,9 +178,25 @@ def config_contributions(config: Config) -> dict[str, list[Contribution]]:
     return _collected(found)
 
 
-def estate_contributions(config: Config) -> dict[str, list[Contribution]]:
+def reached_targets(config: Config, *, every_target: bool = False) -> set[str]:
+    """The names of the targets a run over the selected ``config`` reaches.
+
+    The targets its bindings name, unless ``every_target`` says the run
+    reaches each selected target whether or not a binding names it. `sql run
+    --write` says so: it acts on targets, not on bound accounts (UC-3).
+    """
+    if every_target:
+        return {expanded.name for expanded in config.expanded_targets}
+    return {binding.target for binding in config.bindings}
+
+
+def estate_contributions(
+    config: Config, *, every_target: bool = False
+) -> dict[str, list[Contribution]]:
     """Layer 4 of the ``safety:`` settings -- the blocks on the targets a run
     reaches, and on the groups that match them (decision #424).
+
+    ``every_target`` is :func:`reached_targets`'.
 
     ``config`` is the **already-selected** estate: `filter_estate` has run, and
     what is left is what the verb is about to act on. That is what makes this
@@ -208,7 +224,7 @@ def estate_contributions(config: Config) -> dict[str, list[Contribution]]:
     several layers tie -- and "ties resolve downward" (§9) makes the reported one
     the lowest-authority contributor in any case.
     """
-    reached = {binding.target for binding in config.bindings}
+    reached = reached_targets(config, every_target=every_target)
     found: list[tuple[str, object, str, Layer]] = []
     for expanded in config.expanded_targets:
         if expanded.name not in reached:

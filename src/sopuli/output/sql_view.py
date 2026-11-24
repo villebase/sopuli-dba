@@ -7,6 +7,9 @@ has a block of its own. The shared table cuts a value longer than 40
 characters with ``...`` and shows a line break as ``\\n``; the JSON keeps the
 whole value. A line per target then gives its
 row count, ``truncated`` where the rows were cut, or why it gave no answer.
+
+A write's text has no rows: a line per target with its state and its count,
+then the plan fingerprint.
 """
 
 from __future__ import annotations
@@ -20,7 +23,7 @@ from sopuli.output.palette import Role, paint, role_for_state
 from sopuli.output.table import Cell, Column, render_table
 from sopuli.sql.statement import Statement
 from sopuli.sql.values import JsonValue
-from sopuli.sql_run import READ, TargetOutcome
+from sopuli.sql_run import COMMITTED, GUARD_FAILED, READ, ROLLED_BACK, TargetOutcome
 
 #: The widest a value is shown. The whole value is in the JSON.
 _VALUE = 40
@@ -72,6 +75,96 @@ def summarise(outcomes: Sequence[TargetOutcome]) -> Summary:
         skipped=skipped or None,
         by_state=counts,
     )
+
+
+def summarise_write(outcomes: Sequence[TargetOutcome]) -> Summary:
+    """A write's counts. ``ok`` counts the targets that committed or rolled
+    back with their guard passed, and ``changed`` the ones that committed."""
+    counts: dict[str, int] = {}
+    for outcome in outcomes:
+        counts[outcome.state] = counts.get(outcome.state, 0) + 1
+    ok = counts.get(COMMITTED, 0) + counts.get(ROLLED_BACK, 0)
+    skipped = counts.get(SKIPPED, 0)
+    return Summary(
+        total=len(outcomes),
+        ok=ok,
+        changed=counts.get(COMMITTED, 0),
+        failed=len(outcomes) - ok - skipped,
+        skipped=skipped or None,
+        by_state=counts,
+    )
+
+
+def render_write(
+    statement: Statement,
+    outcomes: Sequence[TargetOutcome],
+    plan: str,
+    *,
+    dry_run: bool,
+    note: str | None = None,
+    asks: bool = False,
+) -> str:
+    """A write's text: the statement, a line per target, and the plan fingerprint.
+
+    A dry run ends with what to do next (:func:`_next_step`), and ``note``
+    says whether a `--plan` it was given matches. ``asks`` is whether the real
+    run will ask for a confirmation.
+    """
+    lines = [paint(f"{statement.kind} statement:", Role.HEADING)]
+    lines.extend(f"  {line}" for line in statement.text.splitlines())
+    lines.append("")
+    if not outcomes:
+        lines.append("no targets selected")
+    width = max((len(outcome.target) for outcome in outcomes), default=0)
+    states = max((len(outcome.state) for outcome in outcomes), default=0)
+    for outcome in outcomes:
+        name = paint(outcome.target, Role.HEADING) + " " * (width - len(outcome.target))
+        state = paint(outcome.state, role_for_state(outcome.state))
+        state += " " * (states - len(outcome.state))
+        lines.append(f"{name}  {state}  {_write_detail(outcome, dry_run=dry_run)}")
+    lines.extend(["", f"plan fingerprint: {plan}"])
+    if dry_run:
+        lines.extend(_next_step(outcomes, plan, asks=asks))
+    if note is not None:
+        lines.append(note)
+    return "\n".join(lines)
+
+
+def _next_step(outcomes: Sequence[TargetOutcome], plan: str, *, asks: bool) -> list[str]:
+    """After a dry run: the `--plan` to run it with, where a real run could
+    finish on every target, and whether it will ask first (``asks``);
+    otherwise where it would stop, and why. Nothing is offered where every
+    target is of a product `sql run` does not run on."""
+    if all(outcome.state == SKIPPED for outcome in outcomes):
+        return ["nothing would run: no selected target is of a product `sql run` runs on"]
+    failing = [outcome for outcome in outcomes if outcome.state not in (ROLLED_BACK, SKIPPED)]
+    if not failing:
+        lines = [f"to run it, drop --dry-run and add:  --plan {plan}"]
+        if asks:
+            lines.append(
+                "`safety.confirm_environments` covers these targets, so the real run will "
+                "ask before it runs; where nobody can answer, add --confirm"
+            )
+        return lines
+    named = ", ".join(f"{outcome.target} ({outcome.state})" for outcome in failing)
+    return [
+        f"a real run would stop at {failing[0].target}. These targets did not pass: {named}",
+        "fix them, or leave them out with a selector, and dry-run again",
+    ]
+
+
+def _write_detail(outcome: TargetOutcome, *, dry_run: bool) -> str:
+    if outcome.state == GUARD_FAILED and outcome.error is not None:
+        return outcome.error.message
+    if outcome.result is None:
+        return outcome.error.message if outcome.error is not None else ""
+    count = outcome.result.row_count
+    said = f"{count} row" if count == 1 else f"{count} rows"
+    if outcome.state == ROLLED_BACK:
+        if dry_run and count:
+            return f"{said}, rolled back (dry run)"
+        return f"{said}, rolled back: no row changed"
+    return said
 
 
 def render_text(statement: Statement, outcomes: Sequence[TargetOutcome]) -> str:

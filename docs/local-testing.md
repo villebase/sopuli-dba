@@ -46,8 +46,8 @@ sopuli sql run
 ```
 
 The `creds` commands manage application credentials (UC-1). The `account`
-commands manage personal accounts (UC-2). `sql run` runs one query on many
-targets (UC-3, §9b). `vault orphans` lists vault records
+commands manage personal accounts (UC-2). `sql run` runs one query or one
+write on many targets (UC-3, §9b). `vault orphans` lists vault records
 the tool wrote at paths the config no longer declares (§13).
 
 There is no `sopuli admin` command. To install the Oracle service account, run
@@ -3550,7 +3550,7 @@ there the date is `unknown`, with the reason; the history is still complete.
 ## 9b. Run one query on many targets (UC-3)
 
 `sql run` runs one `SELECT` or `WITH` statement on each selected target and
-shows the rows. It runs on Oracle only. It never connects as the account in
+shows the rows. With `--write` it runs one write (§*A write*, below). It runs on Oracle only. It never connects as the account in
 `admin:`. It connects as the account in `run_as:`, here a personal account. As
 SYS in the PDB:
 
@@ -3631,23 +3631,95 @@ $ sopuli --config sql-run.yaml sql run --target free-pdb --max-result-rows 1 --f
 free-pdb  1 row, truncated
 ```
 
-A write is refused before anything connects, and so is the account in
-`admin:`:
+A write without `--write` is refused before anything connects, and so is the
+account in `admin:`:
 
 ```
 $ echo "update t set x = 1" | sopuli --config sql-run.yaml sql run
 sopuli: the statement starts with UPDATE, which changes data, and `--write` was not given
-  hint: `sql run` runs SELECT and WITH. A write needs `--write`, which this build does not have yet
+  hint: `sql run` runs SELECT and WITH. A write needs `--write`, a selector and a row guard
 $ echo "select 1 from dual" | sopuli --config sql-run.yaml sql run --as system
 sopuli: target 'free-pdb' would run statements as 'system' (from `--as`), the account the tool uses for its own work (named by `admin.username`)
   hint: name a personal or owner account with `run_as:` or `--as USER`
 ```
 
 Both exit 8. `--as USER` asks for the password at the terminal, so give the
-statement with `--file` then. Afterwards, as SYS in the PDB:
+statement with `--file` then.
+
+### A write
+
+`sql run --write` runs one `UPDATE`, `INSERT`, `MERGE` or `DELETE`. It needs a
+selector and a row guard. `--expect-rows N` commits on a target only when the
+statement changed exactly N rows there, and `--max-rows N` when it changed at
+most N. As SYS in the PDB, give `dba_alpha` a table:
 
 ```sql
-DROP USER dba_alpha;
+ALTER USER dba_alpha QUOTA 1M ON users;
+CREATE TABLE dba_alpha.acme_settings (name VARCHAR2(30), flag NUMBER(1));
+INSERT INTO dba_alpha.acme_settings VALUES ('audit', 0);
+INSERT INTO dba_alpha.acme_settings VALUES ('trace', 0);
+COMMIT;
+```
+
+Run the write with `--dry-run` first. It runs the statement on every target,
+rolls it back, shows each row count, and prints the plan fingerprint:
+
+```
+$ cat audit-on.sql
+UPDATE dba_alpha.acme_settings SET flag = 1 WHERE name = 'audit';
+$ sopuli --config sql-run.yaml sql run --write --target free-pdb --target free-pdb-again --expect-rows 1 --dry-run < audit-on.sql
+Plan: 1 account x 2 targets = 2 writes
+
+ACCOUNT    TARGET          INTENT     SECRET
+dba_alpha  free-pdb        sql_write  -
+dba_alpha  free-pdb-again  sql_write  -
+
+write statement:
+  UPDATE dba_alpha.acme_settings SET flag = 1 WHERE name = 'audit'
+
+free-pdb        ROLLED_BACK  1 row, rolled back (dry run)
+free-pdb-again  ROLLED_BACK  1 row, rolled back (dry run)
+
+plan fingerprint: fe615d13d38b
+to run it, drop --dry-run and add:  --plan fe615d13d38b
+```
+
+It exits 0. The real run needs the fingerprint as `--plan`. It runs the
+targets in sorted order, and commits on each target whose row count passes the
+guard:
+
+```
+$ sopuli --config sql-run.yaml sql run --write --target free-pdb --target free-pdb-again --expect-rows 1 --plan fe615d13d38b < audit-on.sql
+Plan: 1 account x 2 targets = 2 writes
+
+ACCOUNT    TARGET          INTENT     SECRET
+dba_alpha  free-pdb        sql_write  -
+dba_alpha  free-pdb-again  sql_write  -
+
+write statement:
+  UPDATE dba_alpha.acme_settings SET flag = 1 WHERE name = 'audit'
+
+free-pdb        COMMITTED  1 row
+free-pdb-again  COMMITTED  1 row
+
+plan fingerprint: fe615d13d38b
+```
+
+It exits 0. Both names reach one PDB, so the second `UPDATE` matched the same
+row and committed again. A real write stops at the first target that fails its
+guard, and exits 4 when an earlier target committed. A `--plan` that is not
+this run's fingerprint is refused, and nothing runs:
+
+```
+$ sopuli --config sql-run.yaml sql run --write --target free-pdb --target free-pdb-again --expect-rows 1 --plan 000000000000 < audit-on.sql
+sopuli: --plan 000000000000 is not this run's plan fingerprint, which is fe615d13d38b: the statement, the row guard or a target changed since the dry run
+  hint: nothing was run; run it again with --dry-run, check the targets and the row counts, and give the fingerprint it prints to --plan
+```
+
+It exits 8. Afterwards, as SYS in the PDB:
+
+```sql
+DROP USER dba_alpha CASCADE;
 ```
 
 ---

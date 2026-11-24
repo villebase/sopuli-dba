@@ -369,6 +369,27 @@ def test_it_refuses_a_mutation_and_names_the_target() -> None:
     assert "alpha-0 (targets[0].safety.readonly)" in (raised.value.hint or "")
 
 
+def test_the_read_instead_is_the_credential_verbs_unless_the_caller_names_one() -> None:
+    """`sql run --write` has its own read; every other verb keeps `creds check`."""
+    config = estate(safety={"readonly": True}, targets=3)
+
+    with pytest.raises(RefusedError) as default:
+        refuse_if_readonly(folded(config), action="rotating a password", estate=config)
+    with pytest.raises(RefusedError) as named:
+        refuse_if_readonly(
+            folded(config),
+            action="running a write statement",
+            estate=config,
+            reads="read instead with `sopuli sql run` without --write",
+        )
+
+    assert "read instead with `sopuli creds check` or `sopuli creds status`" in (
+        default.value.hint or ""
+    )
+    assert "read instead with `sopuli sql run` without --write" in (named.value.hint or "")
+    assert "creds check" not in (named.value.hint or "")
+
+
 def test_a_partial_refusal_says_how_much_and_offers_a_narrowing() -> None:
     """Decision #424 chose a refusal over a partial run, so the message has to
     hand back the mechanism that *does* narrow -- otherwise the operator is told

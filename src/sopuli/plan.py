@@ -100,6 +100,7 @@ ACTION_KINDS = frozenset(
         "password_expire",
         "attribute_set",
         "verify",
+        "sql_write",
     )
 )
 

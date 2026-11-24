@@ -3676,9 +3676,9 @@ UPDATE dba_alpha.acme_settings SET flag = 1 WHERE name = 'audit';
 $ sopuli --config sql-run.yaml sql run --write --target free-pdb --target free-pdb-again --expect-rows 1 --dry-run < audit-on.sql
 Plan: 1 account x 2 targets = 2 writes
 
-ACCOUNT    TARGET          INTENT     SECRET
-dba_alpha  free-pdb        sql_write  -
-dba_alpha  free-pdb-again  sql_write  -
+ACCOUNT    TARGET          INTENT
+dba_alpha  free-pdb        sql_write
+dba_alpha  free-pdb-again  sql_write
 
 write statement:
   UPDATE dba_alpha.acme_settings SET flag = 1 WHERE name = 'audit'
@@ -3698,9 +3698,9 @@ guard:
 $ sopuli --config sql-run.yaml sql run --write --target free-pdb --target free-pdb-again --expect-rows 1 --plan fe615d13d38b < audit-on.sql
 Plan: 1 account x 2 targets = 2 writes
 
-ACCOUNT    TARGET          INTENT     SECRET
-dba_alpha  free-pdb        sql_write  -
-dba_alpha  free-pdb-again  sql_write  -
+ACCOUNT    TARGET          INTENT
+dba_alpha  free-pdb        sql_write
+dba_alpha  free-pdb-again  sql_write
 
 write statement:
   UPDATE dba_alpha.acme_settings SET flag = 1 WHERE name = 'audit'

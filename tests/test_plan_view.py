@@ -16,6 +16,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+import click
 import pytest
 from jsonschema import Draft202012Validator
 
@@ -193,6 +194,20 @@ def test_the_table_carries_a_row_per_unit_with_its_document() -> None:
     assert "ACCOUNT" in rendered
     assert "vault-prod:apps/acme/alpha" in rendered
     assert "vault-prod:apps/acme/beta" in rendered
+
+
+def test_a_verb_with_no_secret_can_leave_the_column_out() -> None:
+    """`sql run --write` binds no secret, so a SECRET column would read "-" on
+    every row (#1675). The other columns stay."""
+    plan = build(estate(accounts=["acme_web_user"]), intent=["verify"])
+
+    shown = render_plan(plan)
+    left_out = render_plan(plan, secret_column=False)
+
+    assert "SECRET" in shown
+    assert "SECRET" not in left_out
+    header = click.unstyle(left_out.splitlines()[2]).split()
+    assert header == ["ACCOUNT", "TARGET", "INTENT"]
 
 
 def test_a_unit_with_no_document_shows_a_placeholder_rather_than_none() -> None:

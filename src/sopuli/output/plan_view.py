@@ -43,7 +43,7 @@ _TARGET = 28
 _SECRET = 52
 
 
-def render_plan(plan: Plan, *, noun: str = "change") -> str:
+def render_plan(plan: Plan, *, noun: str = "change", secret_column: bool = True) -> str:
     """The plan as text, headed by the count and what it is a count of.
 
     ``noun`` is what one unit *is* for the calling verb -- ``check`` for a
@@ -55,6 +55,9 @@ def render_plan(plan: Plan, *, noun: str = "change") -> str:
     **Environments are named, not counted.** ``max_targets`` is a number and
     `confirm_environments` is not; an operator scanning for whether this run
     reaches prod is reading for the word.
+
+    ``secret_column=False`` leaves out the SECRET column, for a verb with no
+    secret, whose column would read ``-`` on every row. `sql run --write` is one.
     """
     radius = plan.blast_radius
     total = len(plan.units)
@@ -67,7 +70,7 @@ def render_plan(plan: Plan, *, noun: str = "change") -> str:
 
     lines = [head]
     if plan.units:
-        lines.extend(["", *_table(plan)])
+        lines.extend(["", *_table(plan, secret_column=secret_column)])
     if plan.shared:
         lines.extend(["", *_shared(plan.shared)])
     return "\n".join(lines)
@@ -84,7 +87,7 @@ def _environment(name: str) -> str:
     return paint(name, Role.PRODUCTION) if name == "prod" else name
 
 
-def _table(plan: Plan) -> list[str]:
+def _table(plan: Plan, *, secret_column: bool = True) -> list[str]:
     """One row per unit, in binding order.
 
     Deliberately not sorted. :func:`~sopuli.config.sharing.shared_secrets` gives
@@ -97,25 +100,16 @@ def _table(plan: Plan) -> list[str]:
     is exactly the run where a header could not have said so. It repeats where
     they do all agree, which costs a narrow column and keeps one reading rule.
     """
-    return list(
-        render_table(
-            [
-                Column("ACCOUNT", _ACCOUNT),
-                Column("TARGET", _TARGET),
-                Column("INTENT"),
-                Column("SECRET", _SECRET),
-            ],
-            [
-                [
-                    unit.account,
-                    unit.target,
-                    ", ".join(unit.intent),
-                    _secret(unit.secret),
-                ]
-                for unit in plan.units
-            ],
-        )
-    )
+    columns = [Column("ACCOUNT", _ACCOUNT), Column("TARGET", _TARGET), Column("INTENT")]
+    if secret_column:
+        columns.append(Column("SECRET", _SECRET))
+    rows: list[list[Cell | str]] = []
+    for unit in plan.units:
+        row: list[Cell | str] = [unit.account, unit.target, ", ".join(unit.intent)]
+        if secret_column:
+            row.append(_secret(unit.secret))
+        rows.append(row)
+    return list(render_table(columns, rows))
 
 
 def _secret(secret: dict[str, object] | None) -> Cell | str:

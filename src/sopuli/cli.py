@@ -5631,7 +5631,14 @@ def _refuse_unconfirmable(
     return demand
 
 
-def _record_plan(plan: Any, run: Invocation, *, noun: str, confirmation_required: bool) -> None:
+def _record_plan(
+    plan: Any,
+    run: Invocation,
+    *,
+    noun: str,
+    confirmation_required: bool,
+    secret_column: bool = True,
+) -> None:
     """Put a mutating verb's plan on the run document, as JSON and as text (#863).
 
     One call for both, so a verb cannot set the one and forget the other. The
@@ -5640,10 +5647,11 @@ def _record_plan(plan: Any, run: Invocation, *, noun: str, confirmation_required
     raises part way, the command handler prints the text to stderr instead, so
     the operator still sees what the run had been about to touch
     (:func:`sopuli.invocation._show_unfinished_plan`). The prompts print the
-    same text (:func:`_show_plan`).
+    same text (:func:`_show_plan`). ``secret_column=False`` is for a verb with
+    no secret, as :func:`~sopuli.output.plan_view.render_plan` says.
     """
     run.document.plan = plan.as_json(confirmation_required=confirmation_required)
-    run.document.plan_text = render_plan(plan, noun=noun)
+    run.document.plan_text = render_plan(plan, noun=noun, secret_column=secret_column)
 
 
 def _show_plan(plan: Any, run: Invocation, *, noun: str) -> None:
@@ -6588,7 +6596,13 @@ def _sql_write(
         config, sql_run.planned_accounts(config, as_user), intent=["sql_write"]
     )
     refuse_if_over_limit(run.resolved, plan.blast_radius, action=action)
-    _record_plan(plan, run, noun="write", confirmation_required=_asks_environments(plan, run))
+    _record_plan(
+        plan,
+        run,
+        noun="write",
+        confirmation_required=_asks_environments(plan, run),
+        secret_column=False,
+    )
     demand = _refuse_unconfirmable(plan, run, action=action, confirmed=confirm, noun="write")
 
     connections = sql_run.connect_all(
@@ -6653,7 +6667,7 @@ def _sql_write(
             if one.session is None and not one.unsupported and not one.logged_in
         ],
     )
-    return render_plan(plan, noun="write") + "\n\n" + text
+    return render_plan(plan, noun="write", secret_column=False) + "\n\n" + text
 
 
 def _ask_once_per_login(

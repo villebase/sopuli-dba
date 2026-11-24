@@ -408,6 +408,7 @@ def test_dry_run_prints_plan_and_fingerprint_rolls_back(
         ],
     )
     assert text.startswith("Plan: 1 account x 4 targets = 4 writes")
+    assert "SECRET" not in text.split("--plan")[0], "a write binds no secret (#1675)"
     assert f"--plan {expected}" in text
     assert "UPDATE acme_settings SET flag = 1 WHERE name = 'audit'" in text
     for session in fleet["opened"]:

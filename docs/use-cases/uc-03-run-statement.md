@@ -96,8 +96,12 @@ for `admin:`. The allowed `auth:` methods are `keyring`, `prompt`, `external` an
 naming the run-as credential. `vault` is not
 allowed, so that the tool never logs in with a password that a store holds for
 another purpose. `--as USER` with `auth: prompt` covers a run that the config
-does not configure. It asks once for the run, whatever the number of targets.
-It needs a terminal on stdin, so the statement then comes from `--file`; a run
+does not configure. It asks once for the run, whatever the number of targets. A
+`run_as:` with `auth: prompt` asks once for each place the file declares it, and
+each user name: twenty explicit targets that inherit one `defaults.run_as` give
+one prompt, but a `run_as:` written on each of two targets gives two, because two
+databases may hold different passwords for one name. `--as`
+needs a terminal on stdin, so the statement then comes from `--file`; a run
 with `--as` and no terminal is refused with exit 2 before anything connects.
 
 The password is read from the sources the tool already has for its own

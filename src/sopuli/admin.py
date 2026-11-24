@@ -504,22 +504,42 @@ def resolve_run_as(
 
 @dataclass
 class AskOncePerUser:
-    """A :data:`Prompter` that asks once per user name for the whole run.
+    """A :data:`Prompter` for `sql run`, which asks once for each run-as login.
 
-    For `sql run --as USER`. :class:`PasswordPrompt` asks once per declared
-    credential, and ``--as`` is declared nowhere in the file: it is one account
-    the operator named once, so one password covers every target.
+    :class:`PasswordPrompt` asks once per declared *admin* credential. `sql run`
+    connects as the run-as account instead, and two cases need their own key:
+
+    * ``--as USER`` is declared nowhere in the file: it is one account the
+      operator named once, so one password covers every target, and the key is
+      the user name alone;
+    * a ``run_as:`` with ``auth: prompt`` (``by_declaration=True``) is keyed by
+      where the file declares it, and the user name. An inherited
+      ``defaults.run_as`` is one act and is asked for once, however many targets
+      take it. A ``run_as:`` written on each target is one act each, and two
+      databases may hold different passwords for one name, so each is asked for
+      and the first answer is not sent to the second (#1677).
     """
 
     prompt: Prompter
+    by_declaration: bool = False
     _answers: dict[str, Secret] = field(default_factory=dict, repr=False)
-    #: The target each user's password was asked for, which is the key the
+    #: The target each key's password was asked for, which is the key the
     #: inner prompter cached it under.
     _asked_for: dict[str, ExpandedTarget] = field(default_factory=dict, repr=False)
 
+    def _key(self, target: ExpandedTarget, username: str | None) -> str:
+        if not self.by_declaration:
+            return username or ""
+        # NUL, as in :func:`prompt_key`, so a name cannot make two keys collide.
+        return "\x00".join((str(run_as_at(target)), username or ""))
+
     def __call__(self, target: ExpandedTarget, username: str | None) -> Secret:
-        key = username or ""
+        key = self._key(target, username)
         if key not in self._answers:
+            # The inner prompter keys on the `admin` declaration, which two
+            # run-as declarations can share. Drop its answer for this target, so
+            # that it asks for this one.
+            forget(self.prompt, target, username)
             self._answers[key] = self.prompt(target, username)
             self._asked_for[key] = target
         return self._answers[key]
@@ -530,7 +550,7 @@ class AskOncePerUser:
         The inner prompter is told to forget under the target it was asked
         for, so the next ask prompts again.
         """
-        key = username or ""
+        key = self._key(target, username)
         self._answers.pop(key, None)
         asked_for = self._asked_for.pop(key, target)
         forget(self.prompt, asked_for, username)

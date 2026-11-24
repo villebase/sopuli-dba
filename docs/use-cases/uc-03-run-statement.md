@@ -335,11 +335,11 @@ committed: a failed commit on the first target exits `4`, not `1`.
 **An interrupt keeps the record.** When Ctrl-C stops a real write, the
 targets that finished keep their outcome. The target in flight is `ERROR`,
 with `outcome_unknown: true`, because whether it committed is unknown, and
-the targets after it are `NOT_ATTEMPTED`. The tool prints them to stderr before it exits, and under
-`--output json` the run document holds them in `results[]`, and its `summary`
-counts them. The exit code is `8`, as for any abort and for every verb, even when
-some targets committed. Exit `8` here does not mean nothing ran: `results[]` and
-`summary` say what did.
+the targets after it are `NOT_ATTEMPTED`. The tool prints them to stderr
+before it exits, and under `--output json` the run document holds them in
+`results[]`, and its `summary` counts them. The exit code is `8`, as for any
+abort and for every verb, even when some targets committed. Exit `8` here does
+not mean nothing ran: `results[]` and `summary` say what did.
 
 Every other write result has `outcome_unknown: false`, a dry run's included,
 because a dry run commits nothing. A read's results do not have the field.

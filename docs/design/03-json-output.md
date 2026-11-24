@@ -2458,14 +2458,15 @@ with `error.message` naming that target. A target of another product is
 and `ROLLED_BACK`, and `summary.changed` counts `COMMITTED`. Each target has a
 `plan.units[]` entry with the intent `sql_write`.
 
-**`outcome_unknown`** is on every write result, and never on a read's. It is `true` where the change may have taken effect: the
-commit was sent and then failed, or Ctrl-C stopped a real write while the
-statement ran on that target. The state is then `ERROR`, and `error.message`
-says the outcome is unknown. After a failed commit the server's message
-follows, and the exit code counts the target as possibly committed. After
-Ctrl-C the exit code is 8. On every other write result `outcome_unknown` is
-`false`. That includes a dry run, which commits nothing. A consumer reads the
-field and need not parse the message.
+**`outcome_unknown`** is on every write result, and never on a read's. It is
+`true` where the change may have taken effect: the commit was sent and then
+failed, or Ctrl-C stopped a real write while the statement ran on that target.
+The state is then `ERROR`, and `error.message` says the outcome is unknown.
+After a failed commit the server's message follows, and the exit code counts
+the target as possibly committed. After Ctrl-C the exit code is 8. On every
+other write result `outcome_unknown` is `false`. That includes a dry run,
+which commits nothing. A consumer reads the field and need not parse the
+message.
 
 From a real run on two names for one PDB, where the statement changed the row
 on the first name, so the second found none:

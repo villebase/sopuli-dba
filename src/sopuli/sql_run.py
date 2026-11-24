@@ -454,7 +454,12 @@ def run_write(
 
 
 def _interrupted(one: Connection, *, commit: bool) -> TargetOutcome:
-    said = "whether it committed is unknown" if commit else "a dry run commits nothing"
+    if commit:
+        said = "whether it committed is unknown"
+        hint = "check the rows on this target before you run it again"
+    else:
+        said = "a dry run commits nothing"
+        hint = "nothing was committed; dry-run again"
     return TargetOutcome(
         one.target.name,
         one.run_as,
@@ -462,7 +467,7 @@ def _interrupted(one: Connection, *, commit: bool) -> TargetOutcome:
         error=Error(
             category="policy",
             message=f"interrupted while the statement ran here; {said}",
-            hint="check the rows on this target before you run it again",
+            hint=hint,
         ),
         outcome_unknown=commit,
     )

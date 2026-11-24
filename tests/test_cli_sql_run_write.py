@@ -930,6 +930,9 @@ def test_an_interrupt_keeps_the_record_and_closes_every_session(
     ]
     assert loaded["results"][0]["changed"] is True
     assert "whether it committed is unknown" in loaded["results"][1]["error"]["message"]
+    assert loaded["results"][1]["error"]["hint"] == (
+        "check the rows on this target before you run it again"
+    )
     assert [entry["outcome_unknown"] for entry in loaded["results"]] == [False, True, False]
     assert [(one.target, one.state) for one in recorded] == [
         ("a-alpha", "COMMITTED"),
@@ -961,6 +964,8 @@ def test_an_interrupt_during_a_dry_run_leaves_no_outcome_unknown(
     by_target = {entry["target"]: entry for entry in loaded["results"]}
     assert by_target["b-beta"]["state"] == "ERROR"
     assert "a dry run commits nothing" in by_target["b-beta"]["error"]["message"]
+    # No row can have changed, so the hint does not send the operator to check rows.
+    assert by_target["b-beta"]["error"]["hint"] == "nothing was committed; dry-run again"
     assert all(entry["outcome_unknown"] is False for entry in loaded["results"])
 
 

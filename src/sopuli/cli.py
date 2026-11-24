@@ -5588,7 +5588,13 @@ def _confirm_environments(
 
 
 def _ask_environments(
-    plan: Any, run: Invocation, demand: Confirmation | None, *, action: str, noun: str
+    plan: Any,
+    run: Invocation,
+    demand: Confirmation | None,
+    *,
+    action: str,
+    noun: str,
+    secret_column: bool = True,
 ) -> None:
     """The question half of :func:`_confirm_environments`, for ``demand`` as
     :func:`_refuse_unconfirmable` returned it. Nothing is asked where it is
@@ -5598,12 +5604,19 @@ def _ask_environments(
     question = f"{action} in `{demand.named}`?"
     # As `rotate`'s gate does: only where somebody is actually asked.
     run.emitter().event(run.document, "confirmation.required", data={"prompt": question})
-    _show_plan(plan, run, noun=noun)
+    _show_plan(plan, run, noun=noun, secret_column=secret_column)
     _confirm(question, abort=True, err=True)
 
 
 def _refuse_unconfirmable(
-    plan: Any, run: Invocation, *, action: str, confirmed: bool, noun: str, show: bool = True
+    plan: Any,
+    run: Invocation,
+    *,
+    action: str,
+    confirmed: bool,
+    noun: str,
+    show: bool = True,
+    secret_column: bool = True,
 ) -> Confirmation | None:
     """The half of :func:`_confirm_environments` that needs no connection.
 
@@ -5627,11 +5640,18 @@ def _refuse_unconfirmable(
     if not _can_prompt():
         refuse_unconfirmed(demand, action=action, targets=plan.blast_radius.targets)
     if show:
-        _show_plan(plan, run, noun=noun)
+        _show_plan(plan, run, noun=noun, secret_column=secret_column)
     return demand
 
 
-def _record_plan(plan: Any, run: Invocation, *, noun: str, confirmation_required: bool) -> None:
+def _record_plan(
+    plan: Any,
+    run: Invocation,
+    *,
+    noun: str,
+    confirmation_required: bool,
+    secret_column: bool = True,
+) -> None:
     """Put a mutating verb's plan on the run document, as JSON and as text (#863).
 
     One call for both, so a verb cannot set the one and forget the other. The
@@ -5640,19 +5660,22 @@ def _record_plan(plan: Any, run: Invocation, *, noun: str, confirmation_required
     raises part way, the command handler prints the text to stderr instead, so
     the operator still sees what the run had been about to touch
     (:func:`sopuli.invocation._show_unfinished_plan`). The prompts print the
-    same text (:func:`_show_plan`).
+    same text (:func:`_show_plan`). ``secret_column=False`` is for a verb with
+    no secret, as :func:`~sopuli.output.plan_view.render_plan` says.
     """
     run.document.plan = plan.as_json(confirmation_required=confirmation_required)
-    run.document.plan_text = render_plan(plan, noun=noun)
+    run.document.plan_text = render_plan(plan, noun=noun, secret_column=secret_column)
 
 
-def _show_plan(plan: Any, run: Invocation, *, noun: str) -> None:
+def _show_plan(plan: Any, run: Invocation, *, noun: str, secret_column: bool = True) -> None:
     """Print the plan to stderr before a prompt, once per run (#863).
 
     A run can have two gates, a rollback's and `safety.confirm_environments`,
     and the operator needs the plan before the first of them, not twice. The
     text :func:`_record_plan` kept is printed, so the prompt and a failure show
-    the same plan; ``noun`` renders it only for a verb that recorded none.
+    the same plan; ``noun`` and ``secret_column`` render it only for a verb that
+    recorded none, and a verb that passes one to :func:`_record_plan` passes the
+    same here.
 
     The config's warnings follow the plan (#897), because W051 can say the run
     is about to write to another vault, and the answer is given before the
@@ -5660,7 +5683,10 @@ def _show_plan(plan: Any, run: Invocation, *, noun: str) -> None:
     """
     if run.document.plan_shown:
         return
-    _echo_err(run.document.plan_text or render_plan(plan, noun=noun), run=run)
+    _echo_err(
+        run.document.plan_text or render_plan(plan, noun=noun, secret_column=secret_column),
+        run=run,
+    )
     run.document.plan_shown = True
     show_warnings(run)
 
@@ -6588,8 +6614,16 @@ def _sql_write(
         config, sql_run.planned_accounts(config, as_user), intent=["sql_write"]
     )
     refuse_if_over_limit(run.resolved, plan.blast_radius, action=action)
-    _record_plan(plan, run, noun="write", confirmation_required=_asks_environments(plan, run))
-    demand = _refuse_unconfirmable(plan, run, action=action, confirmed=confirm, noun="write")
+    _record_plan(
+        plan,
+        run,
+        noun="write",
+        confirmation_required=_asks_environments(plan, run),
+        secret_column=False,
+    )
+    demand = _refuse_unconfirmable(
+        plan, run, action=action, confirmed=confirm, noun="write", secret_column=False
+    )
 
     connections = sql_run.connect_all(
         config,
@@ -6611,7 +6645,7 @@ def _sql_write(
             assert plan_given is not None  # refused above
             sql_run.refuse_unconnected(connections)
             sql_run.refuse_another_plan(plan_given, computed)
-        _ask_environments(plan, run, demand, action=action, noun="write")
+        _ask_environments(plan, run, demand, action=action, noun="write", secret_column=False)
         outcomes: list[sql_run.TargetOutcome] = []
         try:
             sql_run.run_write(
@@ -6653,7 +6687,7 @@ def _sql_write(
             if one.session is None and not one.unsupported and not one.logged_in
         ],
     )
-    return render_plan(plan, noun="write") + "\n\n" + text
+    return render_plan(plan, noun="write", secret_column=False) + "\n\n" + text
 
 
 def _ask_once_per_login(

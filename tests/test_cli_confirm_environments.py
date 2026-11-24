@@ -769,7 +769,7 @@ def test_the_plan_comes_before_the_store_and_the_question_after(
         events.append("store")
         return store
 
-    def showing(plan: Any, run: Any, *, noun: str) -> None:
+    def showing(plan: Any, run: Any, *, noun: str, secret_column: bool = True) -> None:
         events.append("plan")
 
     def declining(question: str, **_: Any) -> bool:
@@ -952,7 +952,7 @@ def _recording(
             events.append("target")
             return self.driver.connect(target, credential)
 
-    def showing(plan: Any, run: Any, *, noun: str) -> None:
+    def showing(plan: Any, run: Any, *, noun: str, secret_column: bool = True) -> None:
         # Once per run, as the real one prints it.
         if not run.document.plan_shown:
             run.document.plan_shown = True

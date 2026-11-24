@@ -6,7 +6,7 @@ for text output that keep it consistent with both.
 `sopuli/output/` produces them, and CI validates the output against the
 published schemas.
 
-Schemas: [`../schemas/sopuli-run-1.110.schema.json`](../schemas/sopuli-run-1.110.schema.json),
+Schemas: [`../schemas/sopuli-run-1.109.schema.json`](../schemas/sopuli-run-1.109.schema.json),
 [`../schemas/sopuli-event-1.25.schema.json`](../schemas/sopuli-event-1.25.schema.json)
 Examples, each from a real run:
 [`../schemas/example-creds-check-drift.json`](../schemas/example-creds-check-drift.json),
@@ -2458,8 +2458,7 @@ with `error.message` naming that target. A target of another product is
 and `ROLLED_BACK`, and `summary.changed` counts `COMMITTED`. Each target has a
 `plan.units[]` entry with the intent `sql_write`.
 
-**`outcome_unknown`** is on every write result, from run schema 1.110, and
-never on a read's. It is `true` where the change may have taken effect: the
+**`outcome_unknown`** is on every write result, and never on a read's. It is `true` where the change may have taken effect: the
 commit was sent and then failed, or Ctrl-C stopped a real write while the
 statement ran on that target. The state is then `ERROR`, and `error.message`
 says the outcome is unknown. After a failed commit the server's message

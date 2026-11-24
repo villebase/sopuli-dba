@@ -394,14 +394,14 @@ def test_session_user_is_service_account_refuses_all(
     assert all(session.closed for session in sessions["opened"])
 
 
-def test_json_validates_against_1_110(write_config: WriteConfig, sessions: dict[str, Any]) -> None:
+def test_json_validates_against_1_109(write_config: WriteConfig, sessions: dict[str, Any]) -> None:
     sessions["qa-alpha"] = FakeSession(
         "qa-alpha", result=answer(("N", "WHEN"), ((1, None), (2, "2026-11-24T10:00:00")))
     )
 
     loaded = document(sql_run(write_config, json_out=True))
 
-    assert SCHEMA_VERSION == "1.110"
+    assert SCHEMA_VERSION == "1.109"
     # A read commits nothing, so its outcome is never unknown (#1687).
     assert all("outcome_unknown" not in entry for entry in loaded["results"])
     assert loaded["command"] == "sql.run"

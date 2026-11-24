@@ -57,7 +57,8 @@ def render_plan(plan: Plan, *, noun: str = "change", secret_column: bool = True)
     reaches prod is reading for the word.
 
     ``secret_column=False`` leaves out the SECRET column, for a verb with no
-    secret, whose column would read ``-`` on every row. `sql run --write` is one.
+    secret, whose column would read ``-`` on every row: `sql run --write`, and
+    the `account` verbs that change an account (#1685).
     """
     radius = plan.blast_radius
     total = len(plan.units)

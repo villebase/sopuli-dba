@@ -1753,17 +1753,19 @@ def account_suspend(
     )
     refuse_if_over_limit(run.resolved, plan.blast_radius, action=action)
     refuse_if_nobody_to_ask(reached, run.prompt, action=action)
-    _record_plan(plan, run, noun="account", confirmation_required=_asks_environments(plan, run))
+    _record_account_plan(plan, run)
     # Before the question, as in `account expire-password` (#1214): an
     # unattended run is refused with no login, and the plan-time logins come
     # before a person is asked.
-    demand = _refuse_unconfirmable(plan, run, action=action, confirmed=confirm, noun="account")
+    demand = _refuse_unconfirmable(
+        plan, run, action=action, confirmed=confirm, noun="account", secret_column=False
+    )
     _refuse_unresolvable_rules(reached, run, config, members=False)
-    _ask_environments(plan, run, demand, action=action, noun="account")
+    _ask_environments(plan, run, demand, action=action, noun="account", secret_column=False)
 
     if not reached:
         document.finish(ExitCode.SUCCESS, Summary())
-        return render_plan(plan, noun="account") + "\n\nnothing to suspend"
+        return _account_plan_text(plan) + "\n\nnothing to suspend"
 
     found = _suspend_estate(reached, account, run, config, force=force, preview=run.dry_run)
 
@@ -1774,7 +1776,7 @@ def account_suspend(
     changed = sum(1 for record in found if record.changed)
     document.finish(_suspend_exit(states), summarise_suspend(states, changed=changed))
 
-    header = render_plan(plan, noun="account")
+    header = _account_plan_text(plan)
     body = render_suspend(
         [
             (record.account, record.target, record.state, record.status, record.detail)
@@ -2070,7 +2072,7 @@ def account_expire_password(
     )
     refuse_if_over_limit(run.resolved, plan.blast_radius, action=action)
     refuse_if_nobody_to_ask(reached, run.prompt, action=action)
-    _record_plan(plan, run, noun="account", confirmation_required=_asks_environments(plan, run))
+    _record_account_plan(plan, run)
 
     # Invariant 4: a target that cannot expire a password refuses the run, exit
     # 5, before the confirmation and before any account is touched (#1201).
@@ -2080,7 +2082,9 @@ def account_expire_password(
     # person. A target whose scope cannot be read is left to the run, where the
     # driver refuses the same way. An unattended run that the confirmation
     # would refuse is refused first, with no login (#1214).
-    demand = _refuse_unconfirmable(plan, run, action=action, confirmed=confirm, noun="account")
+    demand = _refuse_unconfirmable(
+        plan, run, action=action, confirmed=confirm, noun="account", secret_column=False
+    )
     scopes: dict[str, Scope | None] = {}
     for expanded in reached:
         scope = _plan_scope(expanded, run, config, scopes)
@@ -2088,11 +2092,11 @@ def account_expire_password(
             expire.require_expiry(scope, target=expanded.name)
     _refuse_unresolvable_rules(reached, run, config, members=False)
 
-    _ask_environments(plan, run, demand, action=action, noun="account")
+    _ask_environments(plan, run, demand, action=action, noun="account", secret_column=False)
 
     if not reached:
         document.finish(ExitCode.SUCCESS, Summary())
-        return render_plan(plan, noun="account") + "\n\nnothing to expire"
+        return _account_plan_text(plan) + "\n\nnothing to expire"
 
     found = [
         _expire_one(target, account, run, config, force=force, preview=run.dry_run)
@@ -2106,7 +2110,7 @@ def account_expire_password(
     changed = sum(1 for record in found if record.changed)
     document.finish(_expire_exit(states), summarise_expire(states, changed=changed))
 
-    header = render_plan(plan, noun="account")
+    header = _account_plan_text(plan)
     body = render_expire(
         [
             (record.account, record.target, record.state, record.status, record.detail)
@@ -2485,7 +2489,7 @@ def account_reset_password(
     )
     refuse_if_over_limit(run.resolved, plan.blast_radius, action=action)
     refuse_if_nobody_to_ask(reached, run.prompt, action=action)
-    _record_plan(plan, run, noun="account", confirmation_required=_asks_environments(plan, run))
+    _record_account_plan(plan, run)
     # No-ops outside `--output jsonl`. A seen reset reaches them only as
     # a `--dry-run`: the real one is refused under every machine format above,
     # and a preview is exempt from that refusal because it shows no password
@@ -2496,7 +2500,9 @@ def account_reset_password(
     emitter.event(document, "plan.resolved", data=document.plan)
     # The half of the confirmation that needs no connection: an unattended run
     # that nobody can answer is refused here, before any login (#1214).
-    demand = _refuse_unconfirmable(plan, run, action=action, confirmed=confirm, noun="account")
+    demand = _refuse_unconfirmable(
+        plan, run, action=action, confirmed=confirm, noun="account", secret_column=False
+    )
 
     # The record path is derived before anything connects, so a name it cannot
     # be built from is a plan-time refusal (invariant 4) rather than a failure
@@ -2539,7 +2545,7 @@ def account_reset_password(
     for target in reached:
         if target.target.type == MARIADB:
             run.document.warn_in_text(second_method_unseen(target.name))
-    _ask_environments(plan, run, demand, action=action, noun="account")
+    _ask_environments(plan, run, demand, action=action, noun="account", secret_column=False)
 
     # **The delivery backend**, after the question, so that an operator who
     # answers no has not logged in to the store. What it would refuse from the
@@ -2560,7 +2566,7 @@ def account_reset_password(
         run, config, delivery, reached, account=account, onepassword_token=onepassword_token
     )
 
-    header = render_plan(plan, noun="account")
+    header = _account_plan_text(plan)
     if not reached:
         document.finish(ExitCode.SUCCESS, Summary())
         return header + "\n\nnothing to reset"
@@ -2593,7 +2599,7 @@ def account_reset_password(
         # had been about to touch. That is the case the `click.Abort` handling
         # exists for, reached by a different route, and echoing here is the same
         # fix.
-        _show_plan(plan, run, noun="account")
+        _show_plan(plan, run, noun="account", secret_column=False)
 
     # UC-2 §3.3's lock, keyed on the record's path -- the one location that
     # exists on the seen path and the unseen one alike, and the unit two
@@ -5665,6 +5671,26 @@ def _record_plan(
     """
     run.document.plan = plan.as_json(confirmation_required=confirmation_required)
     run.document.plan_text = render_plan(plan, noun=noun, secret_column=secret_column)
+
+
+def _record_account_plan(plan: Any, run: Invocation) -> None:
+    """:func:`_record_plan` for an `account` verb that changes an account.
+
+    Its units come from ``build_for_accounts`` and address no vault document,
+    so the plan has no SECRET column (#1685).
+    """
+    _record_plan(
+        plan,
+        run,
+        noun="account",
+        confirmation_required=_asks_environments(plan, run),
+        secret_column=False,
+    )
+
+
+def _account_plan_text(plan: Any) -> str:
+    """The text of an `account` verb's plan, as :func:`_record_account_plan` keeps it."""
+    return render_plan(plan, noun="account", secret_column=False)
 
 
 def _show_plan(plan: Any, run: Invocation, *, noun: str, secret_column: bool = True) -> None:

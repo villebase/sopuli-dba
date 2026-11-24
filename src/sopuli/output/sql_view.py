@@ -96,11 +96,17 @@ def summarise_write(outcomes: Sequence[TargetOutcome]) -> Summary:
 
 
 def render_write(
-    statement: Statement, outcomes: Sequence[TargetOutcome], plan: str, *, dry_run: bool
+    statement: Statement,
+    outcomes: Sequence[TargetOutcome],
+    plan: str,
+    *,
+    dry_run: bool,
+    note: str | None = None,
 ) -> str:
     """A write's text: the statement, a line per target, and the plan fingerprint.
 
-    A dry run ends with the `--plan` the real run needs.
+    A dry run ends with the `--plan` the real run needs, and ``note`` says
+    whether a `--plan` it was given matches.
     """
     lines = [paint(f"{statement.kind} statement:", Role.HEADING)]
     lines.extend(f"  {line}" for line in statement.text.splitlines())
@@ -117,6 +123,8 @@ def render_write(
     lines.extend(["", f"plan fingerprint: {plan}"])
     if dry_run:
         lines.append(f"to run it, drop --dry-run and add:  --plan {plan}")
+    if note is not None:
+        lines.append(note)
     return "\n".join(lines)
 
 

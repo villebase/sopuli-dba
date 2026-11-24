@@ -6507,9 +6507,11 @@ def _sql_write(
     statement runs anywhere: `readonly`, the argv checks, the selection,
     `readonly` again on the selected estate, the statement check, the plan,
     `max_targets` and the half of `confirm_environments` that needs nobody to
-    answer. Then every target is connected and its identity read, the
-    fingerprint is computed and compared with `--plan`, and only then is the
-    operator asked. The sessions are closed in one place, here.
+    answer. Then every target is connected and its identity read, and the
+    fingerprint is computed. A real run is refused when a target did not
+    connect, then when `--plan` differs, and only then is the operator asked.
+    A dry run says whether a `--plan` it was given matches. The sessions are
+    closed in one place, here.
 
     ``refuse_if_nobody_to_ask`` is not called: it asks about `admin:`, which
     `sql run` never uses. :func:`~sopuli.safety.refuse_run_as_unattended`
@@ -6570,8 +6572,14 @@ def _sql_write(
     try:
         computed = sql_run.plan_fingerprint(connections, statement, guard)
         document.statement = sql_view.statement_section(statement, computed)
-        if not run.dry_run:
+        note = None
+        if run.dry_run:
+            if plan_given is not None:
+                note = sql_run.plan_note(plan_given, computed)
+                document.diagnostics.append(Diagnostic(level="info", message=note))
+        else:
             assert plan_given is not None  # refused above
+            sql_run.refuse_unconnected(connections)
             sql_run.refuse_another_plan(plan_given, computed)
         _ask_environments(plan, run, demand, action=action, noun="write")
         outcomes = sql_run.run_write(
@@ -6592,7 +6600,7 @@ def _sql_write(
     return (
         render_plan(plan, noun="write")
         + "\n\n"
-        + sql_view.render_write(statement, outcomes, computed, dry_run=run.dry_run)
+        + sql_view.render_write(statement, outcomes, computed, dry_run=run.dry_run, note=note)
     )
 
 

@@ -2449,9 +2449,11 @@ rows the statement changed. `COMMITTED` is `changed: true`, every time (UC-3
 §6). `ROLLED_BACK` is a dry run, or a write that changed 0 rows; it is
 `changed: false`. `GUARD_FAILED` was rolled back because its count failed the
 row guard, and `error.message` gives the count and the guard. A real write
-stops at the first target that does not end `COMMITTED` or `ROLLED_BACK`, and
-the targets after it are `NOT_ATTEMPTED`, with `error.message` naming that
-target. `summary.ok` counts `COMMITTED` and `ROLLED_BACK`, and
+where a target did not connect is refused before anything runs, with exit 8
+and no `results[]`. Otherwise it stops at the first target that does not end
+`COMMITTED` or `ROLLED_BACK`, and the targets after it are `NOT_ATTEMPTED`,
+with `error.message` naming that target. A dry run given `--plan` adds an
+`info` diagnostic saying whether it matches. `summary.ok` counts `COMMITTED` and `ROLLED_BACK`, and
 `summary.changed` counts `COMMITTED`. Each target has a `plan.units[]` entry
 with the intent `sql_write`. From a real run on two names for one PDB, where
 the statement changed the row on the first name, so the second found none:

@@ -334,6 +334,34 @@ def plan_fingerprint(
     )
 
 
+def refuse_unconnected(connections: Sequence[Connection]) -> None:
+    """Refuse a real write where a selected target of a product `sql run` runs
+    on did not connect (UC-3 §5).
+
+    The write could not finish on that target, and the tool knows it before
+    any statement runs, so it commits nowhere rather than on the targets
+    before it. Every unconnected target is named, with its reason.
+    """
+    missing = [one for one in connections if one.session is None and not one.unsupported]
+    if not missing:
+        return
+    reasons = "; ".join(
+        f"{one.target.name} ({one.error.message if one.error is not None else 'no session'})"
+        for one in missing
+    )
+    raise RefusedError(
+        f"a real write needs every selected target connected, and these did not: {reasons}",
+        hint="nothing was run; fix the connection, or leave the target out with a selector, "
+        "and dry-run again",
+    )
+
+
+def plan_note(given: str, computed: str) -> str:
+    """What a dry run says about a ``--plan`` it was given. It changes nothing."""
+    said = "matches" if given.strip().lower() == computed else "does not match"
+    return f"--plan {given} {said} this dry run's fingerprint"
+
+
 def refuse_another_plan(given: str, computed: str) -> None:
     """Refuse a real write whose ``--plan`` is not this run's fingerprint (``SOPULI-20011``)."""
     if given.strip().lower() == computed:
@@ -358,8 +386,10 @@ def run_write(
     """Run a write on each target in sorted order (UC-3 §4, §5).
 
     A real run (``commit``) stops at the first target that does not end
-    :data:`COMMITTED` or :data:`ROLLED_BACK`, whether its guard failed, its
-    statement failed or it was never connected. The targets after it are
+    :data:`COMMITTED` or :data:`ROLLED_BACK`, whether its guard failed or its
+    statement failed or timed out. The caller has already refused a real run
+    with a target that did not connect (:func:`refuse_unconnected`), and the
+    check here covers it too. The targets after it are
     :data:`NOT_ATTEMPTED`. A target of another product is :data:`SKIPPED` and
     does not stop it. A dry run never stops, so it reports every count. The
     caller closes the sessions.

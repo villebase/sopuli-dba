@@ -235,7 +235,9 @@ with `SOPULI-20011` and exit 8, as `readonly` and `max_targets` are, when the
 hash it computes differs. The hash differs when the config adds a target, when a
 target points at another database or another account, when the row guard
 changes, and when the statement differs by one character that normalisation
-keeps. A real `--write` without `--plan` is an argv error, exit 2. Where
+keeps. A real `--write` without `--plan` is an argv error, exit 2. A dry run
+given `--plan` says whether it matches the dry run's hash, and changes nothing
+else. Where
 `confirm_environments` asks, it asks after the hash matched and before any
 statement runs.
 
@@ -259,8 +261,18 @@ timeout does not bound the commit, so a commit is never abandoned half done.
 Targets run one after another, sorted by name. Each write commits on its own
 target. There is no atomic commit across targets.
 
-**A real write stops at the first target that fails**, whether by its row guard, a
-database error or a failed connection. The targets after it are reported as not
+**A real write runs only when every selected target connected.** The tool
+connects every target before any statement runs. If one did not connect,
+whether it could not be reached, refused the login, or was not tried because
+another target refused the same typed password (§2), the write could not
+finish everywhere. So the tool refuses the run with exit 8, names each target
+that did not connect, closes every session, and runs nothing. Committing on
+the targets before it would leave a partial change the tool could have
+avoided. A dry run never commits, so it runs every connected target and
+reports the others.
+
+**A real write stops at the first target that fails while it runs**, by its row
+guard, a database error or a timeout. The targets after it are reported as not
 attempted. A guard that fails on a real run means the data changed since the dry
 run. The operator fixes the cause, dry-runs the remaining targets again, and runs
 again.

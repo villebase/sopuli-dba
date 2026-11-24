@@ -28,7 +28,14 @@ from sopuli.exit_codes import ExitCode
 from sopuli.sql.fingerprint import PlannedTarget, fingerprint
 from sopuli.sql.guard import RowGuard
 from sopuli.sql.statement import Statement, classify
-from test_cli_sql_run import RUN_AS, FakeSession, document, exit_of
+from test_cli_sql_run import (
+    RUN_AS,
+    FakeSession,
+    document,
+    exit_of,
+    refused_login,
+    terminal,  # noqa: F401 -- a fixture
+)
 
 UPDATE = "UPDATE acme_settings SET flag = 1 WHERE name = 'audit';\n"
 
@@ -603,20 +610,134 @@ def test_a_statement_error_stops_a_real_run(
     assert loaded["exit_code"] == ExitCode.PARTIAL
 
 
-def test_a_target_that_did_not_connect_stops_a_real_run(
+def test_a_target_that_did_not_connect_refuses_a_real_run(
+    write_config: WriteConfig, fleet: dict[str, Any]
+) -> None:
+    """The write cannot finish everywhere, and the tool knows it before it
+    runs anything, so it commits nowhere."""
+    fleet["b-beta"] = DriverError("ORA-12541: no listener", code="ORA-12541")
+
+    result = real(write_config, fleet, "--expect-rows", "1")
+
+    assert exit_of(result) == ExitCode.ABORTED, result.output
+    error = document(result)["error"]
+    assert error["category"] == "policy"
+    assert "b-beta" in error["message"]
+    assert "ORA-12541" in error["message"]
+    assert "a-alpha" not in error["message"]
+    assert all(session.calls == [] for session in fleet["opened"])
+    assert all(session.closes == 1 for session in fleet["opened"])
+
+
+def test_a_dry_run_reports_a_target_that_did_not_connect(
     write_config: WriteConfig, fleet: dict[str, Any]
 ) -> None:
     fleet["b-beta"] = DriverError("ORA-12541: no listener", code="ORA-12541")
 
-    loaded = document(real(write_config, fleet, "--expect-rows", "1"))
+    loaded = document(
+        sql(write_config, "--write", "--dry-run", *ALL, "--expect-rows", "1", json_out=True)
+    )
 
     assert states(loaded) == [
-        ("a-alpha", "COMMITTED"),
+        ("a-alpha", "ROLLED_BACK"),
         ("b-beta", "ERROR"),
-        ("c-gamma", "NOT_ATTEMPTED"),
-        ("d-delta", "NOT_ATTEMPTED"),
+        ("c-gamma", "ROLLED_BACK"),
+        ("d-delta", "ROLLED_BACK"),
     ]
-    assert fleet["c-gamma"].calls == []
+
+
+@pytest.mark.usefixtures("terminal")
+def test_a_refused_typed_password_refuses_a_real_run(
+    write_config: WriteConfig, fleet: dict[str, Any], tmp_path: Path
+) -> None:
+    """A target the lockout guard left alone did not connect either."""
+    config = CONFIG.replace(
+        "  run_as: { username: dba_alpha, auth: { method: env, password_env: DBA_ALPHA_PW } }\n",
+        "  run_as: { username: dba_alpha, auth: prompt }\n",
+    )
+    statement = tmp_path / "update.sql"
+    statement.write_text(UPDATE, encoding="utf-8")
+    fleet["d-delta"] = refused_login()
+
+    result = sql(
+        write_config,
+        "--write",
+        *ALL,
+        "--expect-rows",
+        "1",
+        "--plan",
+        "0" * 12,
+        "--file",
+        str(statement),
+        "--confirm",
+        statement=None,
+        config=config,
+        json_out=True,
+    )
+
+    assert exit_of(result) == ExitCode.ABORTED, result.output
+    error = document(result)["error"]
+    assert error.get("code") != "SOPULI-20011"
+    assert "d-delta" in error["message"]
+    assert "a-alpha" in error["message"]
+    assert all(session.calls == [] for session in fleet["opened"])
+
+
+def test_a_target_of_another_product_does_not_refuse_a_real_run(
+    write_config: WriteConfig, fleet: dict[str, Any]
+) -> None:
+    config = CONFIG + (
+        "  - name: e-pg\n"
+        "    type: postgresql\n"
+        "    dsn: pg.example.com:5432\n"
+        "    postgres: { database: acme }\n"
+        "    labels: { fleet: acme }\n"
+        "    admin: { username: sopuli_svc, auth: { method: env } }\n"
+    )
+    plan = dry_hash(write_config, fleet, *ALL, "--expect-rows", "1", config=config)
+
+    result = sql(
+        write_config,
+        "--write",
+        *ALL,
+        "--expect-rows",
+        "1",
+        "--plan",
+        plan,
+        config=config,
+        json_out=True,
+    )
+
+    loaded = document(result)
+    assert states(loaded)[-1] == ("e-pg", "SKIPPED")
+    assert [state for _, state in states(loaded)[:4]] == ["COMMITTED"] * 4
+    assert loaded["exit_code"] == ExitCode.PARTIAL
+
+
+@pytest.mark.parametrize(("given", "said"), [(None, "matches"), ("0" * 12, "does not match")])
+def test_plan_on_a_dry_run_is_compared(
+    write_config: WriteConfig, fleet: dict[str, Any], given: str | None, said: str
+) -> None:
+    plan = given or dry_hash(write_config, fleet, *ALL, "--expect-rows", "1")
+
+    result = sql(write_config, "--write", "--dry-run", *ALL, "--expect-rows", "1", "--plan", plan)
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert f"--plan {plan} {said} this dry run's fingerprint" in click.unstyle(result.output)
+    loaded = document(
+        sql(
+            write_config,
+            "--write",
+            "--dry-run",
+            *ALL,
+            "--expect-rows",
+            "1",
+            "--plan",
+            plan,
+            json_out=True,
+        )
+    )
+    assert any(f"--plan {plan} {said}" in one["message"] for one in loaded.get("diagnostics", []))
 
 
 def test_zero_rows_rolled_back_changed_false(

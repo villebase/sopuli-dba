@@ -320,7 +320,9 @@ first target exits `4`, not `1`.
 **An interrupt keeps the record.** When Ctrl-C stops a real write, the
 targets that finished keep their outcome. The target in flight is `ERROR`,
 because whether it committed is unknown, and the targets after it are
-`NOT_ATTEMPTED`. The tool prints them before it exits.
+`NOT_ATTEMPTED`. The tool prints them to stderr before it exits, and under
+`--output json` the run document holds them in `results[]`. The exit code is `8`,
+as for any abort.
 
 **A read does not stop.** It reports every target it could read, and the ones it
 could not. It exits `0` when every target answered, `4` when some did and some

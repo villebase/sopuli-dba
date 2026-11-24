@@ -3466,7 +3466,10 @@ stderr for whoever is watching the log.
 
 **An abort is a run that happened and did not finish**, so it gets a document
 too, with exit 8. A confirmation declined halfway through a rotation is exactly
-when a consumer needs to know which targets were already touched. The document
+when a consumer needs to know which targets were already touched. Ctrl-C
+(`KeyboardInterrupt`) part way through a run is an abort too, for every verb: the
+document carries whatever `results` the verb had recorded by then, and the exit
+is 8, not click's 1 (#1676). The document
 has no `error`: the category enum has no value for "the operator said no", and
 `internal` would misdescribe what happened. The exit code says it, and a
 `diagnostics[]` entry says it in words. `error` is optional so that a document can

@@ -1104,24 +1104,22 @@ def _pass_invocation(func: F, *, config_optional: bool = False) -> F:
                 finally:
                     # On every way out: a deletion made is made, whatever followed.
                     _report_pruned(invocation)
-        except click.Abort as exc:
+        except (click.Abort, KeyboardInterrupt) as exc:
             # click would print "Aborted!" and exit 1. P5 puts "aborted by user /
             # confirmation declined" on 8, and an abort raised from inside a verb
-            # is that: the invocation resolved, the run began, and somebody -- or
-            # a Ctrl-C -- stopped it. Raising SystemExit here rather than
-            # re-raising is what makes the process agree with the document, since
-            # `exit_code` in the document always equals the process's.
+            # is that: the invocation resolved, the run began, and somebody
+            # stopped it. Ctrl-C part way through is the commonest way a run
+            # stops early, and it arrives as `KeyboardInterrupt`, which click
+            # would turn into the same "Aborted!" and exit 1 with no document
+            # (#1676). It is the same abort. The document carries whatever the
+            # verb had recorded by then, and raising SystemExit here rather than
+            # re-raising is what makes the process agree with the document,
+            # since `exit_code` in the document always equals the process's.
             _show_unfinished_plan(invocation)
             show_warnings(invocation)
             _abort(invocation)
             click.echo("sopuli: aborted", err=True)
             raise SystemExit(ExitCode.ABORTED) from exc
-        except KeyboardInterrupt:
-            # Ctrl-C part way through a run, which is the commonest way one
-            # stops early. Shown, then left to propagate as it always has.
-            _show_unfinished_plan(invocation)
-            show_warnings(invocation)
-            raise
         except Exception as exc:  # noqa: BLE001 - deliberate: this is the handler
             _show_unfinished_plan(invocation, exc)
             if _classify(exc)[0] is not ExitCode.USAGE:

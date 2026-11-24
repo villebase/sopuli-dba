@@ -127,6 +127,12 @@ def test_classify_keeps_the_text_inside_unchanged() -> None:
         ("UPDATE t SET v = 'a--b' WHERE k = 1; -- note", "UPDATE t SET v = 'a--b' WHERE k = 1"),
         ("SELECT '/*' FROM dual; /* x */", "SELECT '/*' FROM dual"),
         ('SELECT "a--b" FROM dual; -- x', 'SELECT "a--b" FROM dual'),
+        ("SELECT 1 FROM dual; -- note\n/", "SELECT 1 FROM dual"),
+        ("SELECT 1 FROM dual;\n/* a */\n/\n-- b\n", "SELECT 1 FROM dual"),
+        ("SELECT q'[it's]' FROM dual; -- note", "SELECT q'[it's]' FROM dual"),
+        ("SELECT Q'{a -- b}' FROM dual; /* c */", "SELECT Q'{a -- b}' FROM dual"),
+        ("SELECT nq'!it's /* x!' FROM dual; -- note", "SELECT nq'!it's /* x!' FROM dual"),
+        ("SELECT q'[a]' || q'(b)' FROM dual; -- n", "SELECT q'[a]' || q'(b)' FROM dual"),
     ],
 )
 def test_a_comment_after_the_terminator_is_dropped_with_it(raw: str, text: str) -> None:
@@ -145,6 +151,19 @@ def test_a_comment_after_the_terminator_is_dropped_with_it(raw: str, text: str) 
 )
 def test_a_second_statement_after_a_comment_is_still_refused(raw: str) -> None:
     with pytest.raises(StatementRefusedError):
+        classify(raw)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "SELECT 1 FROM dual; /* never closed",
+        "SELECT 1 FROM dual\n/\n/* never closed",
+        "SELECT 1 FROM dual; -- a\n/* never closed",
+    ],
+)
+def test_an_unclosed_comment_after_the_terminator_is_named(raw: str) -> None:
+    with pytest.raises(StatementRefusedError, match="not closed"):
         classify(raw)
 
 

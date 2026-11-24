@@ -241,11 +241,18 @@ targets, never all of them. `max_targets` applies unchanged (invariant 10).
 **Normalisation.** The tool turns CRLF and CR into LF. It removes trailing
 ASCII whitespace (space, tab, line feed, form feed, vertical tab), one trailing
 line that holds only `/`, and one trailing `;`, and the whitespace around each
-of them. Comments (`--` and `/* */`) that follow the `;` or the `/` line are
-removed with it, so `SELECT 1 FROM dual; -- note` runs. A comment after a
-statement with no terminator stays in the text, and a statement after a comment
-that follows a `;` is still refused. A second line that holds only `/`, left at the end, is refused, and so
-is a `;` still left in the text. A `/` inside the statement, such as a
+of them. Comments (`--` and `/* */`) that follow the `;` or the `/` line, in
+any order, are removed with it, so `SELECT 1 FROM dual; -- note` runs. Text
+after the terminator is not part of the statement, as in SQL\*Plus. The removed
+comment is not in the text sent to the server, and it is not in the plan
+fingerprint. A write whose `WHERE` is commented out after the terminator runs
+without it, and the row guard, which a write needs, is what stops it. A
+comment after a statement with no terminator stays in the text, and a statement
+after a comment that follows a `;` is still refused. The scan reads string
+literals, quoted names and `q'[...]'` literals whole, so a `--` or `/*` in one
+is not a comment. A `/*` that never closes after the terminator is refused as
+an unclosed comment. A second line that holds only `/`, left at the end, is
+refused, and so is a `;` still left in the text. A `/` inside the statement, such as a
 division, stays. Nothing else changes: case, whitespace and literals inside the
 statement stay as written.
 

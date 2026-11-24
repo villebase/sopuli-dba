@@ -1266,8 +1266,8 @@ No 1Password store exists. These answer #1193, whether one could. The probe is
 
 ## Next use cases
 
-UC-5 has a document and is built. UC-3 has a document, and its reads are
-built. The others are not specified. Each has
+UC-5 has a document and is built. UC-3 has a document and is built on
+Oracle. The others are not specified. Each has
 a number so that work deferred from a
 specified use case can name where it goes. A number does not change once it is
 written down, because documents, issues and pull requests cite it. A new use case
@@ -1277,8 +1277,8 @@ takes the next free number.
 
 Run one statement against a selected set of targets and report what each one
 returned: "run this against all twenty-one PDBs and tell me what each one said".
-[UC-3](use-cases/uc-03-run-statement.md) specifies it, on Oracle. **Reads are built (#1662), and
-`--write` is not yet (#1663).** It uses the run document's per-target results and the
+[UC-3](use-cases/uc-03-run-statement.md) specifies it, on Oracle. **UC-3 on Oracle is built,
+reads (#1662) and writes (#1663).** It uses the run document's per-target results and the
 same selectors and safety ratchets. It takes no run lock, because it writes no
 vault document.
 

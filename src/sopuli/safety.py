@@ -52,7 +52,7 @@ from sopuli.extras import install_hint, installed
 from sopuli.plan import BlastRadius
 from sopuli.settings.registry import Layer
 from sopuli.settings.resolver import Contribution, Resolved, resolve
-from sopuli.settings.sources import estate_contributions
+from sopuli.settings.sources import estate_contributions, reached_targets
 
 #: The setting that refuses every mutation, wherever it was written.
 READONLY = "safety.readonly"
@@ -119,8 +119,12 @@ class ReadonlyTarget:
     location: str
 
 
-def for_estate(resolved: Mapping[str, Resolved], config: Config) -> dict[str, Resolved]:
+def for_estate(
+    resolved: Mapping[str, Resolved], config: Config, *, every_target: bool = False
+) -> dict[str, Resolved]:
     """``resolved``, re-merged with the ``safety:`` blocks of the estate.
+
+    ``every_target`` is :func:`~sopuli.settings.sources.reached_targets`'.
 
     Layer 4 of P3's table, asked at the only moment it can be answered. The
     invocation resolves at the boundary, before any selector has run, so a block
@@ -148,7 +152,7 @@ def for_estate(resolved: Mapping[str, Resolved], config: Config) -> dict[str, Re
     A setting no layer supplied is absent from ``resolved`` and starts from
     nothing, and one no object wrote is returned untouched.
     """
-    extra = estate_contributions(config)
+    extra = estate_contributions(config, every_target=every_target)
     if not extra:
         return dict(resolved)
     merged = dict(resolved)
@@ -167,7 +171,7 @@ def _prior(answer: Resolved | None) -> tuple[Contribution, ...]:
     return tuple(one for one in answer.contributions if one.layer is not Layer.BUILTIN)
 
 
-def readonly_targets(config: Config) -> tuple[ReadonlyTarget, ...]:
+def readonly_targets(config: Config, *, every_target: bool = False) -> tuple[ReadonlyTarget, ...]:
     """The targets in ``config`` that some ``safety:`` block marks ``readonly``.
 
     **Reported per target, whichever kind of block did the marking.** A group is
@@ -185,8 +189,9 @@ def readonly_targets(config: Config) -> tuple[ReadonlyTarget, ...]:
     target would find first.
 
     In estate order, so two runs over one file name them in the same order.
+    ``every_target`` is :func:`~sopuli.settings.sources.reached_targets`'.
     """
-    reached = {binding.target for binding in config.bindings}
+    reached = reached_targets(config, every_target=every_target)
     marked = []
     for expanded in config.expanded_targets:
         if expanded.name not in reached:
@@ -256,7 +261,11 @@ def encryption_required_at(
 
 
 def refuse_if_readonly(
-    resolved: Mapping[str, Resolved], *, action: str, estate: Config | None = None
+    resolved: Mapping[str, Resolved],
+    *,
+    action: str,
+    estate: Config | None = None,
+    every_target: bool = False,
 ) -> None:
     """Stop a mutating command when any layer asked for ``readonly``.
 
@@ -285,7 +294,9 @@ def refuse_if_readonly(
     different one -- *these* targets, and the key on each. Asking twice rather
     than moving the gate is what keeps a ``defaults``-level ``readonly`` refusing
     before a bad ``--target`` is judged: exit 8 for a run that was never going to
-    write, rather than exit 2 for a typo in it.
+    write, rather than exit 2 for a typo in it. ``every_target`` is
+    :func:`~sopuli.settings.sources.reached_targets`', for a verb that acts
+    on targets rather than on bound accounts.
 
     **Refusing the whole run is the decision, not skipping the readonly targets**
     (decision #424). Skipping would make ``readonly`` mean two different things
@@ -299,11 +310,14 @@ def refuse_if_readonly(
     answer = resolved.get(READONLY)
     if answer is None or not answer.value:
         return
-    marked = readonly_targets(estate) if estate is not None else ()
+    if estate is None:
+        marked: tuple[ReadonlyTarget, ...] = ()
+    else:
+        marked = readonly_targets(estate, every_target=every_target)
     if marked and estate is not None:
-        reached = len({binding.target for binding in estate.bindings})
+        reached = len(reached_targets(estate, every_target=every_target))
         raise RefusedError(
-            _marked_message(marked, estate, action=action),
+            _marked_message(marked, reached, action=action),
             hint=_marked_hint(marked, escapable=len(marked) < reached),
         )
     raise RefusedError(
@@ -315,14 +329,14 @@ def refuse_if_readonly(
     )
 
 
-def _marked_message(marked: tuple[ReadonlyTarget, ...], estate: Config, *, action: str) -> str:
-    """The first line of a refusal a target's own block caused.
+def _marked_message(marked: tuple[ReadonlyTarget, ...], reached: int, *, action: str) -> str:
+    """The first line of a refusal a target's own block caused, in a run that
+    reaches ``reached`` targets.
 
     Says how much of the run is refused as well as that it is, because those are
     two different situations and the operator's next move differs: some of the
     plan is reachable by narrowing, and none of it is not.
     """
-    reached = len({binding.target for binding in estate.bindings})
     if len(marked) < reached:
         scope = f"{len(marked)} of the {reached} targets it reaches"
     elif reached == 1:

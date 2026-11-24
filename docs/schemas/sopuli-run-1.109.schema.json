@@ -134,7 +134,7 @@
         "text",
         "kind"
       ],
-      "description": "The statement `sql run` sent, emitted by `sql run` (UC-3). Additive in 1.109. `text` is the statement as sent: line ends turned into LF, and a trailing `;` or `/` line removed. `kind` is `read` or `write`. `fingerprint` is the plan fingerprint of a write, twelve lower-case hex characters; a read has none.",
+      "description": "The statement `sql run` sent, emitted by `sql run` (UC-3). Additive in 1.109. `text` is the statement as sent: line ends turned into LF, and a trailing `;` or `/` line removed. `kind` is `read` or `write`. `fingerprint` is the plan fingerprint of a write, twelve lower-case hex characters, present once every target is connected; a read has none, and so does a write refused before it connected.",
       "properties": {
         "text": {
           "type": "string"
@@ -1613,8 +1613,10 @@
         "account_lock",
         "password_expire",
         "attribute_set",
-        "verify"
-      ]
+        "verify",
+        "sql_write"
+      ],
+      "description": "`sql_write` (added in 1.109) is `sql run --write`'s one action on each target: run the statement, and commit it where its row count passes the guard (UC-3)."
     },
     "state": {
       "type": "string",

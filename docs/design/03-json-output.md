@@ -2393,11 +2393,13 @@ reached the driver (refused, missing, unreachable or previewed) carries one
 ### `statement` and `results[]` from `sql run`
 
 From run schema 1.109. `sql run` (UC-3) emits a top-level `statement` and one
-`results[]` entry per selected target, in the config's order.
+`results[]` entry per selected target: a read's in the config's order, a
+write's sorted by target name, the order it ran them in.
 
 **`statement`** holds the statement as sent: `text`, with CRLF turned into LF
 and a trailing `;` or `/` line removed, and `kind`, `read` or `write`. A write
-will also carry its plan `fingerprint`; a read has none. The statement is not a
+carries its plan `fingerprint` once every target is connected; a read has none,
+and so does a write refused before it connected. The statement is not a
 secret, so it is shown whole (UC-3 §6). It is present on a run the session
 check refused (`SOPULI-20010`), so the record says what was not run. It is
 absent where the statement itself was refused (`SOPULI-20009`).
@@ -2441,6 +2443,63 @@ the server's code in `error.code`. One of another product is `SKIPPED` with
 ```
 
 `V$PARAMETER.VALUE` is a string column, so `300` is a string.
+
+**A write's results** have `columns` and `rows` empty, and `row_count` is the
+rows the statement changed. `COMMITTED` is `changed: true`, every time (UC-3
+§6). `ROLLED_BACK` is a dry run, or a write that changed 0 rows; it is
+`changed: false`. `GUARD_FAILED` was rolled back because its count failed the
+row guard, and `error.message` gives the count and the guard. A real write
+stops at the first target that does not end `COMMITTED` or `ROLLED_BACK`, and
+the targets after it are `NOT_ATTEMPTED`, with `error.message` naming that
+target. `summary.ok` counts `COMMITTED` and `ROLLED_BACK`, and
+`summary.changed` counts `COMMITTED`. Each target has a `plan.units[]` entry
+with the intent `sql_write`. From a real run on two names for one PDB, where
+the statement changed the row on the first name, so the second found none:
+
+```json
+"plan": {
+  "units": [
+    { "account": "dba_alpha", "target": "free-pdb", "intent": ["sql_write"] },
+    { "account": "dba_alpha", "target": "free-pdb-again", "intent": ["sql_write"] }
+  ],
+  "blast_radius": { "targets": 2, "accounts": 1, "environments": [] },
+  "confirmation_required": false
+},
+"results": [
+  {
+    "account": "dba_alpha",
+    "target": "free-pdb",
+    "state": "COMMITTED",
+    "changed": true,
+    "columns": [],
+    "rows": [],
+    "row_count": 1,
+    "truncated": false
+  },
+  {
+    "account": "dba_alpha",
+    "target": "free-pdb-again",
+    "state": "GUARD_FAILED",
+    "changed": false,
+    "columns": [],
+    "rows": [],
+    "row_count": 0,
+    "truncated": false,
+    "error": {
+      "category": "policy",
+      "message": "the statement changed 0 rows, and the guard allows exactly 1 row; it was rolled back",
+      "hint": "check the rows on this target, then dry-run again"
+    }
+  }
+],
+"statement": {
+  "text": "UPDATE dba_alpha.acme_settings SET flag = 1 WHERE name = 'audit' AND flag = 0",
+  "kind": "write",
+  "fingerprint": "0baa12899205"
+}
+```
+
+It exits 4.
 
 ---
 
@@ -2531,7 +2590,11 @@ rotations in progress must not count these, and `check` correctly finds no
 <!-- checked-list: enum action_kind -->
 **`action_kind`** — `none`, `generate`, `vault_write_pending`, `vault_promote`,
 `vault_rollback`, `password_set`, `rollover_start`, `rollover_finish`,
-`account_unlock`, `account_lock`, `password_expire`, `attribute_set`, `verify`
+`account_unlock`, `account_lock`, `password_expire`, `attribute_set`, `verify`,
+`sql_write`
+
+`sql_write` is the plan intent of `sql run --write` on each target (UC-3). It
+appears only in `plan.units[].intent`.
 
 The action list is a readable trace of the UC-1 §8 sequence. A completed rotation
 of one account on one target reads:
@@ -2752,10 +2815,11 @@ records its highest number too.
 | `SOPULI-20008` | `config` | 9 | Two PostgreSQL targets of one run are one cluster: they share a `system_identifier` (`01-configuration.md` §*`postgres:` on a target*). Two MySQL targets of one run are one server: they share a `server_uuid` (from #1223). Two MariaDB targets of one run are one server: they share a `@@server_uid` (from #1286). Two MariaDB targets on nodes of one Galera cluster are one cluster: they share a `wsrep_cluster_state_uuid`, read on a node that is `Synced`, beside each node's own `@@server_uid` (from #1346). A Galera node in another state claims only its server, and `SOPULI-W068` says so. The second to connect is refused, naming both, and the first is unaffected. It has a code for `SOPULI-20007`'s reason: the logins succeeded, and only the tool sees the conflict. `doctor` reports it as that target's error and exits 9 (§2, `targets`). Where a PostgreSQL role may not run `pg_control_system()`, nothing is refused, and `SOPULI-W068` gives the reason. Any MySQL or MariaDB account reads its server's identifier, so there a failed read is the target's error |
 | `SOPULI-20009` | `policy` | 8 | `sql run` refused the statement before it connected: its first keyword is not `SELECT`, `WITH`, `UPDATE`, `INSERT`, `MERGE` or `DELETE`; the statement is empty; a `/*` comment is not closed; the text does not start with an ASCII keyword (after whitespace and comments); a `;` is left in the text after the one terminator is removed; or a `/` is left alone on the last line (`uc-03-run-statement.md`). The message names the cause, and the keyword where there is one. A `;` inside a string literal is refused too, a known false refusal |
 | `SOPULI-20010` | `policy` | 8 | `sql run` refused to connect as the account the tool uses for its own work. At plan time, the account `run_as:` or `--as` names equals the target's `admin.username` by `upper()` (or `SOPULI_DB_ADMIN_USER`), or both `admin:` and `run_as:` are `external` on one `dsn`. Then, once every selected target is connected and before any statement runs, a session whose `SESSION_USER` equals that name by `upper()`; that refuses the run on every target, and every session is closed. An `external` admin has no name to compare, so a `run_as:` that names a user is not checked against it (`uc-03-run-statement.md` §2) |
+| `SOPULI-20011` | `policy` | 8 | A real `sql run --write` was given a `--plan` that is not the plan fingerprint it computed. The fingerprint covers the statement, the row guard, and each selected target's name, `dsn`, run-as user and database identity, read once every target is connected. The message shows both values, and the hint says to run `--dry-run` again. Every session is closed, and no statement runs anywhere (`uc-03-run-statement.md` §4) |
 
 **The category of `SOPULI-20001` to `SOPULI-20008` is `config`, not `capability`**
-(ADR-006, E5). `SOPULI-20009` and `SOPULI-20010` are the `policy` rows, with exit 8,
-because each refuses a request and no setting is wrong. `capability` names
+(ADR-006, E5). `SOPULI-20009`, `SOPULI-20010` and `SOPULI-20011` are the `policy`
+rows, with exit 8, because each refuses a request and no setting is wrong. `capability` names
 what a *target* cannot do: a property of the database at the other end, which
 nothing the operator does locally changes, and which `target_capability` reports
 per target. A missing client is fixed on this machine, by the person reading the

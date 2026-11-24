@@ -441,7 +441,8 @@ from sopuli.safety import (
     refuse_unconfirmed,
 )
 from sopuli.secrets import Secret
-from sopuli.sql.statement import StatementKind, StatementRefusedError, classify
+from sopuli.sql.guard import row_guard
+from sopuli.sql.statement import Statement, StatementKind, StatementRefusedError, classify
 from sopuli.status import Row
 from sopuli.store import CasConflictError, SecretStore, StoreError, connect
 from sopuli.store import registry as store_registry
@@ -5663,7 +5664,9 @@ def _asks_environments(plan: Any, run: Invocation) -> bool:
     return confirmation_demanded(run.resolved, plan.blast_radius) is not None
 
 
-def _with_estate_safety(run: Invocation, config: Config) -> Invocation:
+def _with_estate_safety(
+    run: Invocation, config: Config, *, every_target: bool = False
+) -> Invocation:
     """``run`` with the ``safety:`` blocks of the estate it selected merged in.
 
     P3's layer 4 for the safety settings (decision #424). Without it, a
@@ -5681,8 +5684,11 @@ def _with_estate_safety(run: Invocation, config: Config) -> Invocation:
     A new :class:`~sopuli.invocation.Invocation` rather than a mutation, because
     it is frozen, and it keeps the same run document: the object is shared, so
     everything a verb has already written to it stays written.
+
+    ``every_target`` counts every selected target as reached, for `sql run
+    --write`, which binds no account (:func:`~sopuli.settings.sources.reached_targets`).
     """
-    return replace(run, resolved=for_estate(run.resolved, config))
+    return replace(run, resolved=for_estate(run.resolved, config, every_target=every_target))
 
 
 def _refuse_if_profile_unattended(run: Invocation, *, action: str, hint: str | None = None) -> None:
@@ -6354,6 +6360,39 @@ def sql_group() -> None:
     metavar="SECONDS",
     help="Stop a statement that runs longer than this on a target.",
 )
+@click.option(
+    "--write",
+    is_flag=True,
+    default=False,
+    help=(
+        "Run an UPDATE, INSERT, MERGE or DELETE. Needs a selector, a row guard, and, "
+        "on a real run, `--plan`."
+    ),
+)
+@click.option(
+    "--expect-rows",
+    type=int,
+    metavar="N",
+    help="With `--write`: commit on a target only when the statement changed exactly N rows.",
+)
+@click.option(
+    "--max-rows",
+    type=int,
+    metavar="N",
+    help="With `--write`: commit on a target only when the statement changed at most N rows.",
+)
+@click.option(
+    "--plan",
+    "plan_given",
+    metavar="HASH",
+    help="With `--write`: the plan fingerprint the dry run printed. A real write needs it.",
+)
+@click.option(
+    "--confirm",
+    is_flag=True,
+    default=False,
+    help="Proceed without asking. Required where `safety.confirm_environments` applies.",
+)
 @global_options
 def sql_run_command(
     selectors: tuple[str, ...],
@@ -6363,43 +6402,73 @@ def sql_run_command(
     as_user: str | None,
     max_result_rows: int,
     timeout: int,
+    write: bool,
+    expect_rows: int | None,
+    max_rows: int | None,
+    plan_given: str | None,
+    confirm: bool,
     run: Invocation,
 ) -> str:
-    """Run one SELECT or WITH statement on each selected target, and show the rows.
+    """Run one statement on each selected target, and show what each returned.
 
-    The statement comes from `--file`, or from stdin. It runs in a read-only
-    transaction that is always rolled back. It runs as the account `run_as:`
-    names, or as `--as USER`, and never as the account in `admin:`. Every target
-    is connected first, and if any session turns out to be that account, no
-    statement runs anywhere.
+    The statement comes from `--file`, or from stdin. It runs as the account
+    `run_as:` names, or as `--as USER`, and never as the account in `admin:`.
+    Every target is connected first, and if any session turns out to be that
+    account, no statement runs anywhere.
 
-    Exit 0 when every target answered, 4 when some did not, 1 when none did,
-    and 5 when no target is of a product this command runs on. It runs on
-    Oracle only.
+    Without `--write`, the statement is a SELECT or WITH. It runs in a
+    read-only transaction that is always rolled back. Exit 0 when every target
+    answered, 4 when some did not, 1 when none did, and 5 when no target is of
+    a product this command runs on.
+
+    With `--write`, the statement is an UPDATE, INSERT, MERGE or DELETE, and
+    the run needs a selector and a row guard, `--expect-rows N` or `--max-rows
+    N`. Run it with `--dry-run` first: that runs the statement on every target,
+    rolls it back, shows each row count, and prints the plan fingerprint. The
+    real run needs that fingerprint as `--plan`, and refuses when the
+    statement, the guard or a target changed. It runs the targets in sorted
+    order, commits each one whose row count passes the guard, and stops at the
+    first target that fails. A write that changes no row is rolled back. Exit
+    0 when every target passed, 4 when some committed and some did not, and 1
+    when none committed.
+
+    It runs on Oracle only.
     """
+    if write:
+        return _sql_write(
+            (selectors, targets, groups),
+            path,
+            as_user,
+            timeout,
+            (expect_rows, max_rows),
+            plan_given,
+            confirm,
+            run,
+        )
+    used = [
+        name
+        for name, value in (
+            ("--expect-rows", expect_rows),
+            ("--max-rows", max_rows),
+            ("--plan", plan_given),
+        )
+        if value is not None
+    ]
+    if used:
+        raise click.UsageError(f"{', '.join(used)} applies to --write only")
     document = run.document
-    if as_user is not None:
-        if run.prompt is None:
-            # stdin is not a terminal, so there is nobody to type the password.
-            raise click.UsageError(
-                "--as asks for the password at the terminal; run it from a terminal "
-                "and give the statement with --file PATH"
-            )
-        # One account named on the command line is one password, however many
-        # targets the run covers.
-        run = replace(run, prompt=AskOncePerUser(run.prompt))
+    run = _ask_once_for_as(run, as_user)
     selection = selected(selectors, targets, (), groups, ())
     refuse_unknown(run.config, selection)
     config = _narrow(run.config, selection)
     document.selection = selection.as_json() or None
-    typed = any(run_as_prompts(target, as_user) for target in config.expanded_targets)
-    statement = classify(_read_statement(path, typed=typed or as_user is not None))
+    statement = _sql_statement(path, config, as_user)
     if statement.kind is not StatementKind.READ:
         raise StatementRefusedError(
             f"the statement starts with {statement.keyword}, which changes data, "
             "and `--write` was not given",
-            hint="`sql run` runs SELECT and WITH. A write needs `--write`, which this "
-            "build does not have yet",
+            hint="`sql run` runs SELECT and WITH. A write needs `--write`, a selector "
+            "and a row guard",
         )
     document.statement = sql_view.statement_section(statement)
 
@@ -6420,6 +6489,136 @@ def sql_run_command(
     document.results = sql_view.build_results(outcomes)
     document.finish(sql_run.exit_code(outcomes), sql_view.summarise(outcomes))
     return sql_view.render_text(statement, outcomes)
+
+
+def _sql_write(
+    selectors: tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]],
+    path: Path | None,
+    as_user: str | None,
+    timeout: int,
+    guard_options: tuple[int | None, int | None],
+    plan_given: str | None,
+    confirm: bool,
+    run: Invocation,
+) -> str:
+    """`sql run --write` (UC-3 §3 to §5).
+
+    The gates run in `account suspend`'s order, and every one of them before a
+    statement runs anywhere: `readonly`, the argv checks, the selection,
+    `readonly` again on the selected estate, the statement check, the plan,
+    `max_targets` and the half of `confirm_environments` that needs nobody to
+    answer. Then every target is connected and its identity read, the
+    fingerprint is computed and compared with `--plan`, and only then is the
+    operator asked. The sessions are closed in one place, here.
+
+    ``refuse_if_nobody_to_ask`` is not called: it asks about `admin:`, which
+    `sql run` never uses. :func:`~sopuli.safety.refuse_run_as_unattended`
+    asks the same about the run-as account, inside ``connect_all``, before a
+    socket opens.
+    """
+    document = run.document
+    action = "running a write statement"
+    refuse_if_readonly(run.resolved, action=action)
+    guard = row_guard(*guard_options)
+    if guard is None:
+        raise click.UsageError(
+            "--write needs a row guard: --expect-rows N (exactly N rows) or --max-rows N "
+            "(at most N rows) on each target"
+        )
+    select, targets, groups = selectors
+    selection = selected(select, targets, (), groups, ())
+    if selection.is_everything:
+        raise click.UsageError(
+            "--write needs a selector: --target, --select or --group. Without one a "
+            "write reaches no target, never all of them"
+        )
+    if not run.dry_run and plan_given is None:
+        raise click.UsageError(
+            "a real --write needs --plan HASH: run it with --dry-run first, check the "
+            "row counts, and give the plan fingerprint it prints"
+        )
+    run = _ask_once_for_as(run, as_user)
+    refuse_unknown(run.config, selection)
+    config = _narrow(run.config, selection)
+    document.selection = selection.as_json() or None
+    run = _with_estate_safety(run, config, every_target=True)
+    refuse_if_readonly(run.resolved, action=action, estate=config, every_target=True)
+
+    statement = _sql_statement(path, config, as_user)
+    if statement.kind is not StatementKind.WRITE:
+        raise StatementRefusedError(
+            f"the statement starts with {statement.keyword}, which reads, and `--write` was given",
+            hint="run a SELECT or WITH without --write",
+        )
+    document.statement = sql_view.statement_section(statement)
+
+    plan = plan_builder.build_for_accounts(
+        config, sql_run.planned_accounts(config, as_user), intent=["sql_write"]
+    )
+    refuse_if_over_limit(run.resolved, plan.blast_radius, action=action)
+    _record_plan(plan, run, noun="write", confirmation_required=_asks_environments(plan, run))
+    demand = _refuse_unconfirmable(plan, run, action=action, confirmed=confirm, noun="write")
+
+    connections = sql_run.connect_all(
+        config,
+        as_user,
+        open_session=lambda target, who: _open_sql_session(target, run, config, who),
+        finding=_finding,
+        attended=run.prompt is not None,
+        need_identity=True,
+    )
+    try:
+        computed = sql_run.plan_fingerprint(connections, statement, guard)
+        document.statement = sql_view.statement_section(statement, computed)
+        if not run.dry_run:
+            assert plan_given is not None  # refused above
+            sql_run.refuse_another_plan(plan_given, computed)
+        _ask_environments(plan, run, demand, action=action, noun="write")
+        outcomes = sql_run.run_write(
+            connections,
+            statement,
+            guard,
+            commit=not run.dry_run,
+            timeout_ms=timeout * 1000,
+            finding=_finding,
+        )
+    finally:
+        sql_run.close_all(connections)
+    document.results = sql_view.build_results(outcomes)
+    document.finish(
+        sql_run.write_exit_code(outcomes, dry_run=run.dry_run),
+        sql_view.summarise_write(outcomes),
+    )
+    return (
+        render_plan(plan, noun="write")
+        + "\n\n"
+        + sql_view.render_write(statement, outcomes, computed, dry_run=run.dry_run)
+    )
+
+
+def _ask_once_for_as(run: Invocation, as_user: str | None) -> Invocation:
+    """``run`` with a prompt that asks once per user, where ``--as`` is given.
+
+    ``--as`` with nobody at the terminal is a usage error.
+    """
+    if as_user is None:
+        return run
+    if run.prompt is None:
+        # stdin is not a terminal, so there is nobody to type the password.
+        raise click.UsageError(
+            "--as asks for the password at the terminal; run it from a terminal "
+            "and give the statement with --file PATH"
+        )
+    # One account named on the command line is one password, however many
+    # targets the run covers.
+    return replace(run, prompt=AskOncePerUser(run.prompt))
+
+
+def _sql_statement(path: Path | None, config: Config, as_user: str | None) -> Statement:
+    """The statement, read and checked. Only ``--file`` is offered where a
+    password is typed at the terminal."""
+    typed = any(run_as_prompts(target, as_user) for target in config.expanded_targets)
+    return classify(_read_statement(path, typed=typed or as_user is not None))
 
 
 def _read_statement(path: Path | None, *, typed: bool) -> str:

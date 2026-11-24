@@ -3,8 +3,9 @@
 The order is UC-3 §2 and §4's. Every check that needs no connection runs
 first, then every selected target is connected and its session user checked,
 and only then does any statement run. A target that cannot be reached, or
-whose statement fails, is reported with its error, and a read goes on with
-the others (§5).
+whose statement fails, is reported with its error. A read goes on with the
+others (§5). A write computes its plan fingerprint from the connected
+targets, and a real write stops at the first target that fails (§4, §5).
 
 The command line, the credential and the text live elsewhere: `sopuli.cli`
 opens a session with the run-as credential, and `sopuli.output.sql_view`
@@ -31,11 +32,24 @@ from sopuli.driver.protocol import AuthenticationError, Session, StatementResult
 from sopuli.driver.registry import DriverNotImplementedError, require_command
 from sopuli.exit_codes import ExitCode
 from sopuli.output.document import Error
-from sopuli.safety import ServiceAccountRefusedError, refuse_run_as_unattended
+from sopuli.safety import RefusedError, ServiceAccountRefusedError, refuse_run_as_unattended
+from sopuli.sql.fingerprint import PlannedTarget, fingerprint
+from sopuli.sql.guard import RowGuard
 from sopuli.sql.statement import Statement
 
 #: The run document's name for the command, as `require_command` checks it.
 COMMAND = "sql.run"
+
+#: ``error.code`` for a real write whose ``--plan`` is not its fingerprint
+#: (`03-json-output.md` §3).
+PLAN_CHANGED = "SOPULI-20011"
+
+
+class PlanChangedError(RefusedError):
+    """A real write's ``--plan`` differs from the fingerprint it computed. Nothing ran."""
+
+    code = PLAN_CHANGED
+
 
 #: The rows a read returns per target unless `--max-result-rows` says otherwise.
 DEFAULT_MAX_ROWS = 100
@@ -277,6 +291,153 @@ def _read_one(
         with suppress(Exception):
             session.close()
     return TargetOutcome(name, one.run_as, READ, result=result)
+
+
+def planned_accounts(config: Config, as_user: str | None) -> list[tuple[str, str]]:
+    """(run-as user, target) for each selected target, in sorted order, for the plan.
+
+    A target of a product `sql run` is not written for has :data:`ABSENT` as
+    its account, as its result does. Pure: the config and ``--as`` decide it.
+    """
+    pairs: list[tuple[str, str]] = []
+    for target in sorted(config.expanded_targets, key=lambda one: one.name):
+        try:
+            require_command(target.target, COMMAND)
+        except DriverNotImplementedError:
+            pairs.append((ABSENT, target.name))
+            continue
+        pairs.append((run_as_user(target, as_user), target.name))
+    return pairs
+
+
+def plan_fingerprint(
+    connections: Sequence[Connection], statement: Statement, guard: RowGuard
+) -> str:
+    """The write's plan fingerprint (UC-3 §4), from what the connect step found.
+
+    Every selected target counts, so a target that is added, or one that could
+    not be reached in the dry run and can now, changes it. A target with no
+    session has :data:`ABSENT` for its database identity.
+    """
+    return fingerprint(
+        statement,
+        guard,
+        [
+            PlannedTarget(
+                one.target.name,
+                one.target.target.dsn,
+                one.run_as,
+                *(one.identity or (ABSENT, ABSENT)),
+            )
+            for one in connections
+        ],
+    )
+
+
+def refuse_another_plan(given: str, computed: str) -> None:
+    """Refuse a real write whose ``--plan`` is not this run's fingerprint (``SOPULI-20011``)."""
+    if given.strip().lower() == computed:
+        return
+    raise PlanChangedError(
+        f"--plan {given} is not this run's plan fingerprint, which is {computed}: the "
+        "statement, the row guard or a target changed since the dry run",
+        hint="nothing was run; run it again with --dry-run, check the targets and the row "
+        "counts, and give the fingerprint it prints to --plan",
+    )
+
+
+def run_write(
+    connections: Sequence[Connection],
+    statement: Statement,
+    guard: RowGuard,
+    *,
+    commit: bool,
+    timeout_ms: int,
+    finding: Finding,
+) -> list[TargetOutcome]:
+    """Run a write on each target in sorted order (UC-3 §4, §5).
+
+    A real run (``commit``) stops at the first target that does not end
+    :data:`COMMITTED` or :data:`ROLLED_BACK`, whether its guard failed, its
+    statement failed or it was never connected. The targets after it are
+    :data:`NOT_ATTEMPTED`. A target of another product is :data:`SKIPPED` and
+    does not stop it. A dry run never stops, so it reports every count. The
+    caller closes the sessions.
+    """
+    outcomes: list[TargetOutcome] = []
+    stopped_at: str | None = None
+    for one in sorted(connections, key=lambda each: each.target.name):
+        if stopped_at is not None:
+            stopped = _stopped(stopped_at)
+            name = one.target.name
+            outcomes.append(TargetOutcome(name, one.run_as, NOT_ATTEMPTED, error=stopped))
+            continue
+        outcome = _write_one(one, statement, guard, commit, timeout_ms, finding)
+        outcomes.append(outcome)
+        if commit and outcome.state not in (COMMITTED, ROLLED_BACK, SKIPPED):
+            stopped_at = one.target.name
+    return outcomes
+
+
+def _write_one(
+    one: Connection,
+    statement: Statement,
+    guard: RowGuard,
+    commit: bool,
+    timeout_ms: int,
+    finding: Finding,
+) -> TargetOutcome:
+    name = one.target.name
+    if one.session is None:
+        state = SKIPPED if one.unsupported else NOT_ATTEMPTED if one.not_attempted else ERROR
+        return TargetOutcome(name, one.run_as, state, error=one.error)
+    session = one.session
+    assert isinstance(session, StatementRunner)  # checked by _connect
+    try:
+        result = session.run_statement(
+            statement, guard=guard, commit=commit, max_rows=0, timeout_ms=timeout_ms
+        )
+    except Exception as error:  # noqa: BLE001 -- a per-target finding
+        return TargetOutcome(name, one.run_as, ERROR, error=finding(error))
+    if result.guard_passed is False:
+        changed = "1 row" if result.row_count == 1 else f"{result.row_count} rows"
+        return TargetOutcome(
+            name,
+            one.run_as,
+            GUARD_FAILED,
+            result=result,
+            error=Error(
+                category="policy",
+                message=f"the statement changed {changed}, and the guard allows "
+                f"{guard.describe()}; it was rolled back",
+                hint="check the rows on this target, then dry-run again",
+            ),
+        )
+    return TargetOutcome(name, one.run_as, COMMITTED if result.committed else ROLLED_BACK, result)
+
+
+def _stopped(at: str) -> Error:
+    return Error(
+        category="policy",
+        message=f"not run: the write stopped at {at}, which did not succeed",
+        hint=f"fix the cause on {at}, dry-run the remaining targets again, and run again",
+    )
+
+
+def write_exit_code(outcomes: Sequence[TargetOutcome], *, dry_run: bool) -> int:
+    """0 when every target committed or rolled back a write that changed no row
+    (on a dry run, passed its guard); 5 when every target is of a product `sql
+    run` is not written for. Otherwise 4 when some target committed (on a dry
+    run, passed), and 1 when none did."""
+    if not outcomes:
+        return int(ExitCode.SUCCESS)
+    if all(outcome.state == SKIPPED for outcome in outcomes):
+        return int(ExitCode.UNSUPPORTED_CAPABILITY)
+    passed = sum(1 for outcome in outcomes if outcome.state in (COMMITTED, ROLLED_BACK))
+    if passed == len(outcomes):
+        return int(ExitCode.SUCCESS)
+    progressed = passed if dry_run else sum(1 for outcome in outcomes if outcome.state == COMMITTED)
+    return int(ExitCode.PARTIAL if progressed else ExitCode.FAILURE)
 
 
 def close_all(connections: Sequence[Connection]) -> None:

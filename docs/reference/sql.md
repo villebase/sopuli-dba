@@ -13,17 +13,30 @@ account the tool uses for its own work.
 sopuli sql run [OPTIONS]
 ```
 
-Run one SELECT or WITH statement on each selected target, and show the rows.
+Run one statement on each selected target, and show what each returned.
 
-The statement comes from `--file`, or from stdin. It runs in a read-only
-transaction that is always rolled back. It runs as the account `run_as:`
-names, or as `--as USER`, and never as the account in `admin:`. Every target
-is connected first, and if any session turns out to be that account, no
-statement runs anywhere.
+The statement comes from `--file`, or from stdin. It runs as the account
+`run_as:` names, or as `--as USER`, and never as the account in `admin:`.
+Every target is connected first, and if any session turns out to be that
+account, no statement runs anywhere.
 
-Exit 0 when every target answered, 4 when some did not, 1 when none did,
-and 5 when no target is of a product this command runs on. It runs on
-Oracle only.
+Without `--write`, the statement is a SELECT or WITH. It runs in a
+read-only transaction that is always rolled back. Exit 0 when every target
+answered, 4 when some did not, 1 when none did, and 5 when no target is of
+a product this command runs on.
+
+With `--write`, the statement is an UPDATE, INSERT, MERGE or DELETE, and
+the run needs a selector and a row guard, `--expect-rows N` or `--max-rows
+N`. Run it with `--dry-run` first: that runs the statement on every target,
+rolls it back, shows each row count, and prints the plan fingerprint. The
+real run needs that fingerprint as `--plan`, and refuses when the
+statement, the guard or a target changed. It runs the targets in sorted
+order, commits each one whose row count passes the guard, and stops at the
+first target that fails. A write that changes no row is rolled back. Exit
+0 when every target passed, 4 when some committed and some did not, and 1
+when none committed.
+
+It runs on Oracle only.
 
 Options:
 
@@ -34,5 +47,10 @@ Options:
 - `--as` `USER`: Connect as this account, and ask for its password at the terminal. Wins over `run_as:`. Give the statement with `--file`, as stdin is the terminal then.
 - `--max-result-rows` `N` (at least 0, default `100`): Show at most N rows from each target. A target with more is marked truncated.
 - `--timeout` `SECONDS` (at least 1, default `30`): Stop a statement that runs longer than this on a target.
+- `--write`: Run an UPDATE, INSERT, MERGE or DELETE. Needs a selector, a row guard, and, on a real run, `--plan`.
+- `--expect-rows` `N`: With `--write`: commit on a target only when the statement changed exactly N rows.
+- `--max-rows` `N`: With `--write`: commit on a target only when the statement changed at most N rows.
+- `--plan` `HASH`: With `--write`: the plan fingerprint the dry run printed. A real write needs it.
+- `--confirm`: Proceed without asking. Required where `safety.confirm_environments` applies.
 
 It also takes the [global options](README.md#global-options).

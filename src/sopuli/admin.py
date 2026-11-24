@@ -566,6 +566,14 @@ def forget(prompt: Prompter | None, target: ExpandedTarget, username: str | None
         drop(target, username)
 
 
+def run_as_is_wallet(target: ExpandedTarget, as_user: str | None) -> bool:
+    """Whether `sql run` connects through a wallet (``auth: external``), and not
+    as a named account. :func:`run_as_user` gives the word ``external`` for both
+    that and an account literally named EXTERNAL, so this reads the method. Pure."""
+    declared = _declared_run_as(target, as_user)
+    return declared is not None and declared.auth is not None and declared.auth.method == EXTERNAL
+
+
 def run_as_prompts(target: ExpandedTarget, as_user: str | None) -> bool:
     """Whether `sql run` asks for this target's password at the terminal:
     ``--as``, or a ``run_as:`` with ``auth: prompt``. Pure."""
@@ -606,15 +614,12 @@ def refuse_service_account(
     from sopuli.safety import ServiceAccountRefusedError
 
     who = run_as_user(target, as_user)
-    # The method says it is a wallet login. `who` is the word "external" for one,
-    # and also what an account literally named EXTERNAL is called (#1674).
-    declared = _declared_run_as(target, as_user)
-    wallet_login = (
-        declared is not None and declared.auth is not None and (declared.auth.method == EXTERNAL)
-    )
     admin = target.target.admin
     if admin is None:
         return
+    # The method says it is a wallet login. `who` is the word "external" for one,
+    # and also what an account literally named EXTERNAL is called (#1674).
+    wallet_login = run_as_is_wallet(target, as_user)
     if admin.auth is not None and admin.auth.method == EXTERNAL:
         if wallet_login:
             raise ServiceAccountRefusedError(

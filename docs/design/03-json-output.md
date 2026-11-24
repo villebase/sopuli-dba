@@ -2456,9 +2456,9 @@ with `error.message` naming that target. A target whose commit failed is
 `ERROR`, and `error.message` says the outcome is unknown, before the server's
 message; the exit code counts it as possibly committed. A target of another
 product is `SKIPPED` and has no `plan.units[]` entry. A dry run given `--plan`
-adds an `info` diagnostic saying whether it matches. `summary.ok` counts `COMMITTED` and `ROLLED_BACK`, and
-`summary.changed` counts `COMMITTED`. Each target has a `plan.units[]` entry
-with the intent `sql_write`. From a real run on two names for one PDB, where
+adds an `info` diagnostic saying whether it matches. `summary.ok` counts
+`COMMITTED` and `ROLLED_BACK`, and `summary.changed` counts `COMMITTED`. Each
+target has a `plan.units[]` entry with the intent `sql_write`. From a real run on two names for one PDB, where
 the statement changed the row on the first name, so the second found none:
 
 ```json
@@ -2526,10 +2526,9 @@ back, on a dry run or because it changed no row (`ROLLED_BACK`); a write was
 rolled back because its row count failed the row guard (`GUARD_FAILED`); the
 target was not tried (`NOT_ATTEMPTED`), because a real write stopped at an
 earlier target, or because an earlier target refused the password typed for
-the same user, which is then not tried again (UC-3 §2). A
-target that could not be reached, or whose statement failed, is `ERROR`, and a
-target of a product `sql run` does not run on is `SKIPPED`. This build runs
-reads only, so it reports `READ`, `NOT_ATTEMPTED`, `ERROR` and `SKIPPED`.
+the same user, which is then not tried again (UC-3 §2). A target that could
+not be reached, or whose statement failed, is `ERROR`, and a target of a
+product `sql run` does not run on is `SKIPPED`.
 
 **`report accounts` has six states of its own** (UC-5 §3): every check had a
 rule, ran and passed (`REPORT_OK`); a check found a problem

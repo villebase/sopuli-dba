@@ -26,16 +26,14 @@ class RowGuard:
     def passes(self, count: int) -> bool:
         if self.expect is not None:
             return count == self.expect
-        if self.maximum is not None:
-            return count <= self.maximum
-        return True
+        assert self.maximum is not None  # __post_init__ sets exactly one
+        return count <= self.maximum
 
     def describe(self) -> str:
         if self.expect is not None:
             return f"exactly {_rows(self.expect)}"
-        if self.maximum is not None:
-            return f"at most {_rows(self.maximum)}"
-        return "any number of rows"
+        assert self.maximum is not None  # __post_init__ sets exactly one
+        return f"at most {_rows(self.maximum)}"
 
 
 def _rows(count: int) -> str:

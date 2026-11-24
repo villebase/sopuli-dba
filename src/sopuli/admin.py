@@ -480,7 +480,7 @@ def resolve_run_as(
     prompt: Prompter | None,
     as_user: str | None,
 ) -> Resolved:
-    """The credential `sql run` connects to ``target`` with (UC-3 §5).
+    """The credential `sql run` connects to ``target`` with (UC-3 §2).
 
     ``as_user``, from ``--as``, wins over any ``run_as:`` and means the named
     account with a prompt. Without it the target's ``run_as:`` is used, and
@@ -574,7 +574,7 @@ def run_as_user(target: ExpandedTarget, as_user: str | None) -> str:
 def refuse_service_account(
     target: ExpandedTarget, as_user: str | None, *, env: Mapping[str, str] | None = None
 ) -> None:
-    """`sql run` never connects as the account the tool itself uses (UC-3 §5).
+    """`sql run` never connects as the account the tool itself uses (UC-3 §2).
 
     Refused with ``SOPULI-20010`` when the run-as name equals the admin's by
     ``upper()``, or when both are ``external`` on one ``dsn``, where one wallet

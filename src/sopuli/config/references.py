@@ -595,7 +595,7 @@ def _check_admin_refs(config: Config) -> None:
 
 
 def _check_run_as(config: Config) -> None:
-    """What ``run_as:`` requires of the rest of the target (UC-3 §5).
+    """What ``run_as:`` requires of the rest of the target (UC-3 §2).
 
     The rules of ``admin:`` that apply to it, checked on the expanded estate
     because a patch or ``defaults:`` may write half of the pair: a name unless

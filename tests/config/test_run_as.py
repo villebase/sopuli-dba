@@ -1,4 +1,4 @@
-"""``run_as:`` -- the account `sql run` connects as (UC-3 §5).
+"""``run_as:`` -- the account `sql run` connects as (UC-3 §2).
 
 The same model as ``admin:`` with `vault` taken out, read on a target, on a
 target set and in ``defaults:``. A target's own block wins over the default.

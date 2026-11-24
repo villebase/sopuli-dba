@@ -480,6 +480,33 @@ def test_as_with_the_statement_on_stdin_is_a_usage_error(
     assert sessions["opened"] == []
 
 
+def test_as_with_a_file_and_no_terminal_does_not_name_file(
+    write_config: WriteConfig, sessions: dict[str, Any], tmp_path: Path
+) -> None:
+    """The statement is already in a file, so the refusal says only what is missing."""
+    result = sql_run(
+        write_config, "--as", "dba_beta", "--file", query_file(tmp_path), statement=None
+    )
+
+    assert result.exit_code == ExitCode.USAGE, result.output
+    assert "needs a terminal to ask for the password" in result.output
+    assert "give the statement with --file" not in result.output
+    assert sessions["opened"] == []
+
+
+def test_a_read_leaves_another_product_out_of_its_exit_code() -> None:
+    """A skipped target is left out, as it is for a write (UC-3 §5)."""
+
+    def outcome(state: str) -> sql_run_module.TargetOutcome:
+        return sql_run_module.TargetOutcome("t", "dba_alpha", state)
+
+    exit_code = sql_run_module.exit_code
+    assert exit_code([outcome("READ"), outcome("SKIPPED")]) == ExitCode.SUCCESS
+    assert exit_code([outcome("ERROR"), outcome("SKIPPED")]) == ExitCode.FAILURE
+    assert exit_code([outcome("READ"), outcome("ERROR"), outcome("SKIPPED")]) == ExitCode.PARTIAL
+    assert exit_code([outcome("SKIPPED")]) == ExitCode.UNSUPPORTED_CAPABILITY
+
+
 THREE_TARGETS = (
     f"{CONFIG}  - name: dev-alpha\n"
     "    type: oracle\n"

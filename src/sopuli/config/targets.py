@@ -113,7 +113,7 @@ ADMIN_METHODS: dict[str, Method] = {
 
 ADMIN_AUTH_KEYS = ("method", *sorted({key for spec in ADMIN_METHODS.values() for key in spec.keys}))
 
-#: The sources `run_as:` may name (UC-3 §5): `ADMIN_METHODS` without `vault`.
+#: The sources `run_as:` may name (UC-3 §2): `ADMIN_METHODS` without `vault`.
 #: `run_as:` names the account a person runs a statement as, and a vault ref
 #: would let a scheduled run fetch that person's password. Two differences
 #: from `admin:`, both for the same reason: `env` must name its variable,
@@ -305,7 +305,7 @@ def read_admin(raw: Any, *, at: KeyPath) -> AdminCredential | None:
 
 
 def read_run_as(raw: Any, *, at: KeyPath) -> AdminCredential | None:
-    """``run_as:`` -- the account `sql run` connects as (UC-3 §5).
+    """``run_as:`` -- the account `sql run` connects as (UC-3 §2).
 
     The same model as ``admin:`` with fewer methods (:data:`RUN_AS_METHODS`).
     Whether a name is written is checked once the estate is expanded, because

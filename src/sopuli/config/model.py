@@ -638,7 +638,7 @@ class Target:
     environment: str | None = None
     vault: str | None = None
     admin: AdminCredential | None = None
-    #: The account `sql run` connects as (UC-3 §5). Unset means `defaults.run_as`.
+    #: The account `sql run` connects as (UC-3 §2). Unset means `defaults.run_as`.
     run_as: AdminCredential | None = None
     oracle: TargetOracle = field(default_factory=TargetOracle)
     postgres: TargetPostgres | None = None
@@ -787,7 +787,7 @@ class ExpandedTarget:
     #: decision #424).
     template_safety: Safety | None = None
     #: The account `sql run` connects as: the target's own ``run_as:``, else
-    #: ``defaults.run_as``, else ``None`` (UC-3 §5). Set where the estate is
+    #: ``defaults.run_as``, else ``None`` (UC-3 §2). Set where the estate is
     #: expanded, because that is where both are in hand.
     run_as: AdminCredential | None = None
 
@@ -913,7 +913,7 @@ class Defaults:
     profile: str | None = None
     safety: Safety | None = None
     locking: Locking | None = None
-    #: The account `sql run` connects as, where a target names none (UC-3 §5).
+    #: The account `sql run` connects as, where a target names none (UC-3 §2).
     run_as: AdminCredential | None = None
     #: Partial entries patching stores declared at the top level (C13).
     #:

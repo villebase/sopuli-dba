@@ -3917,7 +3917,7 @@ Scripts can branch on these. P5 in
 | 5 | a target lacks a capability the command needs | `account expire-password` on PostgreSQL (§9); a Yopass `ttl` the server does not accept (§9) |
 | 6 | authentication failed | a token the vault rejects (§6) |
 | 7 | a lock is held | §10 |
-| 8 | aborted, or confirmation declined | `rotate` with nobody to confirm (§8.6) |
+| 8 | aborted (Ctrl-C included), or confirmation declined | `rotate` with nobody to confirm (§8.6) |
 | 9 | the configuration is unusable | file permissions (§5); no vault token (§6) |
 
 ---

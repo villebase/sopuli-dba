@@ -1047,8 +1047,14 @@ def _pass_invocation(func: F, *, config_optional: bool = False) -> F:
                 platform.platform(),
             )
             LOG.debug("command %s", command)
-        invocation = resolve_invocation(group, verb, env=os.environ, command=command)
-        check_output_mode(invocation)
+        try:
+            invocation = resolve_invocation(group, verb, env=os.environ, command=command)
+            check_output_mode(invocation)
+        except KeyboardInterrupt as exc:
+            # Before any run exists, so there is no document to emit; the exit is
+            # still 8, not click's 1 (#1676).
+            click.echo("sopuli: aborted", err=True)
+            raise SystemExit(ExitCode.ABORTED) from exc
 
         # Everything from here is the exit handler. It is one function applied to
         # every verb rather than a global, which is what "serialised once" means

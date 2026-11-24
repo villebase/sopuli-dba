@@ -6627,6 +6627,7 @@ def _sql_write(
             # Ctrl-C part way: a target may have committed, so the record is
             # kept on the document and shown before the interrupt goes on.
             document.results = sql_view.build_results(outcomes)
+            document.summary = sql_view.summarise_write(outcomes)
             with suppress(Exception):
                 _echo_err(
                     sql_view.render_write(statement, outcomes, computed, dry_run=run.dry_run),

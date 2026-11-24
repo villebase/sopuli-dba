@@ -3469,7 +3469,10 @@ too, with exit 8. A confirmation declined halfway through a rotation is exactly
 when a consumer needs to know which targets were already touched. Ctrl-C
 (`KeyboardInterrupt`) part way through a run is an abort too, for every verb: the
 document carries whatever `results` the verb had recorded by then, and the exit
-is 8, not click's 1 (#1676). The document
+is 8, not click's 1 (#1676). A Ctrl-C before the run exists, while the command
+line resolves, exits 8 with no document. A second Ctrl-C while the abort document
+is being written is not handled: a person who presses it twice may get click's own
+exit and a partial document. The document
 has no `error`: the category enum has no value for "the operator said no", and
 `internal` would misdescribe what happened. The exit code says it, and a
 `diagnostics[]` entry says it in words. `error` is optional so that a document can

@@ -20,6 +20,7 @@ from typing import Any
 import click
 import pytest
 from click.testing import CliRunner, Result
+from jsonschema import Draft202012Validator
 
 from conftest import WriteConfig
 from oracle_harness import Environment
@@ -32,6 +33,7 @@ from sopuli.sql.guard import RowGuard
 from sopuli.sql.statement import Statement, classify
 from test_cli_sql_run import (
     RUN_AS,
+    RUN_SCHEMA,
     FakeSession,
     document,
     exit_of,
@@ -909,7 +911,11 @@ def test_an_interrupt_keeps_the_record_and_closes_every_session(
     assert result.exit_code == ExitCode.ABORTED, result.output
     assert "Aborted!" not in result.output
     loaded = json.loads(result.stdout)
+    assert list(Draft202012Validator(RUN_SCHEMA).iter_errors(loaded)) == []
     assert loaded["exit_code"] == ExitCode.ABORTED
+    # The summary agrees with the results: one target committed.
+    assert loaded["summary"]["total"] == 3
+    assert loaded["summary"]["changed"] == 1
     assert states(loaded) == [
         ("a-alpha", "COMMITTED"),
         ("b-beta", "ERROR"),

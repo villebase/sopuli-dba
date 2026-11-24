@@ -368,6 +368,86 @@ def test_a_password_refused_on_another_target_is_forgotten() -> None:
     assert len(asked) == 2
 
 
+def _explicit(name: str, index: int, run_as: AdminCredential | None) -> ExpandedTarget:
+    return ExpandedTarget(
+        target=Target(name=name, type="oracle", dsn=DSN, run_as=run_as), index=index, run_as=run_as
+    )
+
+
+def test_run_as_answers_are_kept_per_declaration() -> None:
+    """Two targets that each write their own `run_as: dba_alpha` are two acts,
+    and the two databases may hold different passwords: asked twice (#1677)."""
+    asked: list[str] = []
+
+    def ask(line: str) -> str:
+        asked.append(line)
+        return f"typed {len(asked)}"
+
+    prompt = AskOncePerUser(PasswordPrompt(ask=ask), by_declaration=True)
+    own = credential("dba_alpha", "prompt")
+    first, second = _explicit("one", 0, own), _explicit("two", 1, own)
+
+    one = prompt(first, "dba_alpha")
+    two = prompt(second, "dba_alpha")
+
+    assert len(asked) == 2
+    assert one.reveal() != two.reveal()
+
+
+def test_targets_that_inherit_one_run_as_share_its_answer() -> None:
+    asked: list[str] = []
+
+    def ask(line: str) -> str:
+        asked.append(line)
+        return "typed"
+
+    prompt = AskOncePerUser(PasswordPrompt(ask=ask), by_declaration=True)
+    first, second, third = (_explicit(name, index, None) for index, name in enumerate("abc"))
+
+    for one in (first, second, third):
+        prompt(one, "dba_alpha")
+
+    assert len(asked) == 1
+
+
+def test_another_user_on_the_same_declaration_is_asked_for() -> None:
+    asked: list[str] = []
+
+    def ask(line: str) -> str:
+        asked.append(line)
+        return "typed"
+
+    prompt = AskOncePerUser(PasswordPrompt(ask=ask), by_declaration=True)
+    first, second = _explicit("a", 0, None), _explicit("b", 1, None)
+
+    prompt(first, "dba_alpha")
+    prompt(second, "dba_beta")
+
+    assert len(asked) == 2
+
+
+def test_a_refused_answer_is_forgotten_only_where_it_was_kept() -> None:
+    """The answer typed for a declaration is dropped when its target refuses
+    it, and the other declaration's answer stays."""
+    asked: list[str] = []
+
+    def ask(line: str) -> str:
+        asked.append(line)
+        return "typed"
+
+    prompt = AskOncePerUser(PasswordPrompt(ask=ask), by_declaration=True)
+    own = credential("dba_alpha", "prompt")
+    first, second = _explicit("one", 0, own), _explicit("two", 1, own)
+    prompt(first, "dba_alpha")
+    prompt(second, "dba_alpha")
+
+    forget(prompt, first, "dba_alpha")
+    prompt(second, "dba_alpha")
+    prompt(first, "dba_alpha")
+
+    assert len(asked) == 3
+
+
 def test_a_refused_typed_password_is_asked_again() -> None:
     asked: list[str] = []
 

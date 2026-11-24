@@ -6466,7 +6466,7 @@ def sql_run_command(
     if used:
         raise click.UsageError(f"{', '.join(used)} applies to --write only")
     document = run.document
-    run = _ask_once_for_as(run, as_user, path)
+    run = _ask_once_per_login(run, as_user, path)
     selection = selected(selectors, targets, (), groups, ())
     refuse_unknown(run.config, selection)
     config = _narrow(run.config, selection)
@@ -6552,7 +6552,7 @@ def _sql_write(
             "a real --write needs --plan HASH: run it with --dry-run first, check the "
             "row counts, and give the plan fingerprint it prints"
         )
-    run = _ask_once_for_as(run, as_user, path)
+    run = _ask_once_per_login(run, as_user, path)
     refuse_unknown(run.config, selection)
     config = _narrow(run.config, selection)
     document.selection = selection.as_json() or None
@@ -6639,17 +6639,22 @@ def _sql_write(
     return render_plan(plan, noun="write") + "\n\n" + text
 
 
-def _ask_once_for_as(run: Invocation, as_user: str | None, path: Path | None = None) -> Invocation:
-    """``run`` with a prompt that asks once per user name.
+def _ask_once_per_login(
+    run: Invocation, as_user: str | None, path: Path | None = None
+) -> Invocation:
+    """``run`` with a prompt that asks once for each run-as login.
 
-    That covers ``--as``, and a ``run_as:`` with ``auth: prompt``: the file gives
-    each explicit target its own declaration site, but a run names one account
-    for its statement, so one password covers it (#1677). ``--as`` with nobody
-    at the terminal is a usage error. ``path`` is the ``--file`` the statement
-    comes from, if one was given.
+    ``--as`` asks once for the user, for every target. A ``run_as:`` with
+    ``auth: prompt`` asks once for each place the file declares it and each user
+    name, so an inherited ``defaults.run_as`` asks once and a ``run_as:`` written
+    on each target asks on each (#1677). ``--as`` with nobody at the terminal is
+    a usage error. ``path`` is the ``--file`` the statement comes from, if one
+    was given.
     """
     if as_user is None:
-        return run if run.prompt is None else replace(run, prompt=AskOncePerUser(run.prompt))
+        if run.prompt is None:
+            return run
+        return replace(run, prompt=AskOncePerUser(run.prompt, by_declaration=True))
     if run.prompt is None:
         # stdin is not a terminal, so there is nobody to type the password.
         if path is not None:

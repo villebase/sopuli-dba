@@ -176,8 +176,8 @@ sopuli --config sopuli.yaml account reset-password --account acme_dev_alice --dr
 ```
 Plan: 1 account x 1 target = 1 account   [dev]
 
-ACCOUNT         TARGET    INTENT        SECRET
-acme_dev_alice  free-pdb  password_set  -
+ACCOUNT         TARGET    INTENT
+acme_dev_alice  free-pdb  password_set
 
 ACCOUNT         TARGET    STATE  WAS   DETAIL
 acme_dev_alice  free-pdb  RESET  OPEN  declared by accounts 'acme_dev_alice'; would be reset
@@ -186,8 +186,8 @@ would reset acme_dev_alice on 1 of 1 targets
 ```
 
 The plan says how much the run would touch: one account on one database, in the
-`dev` environment. `SECRET` is `-`, because no vault document holds a personal
-password. `--account` names exactly one account. A reset never runs on every
+`dev` environment. The plan has no `SECRET` column, because no vault document
+holds a personal password. `--account` names exactly one account. A reset never runs on every
 declared account at once.
 
 ---
@@ -205,12 +205,12 @@ sopuli --config sopuli.yaml account reset-password --account acme_dev_alice
 ```
 Plan: 1 account x 1 target = 1 account   [dev]
 
-ACCOUNT         TARGET    INTENT        SECRET
-acme_dev_alice  free-pdb  password_set  -
+ACCOUNT         TARGET    INTENT
+acme_dev_alice  free-pdb  password_set
 Plan: 1 account x 1 target = 1 account   [dev]
 
-ACCOUNT         TARGET    INTENT        SECRET
-acme_dev_alice  free-pdb  password_set  -
+ACCOUNT         TARGET    INTENT
+acme_dev_alice  free-pdb  password_set
 
 ACCOUNT         TARGET    STATE  WAS   DETAIL
 acme_dev_alice  free-pdb  RESET  OPEN  declared by accounts 'acme_dev_alice'
@@ -225,7 +225,7 @@ hand this to acme_dev_alice for free-pdb; it unwraps once:
 
     <TOKEN>
 
-It stops working at 2026-10-30T18:53:53.361208Z, and the first unwrap is the
+It stops working at 2026-11-24T16:37:33.138747Z, and the first unwrap is the
 last. Do not unwrap it to check -- that spends the person's one read, and
 them finding it spent is the only warning either of you gets.
 ```
@@ -652,8 +652,8 @@ sopuli --config sopuli.yaml account reset-password --account acme_dev_alice
 ```
 Plan: 1 account x 1 target = 1 account   [dev]
 
-ACCOUNT         TARGET    INTENT        SECRET
-acme_dev_alice  free-pdb  password_set  -
+ACCOUNT         TARGET    INTENT
+acme_dev_alice  free-pdb  password_set
 show the new password for acme_dev_alice on free-pdb on this terminal? [y/N]: y
 password for acme_dev_alice, shown once:
 
@@ -664,8 +664,8 @@ your sight of it. It is not stored anywhere and will not be shown again.
 
 Plan: 1 account x 1 target = 1 account   [dev]
 
-ACCOUNT         TARGET    INTENT        SECRET
-acme_dev_alice  free-pdb  password_set  -
+ACCOUNT         TARGET    INTENT
+acme_dev_alice  free-pdb  password_set
 
 ACCOUNT         TARGET    STATE  WAS   DETAIL
 acme_dev_alice  free-pdb  RESET  OPEN  declared by accounts 'acme_dev_alice'

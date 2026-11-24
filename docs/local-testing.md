@@ -1965,12 +1965,12 @@ a single-use Vault token, and prints the token. You never see the password.
 $ sopuli --config sopuli.yaml account reset-password --account acme_dev_alice
 Plan: 1 account x 1 target = 1 account   [dev]
 
-ACCOUNT         TARGET    INTENT        SECRET
-acme_dev_alice  free-pdb  password_set  -
+ACCOUNT         TARGET    INTENT
+acme_dev_alice  free-pdb  password_set
 Plan: 1 account x 1 target = 1 account   [dev]
 
-ACCOUNT         TARGET    INTENT        SECRET
-acme_dev_alice  free-pdb  password_set  -
+ACCOUNT         TARGET    INTENT
+acme_dev_alice  free-pdb  password_set
 
 ACCOUNT         TARGET    STATE  WAS   DETAIL
 acme_dev_alice  free-pdb  RESET  OPEN  declared by accounts 'acme_dev_alice', 'acme_dev_bob'
@@ -1985,7 +1985,7 @@ hand this to acme_dev_alice for free-pdb; it unwraps once:
 
     <TOKEN>
 
-It stops working at 2026-10-23T08:29:54.669686Z, and the first unwrap is the
+It stops working at 2026-11-24T16:37:14.693817Z, and the first unwrap is the
 last. Do not unwrap it to check -- that spends the person's one read, and
 them finding it spent is the only warning either of you gets.
 ```
@@ -1994,8 +1994,8 @@ The plan appears twice. The first copy goes to stderr before anything changes,
 so a run that fails part way still shows what it was about to touch. The second
 is part of the result on stdout.
 
-`SECRET` is `-`, because no vault document holds a personal password. Add
-`--dry-run` to see the plan without resetting.
+The plan has no `SECRET` column, because no vault document holds a personal
+password. Add `--dry-run` to see the plan without resetting.
 
 The person unwraps the token once:
 
@@ -2063,8 +2063,8 @@ reset sets the date to `infinity` with the password:
 $ sopuli --config postgres.yaml account reset-password --account acme_dev_bob
 Plan: 1 account x 1 target = 1 account   [dev]
 
-ACCOUNT       TARGET  INTENT        SECRET
-acme_dev_bob  pg-dev  password_set  -
+ACCOUNT       TARGET  INTENT
+acme_dev_bob  pg-dev  password_set
 
 ACCOUNT       TARGET  STATE  WAS      DETAIL
 acme_dev_bob  pg-dev  RESET  EXPIRED  declared by role 'acme_dev_team'
@@ -2079,7 +2079,7 @@ hand this to acme_dev_bob for pg-dev; it unwraps once:
 
     <TOKEN>
 
-It stops working at 2026-10-31T18:59:39.448848Z, and the first unwrap is the
+It stops working at 2026-11-24T16:39:16.319296Z, and the first unwrap is the
 last. Do not unwrap it to check -- that spends the person's one read, and
 them finding it spent is the only warning either of you gets.
 
@@ -2127,8 +2127,8 @@ ends the block anyway:
 $ sopuli --config mysql.yaml account reset-password --account 'acme_dev_alice@%'
 Plan: 1 account x 1 target = 1 account   [dev]
 
-ACCOUNT           TARGET     INTENT        SECRET
-acme_dev_alice@%  mysql-dev  password_set  -
+ACCOUNT           TARGET     INTENT
+acme_dev_alice@%  mysql-dev  password_set
 
 ACCOUNT           TARGET     STATE  WAS   DETAIL
 acme_dev_alice@%  mysql-dev  RESET  OPEN  declared by role 'acme_dev_team@%'
@@ -2139,7 +2139,7 @@ hand this to acme_dev_alice@% for mysql-dev; it unwraps once:
 
     <TOKEN>
 
-It stops working at 2026-11-03T17:08:28.294814Z, and the first unwrap is the
+It stops working at 2026-11-24T16:39:54.622264Z, and the first unwrap is the
 last. Do not unwrap it to check -- that spends the person's one read, and
 them finding it spent is the only warning either of you gets.
 
@@ -2311,8 +2311,8 @@ the tier-1 container does not encrypt connections, so it ends with two notes:
 $ sopuli account reset-password --account acme_dev_alice
 Plan: 1 account x 1 target = 1 account   [dev]
 
-ACCOUNT         TARGET    INTENT        SECRET
-acme_dev_alice  free-pdb  password_set  -
+ACCOUNT         TARGET    INTENT
+acme_dev_alice  free-pdb  password_set
 show the new password for acme_dev_alice on free-pdb on this terminal? [y/N]: y
 password for acme_dev_alice, shown once:
 
@@ -2323,8 +2323,8 @@ your sight of it. It is not stored anywhere and will not be shown again.
 
 Plan: 1 account x 1 target = 1 account   [dev]
 
-ACCOUNT         TARGET    INTENT        SECRET
-acme_dev_alice  free-pdb  password_set  -
+ACCOUNT         TARGET    INTENT
+acme_dev_alice  free-pdb  password_set
 
 ACCOUNT         TARGET    STATE  WAS   DETAIL
 acme_dev_alice  free-pdb  RESET  OPEN  declared by accounts 'acme_dev_alice', 'acme_dev_bob'
@@ -2395,8 +2395,8 @@ PostgreSQL above, the command sets the role `NOLOGIN`:
 $ sopuli --config postgres.yaml account suspend --account acme_dev_bob --confirm
 Plan: 1 account x 1 target = 1 account   [dev]
 
-ACCOUNT       TARGET  INTENT        SECRET
-acme_dev_bob  pg-dev  account_lock  -
+ACCOUNT       TARGET  INTENT
+acme_dev_bob  pg-dev  account_lock
 
 ACCOUNT       TARGET  STATE   STATUS  DETAIL
 acme_dev_bob  pg-dev  LOCKED  OPEN    role was open; set NOLOGIN
@@ -2435,8 +2435,8 @@ PASSWORD`, then expires the password:
 $ sopuli --config mysql.yaml account expire-password --account 'acme_dev_alice@%'
 Plan: 1 account x 1 target = 1 account   [dev]
 
-ACCOUNT           TARGET     INTENT           SECRET
-acme_dev_alice@%  mysql-dev  password_expire  -
+ACCOUNT           TARGET     INTENT
+acme_dev_alice@%  mysql-dev  password_expire
 
 ACCOUNT           TARGET     STATE    STATUS  DETAIL
 acme_dev_alice@%  mysql-dev  EXPIRED  OPEN    sent DISCARD OLD PASSWORD, so no retained password logs in; password expired
@@ -2460,8 +2460,8 @@ acme_dev_alice@%'s password was already expired on 1 of 1
 $ sopuli --config mysql.yaml account suspend --account 'acme_dev_bob@localhost'
 Plan: 1 account x 1 target = 1 account   [dev]
 
-ACCOUNT                 TARGET     INTENT        SECRET
-acme_dev_bob@localhost  mysql-dev  account_lock  -
+ACCOUNT                 TARGET     INTENT
+acme_dev_bob@localhost  mysql-dev  account_lock
 
 ACCOUNT                 TARGET     STATE   STATUS  DETAIL
 acme_dev_bob@localhost  mysql-dev  LOCKED  OPEN    account was open; sent ACCOUNT LOCK
@@ -2494,8 +2494,8 @@ acme_jdoe  mssql-dev  names        OPEN    2026-11-17     -
 $ sopuli --config mssql.yaml account suspend --account acme_jdoe
 Plan: 1 account x 1 target = 1 account   [dev]
 
-ACCOUNT    TARGET     INTENT        SECRET
-acme_jdoe  mssql-dev  account_lock  -
+ACCOUNT    TARGET     INTENT
+acme_jdoe  mssql-dev  account_lock
 
 ACCOUNT    TARGET     STATE   STATUS  DETAIL
 acme_jdoe  mssql-dev  LOCKED  OPEN    login was open; sent ALTER LOGIN … DISABLE
@@ -2542,8 +2542,8 @@ back after. The reset record holds them while the policy is off:
 $ sopuli --config mssql.yaml account reset-password --account acme_reset_user
 Plan: 1 account x 1 target = 1 account   [dev]
 
-ACCOUNT          TARGET     INTENT        SECRET
-acme_reset_user  mssql-dev  password_set  -
+ACCOUNT          TARGET     INTENT
+acme_reset_user  mssql-dev  password_set
 
 ACCOUNT          TARGET     STATE  WAS   DETAIL
 acme_reset_user  mssql-dev  RESET  OPEN  declared by accounts 'acme_reset_user'
@@ -2554,7 +2554,7 @@ hand this to acme_reset_user for mssql-dev; it unwraps once:
 
     <TOKEN>
 
-It stops working at 2026-11-18T18:20:06.269368Z, and the first unwrap is the
+It stops working at 2026-11-24T16:41:20.220221Z, and the first unwrap is the
 last. Do not unwrap it to check -- that spends the person's one read, and
 them finding it spent is the only warning either of you gets.
 ...
@@ -2580,8 +2580,8 @@ is refused there, exit 5. A preview:
 $ sopuli --config mssql.yaml account reset-password --account acme_reset_user --dry-run
 Plan: 1 account x 1 target = 1 account   [dev]
 
-ACCOUNT          TARGET     INTENT        SECRET
-acme_reset_user  mssql-dev  password_set  -
+ACCOUNT          TARGET     INTENT
+acme_reset_user  mssql-dev  password_set
 
 ACCOUNT          TARGET     STATE  WAS   DETAIL
 acme_reset_user  mssql-dev  RESET  OPEN  declared by accounts 'acme_reset_user'; would be reset
@@ -2598,8 +2598,8 @@ on stderr, and again in the result, on stdout, as on every product:
 $ sopuli --config mssql.yaml account reset-password --account acme_reset_user
 Plan: 1 account x 1 target = 1 account   [dev]
 
-ACCOUNT          TARGET     INTENT        SECRET
-acme_reset_user  mssql-dev  password_set  -
+ACCOUNT          TARGET     INTENT
+acme_reset_user  mssql-dev  password_set
 1 warning:
   targets[0].mssql.trust_server_certificate: target 'mssql-dev' does not verify the server (`trust_server_certificate: true`)
     hint: anything between this run and the server can present its own certificate and read the password a run sets. Use `trust_server_certificate: false` (the default), with the CA that issued the server's certificate in the operating system's trust store, which ODBC Driver 18 checks the server against
@@ -2613,8 +2613,8 @@ your sight of it. It is not stored anywhere and will not be shown again.
 
 Plan: 1 account x 1 target = 1 account   [dev]
 
-ACCOUNT          TARGET     INTENT        SECRET
-acme_reset_user  mssql-dev  password_set  -
+ACCOUNT          TARGET     INTENT
+acme_reset_user  mssql-dev  password_set
 
 ACCOUNT          TARGET     STATE  WAS   DETAIL
 acme_reset_user  mssql-dev  RESET  OPEN  declared by accounts 'acme_reset_user'
@@ -2692,8 +2692,8 @@ reason. A reset sets the value for the account's own plugin:
 $ sopuli --config mariadb.yaml account reset-password --account 'acme_dev_alice@%'
 Plan: 1 account x 1 target = 1 account   [dev]
 
-ACCOUNT           TARGET       INTENT        SECRET
-acme_dev_alice@%  mariadb-dev  password_set  -
+ACCOUNT           TARGET       INTENT
+acme_dev_alice@%  mariadb-dev  password_set
 2 warnings:
   targets[0].mariadb.ssl_mode: target 'mariadb-dev' does not verify the server (`ssl_mode: REQUIRED`)
     hint: anything between this run and the server can present its own certificate and read the password a run sets. Use `ssl_mode: VERIFY_IDENTITY` (the default), with `ssl_ca` naming the CA that issued the server's certificate

@@ -351,6 +351,20 @@ def test_the_unread_check_is_printed_too(
 
 
 @pytest.mark.parametrize("verb", ["expire-password", "suspend", "reset-password"])
+def test_the_plan_has_no_secret_column(
+    runner: CliRunner, write_config: WriteConfig, fake: list[FakeSession], verb: str
+) -> None:
+    """An `account` verb's units address no vault document, so a SECRET column
+    would read `-` on every row (#1685)."""
+    result = _verb(runner, write_config, verb, "--dry-run")
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert result.output.startswith("Plan: 1 account x 1 target")
+    assert "ACME_DEV_ALICE" in result.output.upper()
+    assert "SECRET" not in result.output
+
+
+@pytest.mark.parametrize("verb", ["expire-password", "suspend", "reset-password"])
 def test_a_refused_account_reports_no_unread_check(
     runner: CliRunner, write_config: WriteConfig, monkeypatch: pytest.MonkeyPatch, verb: str
 ) -> None:

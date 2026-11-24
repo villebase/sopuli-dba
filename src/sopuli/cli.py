@@ -6426,11 +6426,13 @@ def sql_run_command(
     N`. Run it with `--dry-run` first: that runs the statement on every target,
     rolls it back, shows each row count, and prints the plan fingerprint. The
     real run needs that fingerprint as `--plan`, and refuses when the
-    statement, the guard or a target changed. It runs the targets in sorted
-    order, commits each one whose row count passes the guard, and stops at the
-    first target that fails. A write that changes no row is rolled back. Exit
-    0 when every target passed, 4 when some committed and some did not, and 1
-    when none committed.
+    statement, the guard or a target changed, and when a target did not
+    connect. It runs the targets in sorted order, commits each one whose row
+    count passes the guard, and stops at the first target that fails. A write
+    that changes no row is rolled back. Exit 0 when every target committed or
+    changed no row, 4 when some committed and some did not, 1 when none
+    committed, and 5 when no target is of a product this command runs on. A
+    target of another product is skipped and does not change the exit code.
 
     It runs on Oracle only.
     """
@@ -6451,6 +6453,7 @@ def sql_run_command(
             ("--expect-rows", expect_rows),
             ("--max-rows", max_rows),
             ("--plan", plan_given),
+            ("--confirm", True if confirm else None),
         )
         if value is not None
     ]
@@ -6582,14 +6585,27 @@ def _sql_write(
             sql_run.refuse_unconnected(connections)
             sql_run.refuse_another_plan(plan_given, computed)
         _ask_environments(plan, run, demand, action=action, noun="write")
-        outcomes = sql_run.run_write(
-            connections,
-            statement,
-            guard,
-            commit=not run.dry_run,
-            timeout_ms=timeout * 1000,
-            finding=_finding,
-        )
+        outcomes: list[sql_run.TargetOutcome] = []
+        try:
+            sql_run.run_write(
+                connections,
+                statement,
+                guard,
+                commit=not run.dry_run,
+                timeout_ms=timeout * 1000,
+                finding=_finding,
+                into=outcomes,
+            )
+        except BaseException:
+            # Ctrl-C part way: a target may have committed, so the record is
+            # kept on the document and shown before the interrupt goes on.
+            document.results = sql_view.build_results(outcomes)
+            with suppress(Exception):
+                _echo_err(
+                    sql_view.render_write(statement, outcomes, computed, dry_run=run.dry_run),
+                    run=run,
+                )
+            raise
     finally:
         sql_run.close_all(connections)
     document.results = sql_view.build_results(outcomes)

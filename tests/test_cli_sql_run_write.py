@@ -25,6 +25,7 @@ from oracle_harness import Environment
 from sopuli.cli import cli
 from sopuli.driver.protocol import DriverError, StatementResult
 from sopuli.exit_codes import ExitCode
+from sopuli.output import sql_view as sql_view_module
 from sopuli.sql.fingerprint import PlannedTarget, fingerprint
 from sopuli.sql.guard import RowGuard
 from sopuli.sql.statement import Statement, classify
@@ -711,7 +712,147 @@ def test_a_target_of_another_product_does_not_refuse_a_real_run(
     loaded = document(result)
     assert states(loaded)[-1] == ("e-pg", "SKIPPED")
     assert [state for _, state in states(loaded)[:4]] == ["COMMITTED"] * 4
-    assert loaded["exit_code"] == ExitCode.PARTIAL
+    assert loaded["exit_code"] == ExitCode.SUCCESS
+
+
+#: The fleet with a PostgreSQL target, which `sql run` skips.
+WITH_PG = CONFIG + (
+    "  - name: e-pg\n"
+    "    type: postgresql\n"
+    "    dsn: pg.example.com:5432\n"
+    "    postgres: { database: acme }\n"
+    "    labels: { fleet: acme }\n"
+    "    admin: { username: sopuli_svc, auth: { method: env } }\n"
+)
+
+
+def test_zero_rows_and_a_skipped_target_exit_0(
+    write_config: WriteConfig, fleet: dict[str, Any]
+) -> None:
+    """Nothing failed and nothing changed: a skipped target does not make it partial."""
+    for name in ORDER:
+        fleet[name] = WriteSession(name, count=0)
+    plan = dry_hash(write_config, fleet, *ALL, "--max-rows", "5", config=WITH_PG)
+
+    result = sql(write_config, "--write", *ALL, "--max-rows", "5", "--plan", plan, config=WITH_PG)
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+
+
+def test_every_target_skipped_exits_5(write_config: WriteConfig, fleet: dict[str, Any]) -> None:
+    result = sql(
+        write_config,
+        "--write",
+        "--dry-run",
+        "--target",
+        "e-pg",
+        "--expect-rows",
+        "1",
+        config=WITH_PG,
+    )
+
+    assert result.exit_code == ExitCode.UNSUPPORTED_CAPABILITY, result.output
+
+
+def test_a_dry_run_with_a_failing_target_offers_no_plan(
+    write_config: WriteConfig, fleet: dict[str, Any]
+) -> None:
+    """The hint to run it is shown only where a real run could finish."""
+    fleet["b-beta"] = WriteSession("b-beta", count=3)
+    fleet["d-delta"] = DriverError("ORA-12541: no listener", code="ORA-12541")
+
+    result = sql(write_config, "--write", "--dry-run", *ALL, "--expect-rows", "1")
+    text = click.unstyle(result.output)
+
+    assert "to run it" not in text
+    assert "a real run would stop at b-beta" in text
+    assert "b-beta (GUARD_FAILED)" in text
+    assert "d-delta (ERROR)" in text
+    assert "plan fingerprint:" in text
+
+    loaded = document(
+        sql(write_config, "--write", "--dry-run", *ALL, "--expect-rows", "1", json_out=True)
+    )
+    assert len(loaded["statement"]["fingerprint"]) == 12
+
+
+def test_a_dry_run_with_a_skipped_target_still_offers_the_plan(
+    write_config: WriteConfig, fleet: dict[str, Any]
+) -> None:
+    result = sql(write_config, "--write", "--dry-run", *ALL, "--expect-rows", "1", config=WITH_PG)
+
+    assert "to run it, drop --dry-run" in click.unstyle(result.output)
+
+
+class InterruptedSession(WriteSession):
+    """A session whose statement is stopped by Ctrl-C."""
+
+    def run_statement(self, statement: Statement, **options: Any) -> StatementResult:
+        self.calls.append({"statement": statement, **options})
+        raise KeyboardInterrupt
+
+
+def test_an_interrupt_keeps_the_record_and_closes_every_session(
+    write_config: WriteConfig, fleet: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ctrl-C on the second of three targets: the first committed, the second
+    is unknown, the third never ran, and the operator is told so."""
+    config = CONFIG.replace("    labels: { fleet: acme }\n", "", 1)  # d-delta left out
+    plan = dry_hash(write_config, fleet, *ALL, "--expect-rows", "1", config=config)
+    fleet["b-beta"] = InterruptedSession("b-beta")
+    said: list[str] = []
+    monkeypatch.setattr("sopuli.cli._echo_err", lambda text, **_: said.append(text))
+    recorded: list[Any] = []
+    real_results = sql_view_module.build_results
+
+    def build_results(outcomes: Any) -> Any:
+        recorded.extend(outcomes)
+        return real_results(outcomes)
+
+    monkeypatch.setattr("sopuli.output.sql_view.build_results", build_results)
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--config",
+            str(write_config(config)),
+            "sql",
+            "run",
+            "--write",
+            *ALL,
+            "--expect-rows",
+            "1",
+            "--plan",
+            plan,
+        ],
+        input=UPDATE,
+    )
+
+    # click turns the interrupt into its own abort, as for every verb.
+    assert result.exit_code == 1, result.output
+    assert "Aborted!" in result.output
+    assert [(one.target, one.state) for one in recorded] == [
+        ("a-alpha", "COMMITTED"),
+        ("b-beta", "ERROR"),
+        ("c-gamma", "NOT_ATTEMPTED"),
+    ]
+    assert recorded[1].error is not None
+    assert "whether it committed is unknown" in recorded[1].error.message
+    assert fleet["c-gamma"].calls == []
+    text = click.unstyle("\n".join(said))
+    assert "a-alpha  COMMITTED" in text
+    assert "whether it committed is unknown" in text
+    assert all(session.closes == 1 for session in fleet["opened"])
+
+
+def test_confirm_without_write_is_a_usage_error(
+    write_config: WriteConfig, fleet: dict[str, Any]
+) -> None:
+    result = sql(write_config, *ALL, "--confirm", statement="SELECT 1 FROM dual")
+
+    assert result.exit_code == ExitCode.USAGE, result.output
+    assert "--confirm" in result.output
+    assert fleet["opened"] == []
 
 
 @pytest.mark.parametrize(("given", "said"), [(None, "matches"), ("0" * 12, "does not match")])

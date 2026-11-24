@@ -122,10 +122,23 @@ def render_write(
         lines.append(f"{name}  {state}  {_write_detail(outcome, dry_run=dry_run)}")
     lines.extend(["", f"plan fingerprint: {plan}"])
     if dry_run:
-        lines.append(f"to run it, drop --dry-run and add:  --plan {plan}")
+        lines.extend(_next_step(outcomes, plan))
     if note is not None:
         lines.append(note)
     return "\n".join(lines)
+
+
+def _next_step(outcomes: Sequence[TargetOutcome], plan: str) -> list[str]:
+    """After a dry run: the `--plan` to run it with, where a real run could
+    finish on every target; otherwise where it would stop, and why."""
+    failing = [outcome for outcome in outcomes if outcome.state not in (ROLLED_BACK, SKIPPED)]
+    if not failing:
+        return [f"to run it, drop --dry-run and add:  --plan {plan}"]
+    named = ", ".join(f"{outcome.target} ({outcome.state})" for outcome in failing)
+    return [
+        f"a real run would stop at {failing[0].target}. These targets did not pass: {named}",
+        "fix them, or leave them out with a selector, and dry-run again",
+    ]
 
 
 def _write_detail(outcome: TargetOutcome, *, dry_run: bool) -> str:

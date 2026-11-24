@@ -30,11 +30,13 @@ the run needs a selector and a row guard, `--expect-rows N` or `--max-rows
 N`. Run it with `--dry-run` first: that runs the statement on every target,
 rolls it back, shows each row count, and prints the plan fingerprint. The
 real run needs that fingerprint as `--plan`, and refuses when the
-statement, the guard or a target changed. It runs the targets in sorted
-order, commits each one whose row count passes the guard, and stops at the
-first target that fails. A write that changes no row is rolled back. Exit
-0 when every target passed, 4 when some committed and some did not, and 1
-when none committed.
+statement, the guard or a target changed, and when a target did not
+connect. It runs the targets in sorted order, commits each one whose row
+count passes the guard, and stops at the first target that fails. A write
+that changes no row is rolled back. Exit 0 when every target committed or
+changed no row, 4 when some committed and some did not, 1 when none
+committed, and 5 when no target is of a product this command runs on. A
+target of another product is skipped and does not change the exit code.
 
 It runs on Oracle only.
 

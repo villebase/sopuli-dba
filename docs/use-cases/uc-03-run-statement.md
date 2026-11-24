@@ -198,7 +198,10 @@ that target as refused by the guard.
 `--dry-run` does the same on every target and always rolls back. So a dry run
 shows the real row counts. It does not stop at a failing target: it runs every
 selected target and reports every count. Only a real write stops at the first
-failure (§5).
+failure (§5). A dry run offers the `--plan` to run it with only when every
+target connected and passed its guard. Otherwise it names the targets that
+did not pass, and the target where a real run would stop. The run document
+still carries the fingerprint.
 
 A dry run is not free of effects. A trigger, a sequence's `NEXTVAL` and an
 autonomous transaction commit their own work, and the rollback does not undo it.
@@ -282,7 +285,13 @@ success), and its output names each target's outcome. A run where every target
 committed, or affected 0 rows and rolled back, exits `0`. A run where no target
 committed exits `1`. A dry run exits `0` when every target passed its guard,
 `4` when some did, and `1` when none did. A target of another product is
-`SKIPPED` (`SOPULI-20006`), and it does not stop a real write.
+`SKIPPED` (`SOPULI-20006`). It does not stop a real write, and the exit code
+leaves it out; a run where every target is one exits `5`.
+
+**An interrupt keeps the record.** When Ctrl-C stops a real write, the
+targets that finished keep their outcome. The target in flight is `ERROR`,
+because whether it committed is unknown, and the targets after it are
+`NOT_ATTEMPTED`. The tool prints them before it exits.
 
 **A read does not stop.** It reports every target it could read, and the ones it
 could not.

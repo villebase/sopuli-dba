@@ -382,8 +382,15 @@ def run_write(
     commit: bool,
     timeout_ms: int,
     finding: Finding,
+    into: list[TargetOutcome] | None = None,
 ) -> list[TargetOutcome]:
     """Run a write on each target in sorted order (UC-3 §4, §5).
+
+    Each outcome is appended to ``into`` as it is known, so a caller keeps
+    the record when an interrupt, such as Ctrl-C, stops the run. Then the
+    target in flight is :data:`ERROR`, because whether it committed is
+    unknown, the rest are :data:`NOT_ATTEMPTED`, and the interrupt is raised
+    again.
 
     A real run (``commit``) stops at the first target that does not end
     :data:`COMMITTED` or :data:`ROLLED_BACK`, whether its guard failed or its
@@ -394,19 +401,52 @@ def run_write(
     does not stop it. A dry run never stops, so it reports every count. The
     caller closes the sessions.
     """
-    outcomes: list[TargetOutcome] = []
+    outcomes: list[TargetOutcome] = [] if into is None else into
     stopped_at: str | None = None
-    for one in sorted(connections, key=lambda each: each.target.name):
+    ordered = sorted(connections, key=lambda each: each.target.name)
+    for index, one in enumerate(ordered):
         if stopped_at is not None:
             stopped = _stopped(stopped_at)
             name = one.target.name
             outcomes.append(TargetOutcome(name, one.run_as, NOT_ATTEMPTED, error=stopped))
             continue
-        outcome = _write_one(one, statement, guard, commit, timeout_ms, finding)
+        try:
+            outcome = _write_one(one, statement, guard, commit, timeout_ms, finding)
+        except BaseException:
+            # _write_one keeps every Exception, so this is Ctrl-C or an exit.
+            outcomes.append(_interrupted(one, commit=commit))
+            stopped = _stopped_by_interrupt(one.target.name)
+            outcomes.extend(
+                TargetOutcome(rest.target.name, rest.run_as, NOT_ATTEMPTED, error=stopped)
+                for rest in ordered[index + 1 :]
+            )
+            raise
         outcomes.append(outcome)
         if commit and outcome.state not in (COMMITTED, ROLLED_BACK, SKIPPED):
             stopped_at = one.target.name
     return outcomes
+
+
+def _interrupted(one: Connection, *, commit: bool) -> TargetOutcome:
+    said = "whether it committed is unknown" if commit else "a dry run commits nothing"
+    return TargetOutcome(
+        one.target.name,
+        one.run_as,
+        ERROR,
+        error=Error(
+            category="policy",
+            message=f"interrupted while the statement ran here; {said}",
+            hint="check the rows on this target before you run it again",
+        ),
+    )
+
+
+def _stopped_by_interrupt(at: str) -> Error:
+    return Error(
+        category="policy",
+        message=f"not run: the run was interrupted at {at}",
+        hint="dry-run the remaining targets again, and run again",
+    )
 
 
 def _write_one(
@@ -455,18 +495,20 @@ def _stopped(at: str) -> Error:
 
 
 def write_exit_code(outcomes: Sequence[TargetOutcome], *, dry_run: bool) -> int:
-    """0 when every target committed or rolled back a write that changed no row
-    (on a dry run, passed its guard); 5 when every target is of a product `sql
-    run` is not written for. Otherwise 4 when some target committed (on a dry
-    run, passed), and 1 when none did."""
+    """5 when every target is of a product `sql run` is not written for. The
+    others decide the rest, and a skipped target is left out: 0 when each
+    committed or rolled back a write that changed no row (on a dry run, passed
+    its guard); otherwise 4 when some target committed (on a dry run, passed),
+    and 1 when none did."""
     if not outcomes:
         return int(ExitCode.SUCCESS)
-    if all(outcome.state == SKIPPED for outcome in outcomes):
+    counted = [outcome for outcome in outcomes if outcome.state != SKIPPED]
+    if not counted:
         return int(ExitCode.UNSUPPORTED_CAPABILITY)
-    passed = sum(1 for outcome in outcomes if outcome.state in (COMMITTED, ROLLED_BACK))
-    if passed == len(outcomes):
+    passed = sum(1 for outcome in counted if outcome.state in (COMMITTED, ROLLED_BACK))
+    if passed == len(counted):
         return int(ExitCode.SUCCESS)
-    progressed = passed if dry_run else sum(1 for outcome in outcomes if outcome.state == COMMITTED)
+    progressed = passed if dry_run else sum(1 for outcome in counted if outcome.state == COMMITTED)
     return int(ExitCode.PARTIAL if progressed else ExitCode.FAILURE)
 
 

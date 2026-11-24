@@ -81,6 +81,8 @@ def test_readonly_on_a_target_refuses_the_verb(
 
     assert document(result)["exit_code"] == ExitCode.ABORTED, result.output
     assert "readonly" in document(result)["error"]["hint"]
+    assert "sopuli account list" in document(result)["error"]["hint"]
+    assert "creds check" not in document(result)["error"]["hint"]
     assert sessions["opened"] == []
 
 
@@ -155,3 +157,39 @@ def test_no_safety_block_changes_nothing(
 
     assert result.exit_code == ExitCode.SUCCESS, result.output
     assert document(result)["plan"]["confirmation_required"] is False
+
+
+def test_allowed_methods_on_a_target_narrows_a_reset(
+    write_config: WriteConfig, sessions: dict[str, Any]
+) -> None:
+    """A target that only `personal_accounts:` declares now joins the
+    intersection `refuse_disallowed_method` checks (#1670)."""
+    text = BASE.replace(
+        "  - name: dev-1\n",
+        "  - name: dev-1\n    safety: { delivery: { allowed_methods: [manual] } }\n",
+    )
+
+    result = run(write_config, "reset-password", text)
+
+    found = document(result)
+    assert found["exit_code"] == ExitCode.ABORTED, result.output
+    assert "vault_wrapped" in found["error"]["message"]
+    assert "targets[0].safety.delivery.allowed_methods" in found["error"]["hint"]
+    assert sessions["opened"] == []
+
+
+def test_allowed_methods_on_a_group_narrows_a_reset(
+    write_config: WriteConfig, sessions: dict[str, Any]
+) -> None:
+    text = (
+        LABELLED
+        + "groups:\n  acme:\n    match: { fleet: acme }\n"
+        + "    safety: { delivery: { allowed_methods: [manual] } }\n"
+    )
+
+    result = run(write_config, "reset-password", text)
+
+    found = document(result)
+    assert found["exit_code"] == ExitCode.ABORTED, result.output
+    assert "groups.acme.safety.delivery.allowed_methods" in found["error"]["hint"]
+    assert sessions["opened"] == []

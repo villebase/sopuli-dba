@@ -1739,8 +1739,10 @@ def account_suspend(
     config = _narrow(run.config, selection)
     document.selection = selection.as_json() or None
 
-    run = _with_estate_safety(run, config)
-    refuse_if_readonly(run.resolved, action=action, estate=config)
+    # Every selected target is reached: the account is named on the command line,
+    # and no application binds it (#1670).
+    run = _with_estate_safety(run, config, every_target=True)
+    refuse_if_readonly(run.resolved, action=action, estate=config, every_target=True)
 
     reached = config.expanded_targets
     _refuse_a_bare_mysql_name(account, reached)
@@ -2052,8 +2054,10 @@ def account_expire_password(
     config = _narrow(run.config, selection)
     document.selection = selection.as_json() or None
 
-    run = _with_estate_safety(run, config)
-    refuse_if_readonly(run.resolved, action=action, estate=config)
+    # Every selected target is reached: the account is named on the command line,
+    # and no application binds it (#1670).
+    run = _with_estate_safety(run, config, every_target=True)
+    refuse_if_readonly(run.resolved, action=action, estate=config, every_target=True)
 
     reached = config.expanded_targets
     _refuse_a_bare_mysql_name(account, reached)
@@ -2447,8 +2451,10 @@ def account_reset_password(
     config = _narrow(run.config, selection)
     document.selection = selection.as_json() or None
 
-    run = _with_estate_safety(run, config)
-    refuse_if_readonly(run.resolved, action=action, estate=config)
+    # Every selected target is reached: the account is named on the command line,
+    # and no application binds it (#1670).
+    run = _with_estate_safety(run, config, every_target=True)
+    refuse_if_readonly(run.resolved, action=action, estate=config, every_target=True)
     # After the estate merge, because a target's or a group's `safety:` block is
     # layer 4 and cannot narrow the set until a selector has run (decision #424).
     # `--force` is not passed and cannot be: this is a safety setting, and

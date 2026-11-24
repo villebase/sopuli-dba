@@ -863,6 +863,11 @@ narrowed its estate and before it builds its plan. It uses the same resolver and
 the same ratchet, in one pass over the earlier and the new contributions, for the
 reason the `vaults.*` layers are merged in one pass.
 
+**Which targets a run reaches** is the targets its bindings name, for the `creds`
+verbs. The `account` verbs and `sql run --write` name no binding: the operator
+names the account or the statement, so every selected target is reached. A block
+on a target that only `personal_accounts:` declares applies to them (#1670).
+
 **A run that reaches a `readonly` target is refused as a whole**, at plan time.
 The refusal names the marked targets and the selectors that would leave them
 out. `01-configuration.md` §3a has the decision and what the other two readings

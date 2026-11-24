@@ -6686,7 +6686,7 @@ def _sql_write(
         except BaseException:
             # Ctrl-C part way: a target may have committed, so the record is
             # kept on the document and shown before the interrupt goes on.
-            document.results = sql_view.build_results(outcomes)
+            document.results = sql_view.build_results(outcomes, write=True)
             document.summary = sql_view.summarise_write(outcomes)
             with suppress(Exception):
                 _echo_err(
@@ -6696,7 +6696,7 @@ def _sql_write(
             raise
     finally:
         sql_run.close_all(connections)
-    document.results = sql_view.build_results(outcomes)
+    document.results = sql_view.build_results(outcomes, write=True)
     document.finish(
         sql_run.write_exit_code(outcomes, dry_run=run.dry_run),
         sql_view.summarise_write(outcomes),

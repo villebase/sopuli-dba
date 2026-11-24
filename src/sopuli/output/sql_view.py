@@ -38,8 +38,11 @@ def statement_section(statement: Statement, fingerprint: str | None = None) -> d
     return section
 
 
-def build_results(outcomes: Sequence[TargetOutcome]) -> list[dict[str, Any]]:
-    """One ``results[]`` entry per target."""
+def build_results(
+    outcomes: Sequence[TargetOutcome], *, write: bool = False
+) -> list[dict[str, Any]]:
+    """One ``results[]`` entry per target. A write's entries carry
+    ``outcome_unknown``; a read's do not, because a read commits nothing."""
     results: list[dict[str, Any]] = []
     for outcome in outcomes:
         entry: dict[str, Any] = {
@@ -48,6 +51,8 @@ def build_results(outcomes: Sequence[TargetOutcome]) -> list[dict[str, Any]]:
             "state": outcome.state,
             "changed": bool(outcome.result is not None and outcome.result.committed),
         }
+        if write:
+            entry["outcome_unknown"] = outcome.outcome_unknown
         if outcome.result is not None:
             entry["columns"] = list(outcome.result.columns)
             entry["rows"] = [list(row) for row in outcome.result.rows]

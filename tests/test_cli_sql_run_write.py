@@ -428,6 +428,7 @@ def test_dry_run_prints_plan_and_fingerprint_rolls_back(
     assert {tuple(unit["intent"]) for unit in loaded["plan"]["units"]} == {("sql_write",)}
     assert states(loaded) == [(name, "ROLLED_BACK") for name in ORDER]
     assert all(entry["changed"] is False for entry in loaded["results"])
+    assert all(entry["outcome_unknown"] is False for entry in loaded["results"])
     assert all(entry["row_count"] == 1 for entry in loaded["results"])
 
 
@@ -557,6 +558,7 @@ def test_real_run_commits_each_target(write_config: WriteConfig, fleet: dict[str
     loaded = document(result)
     assert states(loaded) == [(name, "COMMITTED") for name in ORDER]
     assert all(entry["changed"] is True for entry in loaded["results"])
+    assert all(entry["outcome_unknown"] is False for entry in loaded["results"])
     assert all(entry["row_count"] == 1 for entry in loaded["results"])
     assert [session.target for session in fleet["opened"]] == [
         "d-delta",
@@ -599,6 +601,8 @@ def test_guard_fails_on_third_stops_rest_exit_4(
         ("d-delta", "NOT_ATTEMPTED"),
     ]
     assert loaded["results"][2]["changed"] is False
+    # Committed, guard failed and not attempted: each outcome is known.
+    assert all(entry["outcome_unknown"] is False for entry in loaded["results"])
     assert "c-gamma" in loaded["results"][3]["error"]["message"]
     assert fleet["d-delta"].calls == []
     assert fleet["d-delta"].closes == 1
@@ -637,6 +641,8 @@ def test_a_statement_error_stops_a_real_run(
         ("d-delta", "NOT_ATTEMPTED"),
     ]
     assert loaded["results"][1]["error"]["code"] == "ORA-00942"
+    # The statement failed before a commit was sent, so nothing is unknown.
+    assert loaded["results"][1]["outcome_unknown"] is False
     assert loaded["exit_code"] == ExitCode.PARTIAL
 
 
@@ -882,9 +888,9 @@ def test_an_interrupt_keeps_the_record_and_closes_every_session(
     recorded: list[Any] = []
     real_results = sql_view_module.build_results
 
-    def build_results(outcomes: Any) -> Any:
+    def build_results(outcomes: Any, **options: Any) -> Any:
         recorded.extend(outcomes)
-        return real_results(outcomes)
+        return real_results(outcomes, **options)
 
     monkeypatch.setattr("sopuli.output.sql_view.build_results", build_results)
 
@@ -924,6 +930,7 @@ def test_an_interrupt_keeps_the_record_and_closes_every_session(
     ]
     assert loaded["results"][0]["changed"] is True
     assert "whether it committed is unknown" in loaded["results"][1]["error"]["message"]
+    assert [entry["outcome_unknown"] for entry in loaded["results"]] == [False, True, False]
     assert [(one.target, one.state) for one in recorded] == [
         ("a-alpha", "COMMITTED"),
         ("b-beta", "ERROR"),
@@ -936,6 +943,25 @@ def test_an_interrupt_keeps_the_record_and_closes_every_session(
     assert "a-alpha  COMMITTED" in text
     assert "whether it committed is unknown" in text
     assert all(session.closes == 1 for session in fleet["opened"])
+
+
+def test_an_interrupt_during_a_dry_run_leaves_no_outcome_unknown(
+    write_config: WriteConfig, fleet: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A dry run commits nothing, so the target in flight is `ERROR` with a
+    known outcome (#1687)."""
+    fleet["b-beta"] = InterruptedSession("b-beta")
+    monkeypatch.setattr("sopuli.cli._echo_err", lambda text, **_: None)
+
+    result = sql(write_config, "--write", "--dry-run", *ALL, "--expect-rows", "1", json_out=True)
+
+    assert result.exit_code == ExitCode.ABORTED, result.output
+    loaded = json.loads(result.stdout)
+    assert list(Draft202012Validator(RUN_SCHEMA).iter_errors(loaded)) == []
+    by_target = {entry["target"]: entry for entry in loaded["results"]}
+    assert by_target["b-beta"]["state"] == "ERROR"
+    assert "a dry run commits nothing" in by_target["b-beta"]["error"]["message"]
+    assert all(entry["outcome_unknown"] is False for entry in loaded["results"])
 
 
 def test_confirm_without_write_is_a_usage_error(
@@ -973,6 +999,12 @@ def test_a_failed_commit_is_unknown_and_stops_the_run(
     assert "whether it took effect is unknown" in error["message"]
     assert "ORA-03113" in error["message"]
     assert error["code"] == "ORA-03113"
+    assert [entry["outcome_unknown"] for entry in loaded["results"]] == [
+        True,
+        False,
+        False,
+        False,
+    ]
     assert loaded["exit_code"] == ExitCode.PARTIAL
 
 
@@ -1159,6 +1191,7 @@ def test_zero_rows_rolled_back_changed_false(
     loaded = document(result)
     assert states(loaded) == [(name, "ROLLED_BACK") for name in ORDER]
     assert all(entry["changed"] is False for entry in loaded["results"])
+    assert all(entry["outcome_unknown"] is False for entry in loaded["results"])
     assert loaded["summary"]["changed"] == 0
 
 

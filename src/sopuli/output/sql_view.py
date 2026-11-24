@@ -103,12 +103,14 @@ def render_write(
     dry_run: bool,
     note: str | None = None,
     asks: bool = False,
+    unconnected: Sequence[str] = (),
 ) -> str:
     """A write's text: the statement, a line per target, and the plan fingerprint.
 
     A dry run ends with what to do next (:func:`_next_step`), and ``note``
     says whether a `--plan` it was given matches. ``asks`` is whether the real
-    run will ask for a confirmation.
+    run will ask for a confirmation. ``unconnected`` names the targets that
+    did not connect.
     """
     lines = [paint(f"{statement.kind} statement:", Role.HEADING)]
     lines.extend(f"  {line}" for line in statement.text.splitlines())
@@ -124,17 +126,25 @@ def render_write(
         lines.append(f"{name}  {state}  {_write_detail(outcome, dry_run=dry_run)}")
     lines.extend(["", f"plan fingerprint: {plan}"])
     if dry_run:
-        lines.extend(_next_step(outcomes, plan, asks=asks))
+        lines.extend(_next_step(outcomes, plan, asks=asks, unconnected=unconnected))
     if note is not None:
         lines.append(note)
     return "\n".join(lines)
 
 
-def _next_step(outcomes: Sequence[TargetOutcome], plan: str, *, asks: bool) -> list[str]:
+def _next_step(
+    outcomes: Sequence[TargetOutcome],
+    plan: str,
+    *,
+    asks: bool,
+    unconnected: Sequence[str] = (),
+) -> list[str]:
     """After a dry run: the `--plan` to run it with, where a real run could
     finish on every target, and whether it will ask first (``asks``);
-    otherwise where it would stop, and why. Nothing is offered where every
-    target is of a product `sql run` does not run on."""
+    otherwise why it would not. A real run is refused before it starts where
+    a target did not connect (``unconnected``), and stops where a statement
+    failed or a guard did not pass. Nothing is offered where every target is
+    of a product `sql run` does not run on."""
     if all(outcome.state == SKIPPED for outcome in outcomes):
         return ["nothing would run: no selected target is of a product `sql run` runs on"]
     failing = [outcome for outcome in outcomes if outcome.state not in (ROLLED_BACK, SKIPPED)]
@@ -146,11 +156,19 @@ def _next_step(outcomes: Sequence[TargetOutcome], plan: str, *, asks: bool) -> l
                 "ask before it runs; where nobody can answer, add --confirm"
             )
         return lines
-    named = ", ".join(f"{outcome.target} ({outcome.state})" for outcome in failing)
-    return [
-        f"a real run would stop at {failing[0].target}. These targets did not pass: {named}",
-        "fix them, or leave them out with a selector, and dry-run again",
-    ]
+    rest = [outcome for outcome in failing if outcome.target not in unconnected]
+    named = ", ".join(f"{outcome.target} ({outcome.state})" for outcome in rest)
+    if unconnected:
+        line = "a real run would be refused: these targets did not connect: " + ", ".join(
+            sorted(unconnected)
+        )
+        if rest:
+            line += f". These targets also did not pass: {named}"
+        lines = [line]
+    else:
+        lines = [f"a real run would stop at {rest[0].target}. These targets did not pass: {named}"]
+    lines.append("fix them, or leave them out with a selector, and dry-run again")
+    return lines
 
 
 def _write_detail(outcome: TargetOutcome, *, dry_run: bool) -> str:

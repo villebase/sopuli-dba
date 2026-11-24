@@ -23,7 +23,8 @@ account, no statement runs anywhere.
 Without `--write`, the statement is a SELECT or WITH. It runs in a
 read-only transaction that is always rolled back. Exit 0 when every target
 answered, 4 when some did not, 1 when none did, and 5 when no target is of
-a product this command runs on.
+a product this command runs on. A target of another product is left out
+of the first three.
 
 With `--write`, the statement is an UPDATE, INSERT, MERGE or DELETE, and
 the run needs a selector and a row guard, `--expect-rows N` or `--max-rows

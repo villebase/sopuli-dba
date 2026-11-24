@@ -1,4 +1,4 @@
-"""Resolving the account `sql run` connects as (UC-3 §5). Tier 0.
+"""Resolving the account `sql run` connects as (UC-3 §2). Tier 0.
 
 Every test passes its own mapping and suppliers, as `test_admin.py` does.
 """

@@ -6420,7 +6420,8 @@ def sql_run_command(
     Without `--write`, the statement is a SELECT or WITH. It runs in a
     read-only transaction that is always rolled back. Exit 0 when every target
     answered, 4 when some did not, 1 when none did, and 5 when no target is of
-    a product this command runs on.
+    a product this command runs on. A target of another product is left out
+    of the first three.
 
     With `--write`, the statement is an UPDATE, INSERT, MERGE or DELETE, and
     the run needs a selector and a row guard, `--expect-rows N` or `--max-rows
@@ -6465,7 +6466,7 @@ def sql_run_command(
     if used:
         raise click.UsageError(f"{', '.join(used)} applies to --write only")
     document = run.document
-    run = _ask_once_for_as(run, as_user)
+    run = _ask_once_for_as(run, as_user, path)
     selection = selected(selectors, targets, (), groups, ())
     refuse_unknown(run.config, selection)
     config = _narrow(run.config, selection)
@@ -6551,7 +6552,7 @@ def _sql_write(
             "a real --write needs --plan HASH: run it with --dry-run first, check the "
             "row counts, and give the plan fingerprint it prints"
         )
-    run = _ask_once_for_as(run, as_user)
+    run = _ask_once_for_as(run, as_user, path)
     refuse_unknown(run.config, selection)
     config = _narrow(run.config, selection)
     document.selection = selection.as_json() or None
@@ -6629,21 +6630,29 @@ def _sql_write(
         dry_run=run.dry_run,
         note=note,
         asks=_asks_environments(plan, run),
+        unconnected=[
+            one.target.name
+            for one in connections
+            if one.session is None and not one.unsupported and not one.logged_in
+        ],
     )
     return render_plan(plan, noun="write") + "\n\n" + text
 
 
-def _ask_once_for_as(run: Invocation, as_user: str | None) -> Invocation:
+def _ask_once_for_as(run: Invocation, as_user: str | None, path: Path | None = None) -> Invocation:
     """``run`` with a prompt that asks once per user, where ``--as`` is given.
 
-    ``--as`` with nobody at the terminal is a usage error.
+    ``--as`` with nobody at the terminal is a usage error. ``path`` is the
+    ``--file`` the statement comes from, if one was given.
     """
     if as_user is None:
         return run
     if run.prompt is None:
         # stdin is not a terminal, so there is nobody to type the password.
+        if path is not None:
+            raise click.UsageError("--as needs a terminal to ask for the password")
         raise click.UsageError(
-            "--as asks for the password at the terminal; run it from a terminal "
+            "--as needs a terminal to ask for the password; run it from a terminal "
             "and give the statement with --file PATH"
         )
     # One account named on the command line is one password, however many

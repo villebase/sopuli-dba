@@ -3631,20 +3631,26 @@ $ sopuli --config sql-run.yaml sql run --target free-pdb --max-result-rows 1 --f
 free-pdb  1 row, truncated
 ```
 
-A write without `--write` is refused before anything connects, and so is the
-account in `admin:`:
+A write without `--write` is refused before anything connects:
 
 ```
 $ echo "update t set x = 1" | sopuli --config sql-run.yaml sql run
 sopuli: the statement starts with UPDATE, which changes data, and `--write` was not given
   hint: `sql run` runs SELECT and WITH. A write needs `--write`, a selector and a row guard
-$ echo "select 1 from dual" | sopuli --config sql-run.yaml sql run --as system
-sopuli: target 'free-pdb' would run statements as 'system' (from `--as`), the account the tool uses for its own work (named by `admin.username`)
+```
+
+So is the account in `admin:`. Here `run_as:` names `system`, which is also the
+user in `admin:`, with its password in an environment variable. Nothing
+connects and nothing asks for a password:
+
+```
+$ sopuli --config sql-run-svc.yaml sql run --file one.sql
+sopuli: defaults.run_as.username: target 'free-pdb' would run statements as 'system' (from `run_as.username`), the account the tool uses for its own work (named by `admin.username`)
   hint: name a personal or owner account with `run_as:` or `--as USER`
 ```
 
-Both exit 8. `--as USER` asks for the password at the terminal, so give the
-statement with `--file` then.
+Both exit 8. `--as USER` asks for the password at the terminal, so it needs
+one, and the statement comes from `--file`.
 
 ### A write
 

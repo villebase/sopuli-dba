@@ -24,7 +24,7 @@ from sopuli.config.loading import build_config
 from sopuli.driver.protocol import AuthenticationError, DriverError, StatementResult
 from sopuli.exit_codes import ExitCode
 from sopuli.output.document import SCHEMA_VERSION, Error
-from sopuli.sql.statement import Statement
+from sopuli.sql.statement import Statement, StatementKind
 
 RUN_SCHEMA = json.loads(
     (
@@ -478,6 +478,66 @@ def test_as_with_the_statement_on_stdin_is_a_usage_error(
     assert result.exit_code == ExitCode.USAGE, result.output
     assert "--file" in result.output
     assert sessions["opened"] == []
+
+
+def test_as_with_a_file_and_no_terminal_does_not_name_file(
+    write_config: WriteConfig, sessions: dict[str, Any], tmp_path: Path
+) -> None:
+    """The statement is already in a file, so the refusal says only what is missing."""
+    result = sql_run(
+        write_config, "--as", "dba_beta", "--file", query_file(tmp_path), statement=None
+    )
+
+    assert result.exit_code == ExitCode.USAGE, result.output
+    assert "needs a terminal to ask for the password" in result.output
+    assert "give the statement with --file" not in result.output
+    assert sessions["opened"] == []
+
+
+def test_a_read_closes_each_session_when_its_read_is_done() -> None:
+    """The first session is closed before the second one runs, and an interrupt
+    on the second still closes the rest."""
+    first, second = FakeSession("a"), FakeSession("b")
+    seen: list[bool] = []
+
+    def run_second(statement: Statement, **options: Any) -> StatementResult:
+        seen.append(first.closed)
+        raise KeyboardInterrupt
+
+    second.run_statement = run_second  # type: ignore[method-assign]
+    targets = [
+        type("T", (), {"name": name})()  # only the name is read
+        for name in ("a", "b")
+    ]
+    connections = [
+        sql_run_module.Connection(t, "dba_alpha", session=s)  # type: ignore[arg-type]
+        for t, s in zip(targets, (first, second), strict=True)
+    ]
+
+    with pytest.raises(KeyboardInterrupt):
+        sql_run_module.run_read(
+            connections,
+            Statement("SELECT 1 FROM dual", StatementKind.READ, "SELECT"),
+            max_rows=10,
+            timeout_ms=1000,
+            finding=lambda error: Error(category="x", message=str(error)),
+        )
+
+    assert seen == [True]
+    assert second.closed
+
+
+def test_a_read_leaves_another_product_out_of_its_exit_code() -> None:
+    """A skipped target is left out, as it is for a write (UC-3 §5)."""
+
+    def outcome(state: str) -> sql_run_module.TargetOutcome:
+        return sql_run_module.TargetOutcome("t", "dba_alpha", state)
+
+    exit_code = sql_run_module.exit_code
+    assert exit_code([outcome("READ"), outcome("SKIPPED")]) == ExitCode.SUCCESS
+    assert exit_code([outcome("ERROR"), outcome("SKIPPED")]) == ExitCode.FAILURE
+    assert exit_code([outcome("READ"), outcome("ERROR"), outcome("SKIPPED")]) == ExitCode.PARTIAL
+    assert exit_code([outcome("SKIPPED")]) == ExitCode.UNSUPPORTED_CAPABILITY
 
 
 THREE_TARGETS = (

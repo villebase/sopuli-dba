@@ -87,6 +87,11 @@ class Connection:
     error: Error | None = None
     #: ``(DB_UNIQUE_NAME, CON_NAME)``, read when the session opened.
     identity: tuple[str, str] | None = None
+    #: The user the database says the session became, read when it opened.
+    session_user: str | None = None
+    #: The login worked, and a later step failed, such as the identity read.
+    #: The session is closed and ``session`` is ``None``.
+    logged_in: bool = False
     #: The target's product is not written for `sql run` (``SOPULI-20006``).
     unsupported: bool = False
     #: A typed password was refused on an earlier target, so this one was not
@@ -232,7 +237,8 @@ def _connect(
             raise DriverNotImplementedError(
                 f"target {target.name!r}: this driver cannot run a statement"
             )
-        refuse_session_user(target, session.session_user(), as_user, env=env)
+        user = session.session_user()
+        refuse_session_user(target, user, as_user, env=env)
         identity = session.database_identity() if need_identity else None
     except DriverNotImplementedError as error:
         with suppress(Exception):
@@ -246,12 +252,12 @@ def _connect(
     except Exception as error:  # noqa: BLE001 -- a per-target finding
         with suppress(Exception):
             session.close()
-        return Connection(target, who, error=finding(error))
+        return Connection(target, who, error=finding(error), logged_in=True)
     except BaseException:
         with suppress(Exception):
             session.close()
         raise
-    return Connection(target, who, session=session, identity=identity)
+    return Connection(target, who, session=session, identity=identity, session_user=user)
 
 
 def run_read(
@@ -266,6 +272,9 @@ def run_read(
 
     A read never stops: a target whose statement fails carries its error, and
     the next target runs (UC-3 §5). Each read is rolled back by the runner.
+    Each session is closed as soon as its read is done, and :func:`close_all`
+    closes the rest when an interrupt stops the run. Closing one twice is
+    harmless.
     """
     outcomes: list[TargetOutcome] = []
     try:
@@ -321,8 +330,11 @@ def plan_fingerprint(
     """The write's plan fingerprint (UC-3 §4), from what the connect step found.
 
     Every selected target counts, so a target that is added, or one that could
-    not be reached in the dry run and can now, changes it. A target with no
-    session has :data:`ABSENT` for its database identity.
+    not be reached in the dry run and can now, changes it. A target with a
+    session counts the user the database says the session became, so an
+    `external` login that reaches another user changes it. A target with no
+    session has the configured run-as name, and :data:`ABSENT` for its
+    database identity.
     """
     return fingerprint(
         statement,
@@ -331,7 +343,7 @@ def plan_fingerprint(
             PlannedTarget(
                 one.target.name,
                 one.target.target.dsn,
-                one.run_as,
+                one.session_user or one.run_as,
                 *(one.identity or (ABSENT, ABSENT)),
             )
             for one in connections
@@ -550,15 +562,17 @@ def close_all(connections: Sequence[Connection]) -> None:
 
 
 def exit_code(outcomes: Sequence[TargetOutcome]) -> int:
-    """0 when every target answered; 5 when every target is of a product
-    `sql run` is not written for; 1 when none answered; else 4."""
+    """5 when every target is of a product `sql run` is not written for. The
+    others decide the rest, and a skipped target is left out: 0 when every one
+    answered, 1 when none did, else 4."""
     if not outcomes:
         return int(ExitCode.SUCCESS)
-    if all(outcome.state == SKIPPED for outcome in outcomes):
+    counted = [outcome for outcome in outcomes if outcome.state != SKIPPED]
+    if not counted:
         return int(ExitCode.UNSUPPORTED_CAPABILITY)
-    answered = sum(1 for outcome in outcomes if outcome.state == READ)
+    answered = sum(1 for outcome in counted if outcome.state == READ)
     if answered == 0:
         return int(ExitCode.FAILURE)
-    if answered < len(outcomes):
+    if answered < len(counted):
         return int(ExitCode.PARTIAL)
     return int(ExitCode.SUCCESS)

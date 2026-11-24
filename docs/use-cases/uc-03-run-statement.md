@@ -82,7 +82,7 @@ statement needs, which breaks ADR-001. UC-3 adds no grant to any account
 (`../design/02-oracle-privileges.md` §9).
 
 **The run-as account has no default.** With no `run_as:` and no `--as`, the tool
-refuses the target with exit 9, and the message names both ways to fix it. The
+refuses the run with exit 9, and the message names both ways to fix it. The
 usual choice is the DBA's personal account, such as `dba_alpha`, set in a
 `run_as:` block under `defaults:`. A DBA who wants the application's owner
 account, or another account, names it in the config and puts its password in the
@@ -177,11 +177,12 @@ the server refuses it with `ORA-01456`. This is accepted. The rights of the
 run-as account are the real limit, as §1 says.
 
 **`readonly: true`** (`../design/00-principles.md`) refuses `--write`, with or
-without `--dry-run`. A `safety:` block on a target, or on a group that matches
-one, applies to a write that selects that target. A write binds no account, so
-every selected target counts as reached for `readonly`, and every selected
-target of a product `sql run` runs on counts for `max_targets` (§5). The
-refusal offers a read without `--write` instead.
+without `--dry-run`, with exit 8. It does not refuse a read, and `--dry-run`
+without `--write` runs the read as usual. A `safety:` block on a target, or on
+a group that matches one, applies to a write that selects that target. A write
+binds no account, so every selected target counts as reached for `readonly`,
+and every selected target of a product `sql run` runs on counts for
+`max_targets` (§5). The refusal offers a read without `--write` instead.
 
 ---
 
@@ -202,10 +203,14 @@ shows the real row counts. It does not stop at a failing target: it runs every
 selected target and reports every count. Only a real write stops at the first
 failure (§5). A dry run offers the `--plan` to run it with only when every
 target connected and passed its guard, and then says when the real run will
-ask for a confirmation (`confirm_environments`). Otherwise it names the
-targets that did not pass, and the target where a real run would stop. Where
-no selected target is of a product `sql run` runs on, it says nothing would
-run. The run document carries the fingerprint in every case.
+ask for a confirmation (`confirm_environments`). Otherwise, where a target
+did not connect, it says that a real run would be refused, and names those
+targets and then the others that did not pass. A target that logged in and
+then failed, such as on the identity read, did not pass, but it did connect.
+Where every target connected, it names the targets that did not pass and the
+target where a real run would stop. Where no selected target is of a product
+`sql run` runs on, it says nothing would run. The run document carries the
+fingerprint in every case.
 
 A dry run is not free of effects. A trigger, a sequence's `NEXTVAL` and an
 autonomous transaction commit their own work, and the rollback does not undo it.
@@ -221,14 +226,21 @@ targets, never all of them. `max_targets` applies unchanged (invariant 10).
 
 - the normalised statement text;
 - the row guard: its kind (`expect` or `max`) and its value;
-- the sorted list of resolved targets, each with its name, its `dsn`, its run-as
-  user name (or `external`), and its database identity, which is
-  `DB_UNIQUE_NAME` and `CON_NAME`, read when the tool connects.
+- the sorted list of resolved targets, each with its name, its `dsn`, the
+  user its session became, and its database identity, which is `DB_UNIQUE_NAME`
+  and `CON_NAME`, read when the tool connects. The session user is what the
+  database reports, so an `external` login that reaches another user changes
+  the hash. A target that did not connect, or that failed after it logged in,
+  has its configured run-as name, or `external`, and no identity. A target of
+  another product has neither a user nor an identity.
 
 **Normalisation.** The tool turns CRLF and CR into LF. It removes trailing
 ASCII whitespace (space, tab, line feed, form feed, vertical tab), one trailing
 line that holds only `/`, and one trailing `;`, and the whitespace around each
-of them. A `/` or a `;` still left at the end is refused. Nothing else changes: case, whitespace and literals inside the statement stay as written.
+of them. A second line that holds only `/`, left at the end, is refused, and so
+is a `;` still left in the text. A `/` inside the statement, such as a
+division, stays. Nothing else changes: case, whitespace and literals inside the
+statement stay as written.
 
 Both the dry run and the real run connect to every target first, check the
 session user (§2), and read the database identity. They compute the hash before
@@ -244,9 +256,8 @@ target points at another database or another account, when the row guard
 changes, and when the statement differs by one character that normalisation
 keeps. A real `--write` without `--plan` is an argv error, exit 2. A dry run
 given `--plan` says whether it matches the dry run's hash, and changes nothing
-else. Where
-`confirm_environments` asks, it asks after the hash matched and before any
-statement runs.
+else. Where `confirm_environments` asks, it asks after the hash matched and
+before any statement runs.
 
 A write that affects 0 rows is rolled back, and reports `changed: false` (§6).
 
@@ -256,8 +267,9 @@ A write, dry or real, sets a call timeout on its session, so a row that the
 application holds locked cannot hang the run. The target that times out fails,
 and the write stops there (§5). On Oracle the client closes the connection when
 the timeout fires, and the server rolls this statement's transaction back once
-it ends the session. The rollback does not undo an autonomous transaction (§3). A session that waits on a lock ends when the wait does. The session
-reports `connection_lost`, and nothing more can be sent on it. The client reports
+it ends the session. The rollback does not undo an autonomous transaction (§3).
+A session that waits on a lock ends when the wait does. The session reports
+`connection_lost`, and nothing more can be sent on it. The client reports
 `DPY-4011`, with `ORA-03156` in its message, and the tool keeps both. The
 timeout does not bound the commit, so a commit is never abandoned half done.
 
@@ -307,7 +319,9 @@ because whether it committed is unknown, and the targets after it are
 `NOT_ATTEMPTED`. The tool prints them before it exits.
 
 **A read does not stop.** It reports every target it could read, and the ones it
-could not.
+could not. It exits `0` when every target answered, `4` when some did and some
+did not, and `1` when none did. A target of another product is left out of
+these, and a read where every target is one exits `5`.
 
 ---
 
@@ -359,9 +373,9 @@ fingerprint covers. A statement that holds a secret is the operator's mistake,
 and the tool does not look for one.
 
 **Audit.** The run document and the `jsonl` events are the record. There is no
-separate audit stream. A committed write carries, for each target, the
-statement's fingerprint, the row count and the outcome. A read changes nothing
-and adds no mutation record.
+separate audit stream. A committed write carries the run's plan fingerprint
+and, for each target, the row count and the outcome. A read changes nothing and
+adds no mutation record.
 
 ---
 

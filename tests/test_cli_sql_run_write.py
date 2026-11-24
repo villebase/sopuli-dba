@@ -79,8 +79,9 @@ class WriteSession(FakeSession):
         count: int = 1,
         identity: tuple[str, str] = ("FREE", "FREEPDB1"),
         error: Exception | None = None,
+        user: str = "DBA_ALPHA",
     ) -> None:
-        super().__init__(target, error=error)
+        super().__init__(target, error=error, user=user)
         self.count = count
         self.identity = identity
         self.closes = 0
@@ -397,7 +398,7 @@ def test_dry_run_prints_plan_and_fingerprint_rolls_back(
         classify(UPDATE),
         RowGuard(expect=1),
         [
-            PlannedTarget(name, dsn, "dba_alpha", "FREE", "FREEPDB1")
+            PlannedTarget(name, dsn, "DBA_ALPHA", "FREE", "FREEPDB1")
             for name, dsn in (
                 ("a-alpha", "db-alpha.example.com:1521/ALPHA"),
                 ("b-beta", "db-beta.example.com:1521/BETA"),
@@ -489,6 +490,30 @@ def test_plan_changes_when_database_identity_changes(
 
     assert exit_of(result) == ExitCode.ABORTED, result.output
     assert fleet["b-beta"].calls == []
+
+
+def test_plan_changes_when_the_session_user_changes(
+    write_config: WriteConfig, fleet: dict[str, Any]
+) -> None:
+    """An `external` run-as login that now becomes another user is another plan."""
+    before = dry_hash(write_config, fleet, *ALL, "--expect-rows", "1")
+    fleet["b-beta"] = WriteSession("b-beta", user="DBA_OTHER")
+
+    result = sql(write_config, "--write", *ALL, "--expect-rows", "1", "--plan", before)
+
+    assert exit_of(result) == ExitCode.ABORTED, result.output
+    assert fleet["b-beta"].calls == []
+
+
+def test_a_dry_run_and_a_real_run_with_one_session_user_match(
+    write_config: WriteConfig, fleet: dict[str, Any]
+) -> None:
+    fleet["b-beta"] = WriteSession("b-beta", user="DBA_OTHER")
+    plan = dry_hash(write_config, fleet, *ALL, "--expect-rows", "1")
+
+    result = sql(write_config, "--write", *ALL, "--expect-rows", "1", "--plan", plan)
+
+    assert exit_of(result) == ExitCode.SUCCESS, result.output
 
 
 def test_real_run_wrong_plan_refused_20011(
@@ -647,6 +672,54 @@ def test_a_dry_run_reports_a_target_that_did_not_connect(
     ]
 
 
+def test_a_dry_run_with_only_a_guard_failure_says_where_a_real_run_stops(
+    write_config: WriteConfig, fleet: dict[str, Any]
+) -> None:
+    fleet["b-beta"] = WriteSession("b-beta", count=3)
+
+    result = sql(write_config, "--write", "--dry-run", *ALL, "--expect-rows", "1")
+    text = click.unstyle(result.output)
+
+    assert "a real run would stop at b-beta" in text
+    assert "refused" not in text
+
+
+class NoIdentitySession(WriteSession):
+    """A session that logs in, and then cannot say which database it reached."""
+
+    def database_identity(self) -> tuple[str, str]:
+        raise DriverError("ORA-00942: table or view does not exist", code="ORA-00942")
+
+
+def test_a_target_whose_identity_read_failed_did_not_pass_but_did_connect(
+    write_config: WriteConfig, fleet: dict[str, Any]
+) -> None:
+    fleet["a-alpha"] = NoIdentitySession("a-alpha")
+    fleet["c-gamma"] = DriverError("ORA-12541: no listener", code="ORA-12541")
+
+    result = sql(write_config, "--write", "--dry-run", *ALL, "--expect-rows", "1")
+    text = click.unstyle(result.output)
+
+    assert "did not connect: c-gamma." in text
+    assert "a-alpha (ERROR)" in text
+    assert "did not connect: a-alpha" not in text
+    assert "a-alpha, c-gamma" not in text
+    assert "would stop" not in text
+
+
+def test_a_dry_run_says_a_real_run_would_be_refused_where_a_target_did_not_connect(
+    write_config: WriteConfig, fleet: dict[str, Any]
+) -> None:
+    fleet["b-beta"] = DriverError("ORA-12541: no listener", code="ORA-12541")
+
+    result = sql(write_config, "--write", "--dry-run", *ALL, "--expect-rows", "1")
+    text = click.unstyle(result.output)
+
+    assert "a real run would be refused: these targets did not connect: b-beta" in text
+    assert "would stop" not in text
+    assert "to run it" not in text
+
+
 @pytest.mark.usefixtures("terminal")
 def test_a_refused_typed_password_refuses_a_real_run(
     write_config: WriteConfig, fleet: dict[str, Any], tmp_path: Path
@@ -765,9 +838,9 @@ def test_a_dry_run_with_a_failing_target_offers_no_plan(
     text = click.unstyle(result.output)
 
     assert "to run it" not in text
-    assert "a real run would stop at b-beta" in text
+    assert "a real run would be refused: these targets did not connect: d-delta" in text
+    assert "would stop" not in text
     assert "b-beta (GUARD_FAILED)" in text
-    assert "d-delta (ERROR)" in text
     assert "plan fingerprint:" in text
 
     loaded = document(

@@ -788,6 +788,26 @@ def test_only_the_refused_users_typed_password_is_held_back(
     assert len(terminal.questions) == 2
 
 
+def test_a_prompted_run_as_is_asked_once_for_every_explicit_target(
+    write_config: WriteConfig, driver: FakeDriver, terminal: Asker
+) -> None:
+    """Three explicit targets inherit one `defaults.run_as` with `auth: prompt`.
+    The file gives each its own declaration site, but it names one account, so
+    one password covers them, as it does for `--as` (#1677)."""
+    config = PROMPT_RUN_AS + (
+        "  - name: dev-alpha\n"
+        "    type: oracle\n"
+        "    dsn: db-dev.example.com:1521/ALPHA\n"
+        "    admin: { username: C##SOPULI_SVC, auth: { method: env } }\n"
+    )
+
+    result = sql_run(write_config, config=config)
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    assert len(terminal.questions) == 1
+    assert [credential.username for credential in driver.credentials] == ["dba_alpha"] * 3
+
+
 def test_long_target_names_are_not_cut_in_the_shared_table(
     write_config: WriteConfig, sessions: dict[str, Any]
 ) -> None:

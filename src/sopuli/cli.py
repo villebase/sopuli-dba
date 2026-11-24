@@ -6640,13 +6640,16 @@ def _sql_write(
 
 
 def _ask_once_for_as(run: Invocation, as_user: str | None, path: Path | None = None) -> Invocation:
-    """``run`` with a prompt that asks once per user, where ``--as`` is given.
+    """``run`` with a prompt that asks once per user name.
 
-    ``--as`` with nobody at the terminal is a usage error. ``path`` is the
-    ``--file`` the statement comes from, if one was given.
+    That covers ``--as``, and a ``run_as:`` with ``auth: prompt``: the file gives
+    each explicit target its own declaration site, but a run names one account
+    for its statement, so one password covers it (#1677). ``--as`` with nobody
+    at the terminal is a usage error. ``path`` is the ``--file`` the statement
+    comes from, if one was given.
     """
     if as_user is None:
-        return run
+        return run if run.prompt is None else replace(run, prompt=AskOncePerUser(run.prompt))
     if run.prompt is None:
         # stdin is not a terminal, so there is nobody to type the password.
         if path is not None:

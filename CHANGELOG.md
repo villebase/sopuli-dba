@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.93.0](https://github.com/villebase/sopuli-dba/compare/v0.92.0...v0.93.0) (2026-11-24)
+
+
+### Features
+
+* add sopuli sql run --write ([#1663](https://github.com/villebase/sopuli-dba/issues/1663)) ([#1671](https://github.com/villebase/sopuli-dba/issues/1671)) ([dc252b9](https://github.com/villebase/sopuli-dba/commit/dc252b90798fade572adc0fa184b82fa73dcd4a4))
+* add sopuli sql run for reads ([#1662](https://github.com/villebase/sopuli-dba/issues/1662)) ([#1669](https://github.com/villebase/sopuli-dba/issues/1669)) ([d60c3cf](https://github.com/villebase/sopuli-dba/commit/d60c3cfb8242cf6982691bd7355b1888b8600743))
+* add the UC-3 statement check, row guard and fingerprint ([#1659](https://github.com/villebase/sopuli-dba/issues/1659)) ([#1665](https://github.com/villebase/sopuli-dba/issues/1665)) ([abe4f21](https://github.com/villebase/sopuli-dba/commit/abe4f212c6bc8f8e36b0e32e1927b7a0b0bc33b0))
+* **config:** add run_as, the account sql run connects as ([#1660](https://github.com/villebase/sopuli-dba/issues/1660)) ([#1667](https://github.com/villebase/sopuli-dba/issues/1667)) ([f5a7230](https://github.com/villebase/sopuli-dba/commit/f5a72301fc94bbf43508646ee5e4ea2526494341))
+* **oracle:** run one statement in a guarded transaction ([#1661](https://github.com/villebase/sopuli-dba/issues/1661)) ([#1668](https://github.com/villebase/sopuli-dba/issues/1668)) ([f909c82](https://github.com/villebase/sopuli-dba/commit/f909c82aab2e3a96b863bd4e4592bd7408f61030))
+* **sql:** report outcome_unknown on each write result ([#1687](https://github.com/villebase/sopuli-dba/issues/1687)) ([#1688](https://github.com/villebase/sopuli-dba/issues/1688)) ([008e395](https://github.com/villebase/sopuli-dba/commit/008e395888fbbd362cf9416ad6a1dfe294c8d7ba))
+
+
+### Bug Fixes
+
+* answer the final review of UC-3 ([#1672](https://github.com/villebase/sopuli-dba/issues/1672)) ([#1678](https://github.com/villebase/sopuli-dba/issues/1678)) ([7c853ae](https://github.com/villebase/sopuli-dba/commit/7c853ae874d36b7e39a524deb5a6d7260eed2e5e))
+* **cli:** apply a target's and a group's safety block to the account verbs ([#1670](https://github.com/villebase/sopuli-dba/issues/1670)) ([#1679](https://github.com/villebase/sopuli-dba/issues/1679)) ([8993de7](https://github.com/villebase/sopuli-dba/commit/8993de7fcb8885b2e5de7c905448613ca8a723ec))
+* **cli:** ask once per user for a prompted run_as ([#1677](https://github.com/villebase/sopuli-dba/issues/1677)) ([#1680](https://github.com/villebase/sopuli-dba/issues/1680)) ([99b5feb](https://github.com/villebase/sopuli-dba/commit/99b5febaf49362b6bf1bdc2eadc88a7222f17558))
+* **cli:** drop the empty SECRET column from account plans ([#1685](https://github.com/villebase/sopuli-dba/issues/1685)) ([#1686](https://github.com/villebase/sopuli-dba/issues/1686)) ([477d63d](https://github.com/villebase/sopuli-dba/commit/477d63dc7ac7435965ce4fc33ebc79548a9931bc))
+* **cli:** treat Ctrl-C as an abort for every verb ([#1676](https://github.com/villebase/sopuli-dba/issues/1676)) ([#1684](https://github.com/villebase/sopuli-dba/issues/1684)) ([d5e5373](https://github.com/villebase/sopuli-dba/commit/d5e5373a19f06ecbbbcd46ef1c2590eb2dc89d39))
+* **sql:** accept a comment after the final terminator ([#1673](https://github.com/villebase/sopuli-dba/issues/1673)) ([#1681](https://github.com/villebase/sopuli-dba/issues/1681)) ([da960df](https://github.com/villebase/sopuli-dba/commit/da960dfaa2c81e3cde487f5552dd8e196f0c4e62))
+* **sql:** branch on the auth method, not the string external ([#1674](https://github.com/villebase/sopuli-dba/issues/1674)) ([#1682](https://github.com/villebase/sopuli-dba/issues/1682)) ([889cd21](https://github.com/villebase/sopuli-dba/commit/889cd2161178362c73fd55b5834f8785ccb6682a))
+* **sql:** leave the SECRET column out of the write plan ([#1675](https://github.com/villebase/sopuli-dba/issues/1675)) ([#1683](https://github.com/villebase/sopuli-dba/issues/1683)) ([c8c68dc](https://github.com/villebase/sopuli-dba/commit/c8c68dce36f495dc03c2dceffe04807b6e081fb4))
+
 ## [0.92.0](https://github.com/villebase/sopuli-dba/compare/v0.91.0...v0.92.0) (2026-11-21)
 
 

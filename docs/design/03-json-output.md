@@ -478,7 +478,7 @@ This sketch shows the run document's shape:
                  overridden[], redraws, kind, findings[], failed_logins,
                  privileges, history, failed_logins_reason, missing_profile,
                  expected_by[], declared_by, reset_at, columns[], rows[],
-                 row_count, truncated } ],
+                 row_count, truncated, outcome_unknown } ],
   targets    [ { target, reachable, scope, asserted, duration_ms, privileges,
                  error, warnings[] } ],
   install    { backends[], drivers[] },
@@ -2452,15 +2452,24 @@ row guard, and `error.message` gives the count and the guard. A real write
 where a target did not connect is refused before anything runs, with exit 8
 and no `results[]`. Otherwise it stops at the first target that does not end
 `COMMITTED` or `ROLLED_BACK`, and the targets after it are `NOT_ATTEMPTED`,
-with `error.message` naming that target. A target whose commit failed is
-`ERROR`, and `error.message` says the outcome is unknown, before the server's
-message; the exit code counts it as possibly committed. A target of another
-product is `SKIPPED` and has no `plan.units[]` entry. A dry run given `--plan`
-adds an `info` diagnostic saying whether it matches. `summary.ok` counts
-`COMMITTED` and `ROLLED_BACK`, and `summary.changed` counts `COMMITTED`. Each
-target has a `plan.units[]` entry with the intent `sql_write`. From a real run
-on two names for one PDB, where the statement changed the row on the first
-name, so the second found none:
+with `error.message` naming that target. A target of another product is
+`SKIPPED` and has no `plan.units[]` entry. A dry run given `--plan` adds an
+`info` diagnostic saying whether it matches. `summary.ok` counts `COMMITTED`
+and `ROLLED_BACK`, and `summary.changed` counts `COMMITTED`. Each target has a
+`plan.units[]` entry with the intent `sql_write`.
+
+**`outcome_unknown`** is on every write result, and never on a read's. It is
+`true` where the change may have taken effect: the commit was sent and then
+failed, or Ctrl-C stopped a real write while the statement ran on that target.
+The state is then `ERROR`, and `error.message` says the outcome is unknown.
+After a failed commit the server's message follows, and the exit code counts
+the target as possibly committed. After Ctrl-C the exit code is 8. On every
+other write result `outcome_unknown` is `false`. That includes a dry run,
+which commits nothing. A consumer reads the field and need not parse the
+message.
+
+From a real run on two names for one PDB, where the statement changed the row
+on the first name, so the second found none:
 
 ```json
 "plan": {
@@ -2477,6 +2486,7 @@ name, so the second found none:
     "target": "free-pdb",
     "state": "COMMITTED",
     "changed": true,
+    "outcome_unknown": false,
     "columns": [],
     "rows": [],
     "row_count": 1,
@@ -2487,6 +2497,7 @@ name, so the second found none:
     "target": "free-pdb-again",
     "state": "GUARD_FAILED",
     "changed": false,
+    "outcome_unknown": false,
     "columns": [],
     "rows": [],
     "row_count": 0,
@@ -2501,7 +2512,7 @@ name, so the second found none:
 "statement": {
   "text": "UPDATE dba_alpha.acme_settings SET flag = 1 WHERE name = 'audit' AND flag = 0",
   "kind": "write",
-  "fingerprint": "0baa12899205"
+  "fingerprint": "abed8d8b234d"
 }
 ```
 

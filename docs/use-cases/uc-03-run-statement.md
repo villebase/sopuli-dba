@@ -327,18 +327,22 @@ so the plan leaves it out too, and it counts for neither `max_targets` nor
 **A commit that fails has an unknown outcome.** The statement ran and the
 commit was sent, so the change may have taken effect. The target is `ERROR`,
 with a message that says the outcome is unknown and to check the rows before
-running again, and the server's code and message. The run stops there, and the
-exit code counts the target as possibly committed: a failed commit on the
-first target exits `4`, not `1`.
+running again, and the server's code and message. Its result in the run
+document has `outcome_unknown: true`, so a script need not parse the message.
+The run stops there, and the exit code counts the target as possibly
+committed: a failed commit on the first target exits `4`, not `1`.
 
 **An interrupt keeps the record.** When Ctrl-C stops a real write, the
 targets that finished keep their outcome. The target in flight is `ERROR`,
-because whether it committed is unknown, and the targets after it are
-`NOT_ATTEMPTED`. The tool prints them to stderr before it exits, and under
-`--output json` the run document holds them in `results[]`, and its `summary`
-counts them. The exit code is `8`, as for any abort and for every verb, even when
-some targets committed. Exit `8` here does not mean nothing ran: `results[]` and
-`summary` say what did.
+with `outcome_unknown: true`, because whether it committed is unknown, and
+the targets after it are `NOT_ATTEMPTED`. The tool prints them to stderr
+before it exits, and under `--output json` the run document holds them in
+`results[]`, and its `summary` counts them. The exit code is `8`, as for any
+abort and for every verb, even when some targets committed. Exit `8` here does
+not mean nothing ran: `results[]` and `summary` say what did.
+
+Every other write result has `outcome_unknown: false`, a dry run's included,
+because a dry run commits nothing. A read's results do not have the field.
 
 **A read does not stop.** It reports every target it could read, and the ones it
 could not. It exits `0` when every target answered, `4` when some did and some

@@ -306,6 +306,7 @@ def test_non_oracle_target_refused_20006(
     (entry,) = document(result)["results"]
     assert entry["state"] == "SKIPPED"
     assert entry["error"]["code"] == "SOPULI-20006"
+    assert "outcome_unknown" not in entry
     assert sessions["opened"] == []
 
 
@@ -401,6 +402,8 @@ def test_json_validates_against_1_109(write_config: WriteConfig, sessions: dict[
     loaded = document(sql_run(write_config, json_out=True))
 
     assert SCHEMA_VERSION == "1.109"
+    # A read commits nothing, so its outcome is never unknown (#1687).
+    assert all("outcome_unknown" not in entry for entry in loaded["results"])
     assert loaded["command"] == "sql.run"
     assert loaded["statement"] == {
         "text": "SELECT name, value FROM v$parameter WHERE name = 'open_cursors'",

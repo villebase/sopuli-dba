@@ -2164,6 +2164,10 @@
         "truncated": {
           "type": "boolean",
           "description": "`sql run` (added in 1.109): the read stopped at `--max-result-rows`, or a LOB value was cut at 4000 characters or bytes."
+        },
+        "outcome_unknown": {
+          "type": "boolean",
+          "description": "`sql run --write` (added in 1.109): `true` where the commit was sent and then failed, or the run was interrupted while the statement ran on a real write, so the change may have taken effect. The state is then `ERROR`. `false` on every other write result. Absent on a read."
         }
       }
     },

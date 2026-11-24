@@ -210,6 +210,24 @@ def test_a_verb_with_no_secret_can_leave_the_column_out() -> None:
     assert header == ["ACCOUNT", "TARGET", "INTENT"]
 
 
+def test_the_plan_a_prompt_shows_keeps_the_verbs_choice(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A prompt that comes before the plan was recorded renders it itself, and
+    the column it leaves out is the verb's choice (#1675)."""
+    from types import SimpleNamespace
+
+    from sopuli.cli import _show_plan
+
+    shown: list[str] = []
+    monkeypatch.setattr("sopuli.cli._echo_err", lambda text, run: shown.append(text))
+    monkeypatch.setattr("sopuli.cli.show_warnings", lambda run: None)
+    plan = build(estate(accounts=["acme_web_user"]), intent=["verify"])
+
+    run = SimpleNamespace(document=SimpleNamespace(plan_text=None, plan_shown=False))
+    _show_plan(plan, run, noun="write", secret_column=False)  # type: ignore[arg-type]
+
+    assert "SECRET" not in shown[0]
+
+
 def test_a_unit_with_no_document_shows_a_placeholder_rather_than_none() -> None:
     plan = build(estate(accounts=["acme_web_user"]), intent=["verify"])
 

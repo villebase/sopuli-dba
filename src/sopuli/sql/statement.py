@@ -73,11 +73,100 @@ def _first_word(text: str) -> tuple[str, str]:
     return "", "empty" if start >= n else "other"
 
 
+#: The character that closes a q-quoted literal, by the one that opens it. Any
+#: other character closes with itself.
+_Q_CLOSERS = {"[": "]", "(": ")", "{": "}", "<": ">"}
+
+
+def _is_word_char(char: str) -> bool:
+    return char.isascii() and (char.isalnum() or char in "_$#")
+
+
+def _q_quote_start(text: str, i: int) -> bool:
+    """Whether ``text[i]`` is the ``q`` of ``q'...'`` or ``nq'...'``, Oracle's
+    alternative quoting, and not the end of a longer word."""
+    if text[i] not in "qQ" or text[i + 1 : i + 2] != "'":
+        return False
+    before = i - 1
+    if before >= 0 and text[before] in "nN":
+        before -= 1
+    return before < 0 or not _is_word_char(text[before])
+
+
+def _code_end(text: str) -> tuple[int, int | None]:
+    """Where the code of ``text`` ends, and where an unclosed comment starts.
+
+    The first is the length of ``text`` up to its last character that is not
+    whitespace and not in a comment, so what follows is whitespace and comments
+    only. String literals, q-quoted literals and quoted names are skipped whole,
+    so a ``--`` or a ``/*`` in one is not a comment.
+
+    The second is ``None``, or the position of a ``/*`` that never closes, with
+    the code end before it. An unclosed literal makes the rest of the text code:
+    its length comes back and nothing is cut.
+    """
+    i, n, end = 0, len(text), 0
+    while i < n:
+        char = text[i]
+        if char in _SPACE:
+            i += 1
+        elif text.startswith("--", i):
+            found = text.find("\n", i)
+            i = n if found == -1 else found + 1
+        elif text.startswith("/*", i):
+            found = text.find("*/", i + 2)
+            if found == -1:
+                return end, i
+            i = found + 2
+        elif _q_quote_start(text, i):
+            if i + 2 >= n:
+                return n, None
+            closer = _Q_CLOSERS.get(text[i + 2], text[i + 2]) + "'"
+            found = text.find(closer, i + 3)
+            if found == -1:
+                return n, None
+            i = end = found + 2
+        elif char in "'\"":
+            found = text.find(char, i + 1)
+            if found == -1:
+                return n, None
+            i = end = found + 1
+        else:
+            i += 1
+            end = i
+    return end, None
+
+
+def _is_terminated(code: str) -> bool:
+    return code.endswith(";") or code.rsplit("\n", 1)[-1].strip(_SPACE) == "/"
+
+
+def _without_trailing_comments(text: str) -> str:
+    """``text`` without the comments after its terminator.
+
+    Only a comment that follows a ``;`` or a line holding only ``/`` goes, with
+    that terminator left for :func:`_strip_terminators`. A comment after a
+    statement with no terminator stays where the operator wrote it. A comment
+    that never closes after a terminator is refused by name.
+    """
+    end, unclosed = _code_end(text)
+    code = text[:end].rstrip(_SPACE)
+    if not _is_terminated(code):
+        return text
+    if unclosed is not None:
+        raise StatementRefusedError(
+            "the statement has a comment that is not closed",
+            hint="close the /* comment, or remove it",
+        )
+    return code
+
+
 def _strip_terminators(raw: str) -> str:
-    text = raw.replace("\r\n", "\n").replace("\r", "\n").rstrip(_SPACE)
+    text = _without_trailing_comments(raw.replace("\r\n", "\n").replace("\r", "\n")).rstrip(_SPACE)
     lines = text.split("\n")
     if lines[-1].strip(_SPACE) == "/":
-        text = "\n".join(lines[:-1]).rstrip(_SPACE)
+        # A comment may sit between the `;` and the `/`, and so after the `/`.
+        text = _without_trailing_comments("\n".join(lines[:-1]).rstrip(_SPACE)).rstrip(_SPACE)
     if text.endswith(";"):
         text = text[:-1].rstrip(_SPACE)
     return text

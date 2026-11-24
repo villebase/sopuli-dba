@@ -131,6 +131,10 @@ others.
    `admin:` user name is refused. The comparison uses `upper()`, as invariant 5
    does. A wallet holds one credential for each alias, so a target whose
    `run_as` and `admin` are both `external` on the same `dsn` is refused too.
+   The check reads the auth method. A user whose name is `external`, with a
+   password, is an ordinary account: it is compared by name, and it is not a
+   wallet login. The plan and the results write both as `external`, so they do
+   not show which one a target used; the config does.
 2. Before any statement runs, from the database. The tool connects to every
    selected target as the run-as account, reads
    `SYS_CONTEXT('USERENV','SESSION_USER')`, and compares it with the service

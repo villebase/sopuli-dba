@@ -17,6 +17,7 @@ from sopuli.admin import (
     forget,
     refuse_service_account,
     resolve_run_as,
+    run_as_is_wallet,
     run_as_prompts,
     run_as_user,
     run_as_uses_keyring,
@@ -319,6 +320,55 @@ def test_both_external_same_dsn_refused() -> None:
         refuse_service_account(declared, None)
 
     assert caught.value.code == "SOPULI-20010"
+
+
+def test_a_user_named_external_is_not_a_wallet_login() -> None:
+    """The check branches on the auth method, not on the string (#1674). An
+    Oracle user named EXTERNAL with a password is a named account."""
+    wallet = AdminCredential(auth=AdminAuth(method="external"))
+    declared = target(dsn="CDBQA", admin=wallet, run_as=credential("external", "prompt"))
+
+    refuse_service_account(declared, None)
+    refuse_service_account(declared, "external")
+
+
+def test_a_user_named_external_that_is_the_admin_is_refused_by_name() -> None:
+    """The admin is the user EXTERNAL, with a password. A run-as login of the same
+    name, with a password, is that account, and not a wallet login (#1674)."""
+    declared = target(
+        admin=credential("EXTERNAL", "keyring", entry="svc"),
+        run_as=credential("external", "prompt"),
+    )
+
+    with pytest.raises(RefusedError) as caught:
+        refuse_service_account(declared, None)
+
+    assert caught.value.code == "SOPULI-20010"
+    assert "run_as.username" in str(caught.value)
+
+
+@pytest.mark.parametrize("from_variable", [False, True])
+def test_a_wallet_run_as_against_a_password_admin_named_external_is_allowed(
+    from_variable: bool,
+) -> None:
+    """The reverse (#1674): the admin is the user EXTERNAL with a password, and
+    the run-as login is a wallet. A wallet has no name to compare, so it is not
+    refused here, and `refuse_session_user` is the backstop."""
+    wallet = AdminCredential(auth=AdminAuth(method="external"))
+    admin = credential(None if from_variable else "EXTERNAL", "keyring", entry="svc")
+    declared = target(dsn="CDBQA", admin=admin, run_as=wallet)
+    variables = env(SOPULI_DB_ADMIN_USER="external") if from_variable else env()
+
+    refuse_service_account(declared, None, env=variables)
+
+
+def test_run_as_is_wallet_reads_the_method() -> None:
+    wallet = AdminCredential(auth=AdminAuth(method="external"))
+
+    assert run_as_is_wallet(target(run_as=wallet), None)
+    assert not run_as_is_wallet(target(run_as=credential("external", "prompt")), None)
+    assert not run_as_is_wallet(target(run_as=wallet), "external")
+    assert not run_as_is_wallet(target(), None)
 
 
 def test_admin_external_run_as_named_is_allowed() -> None:

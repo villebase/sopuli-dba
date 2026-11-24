@@ -2458,8 +2458,9 @@ message; the exit code counts it as possibly committed. A target of another
 product is `SKIPPED` and has no `plan.units[]` entry. A dry run given `--plan`
 adds an `info` diagnostic saying whether it matches. `summary.ok` counts
 `COMMITTED` and `ROLLED_BACK`, and `summary.changed` counts `COMMITTED`. Each
-target has a `plan.units[]` entry with the intent `sql_write`. From a real run on two names for one PDB, where
-the statement changed the row on the first name, so the second found none:
+target has a `plan.units[]` entry with the intent `sql_write`. From a real run
+on two names for one PDB, where the statement changed the row on the first
+name, so the second found none:
 
 ```json
 "plan": {

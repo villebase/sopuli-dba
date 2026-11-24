@@ -672,6 +672,41 @@ def test_a_dry_run_reports_a_target_that_did_not_connect(
     ]
 
 
+def test_a_dry_run_with_only_a_guard_failure_says_where_a_real_run_stops(
+    write_config: WriteConfig, fleet: dict[str, Any]
+) -> None:
+    fleet["b-beta"] = WriteSession("b-beta", count=3)
+
+    result = sql(write_config, "--write", "--dry-run", *ALL, "--expect-rows", "1")
+    text = click.unstyle(result.output)
+
+    assert "a real run would stop at b-beta" in text
+    assert "refused" not in text
+
+
+class NoIdentitySession(WriteSession):
+    """A session that logs in, and then cannot say which database it reached."""
+
+    def database_identity(self) -> tuple[str, str]:
+        raise DriverError("ORA-00942: table or view does not exist", code="ORA-00942")
+
+
+def test_a_target_whose_identity_read_failed_did_not_pass_but_did_connect(
+    write_config: WriteConfig, fleet: dict[str, Any]
+) -> None:
+    fleet["a-alpha"] = NoIdentitySession("a-alpha")
+    fleet["c-gamma"] = DriverError("ORA-12541: no listener", code="ORA-12541")
+
+    result = sql(write_config, "--write", "--dry-run", *ALL, "--expect-rows", "1")
+    text = click.unstyle(result.output)
+
+    assert "did not connect: c-gamma." in text
+    assert "a-alpha (ERROR)" in text
+    assert "did not connect: a-alpha" not in text
+    assert "a-alpha, c-gamma" not in text
+    assert "would stop" not in text
+
+
 def test_a_dry_run_says_a_real_run_would_be_refused_where_a_target_did_not_connect(
     write_config: WriteConfig, fleet: dict[str, Any]
 ) -> None:
@@ -804,7 +839,7 @@ def test_a_dry_run_with_a_failing_target_offers_no_plan(
 
     assert "to run it" not in text
     assert "a real run would be refused: these targets did not connect: d-delta" in text
-    assert "a real run would stop at b-beta" in text
+    assert "would stop" not in text
     assert "b-beta (GUARD_FAILED)" in text
     assert "plan fingerprint:" in text
 

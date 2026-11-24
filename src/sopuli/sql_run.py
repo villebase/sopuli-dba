@@ -89,6 +89,9 @@ class Connection:
     identity: tuple[str, str] | None = None
     #: The user the database says the session became, read when it opened.
     session_user: str | None = None
+    #: The login worked, and a later step failed, such as the identity read.
+    #: The session is closed and ``session`` is ``None``.
+    logged_in: bool = False
     #: The target's product is not written for `sql run` (``SOPULI-20006``).
     unsupported: bool = False
     #: A typed password was refused on an earlier target, so this one was not
@@ -249,7 +252,7 @@ def _connect(
     except Exception as error:  # noqa: BLE001 -- a per-target finding
         with suppress(Exception):
             session.close()
-        return Connection(target, who, error=finding(error))
+        return Connection(target, who, error=finding(error), logged_in=True)
     except BaseException:
         with suppress(Exception):
             session.close()
@@ -269,7 +272,9 @@ def run_read(
 
     A read never stops: a target whose statement fails carries its error, and
     the next target runs (UC-3 §5). Each read is rolled back by the runner.
-    The sessions are closed here, once, even when an interrupt stops the run.
+    Each session is closed as soon as its read is done, and :func:`close_all`
+    closes the rest when an interrupt stops the run. Closing one twice is
+    harmless.
     """
     outcomes: list[TargetOutcome] = []
     try:
@@ -295,6 +300,9 @@ def _read_one(
         )
     except Exception as error:  # noqa: BLE001 -- a per-target finding
         return TargetOutcome(name, one.run_as, ERROR, error=finding(error))
+    finally:
+        with suppress(Exception):
+            session.close()
     return TargetOutcome(name, one.run_as, READ, result=result)
 
 

@@ -127,17 +127,18 @@ detail.
    grants decide, and DDL is refused, so a write cannot change an account
    ([#1658](docs/decisions/log.md#1658)). A personal account may be declared
    by a predicate over a profile or role; a mutating verb then still requires
-   the account named on the command line. A name may not be declared twice. One database user on one target is bound to one place, in one
-   spelling: two application entries that bind it to different places, or spell
-   it two ways, are refused, with names compared by `upper()`. One exception
-   is accepted, on MariaDB: once per staged `pending` and target, the login
-   after a change may reach another account of the same user, one the config
-   need not declare, which the server matches from the tool's host. It passes
-   only when `CURRENT_USER()` is the declared account. If it fails, the failure
-   counts toward `max_password_errors` on the account it reached. A mark in the
-   vault, written before the login, keeps a scheduled `creds apply` from
-   repeating it. Every other MariaDB login, `creds check`'s among them, is made
-   only where no other account can answer. Reasons:
+   the account named on the command line. A name may not be declared twice.
+   One database user on one target is bound to one place, in one spelling: two
+   application entries that bind it to different places, or spell it two ways,
+   are refused, with names compared by `upper()`. One exception is accepted, on
+   MariaDB: once per staged `pending` and target, the login after a change may
+   reach another account of the same user, one the config need not declare,
+   which the server matches from the tool's host. It passes only when
+   `CURRENT_USER()` is the declared account. If it fails, the failure counts
+   toward `max_password_errors` on the account it reached. A mark in the vault,
+   written before the login, keeps a scheduled `creds apply` from repeating
+   it. Every other MariaDB login, `creds check`'s among them, is made only
+   where no other account can answer. Reasons:
    [H1](docs/decisions/log.md#h1),
    [#874](docs/decisions/log.md#874),
    [#1270](docs/decisions/log.md#1270),
@@ -169,11 +170,11 @@ detail.
    Server on a host that is not Linux, `creds apply` does not log in before a
    change, so while a rotation's promotion is held it sets the staged `pending`
    again on each run, until the rotation completes. On MariaDB a target whose
-   one reaching login did not pass holds it until a new `pending` is staged (#1316). On MySQL and MariaDB, `creds finish-rollover` cannot
-   read whether an old password is kept, so it sends the close on every run
-   and reports `changed: true`: MySQL sends `DISCARD OLD PASSWORD`, and
-   MariaDB sends the current password's value alone. On
-   MariaDB, `account suspend` cannot read the lock, so it sends `ACCOUNT LOCK`
+   one reaching login did not pass holds it until a new `pending` is staged
+   (#1316). On MySQL and MariaDB, `creds finish-rollover` cannot read whether
+   an old password is kept, so it sends the close on every run and reports
+   `changed: true`: MySQL sends `DISCARD OLD PASSWORD`, and MariaDB sends the
+   current password's value alone. On MariaDB, `account suspend` cannot read the lock, so it sends `ACCOUNT LOCK`
    and reports `changed: true` on every run. Reasons:
    [H7](docs/decisions/log.md#h7), [#1223](docs/decisions/log.md#1223),
    [#1224](docs/decisions/log.md#1224), [#1267](docs/decisions/log.md#1267),

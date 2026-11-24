@@ -6631,7 +6631,9 @@ def _sql_write(
         note=note,
         asks=_asks_environments(plan, run),
         unconnected=[
-            one.target.name for one in connections if one.session is None and not one.unsupported
+            one.target.name
+            for one in connections
+            if one.session is None and not one.unsupported and not one.logged_in
         ],
     )
     return render_plan(plan, noun="write") + "\n\n" + text

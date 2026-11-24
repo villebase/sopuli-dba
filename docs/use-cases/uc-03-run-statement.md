@@ -178,11 +178,11 @@ run-as account are the real limit, as §1 says.
 
 **`readonly: true`** (`../design/00-principles.md`) refuses `--write`, with or
 without `--dry-run`, with exit 8. It does not refuse a read, and `--dry-run`
-without `--write` runs the read as usual. A `safety:` block on a target, or on a group that matches
-one, applies to a write that selects that target. A write binds no account, so
-every selected target counts as reached for `readonly`, and every selected
-target of a product `sql run` runs on counts for `max_targets` (§5). The
-refusal offers a read without `--write` instead.
+without `--write` runs the read as usual. A `safety:` block on a target, or on
+a group that matches one, applies to a write that selects that target. A write
+binds no account, so every selected target counts as reached for `readonly`,
+and every selected target of a product `sql run` runs on counts for
+`max_targets` (§5). The refusal offers a read without `--write` instead.
 
 ---
 
@@ -203,12 +203,14 @@ shows the real row counts. It does not stop at a failing target: it runs every
 selected target and reports every count. Only a real write stops at the first
 failure (§5). A dry run offers the `--plan` to run it with only when every
 target connected and passed its guard, and then says when the real run will
-ask for a confirmation (`confirm_environments`). Otherwise it says
-that a real run would be refused, and names the targets that did not connect,
-and it names the targets that did not pass and the target where a real run
-would stop. Where
-no selected target is of a product `sql run` runs on, it says nothing would
-run. The run document carries the fingerprint in every case.
+ask for a confirmation (`confirm_environments`). Otherwise, where a target
+did not connect, it says that a real run would be refused, and names those
+targets and then the others that did not pass. A target that logged in and
+then failed, such as on the identity read, did not pass, but it did connect.
+Where every target connected, it names the targets that did not pass and the
+target where a real run would stop. Where no selected target is of a product
+`sql run` runs on, it says nothing would run. The run document carries the
+fingerprint in every case.
 
 A dry run is not free of effects. A trigger, a sequence's `NEXTVAL` and an
 autonomous transaction commit their own work, and the rollback does not undo it.
@@ -228,15 +230,17 @@ targets, never all of them. `max_targets` applies unchanged (invariant 10).
   user its session became, and its database identity, which is `DB_UNIQUE_NAME`
   and `CON_NAME`, read when the tool connects. The session user is what the
   database reports, so an `external` login that reaches another user changes
-  the hash. A target that did not connect has its configured run-as name, or
-  `external`, and no identity.
+  the hash. A target that did not connect, or that failed after it logged in,
+  has its configured run-as name, or `external`, and no identity. A target of
+  another product has neither a user nor an identity.
 
 **Normalisation.** The tool turns CRLF and CR into LF. It removes trailing
 ASCII whitespace (space, tab, line feed, form feed, vertical tab), one trailing
 line that holds only `/`, and one trailing `;`, and the whitespace around each
-of them. A `;` still left in the text is refused. A `/` is refused unless it is
-alone on the last line, where it is removed. Nothing else changes: case,
-whitespace and literals inside the statement stay as written.
+of them. A second line that holds only `/`, left at the end, is refused, and so
+is a `;` still left in the text. A `/` inside the statement, such as a
+division, stays. Nothing else changes: case, whitespace and literals inside the
+statement stay as written.
 
 Both the dry run and the real run connect to every target first, check the
 session user (§2), and read the database identity. They compute the hash before

@@ -156,17 +156,17 @@ def _next_step(
                 "ask before it runs; where nobody can answer, add --confirm"
             )
         return lines
-    lines = []
-    if unconnected:
-        lines.append(
-            "a real run would be refused: these targets did not connect: " + ", ".join(unconnected)
-        )
     rest = [outcome for outcome in failing if outcome.target not in unconnected]
-    if rest:
-        named = ", ".join(f"{outcome.target} ({outcome.state})" for outcome in rest)
-        lines.append(
-            f"a real run would stop at {rest[0].target}. These targets did not pass: {named}"
+    named = ", ".join(f"{outcome.target} ({outcome.state})" for outcome in rest)
+    if unconnected:
+        line = "a real run would be refused: these targets did not connect: " + ", ".join(
+            sorted(unconnected)
         )
+        if rest:
+            line += f". These targets also did not pass: {named}"
+        lines = [line]
+    else:
+        lines = [f"a real run would stop at {rest[0].target}. These targets did not pass: {named}"]
     lines.append("fix them, or leave them out with a selector, and dry-run again")
     return lines
 

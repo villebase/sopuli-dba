@@ -61,7 +61,7 @@ class ExitCode(IntEnum):
     """Another process holds the lock."""
 
     ABORTED = 8
-    """Aborted by the user, or confirmation declined."""
+    """Aborted by the user (Ctrl-C included), or confirmation declined."""
 
     CONFIG_INVALID = 9
     """The configuration is unusable -- missing, unreadable, or invalid.

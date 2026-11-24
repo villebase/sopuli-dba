@@ -10,6 +10,7 @@ tier-1 PDB, with the rows read back from a second connection.
 from __future__ import annotations
 
 import contextlib
+import json
 import os
 import uuid
 from collections.abc import Iterator
@@ -19,6 +20,7 @@ from typing import Any
 import click
 import pytest
 from click.testing import CliRunner, Result
+from jsonschema import Draft202012Validator
 
 from conftest import WriteConfig
 from oracle_harness import Environment
@@ -31,6 +33,7 @@ from sopuli.sql.guard import RowGuard
 from sopuli.sql.statement import Statement, classify
 from test_cli_sql_run import (
     RUN_AS,
+    RUN_SCHEMA,
     FakeSession,
     document,
     exit_of,
@@ -890,6 +893,8 @@ def test_an_interrupt_keeps_the_record_and_closes_every_session(
         [
             "--config",
             str(write_config(config)),
+            "--output",
+            "json",
             "sql",
             "run",
             "--write",
@@ -902,9 +907,23 @@ def test_an_interrupt_keeps_the_record_and_closes_every_session(
         input=UPDATE,
     )
 
-    # click turns the interrupt into its own abort, as for every verb.
-    assert result.exit_code == 1, result.output
-    assert "Aborted!" in result.output
+    # The interrupt is an abort, as for every verb (#1676): exit 8, and the run
+    # document on stdout holds what each target did.
+    assert result.exit_code == ExitCode.ABORTED, result.output
+    assert "Aborted!" not in result.output
+    loaded = json.loads(result.stdout)
+    assert list(Draft202012Validator(RUN_SCHEMA).iter_errors(loaded)) == []
+    assert loaded["exit_code"] == ExitCode.ABORTED
+    # The summary agrees with the results: one target committed.
+    assert loaded["summary"]["total"] == 3
+    assert loaded["summary"]["changed"] == 1
+    assert states(loaded) == [
+        ("a-alpha", "COMMITTED"),
+        ("b-beta", "ERROR"),
+        ("c-gamma", "NOT_ATTEMPTED"),
+    ]
+    assert loaded["results"][0]["changed"] is True
+    assert "whether it committed is unknown" in loaded["results"][1]["error"]["message"]
     assert [(one.target, one.state) for one in recorded] == [
         ("a-alpha", "COMMITTED"),
         ("b-beta", "ERROR"),

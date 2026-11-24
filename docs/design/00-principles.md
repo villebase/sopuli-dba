@@ -1237,7 +1237,7 @@ because the count proves nothing changed. The reasons are in
 | 5 | capability not supported by target/driver |
 | 6 | authentication failure (vault or database) |
 | 7 | lock held by another process |
-| 8 | aborted by user / confirmation declined |
+| 8 | aborted by user / confirmation declined / interrupted by Ctrl-C |
 | 9 | configuration invalid — missing, unreadable, or refused by validation |
 
 **2 and 9 are different codes on purpose.** A usage error has no invocation. An

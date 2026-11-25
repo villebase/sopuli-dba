@@ -509,7 +509,7 @@ def test_a_rotation_asks_eso_to_refresh_after_the_promotion(
 
     monkeypatch.setattr(
         "sopuli.cli.refresh_all",
-        lambda refs, *, now: refresh_all(refs, now=now, runner=kubectl, which=lambda _: "kubectl"),
+        lambda refs, *, now: refresh_all(refs, now=now, runner=kubectl, find=lambda: "kubectl"),
     )
     estate()
     config = CONFIG + (

@@ -65,8 +65,10 @@ how the tools happen to be built:
 - The credential that lets sopuli change passwords in Oracle never leaves the
   machine or job that runs sopuli. It is not in your cluster.
 - If you use the refresh in section 5, the machine that runs sopuli also has a
-  kubeconfig. It needs only `patch` on ExternalSecrets, which cannot read a
-  Secret, so it still cannot see a password in the cluster.
+  kubeconfig. It needs `get` and `patch` on the named ExternalSecrets, which
+  cannot read a Secret. But `patch` can change an ExternalSecret's whole spec,
+  such as which vault key it reads and which Secret it writes, so limit the
+  role to those ExternalSecrets (section 5 has the role).
 - The credential that lets ESO read your vault is scoped to reading one path. It
   cannot change a database password, because it has no database access at all.
 - Your application never holds a vault credential. It reads a file or an
@@ -299,10 +301,11 @@ applications:
       external_secret: acme-db-credentials
 ```
 
-After `creds apply` or `creds rotate` promotes the document, sopuli runs:
+After `creds apply` or `creds rotate` promotes the document, or rolls it back
+with `--source previous`, sopuli runs:
 
 ```bash
-kubectl --context=dev-cluster --namespace=acme \
+kubectl --context=dev-cluster --namespace=acme --request-timeout=20s \
   annotate externalsecret acme-db-credentials force-sync=<time> --overwrite
 ```
 
@@ -313,13 +316,33 @@ window is still the safe choice.
 
 What this needs:
 
-- `kubectl` on the `PATH` of the machine that runs sopuli, and a kubeconfig with
-  the context named in the block. sopuli never uses the current context.
-- In that context, `patch` on `externalsecrets.external-secrets.io` in the
-  namespace. Nothing more: the annotation is a timestamp, and no password
-  passes through `kubectl`.
+- `kubectl` in a directory on the `PATH` of the machine that runs sopuli. sopuli
+  never runs a `kubectl` from the current directory, or from a relative `PATH`
+  entry.
+- A kubeconfig with the context named in the block. sopuli never uses the
+  current context.
+- In that context, `get` and `patch` on the named ExternalSecrets. `kubectl
+  annotate` reads the object before it patches it, so `patch` alone is refused.
+  Nothing more: the annotation is a timestamp, and no password passes through
+  `kubectl`. Name the ExternalSecrets in the role, because `patch` could change
+  any part of an ExternalSecret it is allowed:
+
+  ```yaml
+  apiVersion: rbac.authorization.k8s.io/v1
+  kind: Role
+  metadata:
+    name: sopuli-refresh
+    namespace: acme
+  rules:
+    - apiGroups: ["external-secrets.io"]
+      resources: ["externalsecrets"]
+      resourceNames: ["acme-db-credentials"]
+      verbs: ["get", "patch"]
+  ```
+
 - A kubeconfig that logs in without a person. `kubectl`'s input is closed, so a
-  login that asks a question fails, and each call stops after 30 seconds.
+  login that asks a question fails. Each call stops after 30 seconds, and after
+  a timeout the other ExternalSecrets on that context are not tried.
 
 A refresh that fails is the warning `SOPULI-W078`, which names the
 ExternalSecret and what `kubectl` said. The run still exits 0: the database and
@@ -508,6 +531,10 @@ tier-1 PostgreSQL 16 container as the database. The application had the
 
 - A `creds apply` straight after reported `IN_SYNC`, `nothing changed`, and
   left the `force-sync` annotation as it was.
+- A service account holding the role above, `get` and `patch` on
+  `acme-db-credentials` only, annotated it (`kubectl --as`). With `patch`
+  alone it was refused: `cannot get resource "externalsecrets"`. With the role,
+  it was refused reading the Secret and annotating another ExternalSecret.
 - With `context: no-such-context`, `creds rotate` promoted, exited 0, and
   printed:
 

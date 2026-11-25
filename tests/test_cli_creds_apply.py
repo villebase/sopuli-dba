@@ -6121,7 +6121,7 @@ def fake_kubectl(
         return subprocess.CompletedProcess(argv, returncode, "", stderr)
 
     def recorded(refs: Any, *, now: Any) -> Any:
-        return refresh_all(refs, now=now, runner=runner, which=lambda _: "kubectl")
+        return refresh_all(refs, now=now, runner=runner, find=lambda: "kubectl")
 
     monkeypatch.setattr("sopuli.cli.refresh_all", recorded)
     return calls

@@ -1,9 +1,9 @@
 """Asking External Secrets Operator to read a promoted document at once (C18).
 
-After ``creds apply`` or ``creds rotate`` promotes documents, each distinct
-ExternalSecret that an application's ``kubernetes:`` block names for them is
-annotated with ``force-sync``. ESO reads the vault again when that annotation
-changes, rather than at its next ``refreshInterval``.
+After ``creds apply`` or ``creds rotate`` promotes documents, or rolls one back,
+each distinct ExternalSecret that an application's ``kubernetes:`` block names
+for them is annotated with ``force-sync``. ESO reads the vault again when that
+annotation changes, rather than at its next ``refreshInterval``.
 
 The tool runs ``kubectl`` with the operator's own kubeconfig. It holds no
 cluster credential, and no secret is on the command line: the annotation is a
@@ -17,8 +17,10 @@ ESO catches up at its next refresh.
 
 from __future__ import annotations
 
-import shutil
+import os
 import subprocess
+import sys
+import tempfile
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import datetime
@@ -30,16 +32,26 @@ from sopuli.config.model import ExternalSecretRef
 #: closed), so it fails or hangs, and this bounds the hang.
 TIMEOUT_SECONDS = 30
 
+#: kubectl's own limit on each request to the API server, below the call's
+#: limit, so an unreachable cluster is reported by kubectl, in its words.
+REQUEST_TIMEOUT = "20s"
+
 #: Kept short in a message: kubectl's own error is the useful part.
 _DETAIL_MAX = 300
 
 
 @dataclass(frozen=True)
 class Refresh:
-    """What happened to one ExternalSecret. ``error`` is ``None`` on success."""
+    """What happened to one ExternalSecret.
+
+    ``error`` is ``None`` on success. ``attempted`` says whether kubectl was
+    run for it at all: not where kubectl was not found, could not start, or an
+    earlier call on the same context timed out.
+    """
 
     external_secret: ExternalSecretRef
     error: str | None = None
+    attempted: bool = True
 
     @property
     def ok(self) -> bool:
@@ -61,6 +73,7 @@ def command(kubectl: str, ref: ExternalSecretRef, stamp: str) -> list[str]:
         kubectl,
         f"--context={ref.context}",
         f"--namespace={ref.namespace}",
+        f"--request-timeout={REQUEST_TIMEOUT}",
         "annotate",
         "externalsecret",
         ref.name,
@@ -69,26 +82,70 @@ def command(kubectl: str, ref: ExternalSecretRef, stamp: str) -> list[str]:
     ]
 
 
+def find_kubectl(path: str | None = None) -> str | None:
+    """``kubectl`` from an absolute ``PATH`` entry, and never from anywhere else.
+
+    Not :func:`shutil.which`: on Windows it looks in the current directory
+    before ``PATH``, so a ``kubectl.exe`` in a checked-out repository would run
+    with the operator's kubeconfig. An empty or relative ``PATH`` entry is
+    skipped for the same reason.
+    """
+    entries = (os.environ.get("PATH", "") if path is None else path).split(os.pathsep)
+    if sys.platform == "win32":
+        extensions = [ext for ext in os.environ.get("PATHEXT", ".EXE").split(os.pathsep) if ext]
+        names = [f"kubectl{ext.lower()}" for ext in extensions]
+    else:
+        names = ["kubectl"]
+    for entry in entries:
+        if not entry or not os.path.isabs(entry):
+            continue
+        for name in names:
+            candidate = os.path.join(entry, name)
+            if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+                return candidate
+    return None
+
+
 def refresh_all(
     refs: Iterable[ExternalSecretRef],
     *,
     now: datetime,
     runner: Runner | None = None,
-    which: Callable[[str], str | None] = shutil.which,
+    find: Callable[[], str | None] = find_kubectl,
 ) -> list[Refresh]:
-    """Annotate each ExternalSecret once, in a stable order."""
+    """Annotate each ExternalSecret once, in a stable order.
+
+    After a call times out, the others on the same context are not tried: the
+    cluster did not answer, and each would wait out the same limit.
+    """
     distinct = sorted(set(refs), key=lambda ref: (ref.context, ref.namespace, ref.name))
     if not distinct:
         return []
-    kubectl = which("kubectl")
+    kubectl = find()
     if kubectl is None:
-        return [
-            Refresh(ref, "kubectl was not found on PATH, so ESO was not asked to refresh")
-            for ref in distinct
-        ]
-    stamp = str(int(now.timestamp()))
+        return [Refresh(ref, "kubectl was not found on PATH", attempted=False) for ref in distinct]
+    # Microseconds, so two runs in one second still change the annotation, and
+    # ESO sees each one.
+    stamp = now.strftime("%Y%m%dT%H%M%S.%fZ")
     run = runner if runner is not None else _run
-    return [_refresh_one(run, command(kubectl, ref, stamp), ref) for ref in distinct]
+    results: list[Refresh] = []
+    timed_out: set[str] = set()
+    for ref in distinct:
+        if ref.context in timed_out:
+            results.append(
+                Refresh(
+                    ref,
+                    "not tried: an earlier call on this context did not finish in "
+                    f"{TIMEOUT_SECONDS} seconds",
+                    attempted=False,
+                )
+            )
+            continue
+        result = _refresh_one(run, command(kubectl, ref, stamp), ref)
+        if result.error is not None and result.error.startswith("kubectl did not finish"):
+            timed_out.add(ref.context)
+        results.append(result)
+    return results
 
 
 def _refresh_one(run: Runner, argv: list[str], ref: ExternalSecretRef) -> Refresh:
@@ -97,7 +154,9 @@ def _refresh_one(run: Runner, argv: list[str], ref: ExternalSecretRef) -> Refres
     except subprocess.TimeoutExpired:
         return Refresh(ref, f"kubectl did not finish in {TIMEOUT_SECONDS} seconds")
     except OSError as error:
-        return Refresh(ref, f"kubectl could not be started: {error.strerror or error}")
+        return Refresh(
+            ref, f"kubectl could not be started: {error.strerror or error}", attempted=False
+        )
     if completed.returncode != 0:
         return Refresh(ref, f"kubectl exited {completed.returncode}: {_detail(completed)}")
     return Refresh(ref)
@@ -113,14 +172,22 @@ def _detail(completed: subprocess.CompletedProcess[str]) -> str:
 
 
 def _run(argv: list[str]) -> subprocess.CompletedProcess[str]:
-    """One kubectl call: no shell, stdin closed, output captured, bounded in time."""
-    return subprocess.run(  # noqa: S603 - a fixed argument list, no shell
-        argv,
-        stdin=subprocess.DEVNULL,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=TIMEOUT_SECONDS,
-        check=False,
-    )
+    """One kubectl call: no shell, stdin closed, bounded in time.
+
+    Output goes to temporary files, not pipes. An exec credential plugin that
+    kubectl starts can outlive kubectl and keep a pipe open, and then reading
+    the pipe after the timeout would wait for the plugin. A file has no such
+    wait, so the limit holds.
+    """
+    with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
+        process = subprocess.run(  # noqa: S603 - a fixed argument list, no shell
+            argv,
+            stdin=subprocess.DEVNULL,
+            stdout=out,
+            stderr=err,
+            timeout=TIMEOUT_SECONDS,
+            check=False,
+        )
+        err.seek(0)
+        stderr = err.read().decode("utf-8", errors="replace")
+    return subprocess.CompletedProcess(argv, process.returncode, "", stderr)

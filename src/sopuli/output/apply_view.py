@@ -328,15 +328,15 @@ def _actions(
 
 
 def refresh_action(refresh: Refresh) -> dict[str, Any]:
-    """The ``external_secret_refresh`` action: ``applied`` because kubectl ran,
-    and the detail says whether ESO took the request (C18)."""
+    """The ``external_secret_refresh`` action (C18). ``applied`` is whether
+    kubectl ran for it, and the detail says whether ESO took the request."""
     where = describe(refresh.external_secret)
     detail = (
         f"asked ESO to refresh {where}"
         if refresh.ok
         else f"could not ask ESO to refresh {where}: {refresh.error}"
     )
-    return {"kind": "external_secret_refresh", "applied": True, "detail": detail}
+    return {"kind": "external_secret_refresh", "applied": refresh.attempted, "detail": detail}
 
 
 def _attempted(result: VerifyResult | None) -> bool:

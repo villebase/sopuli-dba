@@ -748,7 +748,8 @@ An application whose `kubernetes:` block names an ExternalSecret
 (`01-configuration.md` §3) reads its password through External Secrets
 Operator. Once every promotion of the run is written, the tool runs
 `kubectl annotate externalsecret … force-sync=<time> --overwrite` once for each
-ExternalSecret whose document was promoted. ESO then copies the new `current`
+ExternalSecret whose document was promoted, by a rotation or by a rollback with
+`--source previous`. ESO then copies the new `current`
 into the Kubernetes Secret at once, not at its next `refreshInterval`. A
 document that was not promoted is not refreshed, so a run that changes nothing
 sends nothing. The refresh comes after the promotion, so ESO never reads a

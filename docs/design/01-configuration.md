@@ -889,13 +889,15 @@ The context sits on the application, not on the target. One database can serve
 tenants whose applications run on different clusters, and only the application
 entry knows where its application runs.
 
-After `creds apply` or `creds rotate` promotes a document, the tool runs
+After `creds apply` or `creds rotate` promotes a document, a rollback with
+`--source previous` included, the tool runs
 `kubectl annotate externalsecret <name> force-sync=<time> --overwrite`, with
 `--context=` and `--namespace=` from the block, once for each ExternalSecret
-(UC-1 §5, #1706). `kubectl` comes from `PATH` and uses the operator's own
-kubeconfig, so the tool needs no cluster credential, and the kubeconfig needs
-only `patch` on ExternalSecrets. A failure is `SOPULI-W078`, and the exit code
-does not change. `--dry-run` lists each ExternalSecret under the plan, and
+(UC-1 §5, #1706). `kubectl` comes from an absolute `PATH` entry, never from the
+current directory, and uses the operator's own kubeconfig, so the tool needs no
+cluster credential. The kubeconfig needs `get` and `patch` on the named
+ExternalSecrets ([kubernetes-eso.md](../scenarios/kubernetes-eso.md) §5). A failure is `SOPULI-W078`,
+and the exit code does not change. `--dry-run` lists each ExternalSecret under the plan, and
 `config show --resolved` shows it beside each binding. The block was added in
 config schema 5.5 (#1705).
 

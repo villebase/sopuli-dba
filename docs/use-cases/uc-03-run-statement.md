@@ -25,8 +25,9 @@ refused at plan time by `require_command`, with `SOPULI-20006`, never by a
 version check (invariant 4). The umbrella issue is #1657.
 
 UC-3 on PostgreSQL is in progress, under #1689. Its statement check is built
-(§3, #1692), and so is its runner (§3, §4, #1693). `sql run` still refuses a
-PostgreSQL target.
+(§3, #1692), and so are its runner (§3, §4, #1693) and the refusal of a
+run-as role that holds the service role's privileges (§2, #1700). `sql run`
+still refuses a PostgreSQL target.
 
 ---
 
@@ -144,6 +145,21 @@ others.
    `SYS_CONTEXT('USERENV','SESSION_USER')`, and compares it with the service
    account's user name from the config. One match refuses the run on every
    target, before any statement runs. The error is `SOPULI-20010`.
+
+   On PostgreSQL a login role can hold another role's privileges without
+   logging in as it, so two more reads refuse the run the same way. The
+   tool reads `current_user`, which differs from the session user where the
+   login role has a default role (`ALTER ROLE … SET role`), and refuses it
+   when it is the service account. It also reads `pg_auth_members`, and
+   refuses a login role that is a member of the service role, directly or
+   through other roles, whatever the membership's `INHERIT` or `SET` option:
+   a member without `INHERIT` can still take the role with
+   `set_config('role', …)`. A superuser is not counted as a member, because
+   it gains nothing from the service role. A superuser login whose default
+   role is a member is refused, because its statements run as that member.
+   Every role may read
+   `pg_auth_members`. On Oracle one user is never granted to another, so
+   neither read applies ([#1690](../decisions/log.md#1690)).
 
    There is a gap here, and it is accepted. When `admin:` is `external`, the
    config holds no service-account name, so the session check has nothing to
@@ -285,7 +301,9 @@ targets, never all of them. `max_targets` applies unchanged (invariant 10).
 - the sorted list of resolved targets, each with its name, its `dsn`, the
   user its session became, and its database identity, read when the tool
   connects. On Oracle that is `DB_UNIQUE_NAME` and `CON_NAME`, and on
-  PostgreSQL the cluster's `system_identifier` and `current_database()`. The
+  PostgreSQL the cluster's `system_identifier` and `current_database()`. Where
+  a PostgreSQL session starts as another role, that role is in the hash too,
+  so a default role set between the dry run and the real run changes it. The
   session user is what the
   database reports, so an `external` login that reaches another user changes
   the hash. A target that did not connect, or that failed after it logged in,

@@ -76,11 +76,17 @@ class FakeSession:
         user: str = "DBA_ALPHA",
         identity_error: Exception | None = None,
         user_error: Exception | None = None,
+        current: str | None = None,
+        member_of: tuple[str, ...] = (),
     ) -> None:
         self.target = target
         self.result = result or answer()
         self.error = error
         self.user = user
+        #: The role statements run as, where it is not ``user``.
+        self.current = current
+        #: The roles the session's user is a member of.
+        self.roles = member_of
         self.identity_error = identity_error
         self.user_error = user_error
         self.calls: list[dict[str, Any]] = []
@@ -97,6 +103,12 @@ class FakeSession:
         if self.user_error is not None:
             raise self.user_error
         return self.user
+
+    def current_user(self) -> str:
+        return self.current or self.user
+
+    def member_of(self, account: str) -> bool:
+        return account.upper() in (role.upper() for role in self.roles)
 
     def database_identity(self) -> tuple[str, str]:
         self.identity_reads += 1
@@ -449,6 +461,31 @@ def test_session_user_is_service_account_refuses_all(
     assert len(sessions["opened"]) == 2
     assert all(session.calls == [] for session in sessions["opened"])
     assert all(session.closed for session in sessions["opened"])
+
+
+@pytest.mark.parametrize(
+    ("session", "words"),
+    [
+        (FakeSession("qa-alpha", current="c##sopuli_svc"), "starts as 'c##sopuli_svc'"),
+        (FakeSession("qa-alpha", member_of=("APP_OWNER", "C##SOPULI_SVC")), "is a member of"),
+    ],
+    ids=["starts as", "member"],
+)
+def test_a_session_with_the_service_account_privileges_refuses_all(
+    write_config: WriteConfig, sessions: dict[str, Any], session: FakeSession, words: str
+) -> None:
+    """A login that starts as the service account, or is a member of it, gets
+    its privileges, so the run is refused as for the name itself (#1690)."""
+    sessions["qa-alpha"] = session
+
+    result = sql_run(write_config, json_out=True)
+
+    assert exit_of(result) == ExitCode.ABORTED, result.output
+    error = document(result)["error"]
+    assert error["code"] == "SOPULI-20010"
+    assert words in error["message"]
+    assert all(one.calls == [] for one in sessions["opened"])
+    assert all(one.closed for one in sessions["opened"])
 
 
 def test_json_validates_against_1_109(write_config: WriteConfig, sessions: dict[str, Any]) -> None:

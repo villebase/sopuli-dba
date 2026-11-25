@@ -138,9 +138,125 @@ def _values(live_postgres: Any, role: dict[str, str]) -> list[tuple[Any, ...]]:
 
 def test_the_session_user_and_the_identity(session: Any, role: dict[str, str]) -> None:
     assert session.session_user() == role["name"]
+    assert session.current_user() == role["name"]
     system, database = session.database_identity()
     assert system.isdigit()
     assert database == "postgres"
+
+
+@pytest.fixture
+def service(live_postgres: Any, role: dict[str, str]) -> Iterator[dict[str, str]]:
+    """A stand-in for the service role, ``svc``, and a role ``mid`` between it
+    and the run-as role when a test grants one. NOLOGIN, dropped afterwards."""
+    import psycopg
+
+    suffix = uuid.uuid4().hex[:8]
+    names = {"svc": f"sopuli_svc_{suffix}", "mid": f"sopuli_mid_{suffix}"}
+    with _connect(live_postgres, live_postgres.user, live_postgres.password) as admin:
+        for name in names.values():
+            admin.execute(f'create role "{name}" nologin')
+    try:
+        yield names
+    finally:
+        with _connect(live_postgres, live_postgres.user, live_postgres.password) as admin:
+            with suppress(psycopg.Error):
+                admin.execute(f'alter role "{role["name"]}" reset role')
+            for name in names.values():
+                with suppress(psycopg.Error):
+                    admin.execute(f'drop role "{name}"')
+
+
+def _as_superuser(live_postgres: Any, *statements: str) -> None:
+    with _connect(live_postgres, live_postgres.user, live_postgres.password) as admin:
+        for statement in statements:
+            admin.execute(statement)
+
+
+def test_a_role_that_is_not_a_member_is_not(session: Any, service: dict[str, str]) -> None:
+    assert session.member_of(service["svc"]) is False
+
+
+def test_a_direct_member_is_one(
+    live_postgres: Any, role: dict[str, str], service: dict[str, str]
+) -> None:
+    _as_superuser(live_postgres, f'grant "{service["svc"]}" to "{role["name"]}"')
+    opened = _open(live_postgres, role)
+    try:
+        assert opened.member_of(service["svc"]) is True
+        # Compared by upper(), as invariant 5 compares names.
+        assert opened.member_of(service["svc"].upper()) is True
+    finally:
+        opened.close()
+
+
+def test_a_member_through_another_role_is_one(
+    live_postgres: Any, role: dict[str, str], service: dict[str, str]
+) -> None:
+    # Without INHERIT on the path, too: SET ROLE still reaches it.
+    _as_superuser(
+        live_postgres,
+        f'grant "{service["svc"]}" to "{service["mid"]}"',
+        f'grant "{service["mid"]}" to "{role["name"]}"',
+        f'alter role "{role["name"]}" noinherit',
+    )
+    opened = _open(live_postgres, role)
+    try:
+        assert opened.member_of(service["svc"]) is True
+    finally:
+        opened.close()
+        _as_superuser(live_postgres, f'alter role "{role["name"]}" inherit')
+
+
+def test_a_superuser_is_not_counted(
+    live_postgres: Any, role: dict[str, str], service: dict[str, str]
+) -> None:
+    _as_superuser(
+        live_postgres,
+        f'grant "{service["svc"]}" to "{role["name"]}"',
+        f'alter role "{role["name"]}" superuser',
+    )
+    opened = _open(live_postgres, role)
+    try:
+        assert opened.member_of(service["svc"]) is False
+    finally:
+        opened.close()
+        _as_superuser(live_postgres, f'alter role "{role["name"]}" nosuperuser')
+
+
+def test_a_default_role_is_the_current_user(
+    live_postgres: Any, role: dict[str, str], service: dict[str, str]
+) -> None:
+    _as_superuser(
+        live_postgres,
+        f'grant "{service["svc"]}" to "{role["name"]}"',
+        f'alter role "{role["name"]}" set role = "{service["svc"]}"',
+    )
+    opened = _open(live_postgres, role)
+    try:
+        assert opened.session_user() == role["name"]
+        assert opened.current_user() == service["svc"]
+    finally:
+        opened.close()
+
+
+def test_a_superuser_starting_as_a_member_is_one(
+    live_postgres: Any, role: dict[str, str], service: dict[str, str]
+) -> None:
+    # The login is a superuser and no member, but its statements run as
+    # `mid`, which is an ordinary role and a member of the service role.
+    _as_superuser(
+        live_postgres,
+        f'grant "{service["svc"]}" to "{service["mid"]}"',
+        f'alter role "{role["name"]}" superuser',
+        f'alter role "{role["name"]}" set role = "{service["mid"]}"',
+    )
+    opened = _open(live_postgres, role)
+    try:
+        assert opened.current_user() == service["mid"]
+        assert opened.member_of(service["svc"]) is True
+    finally:
+        opened.close()
+        _as_superuser(live_postgres, f'alter role "{role["name"]}" nosuperuser')
 
 
 def test_a_read_returns_columns_and_rows(session: Any) -> None:

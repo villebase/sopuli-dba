@@ -83,8 +83,9 @@ class WriteSession(FakeSession):
         identity: tuple[str, str] = ("FREE", "FREEPDB1"),
         error: Exception | None = None,
         user: str = "DBA_ALPHA",
+        current: str | None = None,
     ) -> None:
-        super().__init__(target, error=error, user=user)
+        super().__init__(target, error=error, user=user, current=current)
         self.count = count
         self.identity = identity
         self.closes = 0
@@ -503,6 +504,20 @@ def test_plan_changes_when_the_session_user_changes(
     """An `external` run-as login that now becomes another user is another plan."""
     before = dry_hash(write_config, fleet, *ALL, "--expect-rows", "1")
     fleet["b-beta"] = WriteSession("b-beta", user="DBA_OTHER")
+
+    result = sql(write_config, "--write", *ALL, "--expect-rows", "1", "--plan", before)
+
+    assert exit_of(result) == ExitCode.ABORTED, result.output
+    assert fleet["b-beta"].calls == []
+
+
+def test_plan_changes_when_the_session_starts_as_another_role(
+    write_config: WriteConfig, fleet: dict[str, Any]
+) -> None:
+    """A login role given a default role between the dry run and the real run
+    runs its statements with other rights, so it is another plan (#1700)."""
+    before = dry_hash(write_config, fleet, *ALL, "--expect-rows", "1")
+    fleet["b-beta"] = WriteSession("b-beta", current="ACME_OWNER")
 
     result = sql(write_config, "--write", *ALL, "--expect-rows", "1", "--plan", before)
 

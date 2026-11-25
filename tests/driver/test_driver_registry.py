@@ -269,7 +269,7 @@ def test_a_command_the_driver_is_not_written_for_is_refused() -> None:
         "can run only `doctor`, `account expire-password`, `account list`, "
         "`account reset-password`, `account suspend`, `creds apply`, `creds check`, "
         "`creds finish-rollover`, `creds generate`, `creds rotate`, `creds status`, "
-        "`report accounts`, `report history`, `report privileges` there yet"
+        "`report accounts`, `report history`, `report privileges`, `sql run` there yet"
     ) in refused.value.message
     assert "`account unlock` is not written for it" in str(refused.value.hint)
 
@@ -329,16 +329,18 @@ def test_account_list_is_let_through_on_postgresql() -> None:
     require_command(target("pg-dev", "postgresql"), "account.list")
 
 
-@pytest.mark.parametrize("kind", ["postgresql", "mysql", "mariadb", "mssql"])
-def test_sql_run_is_refused_on_every_product_but_oracle(kind: str) -> None:
-    """UC-3 is written for Oracle only (#1661). The shared set does not list it."""
+@pytest.mark.parametrize("kind", ["mysql", "mariadb", "mssql"])
+def test_sql_run_is_refused_where_it_is_not_written(kind: str) -> None:
+    """UC-3 is written for Oracle (#1661) and PostgreSQL (#1694). The shared
+    set does not list it."""
     assert "sql.run" not in CONNECTING_COMMANDS
     with pytest.raises(DriverNotImplementedError):
         require_command(target("dev", kind), "sql.run")
 
 
-def test_sql_run_is_let_through_on_oracle() -> None:
-    require_command(target(), "sql.run")
+@pytest.mark.parametrize("kind", ["oracle", "postgresql"])
+def test_sql_run_is_let_through_where_it_is_written(kind: str) -> None:
+    require_command(target("dev", kind), "sql.run")
 
 
 def test_a_driver_written_for_every_command_refuses_none() -> None:
@@ -389,8 +391,12 @@ def test_the_finished_drivers_share_the_connecting_commands(kind: str) -> None:
     """One shared set, so a new command reaches every finished product at once
     (#1636). A copy per driver once left out `creds status` on SQL Server
     (#1631). A new product's driver, built one command at a time, lists a set
-    of its own until it is finished."""
-    assert DRIVERS[kind].commands is CONNECTING_COMMANDS
+    of its own until it is finished. Beyond the shared set a finished driver
+    lists only `sql run`, which is written one product at a time (UC-3)."""
+    commands = DRIVERS[kind].commands
+    assert commands is not None
+    assert commands >= CONNECTING_COMMANDS
+    assert commands - CONNECTING_COMMANDS <= {"sql.run"}
 
 
 def test_every_creds_account_and_report_verb_is_a_connecting_command() -> None:

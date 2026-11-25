@@ -306,6 +306,34 @@ def test_values_become_json(session: Any) -> None:
     )
 
 
+def test_dates_python_cannot_hold_are_the_servers_text(session: Any) -> None:
+    # `account reset-password` sets VALID UNTIL 'infinity', so a read of
+    # pg_roles meets one.
+    result = _run(
+        session,
+        "SELECT 'infinity'::timestamptz, '-infinity'::timestamp, 'infinity'::date, "
+        "'0044-03-15 BC'::date, '10000-01-01'::date, '2026-11-25 10:00:00+00'::timestamptz",
+    )
+
+    assert result.rows[0][:5] == (
+        "infinity",
+        "-infinity",
+        "infinity",
+        "0044-03-15 BC",
+        "10000-01-01",
+    )
+    # A date Python holds is still read as one.
+    assert result.rows[0][5].startswith("2026-11-25T")
+
+
+def test_a_record_is_json_text_and_a_long_value_is_cut(session: Any) -> None:
+    result = _run(session, "SELECT ROW(1, 'a'), repeat('x', 5000)::xml")
+
+    assert result.rows[0][0] == '["1", "a"]'
+    assert result.rows[0][1] == "x" * 4000
+    assert result.truncated is True
+
+
 @pytest.mark.parametrize(
     ("text", "code"),
     [

@@ -8,7 +8,6 @@ the command's text, its JSON and its exit codes.
 from __future__ import annotations
 
 import json
-from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -302,17 +301,18 @@ def test_all_down_exit_1(write_config: WriteConfig, sessions: dict[str, Any]) ->
     assert result.exit_code == ExitCode.FAILURE, result.output
 
 
-def test_non_oracle_target_refused_20006(
+MYSQL_TARGET = (
+    "  - name: my-alpha\n"
+    "    type: mysql\n"
+    "    dsn: mysql.example.com:3306\n"
+    '    admin: { username: "sopuli_svc@%", auth: { method: env } }\n'
+)
+
+
+def test_a_target_of_a_product_it_does_not_run_on_is_skipped_20006(
     write_config: WriteConfig, sessions: dict[str, Any]
 ) -> None:
-    config = (
-        f"version: 1\ndefaults:\n{RUN_AS}targets:\n"
-        "  - name: pg-alpha\n"
-        "    type: postgresql\n"
-        "    dsn: pg.example.com:5432\n"
-        "    postgres: { database: acme }\n"
-        "    admin: { username: sopuli_svc, auth: { method: env } }\n"
-    )
+    config = f"version: 1\ndefaults:\n{RUN_AS}targets:\n{MYSQL_TARGET}"
 
     result = sql_run(write_config, config=config, json_out=True)
 
@@ -340,7 +340,7 @@ ORACLE_ONLY = "SELECT q'[it's]' FROM dual; -- n\n"
 def test_a_skipped_product_does_not_check_the_statement(
     write_config: WriteConfig, sessions: dict[str, Any]
 ) -> None:
-    config = f"version: 1\ndefaults:\n{RUN_AS}{TARGETS}{PG_TARGET}"
+    config = f"version: 1\ndefaults:\n{RUN_AS}{TARGETS}{MYSQL_TARGET}"
 
     result = sql_run(write_config, config=config, statement=ORACLE_ONLY)
 
@@ -351,13 +351,8 @@ def test_a_skipped_product_does_not_check_the_statement(
 
 
 def test_each_product_that_runs_checks_the_statement(
-    write_config: WriteConfig, sessions: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+    write_config: WriteConfig, sessions: dict[str, Any]
 ) -> None:
-    postgres = DRIVERS["postgresql"]
-    assert postgres.commands is not None
-    monkeypatch.setitem(
-        DRIVERS, "postgresql", replace(postgres, commands=postgres.commands | {"sql.run"})
-    )
     config = f"version: 1\ndefaults:\n{RUN_AS}{TARGETS}{PG_TARGET}"
 
     result = sql_run(write_config, config=config, statement=ORACLE_ONLY, json_out=True)

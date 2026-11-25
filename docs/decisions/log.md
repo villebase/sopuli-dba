@@ -447,6 +447,41 @@ the register.
   never part of this question.
 - **Rejected:** See D10.
 
+## C18
+
+- **Decided:** 2026-11-25, #1702
+- **Question:** An application in Kubernetes that reads its password through
+  External Secrets Operator (ESO) gets a new one only at ESO's next
+  `refreshInterval`, up to an hour after the promotion
+  ([kubernetes-eso.md](../scenarios/kubernetes-eso.md) §5). Should the tool tell Kubernetes about a
+  new password, and how?
+- **Decision:** the maintainer's, A: an application entry may name the
+  ExternalSecret that reads its document, in a `kubernetes:` block with
+  `context`, `namespace` and `external_secret`. After `creds apply` or
+  `creds rotate` promotes a document, the tool runs `kubectl annotate
+  externalsecret … force-sync=<time> --overwrite` with that context and
+  namespace (#1706). A failed refresh is a warning, and the exit code does not
+  change. The block resolves like a secret ref: §7's tokens, and `overrides:`
+  patch it key by key. Option B, writing a Secret where there is no ESO, is
+  C19, still open (#1704).
+- **Why:** no secret passes to `kubectl`, so invariants 1 and 2 do not change.
+  The kubeconfig needs only `get` and `patch` on the named ExternalSecrets,
+  which cannot read a Secret (measured in #1706). The refresh comes after
+  the promotion, so ESO never reads a password the databases do not have. A
+  failure leaves the database and the vault right, and ESO catches up at its
+  next refresh, so it is not a reason to fail the run. The context sits on the
+  application, not the target, because one database can serve tenants whose
+  applications run on different clusters. `kubectl` is a prerequisite only
+  for a config that has the block, and that operator already uses it. The
+  `file` store's decision ([#1415](#1415)) refused gpg as a subprocess because
+  every user of the store would need it.
+- **Rejected:** B, writing one key of an existing Secret, is not rejected but
+  split out as C19. C, no Kubernetes step, which leaves a rotation without a
+  rollover window as an outage of up to `refreshInterval`. A context taken from
+  the target, or from the kubeconfig's current context: the first cannot
+  express one database serving two clusters, and the second sends the refresh
+  to whichever cluster the operator last used.
+
 ## P1
 
 - **Decided:** 2026-10-03, #615

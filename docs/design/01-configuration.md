@@ -11,7 +11,7 @@ Put the binding keys at the top level and the file reads like a straightforward
 target list. This is the shape most users will ever need.
 
 ```yaml
-# yaml-language-server: $schema=./sopuli-config-5.4.schema.json
+# yaml-language-server: $schema=./sopuli-config-5.5.schema.json
 version: 1
 
 vaults: {}          # named secret stores
@@ -487,7 +487,7 @@ PDB per tenant across three environments, HashiCorp Vault as master. It needs no
 `applications:` section.
 
 ```yaml
-# yaml-language-server: $schema=./sopuli-config-5.4.schema.json
+# yaml-language-server: $schema=./sopuli-config-5.5.schema.json
 version: 1
 
 runtime:
@@ -813,7 +813,8 @@ sopuli creds rotate --app acme --select env=dev    # --app is an accepted alias
 | `secret` / `secret_template` | SecretRef, literal or templated (§7). Mutually exclusive: one entry uses one of them |
 | `policy` | policy name |
 | `oracle` | vendor-specific options, e.g. `container_clause` |
-| `overrides` | list of `{ where: {labels}, ...keys }` patches applied to matching targets. `where` is required, and the patchable keys are `vault`, `secret`, `secret_template`, `policy` and `oracle` — **not `accounts`**, see §10 |
+| `kubernetes` | the ExternalSecret that reads this entry's documents: `context`, `namespace` and `external_secret`. Optional. See *`kubernetes:` on an application* below |
+| `overrides` | list of `{ where: {labels}, ...keys }` patches applied to matching targets. `where` is required, and the patchable keys are `vault`, `secret`, `secret_template`, `policy`, `oracle` and `kubernetes` — **not `accounts`**, see §10 |
 
 `where:` matches **labels**, so it reaches generated targets by their dimension
 values and explicit ones by the `labels:` they declare. `environment` is a field
@@ -832,10 +833,65 @@ Resolution, once a target is selected — implemented in `sopuli/config/bindings
 | `secret` / `secret_template` | the last matching override's, else the entry's. The tokens are then expanded per account and target (§7) |
 | `vault` | the ref's own `vault:` prefix if it has one, else the last matching override's, else the entry's, else the target's, else `defaults.vault` |
 | `policy` | the last matching override's, else the entry's, else `defaults.policy` |
+| `kubernetes` | key by key: each key from the last matching override that sets it, else the entry's. The tokens are then expanded per account and target |
 
 This is the chain the file itself describes. The `SOPULI_*` and command-line
 layers above it are P3's and belong to the precedence resolver, not here — a
 config file can be read without knowing what environment it will be read in.
+
+### `kubernetes:` on an application
+
+An application in Kubernetes can read its password through External Secrets
+Operator (ESO), which copies `current` from the vault into a Kubernetes Secret at
+each `refreshInterval` ([kubernetes-eso.md](../scenarios/kubernetes-eso.md)). The `kubernetes:` block
+names the ExternalSecret that reads this entry's documents, so that ESO can be
+asked to read again as soon as a document is promoted, not up to an hour later
+([C18](../decisions/log.md#c18)).
+
+```yaml
+applications:
+  - name: acme
+    targets: { group: app-pdbs }
+    accounts: [acme_web_user]
+    secret_template: "tenants/{tenant}#DB_CREDENTIALS/{account}"
+    kubernetes:
+      context: "{env}-cluster"           # a kubeconfig context, always named
+      namespace: "acme-{tenant}"
+      external_secret: acme-db
+    overrides:
+      - where: { tenant: gamma }         # gamma's application runs on another cluster
+        kubernetes: { context: test-b-cluster }
+```
+
+| Key | Meaning |
+|---|---|
+| `context` | the kubeconfig context, as `kubectl config get-contexts` lists it. The kubeconfig's current context is never used |
+| `namespace` | the ExternalSecret's namespace |
+| `external_secret` | the ExternalSecret's name |
+
+Each value may hold §7's tokens. `overrides:` patch the block key by key, so an
+override can change only the context for some targets. Once the entry and the
+overrides that match a target set any key, all three are required. A config
+that sets only some is refused when the file is read, because a refresh needs
+the exact cluster, namespace and name. The block also needs a secret ref,
+because the refresh follows a promotion of the document the ref names.
+
+After expansion, `namespace` must be a DNS-1123 label and `external_secret` a
+DNS-1123 subdomain, the names Kubernetes accepts: lowercase letters, digits and
+`-` (and `.` between the parts of a name). `{account}` rarely fits, because an
+account name usually has `_`. A context may be any printable name that does not
+start with `-` or start or end with a space.
+
+A refusal about the block as a whole, such as a missing key, names the target
+and points at the first block that applies to it, the entry's or an override's.
+
+The context sits on the application, not on the target. One database can serve
+tenants whose applications run on different clusters, and only the application
+entry knows where its application runs.
+
+The block is read and checked when the file is read. No command uses it yet:
+the refresh after a promotion, and the block in `config show`, are #1706. It
+was added in config schema 5.5 (#1705).
 
 ---
 
@@ -4003,7 +4059,7 @@ error message for a file this long.
 ## 9b. The published schema
 
 P3 requires a published JSON Schema. It is
-[`docs/schemas/sopuli-config-5.4.schema.json`](../schemas/sopuli-config-5.4.schema.json),
+[`docs/schemas/sopuli-config-5.5.schema.json`](../schemas/sopuli-config-5.5.schema.json),
 Draft 2020-12, and it exists for the editor rather than for the tool: pointed at
 from a YAML language server, it gives completion and inline errors while somebody
 is editing a 130-line file, which is worth more than the validation itself.
@@ -4014,7 +4070,7 @@ the same constants the builders validate with — `TARGET_KEYS`, `VAULT_TYPES`,
 a section's keys and its type table disagree. Regenerate with:
 
 ```
-python -m sopuli.config.schema > docs/schemas/sopuli-config-5.4.schema.json
+python -m sopuli.config.schema > docs/schemas/sopuli-config-5.5.schema.json
 ```
 
 `tests/config/test_schema.py` fails when the committed file is not what the model
@@ -4101,7 +4157,7 @@ A schema nothing is pointed at is a file in a directory. The association is made
 from the config file itself, with a comment on the first line:
 
 ```yaml
-# yaml-language-server: $schema=./sopuli-config-5.4.schema.json
+# yaml-language-server: $schema=./sopuli-config-5.5.schema.json
 version: 1
 ```
 
@@ -4112,7 +4168,7 @@ description the generator wrote for it, and an unknown key is underlined where i
 was typed.
 
 **The path is relative to the YAML file**, not to the repository. Copy the schema
-next to the config, or point at it where it lives — `$schema=../sopuli-dba/docs/schemas/sopuli-config-5.4.schema.json`
+next to the config, or point at it where it lives — `$schema=../sopuli-dba/docs/schemas/sopuli-config-5.5.schema.json`
 is as valid as the form above.
 
 **The `$id` inside the schema is an identifier, not an address.** It reads like a
@@ -4504,3 +4560,5 @@ notices until a rotation.
 | C15 | ~~A binding names a secret and no store, anywhere — refuse, warn, or leave it to plan time?~~ | **decided in #118: mostly plan time, refused only when nothing could ever complete it** (§10). Reasons: [C15](../decisions/log.md#c15) |
 | C16 | ~~What does `--vault-token` take? Every document treated it as a step in a chain and none said what an operator types after it~~ | **decided: nothing.** `--vault-token-file PATH` instead, and a bare `--vault-token` is refused. See [ADR-007](../decisions/adr-007-vault-token-flag.md). Reasons: [C16](../decisions/log.md#c16) |
 | C17 | ~~P5 requires confirmation "by default" when a target is `environment: prod` or the blast radius exceeds `max_targets`; §9 forbids a built-in that joins a ratchet. Both are binding and they cannot both hold~~ | **decided: §9 governs, and P5 is reworded** (#294). Reasons: [C17](../decisions/log.md#c17) |
+| C18 | ~~Should the tool tell Kubernetes about a new password, and how?~~ | **decided** (#1702): an application's `kubernetes:` block names the ExternalSecret that ESO refreshes after a promotion (§3). Reasons: [C18](../decisions/log.md#c18) |
+| C19 | Where there is no ESO, should the tool write one key of an existing Kubernetes Secret itself? | open (#1704): the mechanism and the decisions it needs are in #1702, option B |

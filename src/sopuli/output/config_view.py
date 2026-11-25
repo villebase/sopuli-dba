@@ -938,25 +938,35 @@ def _binding_sections(config: Config) -> list[tuple[str, list[str]]]:
 
 
 def _binding_rows(bindings: Sequence[Binding]) -> list[str]:
-    return render_table(
-        [
-            Column("TARGET", _NAME),
-            Column("ACCOUNT", _NAME),
-            Column("SECRET", _REF),
-            Column("VAULT", _NAME),
-            Column("POLICY"),
-        ],
-        [
-            [
-                binding.target,
-                binding.account,
-                _or_dash(str(binding.secret) if binding.secret is not None else None),
-                _or_dash(binding.vault),
-                _or_dash(binding.policy),
-            ]
-            for binding in bindings
-        ],
-    )
+    """One row per binding. The EXTERNAL SECRET column (C18) is there only
+    where some binding of the application names one, so an estate without
+    Kubernetes reads as before."""
+    columns = [
+        Column("TARGET", _NAME),
+        Column("ACCOUNT", _NAME),
+        Column("SECRET", _REF),
+        Column("VAULT", _NAME),
+        Column("POLICY"),
+    ]
+    refreshes = any(binding.external_secret is not None for binding in bindings)
+    if refreshes:
+        columns.append(Column("EXTERNAL SECRET"))
+    rows = []
+    for binding in bindings:
+        row = [
+            binding.target,
+            binding.account,
+            _or_dash(str(binding.secret) if binding.secret is not None else None),
+            _or_dash(binding.vault),
+            _or_dash(binding.policy),
+        ]
+        if refreshes:
+            ref = binding.external_secret
+            row.append(
+                _or_dash(None if ref is None else f"{ref.context}:{ref.namespace}/{ref.name}")
+            )
+        rows.append(row)
+    return render_table(columns, rows)
 
 
 # ------------------------------------------------------------------ json ---
@@ -1079,7 +1089,7 @@ def _target_safety_json(expanded: ExpandedTarget) -> dict[str, Any] | None:
 
 
 def _binding_json(binding: Binding) -> dict[str, Any]:
-    return {
+    entry: dict[str, Any] = {
         "application": binding.application,
         "account": binding.account,
         "target": binding.target,
@@ -1091,6 +1101,14 @@ def _binding_json(binding: Binding) -> dict[str, Any]:
         "vault": binding.vault,
         "policy": binding.policy,
     }
+    if binding.external_secret is not None:
+        ref = binding.external_secret
+        entry["external_secret"] = {
+            "context": ref.context,
+            "namespace": ref.namespace,
+            "name": ref.name,
+        }
+    return entry
 
 
 # ----------------------------------------------------------------- shared ---

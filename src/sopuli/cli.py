@@ -134,7 +134,13 @@ from sopuli.config import delivery as delivery_config
 from sopuli.config.bindings import check_oci_name, refuse_non_production_store
 from sopuli.config.errors import KeyPath
 from sopuli.config.expansion import declared_at
-from sopuli.config.model import Delivery, Notify, PersonalAccountRule, Vault
+from sopuli.config.model import (
+    Delivery,
+    ExternalSecretRef,
+    Notify,
+    PersonalAccountRule,
+    Vault,
+)
 from sopuli.config.password_keys import declared_password_key, place_of
 from sopuli.config.products import (
     account_key,
@@ -177,6 +183,7 @@ from sopuli.diagnostics import (
     admin_diagnostics,
     constraint_diagnostics,
     encryption_diagnostics,
+    external_secret_not_refreshed,
     failed_login_block_unread,
     file_store_in_use,
     file_store_leftover,
@@ -297,6 +304,7 @@ from sopuli.keyring_change import (
     set_entry,
 )
 from sopuli.keyring_survey import survey as keyring_survey
+from sopuli.kubernetes_refresh import Refresh, describe, refresh_all
 from sopuli.lock.errors import LockDeniedError, LockError, LockStolenError
 from sopuli.lock.inspect import declared_locks, mode_of, reset_region, resolvable_locks, survey
 from sopuli.lock.inspect import discover as discover_locks
@@ -9998,7 +10006,9 @@ def creds_apply(
     run = _with_estate_safety(run, config)
     refuse_if_readonly(run.resolved, action="applying a password", estate=config)
     plan = plan_builder.build(
-        config, intent=[*_attribute_intent(config), "verify", "password_set", "vault_promote"]
+        config,
+        intent=[*_attribute_intent(config), "verify", "password_set", "vault_promote"],
+        refreshes=True,
     )
     refuse_if_over_limit(run.resolved, plan.blast_radius, action="applying a password")
     bindings = [binding for binding in config.bindings if binding.secret is not None]
@@ -10307,7 +10317,8 @@ def creds_apply(
         raise
 
     _record_locks(document, manager)
-    document.results = [_applied_json(record, promotions) for record in applied]
+    refreshes = _refresh_external_secrets(applied, promotions)
+    document.results = [_applied_json(record, promotions, refreshes) for record in applied]
     _stream_results(run)
     unchecked = _guardrail_caveats(applied)
     document.diagnostics.extend(unchecked)
@@ -10352,6 +10363,8 @@ def creds_apply(
     document.diagnostics.extend(skipped_promotions)
     unconfirmed_promotions = _unconfirmed_promotions(promotions)
     document.diagnostics.extend(unconfirmed_promotions)
+    unrefreshed = _unrefreshed(refreshes)
+    document.diagnostics.extend(unrefreshed)
     states = [record.outcome.state for record in applied]
     # `mutated`, not `changed`: an account this run unlocked and did not need to
     # re-password changed, and a summary counting only the DDL would call a run that
@@ -10421,6 +10434,7 @@ def creds_apply(
         + [one.message for one in failed_promotions]
         + [one.message for one in skipped_promotions]
         + [one.message for one in unconfirmed_promotions]
+        + [one.message for one in unrefreshed]
         + [one.message for one in reuse_notices]
         + [one.message for one in unchecked]
         + [one.message for one in clear]
@@ -14357,6 +14371,75 @@ def _promote_documents(
     return promotions, None
 
 
+def _refresh_external_secrets(
+    applied: Sequence[_Applied],
+    promotions: Mapping[LockKey, _Promotion],
+    *,
+    doubted: frozenset[LockKey] = frozenset(),
+) -> dict[ExternalSecretRef, Refresh]:
+    """Ask ESO to refresh each ExternalSecret whose document this run promoted (C18).
+
+    Once per distinct ExternalSecret, after every promotion, so one that reads
+    two documents is not refreshed between them. A document that was not
+    promoted is not refreshed: ESO would copy the same `current` again.
+
+    ``doubted`` is `creds rotate`'s documents whose read-back disagreed or
+    failed (§8 step 8). An ExternalSecret that reads one is not asked: ESO
+    would copy whatever the vault serves, which may not be what the databases
+    hold. It gets ``SOPULI-W078`` saying so, and ESO reads at its next
+    ``refreshInterval`` as it would without the block.
+    """
+    refs: list[ExternalSecretRef] = []
+    held: set[ExternalSecretRef] = set()
+    for record in applied:
+        binding = record.binding
+        if binding.external_secret is None or binding.secret is None or binding.vault is None:
+            continue
+        key = _lock_key(binding)
+        promotion = promotions.get(key)
+        if promotion is None or promotion.version is None:
+            continue
+        if key in doubted:
+            held.add(binding.external_secret)
+        else:
+            refs.append(binding.external_secret)
+    refreshes = {
+        refresh.external_secret: refresh
+        for refresh in refresh_all([ref for ref in refs if ref not in held], now=utc_now())
+    }
+    for ref in held:
+        refreshes[ref] = Refresh(
+            ref,
+            "the vault's read-back did not show the promoted password, so ESO was not asked",
+            attempted=False,
+        )
+    return refreshes
+
+
+def _refresh_for(
+    record: _Applied,
+    promotions: Mapping[LockKey, _Promotion],
+    refreshes: Mapping[ExternalSecretRef, Refresh],
+) -> Refresh | None:
+    """The refresh that followed this row's promotion, or ``None``."""
+    binding = record.binding
+    if binding.external_secret is None or binding.secret is None or binding.vault is None:
+        return None
+    promotion = promotions.get(_lock_key(binding))
+    if promotion is None or promotion.version is None:
+        return None
+    return refreshes.get(binding.external_secret)
+
+
+def _unrefreshed(refreshes: Mapping[ExternalSecretRef, Refresh]) -> list[Diagnostic]:
+    """``SOPULI-W078`` for each ExternalSecret ESO was not asked to refresh."""
+    return [
+        external_secret_not_refreshed(describe(refresh.external_secret), refresh.error)
+        for refresh in refreshes.values()
+        if refresh.error is not None
+    ]
+
+
 def _skipped_pairs(records: Sequence[_Applied]) -> tuple[tuple[str, str], ...]:
     """The (account, target) pairs a guardrail skipped in one document's group.
 
@@ -14945,7 +15028,11 @@ def _encryption_notices(applied: Sequence[_Applied]) -> list[Diagnostic]:
     )
 
 
-def _applied_json(record: _Applied, promotions: Mapping[LockKey, _Promotion]) -> dict[str, Any]:
+def _applied_json(
+    record: _Applied,
+    promotions: Mapping[LockKey, _Promotion],
+    refreshes: Mapping[ExternalSecretRef, Refresh],
+) -> dict[str, Any]:
     """One `results[]` entry, once the promotion for its document is known."""
     binding = record.binding
     promotion = None
@@ -14969,6 +15056,7 @@ def _applied_json(record: _Applied, promotions: Mapping[LockKey, _Promotion]) ->
         duration_ms=record.duration_ms,
         error=record.error,
         redraws=record.redraws,
+        refresh=_refresh_for(record, promotions, refreshes),
     )
 
 
@@ -15621,6 +15709,7 @@ def creds_rotate(
             "password_set",
             "vault_promote",
         ],
+        refreshes=True,
     )
     refuse_if_over_limit(run.resolved, plan.blast_radius, action="rotating a password")
     bindings = [binding for binding in config.bindings if binding.secret is not None]
@@ -15774,9 +15863,12 @@ def creds_rotate(
     # record. One call, one place, and the ordering is structural rather than a
     # property of where each early return happens to sit.
     _record_locks(document, manager)
+    refreshes = _refresh_external_secrets(
+        sequence.applied, sequence.promotions, doubted=sequence.doubted
+    )
     if refusal is None:
         document.results = sequence.staged_json + [
-            _applied_json(record, sequence.promotions) for record in sequence.applied
+            _applied_json(record, sequence.promotions, refreshes) for record in sequence.applied
         ]
     # Every row, once the lock is let go -- `apply`'s arrangement and for its
     # reason: a row is final only once the promotion is decided. The staging
@@ -15809,6 +15901,8 @@ def creds_rotate(
     document.diagnostics.extend(skipped_promotions)
     unconfirmed_promotions = _unconfirmed_promotions(sequence.promotions)
     document.diagnostics.extend(unconfirmed_promotions)
+    unrefreshed = _unrefreshed(refreshes)
+    document.diagnostics.extend(unrefreshed)
     states = [record.outcome.state for record in sequence.applied]
     changed = sum(1 for record in sequence.applied if record.mutated)
 
@@ -15874,6 +15968,7 @@ def creds_rotate(
         + [one.message for one in failed_promotions]
         + [one.message for one in skipped_promotions]
         + [one.message for one in unconfirmed_promotions]
+        + [one.message for one in unrefreshed]
         + [one.message for one in unchecked]
         + [one.message for one in clear]
         + _lock_notices(manager)
@@ -15990,6 +16085,9 @@ class _Rotation:
     #: Step 8's documents that could not be read back. Their accounts are in
     #: ``disagreed`` as well.
     unread: dict[LockKey, Error] = field(default_factory=dict)
+    #: Step 8's documents whose read-back disagreed or failed. ESO is not
+    #: asked to refresh them: the vault may not serve what was promoted (C18).
+    doubted: frozenset[LockKey] = frozenset()
     #: Windows closed by ``--finish-rollover``. ``None`` where it was not asked
     #: for, which is not the same fact as zero.
     closed: int | None = None
@@ -16152,6 +16250,7 @@ def _rotate_estate(
     # Step 8, on the documents this run actually promoted.
     promoted, into.unread = _read_promoted(into.promotions, stores, run=run)
     into.disagreed, unconfirmed = _read_back(into.applied, into.promotions, promoted)
+    into.doubted = frozenset(unconfirmed)
 
     if finish_windows:
         settled = _settled(into.applied, into.promotions, unconfirmed)

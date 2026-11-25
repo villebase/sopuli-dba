@@ -636,6 +636,10 @@ REPLICAS_UNREACHED = "SOPULI-W076"
 #: wrong passwords.
 LOCKOUT_ENDED = "SOPULI-W077"
 
+#: `creds apply` or `creds rotate` promoted a document, and could not ask
+#: External Secrets Operator to refresh the ExternalSecret that reads it (C18).
+EXTERNAL_SECRET_NOT_REFRESHED = "SOPULI-W078"
+
 #: The config layer's codes, such as ``SOPULI-W004`` and ``SOPULI-W072`` --
 #: imported above rather than defined here. They are raised in the config
 #: layer, which cannot import this module, so they are defined in
@@ -934,6 +938,14 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
             "off, which ends the lockout and sets the failed-login count to 0, so the "
             "server no longer shows that somebody tried wrong passwords. One per account "
             "whose change was sent. A login a person disabled is not changed."
+        ),
+        EXTERNAL_SECRET_NOT_REFRESHED: (
+            "`creds apply` or `creds rotate` promoted a document, and `kubectl annotate` "
+            "could not ask External Secrets Operator to refresh the ExternalSecret an "
+            "application's `kubernetes:` block names for it (C18), or did not ask because "
+            "`creds rotate`'s read-back did not show the promoted password. ESO reads the "
+            "vault again at its next `refreshInterval`. One per ExternalSecret. A warning: "
+            "the exit code does not change."
         ),
         CONSTRAINTS_UNREAD: (
             "`creds generate` could not read a target's password constraints, so the "
@@ -1609,6 +1621,21 @@ def lockout_ended(target: str, account: str, status: str, *, ended: str = "ended
             f"{target}: {account}: the login is locked out after failed logins (status "
             f"{status}), and the change {ended} the lockout and its failed-login count. "
             f"{after}"
+        ),
+    )
+
+
+def external_secret_not_refreshed(external_secret: str, reason: str) -> Diagnostic:
+    """`SOPULI-W078`: ESO was not asked to refresh an ExternalSecret after its
+    document was promoted (C18). ``external_secret`` names it as
+    :func:`sopuli.kubernetes_refresh.describe` does, and ``reason`` is what
+    kubectl, or finding it, said."""
+    return Diagnostic(
+        level="warning",
+        code=EXTERNAL_SECRET_NOT_REFRESHED,
+        message=(
+            f"could not ask ESO to refresh {external_secret}: {reason}. ESO reads the "
+            "vault again at its next refreshInterval"
         ),
     )
 

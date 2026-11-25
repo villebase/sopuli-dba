@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import functools
 import json
+import subprocess
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -82,6 +83,7 @@ from sopuli.driver.protocol import (
     VerifyResult,
 )
 from sopuli.exit_codes import ExitCode
+from sopuli.kubernetes_refresh import refresh_all
 from sopuli.lock import (
     CLOCK_SKEW,
     DEFAULT_TTL,
@@ -6094,3 +6096,141 @@ OCI_SHARED_CONFIG = (
     .replace("vault: vault-prod", "vault: vault-oci")
     .replace('"apps/acme/db#DB_CREDENTIALS/{account}"', '"acme-db#DB_CREDENTIALS/{account}"')
 )
+
+
+# -------------------------------------------------- the ExternalSecret refresh ---
+
+#: `CONFIG` with a `kubernetes:` block: each tenant's application reads its own
+#: document through its own ExternalSecret (C18).
+REFRESHING_CONFIG = CONFIG + (
+    "    kubernetes:\n"
+    "      context: prod-cluster\n"
+    '      namespace: "acme-{tenant}"\n'
+    "      external_secret: acme-db\n"
+)
+
+
+def fake_kubectl(
+    monkeypatch: pytest.MonkeyPatch, *, returncode: int = 0, stderr: str = ""
+) -> list[list[str]]:
+    """Replace kubectl with a recorder; hand back the argument lists it got."""
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str]) -> subprocess.CompletedProcess[str]:
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, returncode, "", stderr)
+
+    def recorded(refs: Any, *, now: Any) -> Any:
+        return refresh_all(refs, now=now, runner=runner, find=lambda: "kubectl")
+
+    monkeypatch.setattr("sopuli.cli.refresh_all", recorded)
+    return calls
+
+
+def test_a_promotion_asks_eso_to_refresh_each_external_secret(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    validator: Draft202012Validator,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """C18: one annotate per ExternalSecret, after the promotion, and an action
+    on each promoted row."""
+    calls = fake_kubectl(monkeypatch)
+    estate()
+
+    result = run(runner, write_config(REFRESHING_CONFIG), "--output", "json")
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert [call[1:3] for call in calls] == [
+        ["--context=prod-cluster", "--namespace=acme-alpha"],
+        ["--context=prod-cluster", "--namespace=acme-beta"],
+    ]
+    body = document(result)
+    assert not list(validator.iter_errors(body))
+    for row in body["results"]:
+        kinds = [action["kind"] for action in row["actions"]]
+        assert kinds[-2:] == ["vault_promote", "external_secret_refresh"]
+    assert all(unit["intent"][-1] == "external_secret_refresh" for unit in body["plan"]["units"])
+    assert body["plan"]["units"][0]["external_secret"] == {
+        "context": "prod-cluster",
+        "namespace": "acme-alpha",
+        "name": "acme-db",
+    }
+
+
+def test_a_failed_refresh_is_a_warning_and_the_run_still_succeeds(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_kubectl(monkeypatch, returncode=1, stderr='error: context "prod-cluster" does not exist')
+    harness = estate()
+
+    result = run(runner, write_config(REFRESHING_CONFIG), "--output", "json")
+
+    assert result.exit_code == ExitCode.SUCCESS
+    body = document(result)
+    codes = [one.get("code") for one in body["diagnostics"]]
+    assert codes.count("SOPULI-W078") == 2
+    assert 'context "prod-cluster" does not exist' in body["diagnostics"][-1]["message"]
+    # The vault was promoted all the same.
+    assert stored(harness["store"], "apps/acme/appdb-alpha")["DB_CREDENTIALS"] == {
+        "acme_web_user": STAGED
+    }
+
+
+def test_a_failed_refresh_is_printed_in_the_text_view(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A warning a terminal user cannot see is not surfaced."""
+    fake_kubectl(monkeypatch, returncode=1, stderr='error: context "prod-cluster" does not exist')
+    estate()
+
+    result = run(runner, write_config(REFRESHING_CONFIG))
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert "could not ask ESO to refresh ExternalSecret acme-alpha/acme-db" in result.output
+
+
+def test_nothing_promoted_asks_nothing_of_eso(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A second run finds every database in sync, promotes nothing, and so
+    sends no refresh (invariant 9)."""
+    calls = fake_kubectl(monkeypatch)
+    estate(
+        documents={
+            f"apps/acme/{target}": {"DB_CREDENTIALS": {"acme_web_user": LIVE}}
+            for target in ("appdb-alpha", "appdb-beta")
+        },
+        answers={"ACME_WEB_USER": passes(1)},
+    )
+
+    result = run(runner, write_config(REFRESHING_CONFIG), "--output", "json")
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert calls == []
+
+
+def test_a_dry_run_names_the_external_secrets_and_runs_no_kubectl(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = fake_kubectl(monkeypatch)
+    estate()
+
+    result = run(runner, write_config(REFRESHING_CONFIG), "--dry-run")
+
+    assert calls == []
+    assert "After a promotion, ESO is asked to refresh:" in result.output
+    assert "ExternalSecret acme-alpha/acme-db on context prod-cluster" in result.output

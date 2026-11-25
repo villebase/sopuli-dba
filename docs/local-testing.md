@@ -3550,7 +3550,7 @@ there the date is `unknown`, with the reason; the history is still complete.
 ## 9b. Run one query on many targets (UC-3)
 
 `sql run` runs one `SELECT` or `WITH` statement on each selected target and
-shows the rows. With `--write` it runs one write (§*A write*, below). It runs on Oracle only. It never connects as the account in
+shows the rows. With `--write` it runs one write (§*A write*, below). It runs on Oracle and PostgreSQL (§*On PostgreSQL*, below). It never connects as the account in
 `admin:`. It connects as the account in `run_as:`, here a personal account. As
 SYS in the PDB:
 
@@ -3726,6 +3726,113 @@ It exits 8. Afterwards, as SYS in the PDB:
 
 ```sql
 DROP USER dba_alpha CASCADE;
+```
+
+### On PostgreSQL
+
+`sql run` runs on the stack's PostgreSQL too (§*A PostgreSQL cluster*). As the
+superuser, create a personal role with a table:
+
+```sql
+SET password_encryption = 'scram-sha-256';
+CREATE ROLE dba_alpha LOGIN PASSWORD '<PASSWORD>';
+CREATE SCHEMA dba_alpha AUTHORIZATION dba_alpha;
+SET ROLE dba_alpha;
+CREATE TABLE dba_alpha.acme_settings (name text, flag int);
+INSERT INTO dba_alpha.acme_settings VALUES ('audit', 0), ('trace', 0);
+RESET ROLE;
+```
+
+Export that password as `DBA_ALPHA_PASSWORD`, and save this as
+`sql-run-pg.yaml`:
+
+```yaml
+version: 1
+defaults:
+  run_as:
+    username: dba_alpha
+    auth: { method: env, password_env: DBA_ALPHA_PASSWORD }
+targets:
+  - name: pg-dev
+    type: postgresql
+    environment: dev
+    dsn: "127.0.0.1:5432"
+    admin: { username: sopuli_admin, auth: { method: env } }
+    postgres: { sslmode: disable }
+```
+
+A read, and then a write with its dry run first:
+
+```
+$ cat settings.sql
+SELECT name, flag FROM dba_alpha.acme_settings ORDER BY name;
+$ sopuli --config sql-run-pg.yaml sql run --file settings.sql
+read statement:
+  SELECT name, flag FROM dba_alpha.acme_settings ORDER BY name
+
+TARGET  name   flag
+pg-dev  audit  0
+pg-dev  trace  0
+
+pg-dev  2 rows
+
+1 warning:
+  targets[0].postgres.sslmode: target 'pg-dev' does not verify the server (`sslmode: disable`)
+    hint: anything between this run and the server can present its own certificate and read the password a run sets. Use `sslmode: verify-full` (the default), with `sslrootcert` naming the CA that issued the server's certificate
+$ sopuli --config sql-run-pg.yaml sql run --write --target pg-dev --expect-rows 1 --dry-run < audit-on.sql
+Plan: 1 account x 1 target = 1 write   [dev]
+
+ACCOUNT    TARGET  INTENT
+dba_alpha  pg-dev  sql_write
+
+write statement:
+  UPDATE dba_alpha.acme_settings SET flag = 1 WHERE name = 'audit'
+
+pg-dev  ROLLED_BACK  1 row, rolled back (dry run)
+
+plan fingerprint: 1c9a0915e262
+to run it, drop --dry-run and add:  --plan 1c9a0915e262
+...
+$ sopuli --config sql-run-pg.yaml sql run --write --target pg-dev --expect-rows 1 --plan 1c9a0915e262 < audit-on.sql
+...
+pg-dev  COMMITTED  1 row
+
+plan fingerprint: 1c9a0915e262
+...
+```
+
+Each exits 0. PostgreSQL keeps the case of an unquoted column name low, so the
+headings are `name` and `flag`. A read runs in a read-only transaction, and
+the server refuses one that would write:
+
+```
+$ sopuli --config sql-run-pg.yaml sql run --file lock.sql
+read statement:
+  SELECT * FROM dba_alpha.acme_settings FOR UPDATE
+
+pg-dev  ERROR: 25006: cannot execute SELECT FOR UPDATE in a read-only transaction
+
+...
+  25006 on pg-dev: a SELECT or WITH runs in a read-only transaction, and `sql run` cannot run one that writes, such as nextval(), SELECT ... FOR UPDATE, or a function that writes
+```
+
+It exits 1. A run-as role that is a member of the role in `admin:` holds its
+privileges, so the run is refused before any statement runs. After
+`GRANT sopuli_admin TO dba_alpha`:
+
+```
+$ sopuli --config sql-run-pg.yaml sql run --file settings.sql
+sopuli: defaults.run_as: target 'pg-dev': the run-as login 'dba_alpha' is a member of 'sopuli_admin', so a statement would have its privileges. 'sopuli_admin' is the account the tool uses for its own work. No statement ran on any target
+  hint: name a personal or owner account with `run_as:` or `--as USER` that is not a member of the service role, directly or through another role
+```
+
+It exits 8. A config with both an Oracle and a PostgreSQL target runs one
+statement on both, and each target shows its own block where the columns
+differ. Afterwards, as the superuser:
+
+```sql
+DROP SCHEMA dba_alpha CASCADE;
+DROP ROLE dba_alpha;
 ```
 
 ---

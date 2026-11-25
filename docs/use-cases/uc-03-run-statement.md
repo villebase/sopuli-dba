@@ -1,33 +1,31 @@
 # UC-3 — Run one statement across many targets
 
 Depends on: `../design/00-principles.md`, `../design/01-configuration.md`,
-`../design/02-oracle-privileges.md`
+`../design/02-oracle-privileges.md`, `../design/02-postgres-privileges.md`
 
 This document specifies a command that runs one statement against a selected
-set of declared targets and shows what each target returned. **The statement
-check, the row guard, the plan fingerprint and the value conversion are built
-(#1659), and so is the `run_as:` configuration with its plan-time refusal of the
-service account (#1660), and so is the Oracle runner (#1661), and so is `sql
-run` for reads (#1662) and for writes (#1663). UC-3 on Oracle is built.** The
-command name, `sopuli sql run`, is a working name. The parts were built in this
-order, each by its own issue:
+set of declared targets and shows what each target returned. **UC-3 is built on
+Oracle and PostgreSQL.** The command name, `sopuli sql run`, is a working name.
+The parts were built in this order, each by its own issue:
 
 | Part | Issue |
 |---|---|
 | The pure layer: the statement check, the plan fingerprint and the row guards | #1659, built |
 | The `run_as:` configuration | #1660, built. The session check of §2 is part of the runner |
-| The Oracle runner | #1661, built. `OracleSession.run_statement`, with `session_user()` for the check of §2. `sql.run` is not in the shared command set, so every other product is refused |
+| The Oracle runner | #1661, built. `OracleSession.run_statement`, with `session_user()` for the check of §2 |
 | `sql run` for reads | #1662, built |
 | `--write` | #1663, built |
+| What PostgreSQL does, measured | #1691, built. `sql/postgres/12_statement_run_probe.py` |
+| The statement check's PostgreSQL dialect | #1692, built (§3) |
+| The PostgreSQL runner | #1693, built. `PostgresSession.run_statement` |
+| The refusal of a run-as role that holds the service role's privileges | #1700, built (§2) |
+| `sql run` on PostgreSQL | #1694, built |
 
-The first release of UC-3 covers Oracle only. A target of another product is
+`sql run` runs on Oracle and PostgreSQL. A target of another product is
 refused at plan time by `require_command`, with `SOPULI-20006`, never by a
-version check (invariant 4). The umbrella issue is #1657.
-
-UC-3 on PostgreSQL is in progress, under #1689. Its statement check is built
-(§3, #1692), and so are its runner (§3, §4, #1693) and the refusal of a
-run-as role that holds the service role's privileges (§2, #1700). `sql run`
-still refuses a PostgreSQL target.
+version check (invariant 4): `sql.run` is not in the shared command set, and
+only the Oracle and PostgreSQL drivers list it. The umbrella issues are #1657
+for Oracle and #1689 for PostgreSQL.
 
 ---
 
@@ -48,8 +46,8 @@ small:
 
 **Not in scope:**
 
-- PostgreSQL, MySQL, MariaDB and SQL Server. The driver interface leaves room
-  for them, and they come later.
+- MySQL, MariaDB and SQL Server. The driver interface leaves room for them,
+  and they come later.
 - Statements declared by name in the config. They can be added later without
   changing this design.
 - DDL, PL/SQL blocks, `ALTER SYSTEM`, and anything else that is not one query

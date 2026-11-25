@@ -465,7 +465,8 @@ the register.
   patch it key by key. Option B, writing a Secret where there is no ESO, is
   C19, still open (#1704).
 - **Why:** no secret passes to `kubectl`, so invariants 1 and 2 do not change.
-  The kubeconfig needs only `patch` on ExternalSecrets. The refresh comes after
+  The kubeconfig needs only `get` and `patch` on the named ExternalSecrets,
+  which cannot read a Secret (measured in #1706). The refresh comes after
   the promotion, so ESO never reads a password the databases do not have. A
   failure leaves the database and the vault right, and ESO catches up at its
   next refresh, so it is not a reason to fail the run. The context sits on the

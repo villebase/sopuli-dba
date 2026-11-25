@@ -31,6 +31,13 @@ READ_ONLY_TRANSACTION = "25006"
 INVALID_CATALOG = "3D000"
 #: ``too_many_connections``: the role is at its ``CONNECTION LIMIT``.
 TOO_MANY_CONNECTIONS = "53300"
+#: ``query_canceled``: among others, a statement past ``statement_timeout``.
+QUERY_CANCELED = "57014"
+#: ``lock_not_available``: a lock wait past ``lock_timeout``.
+LOCK_NOT_AVAILABLE = "55P03"
+#: ``syntax_error``. A prepared statement that holds more than one is refused
+#: with it.
+SYNTAX_ERROR = "42601"
 #: ``sqlclient_unable_to_establish_sqlconnection``.
 UNABLE_TO_CONNECT = "08001"
 #: ``connection_failure``.
@@ -276,3 +283,41 @@ def from_error(exc: Any, *, connecting: bool = False) -> Diagnosis:
     if _CERTIFICATE.search(message):
         return replace(diagnosis, hint=CERTIFICATE_HINT)
     return diagnosis
+
+
+#: `sql run`'s hints, where the shared ones are about the tool's own account
+#: or would mislead. The statement is the operator's, and the account is the
+#: run-as account (UC-3 §2).
+_STATEMENT_HINTS = {
+    QUERY_CANCELED: (
+        "the statement ran longer than the timeout, which counts the time it waits for "
+        "a lock another session holds. The server cancelled it and its transaction was "
+        "rolled back. Raise --timeout, or find what holds the lock or makes it slow"
+    ),
+    LOCK_NOT_AVAILABLE: (
+        "the statement waited longer than the role's lock_timeout for a lock that "
+        "another session holds. Its transaction was rolled back. Find what holds the lock"
+    ),
+    INSUFFICIENT_PRIVILEGE: "the run-as account lacks a privilege this statement needs",
+    SYNTAX_ERROR: (
+        "the server could not parse the statement. Two statements in one text are "
+        "refused this way too"
+    ),
+}
+
+#: A read runs in a read-only transaction, so the shared hint for ``25006``,
+#: about a standby, is wrong for it.
+_READ_ONLY_READ_HINT = (
+    "the statement tried to write, and a read runs in a read-only transaction. A write "
+    "needs --write. A function or a WITH query that writes is refused this way too"
+)
+
+
+def for_statement(diagnosis: Diagnosis, *, read: bool) -> Diagnosis:
+    """``diagnosis`` with `sql run`'s hint, where it has one. The code and the
+    server's message are kept. ``read`` says the statement ran in a read-only
+    transaction."""
+    if read and diagnosis.code == READ_ONLY_TRANSACTION:
+        return replace(diagnosis, hint=_READ_ONLY_READ_HINT)
+    hint = _STATEMENT_HINTS.get(diagnosis.code)
+    return diagnosis if hint is None else replace(diagnosis, hint=hint)

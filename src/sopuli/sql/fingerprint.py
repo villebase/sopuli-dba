@@ -24,9 +24,11 @@ class PlannedTarget:
     dsn: str
     #: The database user the tool logs in as, or ``"external"``.
     run_as: str
-    db_unique_name: str
-    #: Read when the tool connects.
-    con_name: str
+    #: The database's identity, read when the tool connects: on Oracle
+    #: ``DB_UNIQUE_NAME``, and on PostgreSQL the cluster's ``system_identifier``.
+    system: str
+    #: On Oracle ``CON_NAME``, and on PostgreSQL ``current_database()``.
+    database: str
 
 
 def fingerprint(
@@ -42,7 +44,7 @@ def fingerprint(
     document = {
         "statement": statement.text,
         "guard": guard_part,
-        "targets": sorted([t.name, t.dsn, t.run_as, t.db_unique_name, t.con_name] for t in targets),
+        "targets": sorted([t.name, t.dsn, t.run_as, t.system, t.database] for t in targets),
     }
     text = json.dumps(document, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]

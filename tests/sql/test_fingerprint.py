@@ -68,8 +68,8 @@ def test_changed_run_as_changes_it() -> None:
 
 
 def test_changed_database_identity_changes_it() -> None:
-    unique = replace(ONE, db_unique_name="CDBOTHER")
-    con = replace(ONE, con_name="PDB9")
+    unique = replace(ONE, system="CDBOTHER")
+    con = replace(ONE, database="PDB9")
     base = fingerprint(UPDATE, GUARD, [ONE])
     assert base != fingerprint(UPDATE, GUARD, [unique])
     assert base != fingerprint(UPDATE, GUARD, [con])

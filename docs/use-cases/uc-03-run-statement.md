@@ -25,7 +25,8 @@ refused at plan time by `require_command`, with `SOPULI-20006`, never by a
 version check (invariant 4). The umbrella issue is #1657.
 
 UC-3 on PostgreSQL is in progress, under #1689. Its statement check is built
-(§3, #1692). `sql run` still refuses a PostgreSQL target.
+(§3, #1692), and so is its runner (§3, §4, #1693). `sql run` still refuses a
+PostgreSQL target.
 
 ---
 
@@ -210,6 +211,18 @@ the sequence (measured on 23.26.3.0.0); `SELECT ... FOR UPDATE` does not, becaus
 the server refuses it with `ORA-01456`. This is accepted. The rights of the
 run-as account are the real limit, as §1 says.
 
+**On PostgreSQL** a read runs in `BEGIN READ ONLY`. It refuses DDL,
+`SELECT ... INTO`, a write, `nextval()`, `SELECT ... FOR UPDATE`, a `WITH`
+query that writes, and a function that writes, with `25006` (`0A000` for a
+`STABLE` function), on releases 13 to 18. PostgreSQL does not commit before
+DDL, so the transaction covers it. The gap is `dblink_exec()`: it writes
+through another connection, and the write stays after the rollback. Once the
+`dblink` extension is in a database, any role there may call it, and a role
+that is not a superuser gives a password in its connection string. This is
+accepted, for the reason above. The statement goes to the server as a
+prepared statement, which the server refuses with `42601` when the text holds
+two (`../measurements.md`, `12_statement_run_probe.py`).
+
 **`readonly: true`** (`../design/00-principles.md`) refuses `--write`, with or
 without `--dry-run`, with exit 8. It does not refuse a read, and `--dry-run`
 without `--write` runs the read as usual. A `safety:` block on a target, or on
@@ -261,8 +274,10 @@ targets, never all of them. `max_targets` applies unchanged (invariant 10).
 - the normalised statement text;
 - the row guard: its kind (`expect` or `max`) and its value;
 - the sorted list of resolved targets, each with its name, its `dsn`, the
-  user its session became, and its database identity, which is `DB_UNIQUE_NAME`
-  and `CON_NAME`, read when the tool connects. The session user is what the
+  user its session became, and its database identity, read when the tool
+  connects. On Oracle that is `DB_UNIQUE_NAME` and `CON_NAME`, and on
+  PostgreSQL the cluster's `system_identifier` and `current_database()`. The
+  session user is what the
   database reports, so an `external` login that reaches another user changes
   the hash. A target that did not connect, or that failed after it logged in,
   has its configured run-as name, or `external`, and no identity. A target of
@@ -319,6 +334,11 @@ A session that waits on a lock ends when the wait does. The session reports
 `connection_lost`, and nothing more can be sent on it. The client reports
 `DPY-4011`, with `ORA-03156` in its message, and the tool keeps both. The
 timeout does not bound the commit, so a commit is never abandoned half done.
+
+On PostgreSQL the timeout is `statement_timeout`, set for the statement's
+transaction only. It counts the time a statement waits for a lock. The server
+cancels a statement past it with `57014` and rolls its transaction back, and
+the session stays usable. No timeout bounds the commit.
 
 ---
 

@@ -128,13 +128,20 @@ def test_a_block_missing_a_key_is_refused() -> None:
 
 
 def test_a_key_missing_only_where_no_override_supplies_it_is_refused() -> None:
-    """The dev target has no override, so it has no name."""
+    """The dev target has no override, so it has no name, and the message says which."""
     error = refusal(
         kubernetes={"context": "{env}-cluster", "namespace": "acme"},
         overrides=[{"where": {"env": "test"}, "kubernetes": {"external_secret": "acme-db"}}],
     )
 
     assert "`external_secret`" in str(error)
+    assert "'appdb-dev-alpha'" in str(error)
+
+
+def test_a_block_only_an_override_writes_is_reported_where_it_was_written() -> None:
+    error = refusal(overrides=[{"where": {"env": "test"}, "kubernetes": {"context": "x"}}])
+
+    assert str(error.at) == "applications[0].overrides[0].kubernetes"
 
 
 def test_a_block_without_a_secret_ref_is_refused() -> None:
@@ -151,6 +158,9 @@ def test_a_block_without_a_secret_ref_is_refused() -> None:
         ("namespace", "x" * 64),
         ("external_secret", "{account}"),
         ("external_secret", "-acme"),
+        ("external_secret", "acme..db"),
+        ("external_secret", "acme.-db"),
+        ("external_secret", "acme-.db"),
     ],
 )
 def test_a_name_kubernetes_refuses_is_refused_where_it_was_written(key: str, value: str) -> None:
@@ -170,8 +180,9 @@ def test_a_dotted_external_secret_name_is_accepted() -> None:
     assert resolved["appdb-dev-alpha"].name == "acme.db"
 
 
-def test_an_unprintable_context_is_refused() -> None:
-    error = refusal(kubernetes={**BLOCK, "context": "dev\tcluster"})
+@pytest.mark.parametrize("context", ["dev\tcluster", "--kubeconfig=/x", " dev", "dev "])
+def test_a_context_that_is_not_a_name_is_refused(context: str) -> None:
+    error = refusal(kubernetes={**BLOCK, "context": context})
 
     assert "context name" in str(error)
 

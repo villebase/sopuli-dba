@@ -28,8 +28,8 @@ KUBERNETES_KEYS = ("context", "namespace", "external_secret")
 _LABEL = re.compile(r"[a-z0-9]([-a-z0-9]*[a-z0-9])?")
 _LABEL_MAX = 63
 
-#: An ExternalSecret's name is a DNS-1123 subdomain.
-_SUBDOMAIN = re.compile(r"[a-z0-9]([-a-z0-9.]*[a-z0-9])?")
+#: An ExternalSecret's name is a DNS-1123 subdomain: labels joined by `.`.
+_SUBDOMAIN = re.compile(r"[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*")
 _SUBDOMAIN_MAX = 253
 
 _TOKEN_SOURCE = "a `kubernetes:` value resolves from §7's tokens, as a secret ref does"
@@ -60,6 +60,7 @@ def resolve_external_secret(
     patches: list[tuple[int, Override]],
     tokens: dict[str, str],
     *,
+    target: str,
     has_secret: bool,
     at: KeyPath,
 ) -> ExternalSecretRef | None:
@@ -69,17 +70,22 @@ def resolve_external_secret(
     :func:`sopuli.config.bindings._patches_for` gives them. ``tokens`` is the
     account's §7 scope. ``has_secret`` says whether the binding has a secret
     ref: without one nothing is promoted, so there is nothing to refresh.
+
+    A refusal about the block as a whole points at the first block that applies
+    to the target, the entry's or an override's, so it names a key that is in
+    the file.
     """
-    written = _merge(application, patches, at=at)
-    if not written:
+    written, first = _merge(application, patches, at=at)
+    if first is None:
         return None
 
     missing = [key for key in KUBERNETES_KEYS if key not in written]
     if missing:
         names = ", ".join(f"`{key}`" for key in missing)
         raise ConfigError(
-            f"application {application.label!r} has a `kubernetes:` block without {names}",
-            at=at.key("kubernetes"),
+            f"application {application.label!r} has no {names} in its `kubernetes:` "
+            f"block for target {target!r}",
+            at=first,
             hint=(
                 "all three keys are required, on the entry or from an override that "
                 "matches this target: a refresh needs the exact context, namespace "
@@ -88,8 +94,9 @@ def resolve_external_secret(
         )
     if not has_secret:
         raise ConfigError(
-            f"application {application.label!r} has a `kubernetes:` block and no secret ref",
-            at=at.key("kubernetes"),
+            f"application {application.label!r} has a `kubernetes:` block for target "
+            f"{target!r} and no secret ref",
+            at=first,
             hint=(
                 "the refresh follows a promotion in the vault, so it needs `secret` "
                 "or `secret_template`"
@@ -126,25 +133,43 @@ def resolve_external_secret(
 
 def _merge(
     application: Application, patches: list[tuple[int, Override]], *, at: KeyPath
-) -> dict[str, tuple[str, KeyPath]]:
-    """Each key's value and the place it was written, the last patch winning."""
+) -> tuple[dict[str, tuple[str, KeyPath]], KeyPath | None]:
+    """Each key's value and the place it was written, the last patch winning,
+    and the first block that sets anything, or ``None`` where none does."""
     written: dict[str, tuple[str, KeyPath]] = {}
+    first: KeyPath | None = None
     sources = [(application.kubernetes, at.key("kubernetes"))]
     sources.extend(
         (override.kubernetes, at.key("overrides").index(position).key("kubernetes"))
         for position, override in patches
     )
     for options, where in sources:
+        if options.is_empty:
+            continue
+        if first is None:
+            first = where
         for key in KUBERNETES_KEYS:
             value = getattr(options, key)
             if value is not None:
                 written[key] = (value, where.key(key))
-    return written
+    return written, first
 
 
 def _check_context(value: str, *, at: KeyPath) -> None:
-    """A kubeconfig context may be any name, but not an empty or unprintable one."""
-    if not value or any(not character.isprintable() for character in value):
+    """A kubeconfig context may be almost any name, but not an empty or
+    unprintable one, and not one that starts with `-` or ends in a space.
+
+    The refresh passes it as ``--context=<value>``, one argument, so even a
+    leading `-` could not be read as another option. It is refused anyway:
+    no context is named that way on purpose, and a value such as
+    ``--kubeconfig=/x`` is a mistake worth catching when the file is read.
+    """
+    if (
+        not value
+        or value != value.strip()
+        or value.startswith("-")
+        or any(not character.isprintable() for character in value)
+    ):
         raise ConfigError(
             f"{value!r} is not a kubeconfig context name",
             at=at,

@@ -475,6 +475,7 @@ def _bind(config: Config, application: Application, *, at: KeyPath) -> list[Bind
                 application,
                 patches,
                 _tokens(application, account, expanded),
+                target=expanded.name,
                 has_secret=secret is not None,
                 at=at,
             )

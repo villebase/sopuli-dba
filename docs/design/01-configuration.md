@@ -878,8 +878,12 @@ because the refresh follows a promotion of the document the ref names.
 
 After expansion, `namespace` must be a DNS-1123 label and `external_secret` a
 DNS-1123 subdomain, the names Kubernetes accepts: lowercase letters, digits and
-`-` (and `.` in a name). `{account}` rarely fits, because an account name
-usually has `_`. A context may be any printable name.
+`-` (and `.` between the parts of a name). `{account}` rarely fits, because an
+account name usually has `_`. A context may be any printable name that does not
+start with `-` or start or end with a space.
+
+A refusal about the block as a whole, such as a missing key, names the target
+and points at the first block that applies to it, the entry's or an override's.
 
 The context sits on the application, not on the target. One database can serve
 tenants whose applications run on different clusters, and only the application

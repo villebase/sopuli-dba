@@ -455,9 +455,9 @@ These entries share a setup. The probe is
 
 ### PostgreSQL
 
-These entries are for the PostgreSQL driver, which runs UC-1's commands. The
-probes are in `sql/postgres/`, and the matrix of releases 13 to 18 is the
-`postgres-matrix` profile of `test/compose.yaml`. A major release named here,
+These entries are for the PostgreSQL driver. The probes are in
+`sql/postgres/`, and the matrix of releases 13 to 18 is the `postgres-matrix`
+profile of `test/compose.yaml`. A major release named here,
 such as "from 16", means the one release of it that was measured.
 [measurements.md](measurements.md) names each in full.
 
@@ -569,6 +569,41 @@ such as "from 16", means the one release of it that was measured.
   member's `INHERIT`, and from 16 the grant's `inherit_option`.
   `02-postgres-privileges.md` §2.5 has the details.
   `sql/postgres/10_report_read_probe.py` measures it.
+- `verified` `pg-read-only-transaction` (#1691) — **Which statements does
+  `BEGIN READ ONLY` refuse, for UC-3's reads?**
+  Every write a statement makes in its own database, with SQLSTATE `25006`:
+  DDL, `SELECT … INTO`, `INSERT`, `UPDATE`, `DELETE`, `MERGE` from 15,
+  `nextval()`, `SELECT … FOR UPDATE` and `FOR SHARE`, a data-modifying CTE,
+  and a function that writes. A `STABLE` function that writes is refused
+  with `0A000` before that. A temporary table or sequence can still be
+  written. `dblink_exec()` is not refused: it writes through its own
+  connection, which commits, and the rollback does not undo it. It is the
+  counterpart of Oracle's autonomous transaction (UC-3 §3).
+  `sql/postgres/12_statement_run_probe.py` measures it.
+- `verified` `psycopg-multiple-statements` (#1691) — **Does psycopg refuse a
+  text that holds two statements?**
+  Not by default. psycopg 3.3.6 sends a text with no parameters, or with an
+  empty tuple of them, by the simple query protocol, which runs every
+  statement in it. With `prepare=True` it uses the extended protocol, and the
+  server refuses a second statement with `42601`, "cannot insert multiple
+  commands into a prepared statement". `prepare=True` reads no `%` as a
+  placeholder; an empty tuple does, and refuses `LIKE 'a%'` in the client.
+  `sql/postgres/12_statement_run_probe.py` measures it.
+- `verified` `pg-statement-timeout` (#1691) — **What does a timeout leave
+  behind, and does it bound a `COMMIT`?**
+  `statement_timeout` cancels a statement with `57014`, and `lock_timeout`
+  cancels a wait on a row lock with `55P03`. The transaction is then failed,
+  and after a `ROLLBACK` the session runs the next statement: the connection
+  is not lost. No `statement_timeout`, local or the session's, bounds a
+  `COMMIT`, even one that runs a deferred trigger that sleeps.
+  `sql/postgres/12_statement_run_probe.py` measures it.
+- `verified` `pg-write-rowcount` (#1691) — **What does psycopg's `rowcount`
+  count after a write?**
+  The rows a statement matched, not the rows it changed: an `UPDATE` that
+  sets the values the rows hold counts each of them. `INSERT … ON CONFLICT DO
+  NOTHING` counts only the rows it inserted, and `MERGE` each row it updated
+  or inserted. `UPDATE … RETURNING` counts its rows and also returns them.
+  `sql/postgres/12_statement_run_probe.py` measures it.
 - `unverified` `psycopg-libpq-macos` (#1032) — **Which libpq does psycopg's
   binary wheel bundle on macOS?**
   Not run: there is no macOS host. Linux arm64 is not run either. The libpq 16

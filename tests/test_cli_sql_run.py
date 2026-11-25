@@ -8,7 +8,6 @@ the command's text, its JSON and its exit codes.
 from __future__ import annotations
 
 import json
-from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -76,11 +75,17 @@ class FakeSession:
         user: str = "DBA_ALPHA",
         identity_error: Exception | None = None,
         user_error: Exception | None = None,
+        current: str | None = None,
+        member_of: tuple[str, ...] = (),
     ) -> None:
         self.target = target
         self.result = result or answer()
         self.error = error
         self.user = user
+        #: The role statements run as, where it is not ``user``.
+        self.current = current
+        #: The roles the session's user is a member of.
+        self.roles = member_of
         self.identity_error = identity_error
         self.user_error = user_error
         self.calls: list[dict[str, Any]] = []
@@ -97,6 +102,12 @@ class FakeSession:
         if self.user_error is not None:
             raise self.user_error
         return self.user
+
+    def current_user(self) -> str:
+        return self.current or self.user
+
+    def member_of(self, account: str) -> bool:
+        return account.upper() in (role.upper() for role in self.roles)
 
     def database_identity(self) -> tuple[str, str]:
         self.identity_reads += 1
@@ -290,17 +301,18 @@ def test_all_down_exit_1(write_config: WriteConfig, sessions: dict[str, Any]) ->
     assert result.exit_code == ExitCode.FAILURE, result.output
 
 
-def test_non_oracle_target_refused_20006(
+MYSQL_TARGET = (
+    "  - name: my-alpha\n"
+    "    type: mysql\n"
+    "    dsn: mysql.example.com:3306\n"
+    '    admin: { username: "sopuli_svc@%", auth: { method: env } }\n'
+)
+
+
+def test_a_target_of_a_product_it_does_not_run_on_is_skipped_20006(
     write_config: WriteConfig, sessions: dict[str, Any]
 ) -> None:
-    config = (
-        f"version: 1\ndefaults:\n{RUN_AS}targets:\n"
-        "  - name: pg-alpha\n"
-        "    type: postgresql\n"
-        "    dsn: pg.example.com:5432\n"
-        "    postgres: { database: acme }\n"
-        "    admin: { username: sopuli_svc, auth: { method: env } }\n"
-    )
+    config = f"version: 1\ndefaults:\n{RUN_AS}targets:\n{MYSQL_TARGET}"
 
     result = sql_run(write_config, config=config, json_out=True)
 
@@ -328,7 +340,7 @@ ORACLE_ONLY = "SELECT q'[it's]' FROM dual; -- n\n"
 def test_a_skipped_product_does_not_check_the_statement(
     write_config: WriteConfig, sessions: dict[str, Any]
 ) -> None:
-    config = f"version: 1\ndefaults:\n{RUN_AS}{TARGETS}{PG_TARGET}"
+    config = f"version: 1\ndefaults:\n{RUN_AS}{TARGETS}{MYSQL_TARGET}"
 
     result = sql_run(write_config, config=config, statement=ORACLE_ONLY)
 
@@ -339,13 +351,8 @@ def test_a_skipped_product_does_not_check_the_statement(
 
 
 def test_each_product_that_runs_checks_the_statement(
-    write_config: WriteConfig, sessions: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+    write_config: WriteConfig, sessions: dict[str, Any]
 ) -> None:
-    postgres = DRIVERS["postgresql"]
-    assert postgres.commands is not None
-    monkeypatch.setitem(
-        DRIVERS, "postgresql", replace(postgres, commands=postgres.commands | {"sql.run"})
-    )
     config = f"version: 1\ndefaults:\n{RUN_AS}{TARGETS}{PG_TARGET}"
 
     result = sql_run(write_config, config=config, statement=ORACLE_ONLY, json_out=True)
@@ -449,6 +456,31 @@ def test_session_user_is_service_account_refuses_all(
     assert len(sessions["opened"]) == 2
     assert all(session.calls == [] for session in sessions["opened"])
     assert all(session.closed for session in sessions["opened"])
+
+
+@pytest.mark.parametrize(
+    ("session", "words"),
+    [
+        (FakeSession("qa-alpha", current="c##sopuli_svc"), "starts as 'c##sopuli_svc'"),
+        (FakeSession("qa-alpha", member_of=("APP_OWNER", "C##SOPULI_SVC")), "is a member of"),
+    ],
+    ids=["starts as", "member"],
+)
+def test_a_session_with_the_service_account_privileges_refuses_all(
+    write_config: WriteConfig, sessions: dict[str, Any], session: FakeSession, words: str
+) -> None:
+    """A login that starts as the service account, or is a member of it, gets
+    its privileges, so the run is refused as for the name itself (#1690)."""
+    sessions["qa-alpha"] = session
+
+    result = sql_run(write_config, json_out=True)
+
+    assert exit_of(result) == ExitCode.ABORTED, result.output
+    error = document(result)["error"]
+    assert error["code"] == "SOPULI-20010"
+    assert words in error["message"]
+    assert all(one.calls == [] for one in sessions["opened"])
+    assert all(one.closed for one in sessions["opened"])
 
 
 def test_json_validates_against_the_run_schema(

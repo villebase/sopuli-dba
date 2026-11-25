@@ -1723,7 +1723,10 @@ ways to fix it. There is no default account, and the tool never falls back to
 is a target whose `admin:` and `run_as:` are both `external`: a wallet holds one
 credential for each alias. When `admin:` is `external` the config holds no name to
 compare, and a `run_as:` that names a user is allowed
-(`../use-cases/uc-03-run-statement.md` §2).
+(`../use-cases/uc-03-run-statement.md` §2). On PostgreSQL the session is
+refused too where the run-as role starts as the service role, or is a member
+of it, directly or through other roles. A superuser is not counted as a member
+([#1690](../decisions/log.md#1690)).
 
 ### `oracle:` on a target — assertions, not settings
 

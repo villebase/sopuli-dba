@@ -6787,3 +6787,33 @@ the register.
   would need a SQL parser for a free-form statement, and it still could not
   read the target's state. Running the statement twice and comparing counts.
   It would commit a write the operator did not ask for.
+
+## #1690
+
+- **Decided:** 2026-11-25, #1690
+- **Question:** UC-3 refuses a `sql run` whose run-as account is the service
+  account, by name. On PostgreSQL a role can hold another role's privileges
+  through membership, without logging in as it. May the run-as role be a
+  member of the service role?
+- **Decision:** the maintainer's: no (option A). The session check refuses a
+  run-as role that is a member of the service role, directly or through other
+  roles, read from `pg_auth_members` and compared by `upper()`. Every
+  membership counts, whatever its `INHERIT` or `SET` option. A superuser is
+  not counted as a member. Built in #1700, which also refuses a session whose
+  `current_user` is the service account, and writes `<login> as <role>` in the
+  plan fingerprint where a session starts as another role.
+- **Why:** a member runs a statement with the service role's privileges, such
+  as `CREATEROLE`, and UC-3 §1 counts that as a failure even when the run
+  works (ADR-001). A member without `INHERIT` can still take the role with
+  `set_config('role', …)` inside a `SELECT`, so the option does not make the
+  membership safe. A superuser already holds every privilege, so it gains
+  nothing from the service role, and `pg_has_role()`, which reports a
+  superuser as a member of every role, would refuse the usual run-as account,
+  a DBA's personal superuser. The cost accepted: a site that makes the
+  operator's role a member of the service role on purpose cannot use it with
+  `sql run`.
+- **Rejected:** accepting the membership and documenting it as a gap beside
+  the `external` admin's (option B): it is the case UC-3 §1 rules out.
+  Refusing membership in the other direction too, where the service role is a
+  member of the run-as role (option C): the statement gains no privilege from
+  it, so it would only refuse more setups.

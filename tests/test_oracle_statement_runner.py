@@ -233,6 +233,12 @@ def test_session_user(session: Any) -> None:
     assert session.session_user() == USER.upper()
 
 
+def test_current_user_is_the_session_user_and_no_user_is_a_member(session: Any) -> None:
+    # One user is never granted to another on Oracle (#1700).
+    assert session.current_user() == session.session_user()
+    assert session.member_of("SYS") is False
+
+
 def test_values_convert(session: Any) -> None:
     result = _run(
         session,

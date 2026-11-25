@@ -83,8 +83,9 @@ class WriteSession(FakeSession):
         identity: tuple[str, str] = ("FREE", "FREEPDB1"),
         error: Exception | None = None,
         user: str = "DBA_ALPHA",
+        current: str | None = None,
     ) -> None:
-        super().__init__(target, error=error, user=user)
+        super().__init__(target, error=error, user=user, current=current)
         self.count = count
         self.identity = identity
         self.closes = 0
@@ -510,6 +511,20 @@ def test_plan_changes_when_the_session_user_changes(
     assert fleet["b-beta"].calls == []
 
 
+def test_plan_changes_when_the_session_starts_as_another_role(
+    write_config: WriteConfig, fleet: dict[str, Any]
+) -> None:
+    """A login role given a default role between the dry run and the real run
+    runs its statements with other rights, so it is another plan (#1700)."""
+    before = dry_hash(write_config, fleet, *ALL, "--expect-rows", "1")
+    fleet["b-beta"] = WriteSession("b-beta", current="ACME_OWNER")
+
+    result = sql(write_config, "--write", *ALL, "--expect-rows", "1", "--plan", before)
+
+    assert exit_of(result) == ExitCode.ABORTED, result.output
+    assert fleet["b-beta"].calls == []
+
+
 def test_a_dry_run_and_a_real_run_with_one_session_user_match(
     write_config: WriteConfig, fleet: dict[str, Any]
 ) -> None:
@@ -770,14 +785,7 @@ def test_a_refused_typed_password_refuses_a_real_run(
 def test_a_target_of_another_product_does_not_refuse_a_real_run(
     write_config: WriteConfig, fleet: dict[str, Any]
 ) -> None:
-    config = CONFIG + (
-        "  - name: e-pg\n"
-        "    type: postgresql\n"
-        "    dsn: pg.example.com:5432\n"
-        "    postgres: { database: acme }\n"
-        "    labels: { fleet: acme }\n"
-        "    admin: { username: sopuli_svc, auth: { method: env } }\n"
-    )
+    config = WITH_MYSQL
     plan = dry_hash(write_config, fleet, *ALL, "--expect-rows", "1", config=config)
 
     result = sql(
@@ -793,19 +801,18 @@ def test_a_target_of_another_product_does_not_refuse_a_real_run(
     )
 
     loaded = document(result)
-    assert states(loaded)[-1] == ("e-pg", "SKIPPED")
+    assert states(loaded)[-1] == ("e-my", "SKIPPED")
     assert [state for _, state in states(loaded)[:4]] == ["COMMITTED"] * 4
     assert loaded["exit_code"] == ExitCode.SUCCESS
 
 
-#: The fleet with a PostgreSQL target, which `sql run` skips.
-WITH_PG = CONFIG + (
-    "  - name: e-pg\n"
-    "    type: postgresql\n"
-    "    dsn: pg.example.com:5432\n"
-    "    postgres: { database: acme }\n"
+#: The fleet with a MySQL target, which `sql run` skips.
+WITH_MYSQL = CONFIG + (
+    "  - name: e-my\n"
+    "    type: mysql\n"
+    "    dsn: mysql.example.com:3306\n"
     "    labels: { fleet: acme }\n"
-    "    admin: { username: sopuli_svc, auth: { method: env } }\n"
+    '    admin: { username: "sopuli_svc@%", auth: { method: env } }\n'
 )
 
 
@@ -815,9 +822,11 @@ def test_zero_rows_and_a_skipped_target_exit_0(
     """Nothing failed and nothing changed: a skipped target does not make it partial."""
     for name in ORDER:
         fleet[name] = WriteSession(name, count=0)
-    plan = dry_hash(write_config, fleet, *ALL, "--max-rows", "5", config=WITH_PG)
+    plan = dry_hash(write_config, fleet, *ALL, "--max-rows", "5", config=WITH_MYSQL)
 
-    result = sql(write_config, "--write", *ALL, "--max-rows", "5", "--plan", plan, config=WITH_PG)
+    result = sql(
+        write_config, "--write", *ALL, "--max-rows", "5", "--plan", plan, config=WITH_MYSQL
+    )
 
     assert result.exit_code == ExitCode.SUCCESS, result.output
 
@@ -828,10 +837,10 @@ def test_every_target_skipped_exits_5(write_config: WriteConfig, fleet: dict[str
         "--write",
         "--dry-run",
         "--target",
-        "e-pg",
+        "e-my",
         "--expect-rows",
         "1",
-        config=WITH_PG,
+        config=WITH_MYSQL,
     )
 
     assert result.exit_code == ExitCode.UNSUPPORTED_CAPABILITY, result.output
@@ -862,7 +871,9 @@ def test_a_dry_run_with_a_failing_target_offers_no_plan(
 def test_a_dry_run_with_a_skipped_target_still_offers_the_plan(
     write_config: WriteConfig, fleet: dict[str, Any]
 ) -> None:
-    result = sql(write_config, "--write", "--dry-run", *ALL, "--expect-rows", "1", config=WITH_PG)
+    result = sql(
+        write_config, "--write", "--dry-run", *ALL, "--expect-rows", "1", config=WITH_MYSQL
+    )
 
     assert "to run it, drop --dry-run" in click.unstyle(result.output)
 
@@ -1075,10 +1086,10 @@ def test_a_skipped_target_is_not_in_the_plan(
 ) -> None:
     """It never runs, so it counts for neither `max_targets` nor
     `confirm_environments`."""
-    config = WITH_PG.replace(
+    config = WITH_MYSQL.replace(
         "defaults:\n",
         "defaults:\n  safety: { max_targets: 4, confirm_environments: [prod] }\n",
-    ).replace("  - name: e-pg\n", "  - name: e-pg\n    environment: prod\n")
+    ).replace("  - name: e-my\n", "  - name: e-my\n    environment: prod\n")
 
     loaded = document(
         sql(
@@ -1095,7 +1106,7 @@ def test_a_skipped_target_is_not_in_the_plan(
 
     assert [unit["target"] for unit in loaded["plan"]["units"]] == ORDER
     assert loaded["plan"]["confirmation_required"] is False
-    assert states(loaded)[-1] == ("e-pg", "SKIPPED")
+    assert states(loaded)[-1] == ("e-my", "SKIPPED")
 
 
 def test_readonly_on_a_write_names_the_read_instead(
@@ -1123,10 +1134,10 @@ def test_a_dry_run_where_every_target_is_skipped_says_nothing_would_run(
         "--write",
         "--dry-run",
         "--target",
-        "e-pg",
+        "e-my",
         "--expect-rows",
         "1",
-        config=WITH_PG,
+        config=WITH_MYSQL,
     )
     text = click.unstyle(result.output)
 

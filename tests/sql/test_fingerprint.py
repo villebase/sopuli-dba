@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from dataclasses import replace
 
@@ -73,3 +75,27 @@ def test_changed_database_identity_changes_it() -> None:
     base = fingerprint(UPDATE, GUARD, [ONE])
     assert base != fingerprint(UPDATE, GUARD, [unique])
     assert base != fingerprint(UPDATE, GUARD, [con])
+
+
+def test_a_target_with_no_role_hashes_as_before_role_existed() -> None:
+    # The document the hash covered before #1700, written out by hand.
+    document = {
+        "statement": UPDATE.text,
+        "guard": ["expect", 1],
+        "targets": [["pdb-dev-1", "db-dev.example.com:1521/PDB1", "DBA_ALPHA", "CDBDEV", "PDB1"]],
+    }
+    text = json.dumps(document, sort_keys=True, separators=(",", ":"))
+    assert fingerprint(UPDATE, GUARD, [ONE]) == hashlib.sha256(text.encode()).hexdigest()[:12]
+
+
+def test_a_role_changes_it() -> None:
+    assert fingerprint(UPDATE, GUARD, [ONE]) != fingerprint(
+        UPDATE, GUARD, [replace(ONE, role="ACME_OWNER")]
+    )
+
+
+def test_no_user_name_stands_in_for_a_role() -> None:
+    # PostgreSQL names may hold spaces, so the role is never joined into the name.
+    joined = replace(ONE, run_as="DBA_ALPHA as ACME_OWNER")
+    split = replace(ONE, role="ACME_OWNER")
+    assert fingerprint(UPDATE, GUARD, [joined]) != fingerprint(UPDATE, GUARD, [split])

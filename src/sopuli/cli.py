@@ -6402,7 +6402,7 @@ def _keyring_done(run: Invocation, change: Change) -> str:
 
 @cli.group("sql")
 def sql_group() -> None:
-    """Run one statement on the selected targets (UC-3). Oracle only.
+    """Run one statement on the selected targets (UC-3). Oracle and PostgreSQL.
 
     The statement runs as the account `run_as:` or `--as` names, never as the
     account the tool uses for its own work.
@@ -6519,7 +6519,7 @@ def sql_run_command(
     committed, and 5 when no target is of a product this command runs on. A
     target of another product is skipped and does not change the exit code.
 
-    It runs on Oracle only.
+    It runs on Oracle and PostgreSQL.
     """
     if write:
         if max_result_rows is not None:

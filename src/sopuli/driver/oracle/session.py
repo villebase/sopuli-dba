@@ -1167,6 +1167,17 @@ class OracleSession(ClosesConnection):
             self._session_user = str(self._select_one(SESSION_USER_QUERY)[0])
         return self._session_user
 
+    def current_user(self) -> str:
+        """The session user. A statement `sql run` sends runs with its
+        caller's rights, and no setting starts a session as another user."""
+        return self.session_user()
+
+    def member_of(self, account: str) -> bool:
+        """Always ``False``. One user is never granted to another. A proxy
+        login (``CONNECT THROUGH``) becomes the other user by name, which the
+        name check refuses."""
+        return False
+
     def database_identity(self) -> tuple[str, str]:
         """``(DB_UNIQUE_NAME, CON_NAME)`` of the database this session reached."""
         row = self._select_one(IDENTITY_QUERY)

@@ -1741,6 +1741,20 @@ class StatementRunner(Protocol):
         """The account this session is logged in as, as the server spells it."""
         ...
 
+    def current_user(self) -> str:
+        """The account the statement runs as. On PostgreSQL a role may start
+        every session as another role (``ALTER ROLE … SET role``). On Oracle
+        it is :meth:`session_user`."""
+        ...
+
+    def member_of(self, account: str) -> bool:
+        """Whether the session's user holds ``account``'s privileges through
+        role membership, directly or through other roles, compared by
+        ``upper()``. A superuser is not counted: it gains nothing from
+        ``account``. Oracle answers ``False``: one user is never granted to
+        another (UC-3 §2)."""
+        ...
+
     def database_identity(self) -> tuple[str, str]:
         """Two names for the database the session reached, for the plan
         fingerprint: ``(DB_UNIQUE_NAME, CON_NAME)`` on Oracle, and

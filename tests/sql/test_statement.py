@@ -272,6 +272,17 @@ def test_an_escape_string_continued_on_a_later_line(raw: str, text: str) -> None
     assert classify(raw, dialect=PG).text == text
 
 
+@pytest.mark.parametrize(
+    "gap",
+    ["\n-- c\n", " -- c\n", "\n  -- c\n-- d\n  "],
+    ids=["after the break", "before the break", "two comments"],
+)
+def test_an_escape_string_continues_across_line_comments(gap: str) -> None:
+    # PostgreSQL's lexer allows `--` comments between the parts (`whitespace_with_newline`).
+    raw = f"SELECT E'a'{gap}'b\\'' FROM t; -- n"
+    assert classify(raw, dialect=PG).text == f"SELECT E'a'{gap}'b\\'' FROM t"
+
+
 def test_an_escape_string_is_not_continued_on_the_same_line() -> None:
     # Without a line break between them, the second literal stands alone,
     # and its `\` escapes nothing, so `'b\'` ends there.
@@ -315,6 +326,16 @@ def test_classify_for_names_the_product_whose_reading_refused() -> None:
     assert raised.value.message == "read the Oracle way, the statement holds a ';' before its end"
     assert raised.value.hint is not None
     assert raised.value.hint.endswith("Or select one product's targets at a time")
+
+
+@pytest.mark.parametrize("raw", ["drop table t", "", "select 1; select 2"])
+def test_classify_for_does_not_name_a_product_when_every_product_refuses(raw: str) -> None:
+    with pytest.raises(StatementRefusedError) as raised:
+        classify_for(raw, [ORA, PG])
+    with pytest.raises(StatementRefusedError) as alone:
+        classify(raw)
+    assert raised.value.message == alone.value.message
+    assert raised.value.hint == alone.value.hint
 
 
 def test_classify_for_with_one_dialect_does_not_name_it() -> None:

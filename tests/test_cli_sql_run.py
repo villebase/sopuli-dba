@@ -26,7 +26,7 @@ from sopuli.driver.protocol import AuthenticationError, DriverError, StatementRe
 from sopuli.driver.registry import DRIVERS
 from sopuli.exit_codes import ExitCode
 from sopuli.output.document import SCHEMA_VERSION, Error
-from sopuli.sql.statement import Statement, StatementKind
+from sopuli.sql.statement import Dialect, Statement, StatementKind
 
 RUN_SCHEMA = json.loads(
     (
@@ -355,6 +355,16 @@ def test_each_product_that_runs_checks_the_statement(
     assert error["code"] == "SOPULI-20009"
     assert error["message"].startswith("read the PostgreSQL way, ")
     assert sessions["opened"] == []
+
+
+@pytest.mark.parametrize("product", sorted(DRIVERS))
+def test_every_product_sql_run_runs_on_has_a_dialect(product: str) -> None:
+    # `_statement_dialects` turns the target's type into a `Dialect`. A driver
+    # given `sql.run` without one would crash there instead of refusing.
+    commands = DRIVERS[product].commands
+    if commands is not None and "sql.run" not in commands:
+        pytest.skip(f"`sql run` does not run on {product}")
+    assert Dialect(product)
 
 
 def test_statement_from_stdin_and_file(

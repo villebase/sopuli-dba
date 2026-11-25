@@ -168,14 +168,25 @@ def _dollar_tag(text: str, i: int) -> str | None:
 def _continued_at(text: str, i: int) -> int | None:
     """Where a string continues after the quote that ended before ``text[i]``.
 
-    PostgreSQL joins two string literals separated only by whitespace that
-    holds a line break. The position of the next part's opening ``'`` comes
-    back, or ``None`` when no part follows.
+    PostgreSQL joins two string literals separated only by whitespace and
+    ``--`` comments, with at least one line break among them. The position of
+    the next part's opening ``'`` comes back, or ``None`` when no part follows.
     """
     j, n = i, len(text)
-    while j < n and text[j] in _SPACE:
-        j += 1
-    if j < n and text[j] == "'" and "\n" in text[i:j]:
+    line_break = False
+    while j < n:
+        if text[j] in _SPACE:
+            line_break = line_break or text[j] == "\n"
+            j += 1
+        elif text.startswith("--", j):
+            found = text.find("\n", j)
+            if found == -1:
+                return None
+            line_break = True
+            j = found + 1
+        else:
+            break
+    if line_break and j < n and text[j] == "'":
         return j
     return None
 
@@ -353,23 +364,31 @@ def classify_for(raw: str, dialects: Iterable[Dialect]) -> Statement:
     One refusal refuses the statement. Where two dialects give a different
     text or keyword, the statement is refused too, and neither reading is
     picked: the plan fingerprint and every target need one text. With no
-    dialect, Oracle's is used. Where more than one dialect is checked, a
-    refusal names the product whose reading refused it.
+    dialect, Oracle's is used. Where every dialect refuses it, the first
+    refusal is raised as it is. Where only some do, the refusal names the
+    product whose reading refused it, because selecting the other product's
+    targets alone would run it.
     """
     covered = sorted(set(dialects))
     if len(covered) <= 1:
         return classify(raw, dialect=covered[0] if covered else Dialect.ORACLE)
     found: dict[Dialect, Statement] = {}
+    refusals: dict[Dialect, StatementRefusedError] = {}
     for dialect in covered:
         try:
             found[dialect] = classify(raw, dialect=dialect)
         except StatementRefusedError as refused:
-            advice = "select one product's targets at a time"
-            hint = f"{refused.hint}. Or {advice}" if refused.hint else advice
-            raise StatementRefusedError(
-                f"read the {_PRODUCT_NAMES[dialect]} way, {refused.message}",
-                hint=hint,
-            ) from refused
+            refusals[dialect] = refused
+    if not found:
+        raise next(iter(refusals.values()))
+    if refusals:
+        dialect, first = next(iter(refusals.items()))
+        advice = "select one product's targets at a time"
+        hint = f"{first.hint}. Or {advice}" if first.hint else advice
+        raise StatementRefusedError(
+            f"read the {_PRODUCT_NAMES[dialect]} way, {first.message}",
+            hint=hint,
+        ) from first
     readings = set(found.values())
     if len(readings) > 1:
         names = " and ".join(_PRODUCT_NAMES[dialect] for dialect in found)

@@ -31,7 +31,7 @@ the intended division.
 
 Regenerate the committed artefact with::
 
-    python -m sopuli.config.schema > docs/schemas/sopuli-config-5.4.schema.json
+    python -m sopuli.config.schema > docs/schemas/sopuli-config-5.5.schema.json
 """
 
 from __future__ import annotations
@@ -47,6 +47,7 @@ from sopuli.config import (
     defaults,
     delivery,
     groups,
+    kubernetes,
     loading,
     locking,
     notify,
@@ -65,7 +66,7 @@ from sopuli.config import (
 #: `01-configuration.md` §9b says when it changes. What each shape accepts and
 #: refuses, and why, is in the function that builds it: its docstring or its
 #: ``description``.
-SCHEMA_VERSION = "5.4"
+SCHEMA_VERSION = "5.5"
 
 SCHEMA_FILENAME = f"sopuli-config-{SCHEMA_VERSION}.schema.json"
 
@@ -1080,6 +1081,7 @@ _APPLICATION_TYPES: dict[str, Schema] = {
     "secret_template": SECRET_REF,
     "policy": {**STRING, "description": "The name of an entry in `policies:`."},
     "oracle": _ref("oracle_options"),
+    "kubernetes": _ref("kubernetes_options"),
     "overrides": _ref("overrides"),
 }
 
@@ -1498,6 +1500,24 @@ def _oracle_options() -> Schema:
     )
 
 
+def _kubernetes_options() -> Schema:
+    return _object(
+        keys=kubernetes.KUBERNETES_KEYS,
+        types={
+            "context": {**STRING, "description": "A kubeconfig context, as kubectl lists it."},
+            "namespace": {**STRING, "description": "The ExternalSecret's namespace."},
+            "external_secret": {**STRING, "description": "The ExternalSecret's name."},
+        },
+        min_properties=1,
+        description=(
+            "The ExternalSecret that creds apply and creds rotate ask External Secrets "
+            "Operator to refresh after a promotion (C18). Each value may hold §7's "
+            "tokens. Once the entry and its matching overrides set any key, all three "
+            "are required."
+        ),
+    )
+
+
 def _overrides() -> Schema:
     return _array(
         _ref("override"),
@@ -1515,6 +1535,7 @@ def _override() -> Schema:
             "secret_template": SECRET_REF,
             "policy": {**STRING, "description": "The name of an entry in `policies:`."},
             "oracle": _ref("oracle_options"),
+            "kubernetes": _ref("kubernetes_options"),
         },
         required=("where",),
         description=(
@@ -1663,6 +1684,7 @@ def build_schema() -> Schema:
             "accounts": _accounts(),
             "application_targets": _application_targets(),
             "oracle_options": _oracle_options(),
+            "kubernetes_options": _kubernetes_options(),
             "overrides": _overrides(),
             "override": _override(),
         },

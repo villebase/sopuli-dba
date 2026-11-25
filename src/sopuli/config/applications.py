@@ -32,6 +32,7 @@ from sopuli.config.fields import (
     string,
     string_list,
 )
+from sopuli.config.kubernetes import build_kubernetes
 from sopuli.config.model import Application, OracleOptions, Override, TargetSelector
 from sopuli.config.secret_refs import parse_secret_ref
 
@@ -56,12 +57,13 @@ APPLICATION_KEYS = (
     "secret_template",
     "policy",
     "oracle",
+    "kubernetes",
     "overrides",
 )
 
 #: What an `overrides:` entry may patch. `accounts` is absent on purpose --
 #: see `_build_override`.
-OVERRIDE_KEYS = ("where", "vault", "secret", "secret_template", "policy", "oracle")
+OVERRIDE_KEYS = ("where", "vault", "secret", "secret_template", "policy", "oracle", "kubernetes")
 
 ORACLE_KEYS = ("container_clause",)
 
@@ -165,6 +167,7 @@ def _build_entry(raw: Any, *, at: KeyPath, named: bool) -> Application:
         secret_template=secret_template,
         policy=optional_string(entry, "policy", at=at),
         oracle=_build_oracle(entry.get("oracle"), at=at.key("oracle")),
+        kubernetes=build_kubernetes(entry.get("kubernetes"), at=at.key("kubernetes")),
         overrides=_build_overrides(entry.get("overrides"), at=at.key("overrides")),
     )
 
@@ -373,6 +376,7 @@ def _build_override(raw: Any, *, at: KeyPath) -> Override:
         secret_template=secret_template,
         policy=optional_string(patch, "policy", at=at),
         oracle=_build_oracle(patch.get("oracle"), at=at.key("oracle")),
+        kubernetes=build_kubernetes(patch.get("kubernetes"), at=at.key("kubernetes")),
     )
 
 

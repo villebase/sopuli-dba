@@ -47,6 +47,38 @@ class OracleOptions:
 
 
 @dataclass(frozen=True)
+class KubernetesOptions:
+    """An application's ``kubernetes:`` block, as written (C18).
+
+    Each key may still hold §7 tokens, and each may be absent: an override can
+    supply what the entry leaves out. :mod:`sopuli.config.kubernetes` merges
+    them key by key and requires all three once any is set.
+    """
+
+    context: str | None = None
+    namespace: str | None = None
+    external_secret: str | None = None
+
+    @property
+    def is_empty(self) -> bool:
+        """True when no key is set, which is what an absent block builds."""
+        return self.context is None and self.namespace is None and self.external_secret is None
+
+
+@dataclass(frozen=True)
+class ExternalSecretRef:
+    """The ExternalSecret one binding asks ESO to refresh, with every token expanded.
+
+    An address, like :class:`Binding`'s ``secret``. ``creds apply`` and
+    ``creds rotate`` annotate it after they promote the document (C18).
+    """
+
+    context: str
+    namespace: str
+    name: str
+
+
+@dataclass(frozen=True)
 class TargetSelector:
     """Which targets an application entry applies to (§3).
 
@@ -80,6 +112,7 @@ class Override:
     secret_template: str | None = None
     policy: str | None = None
     oracle: OracleOptions = field(default_factory=OracleOptions)
+    kubernetes: KubernetesOptions = field(default_factory=KubernetesOptions)
 
     @property
     def secret_ref(self) -> str | None:
@@ -110,6 +143,7 @@ class Application:
     secret_template: str | None = None
     policy: str | None = None
     oracle: OracleOptions = field(default_factory=OracleOptions)
+    kubernetes: KubernetesOptions = field(default_factory=KubernetesOptions)
     overrides: tuple[Override, ...] = ()
 
     @property
@@ -155,6 +189,7 @@ class Binding:
     secret: SecretRef | None = None
     vault: str | None = None
     policy: str | None = None
+    external_secret: ExternalSecretRef | None = None
 
 
 # --------------------------------------------------------------- the estate ---

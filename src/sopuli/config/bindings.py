@@ -38,6 +38,7 @@ from collections.abc import Mapping, Sequence
 from sopuli.config.applications import ACCOUNT_TOKEN
 from sopuli.config.errors import ROOT, ConfigError, KeyPath
 from sopuli.config.expansion import declared_at
+from sopuli.config.kubernetes import resolve_external_secret
 from sopuli.config.model import (
     Application,
     Binding,
@@ -470,6 +471,13 @@ def _bind(config: Config, application: Application, *, at: KeyPath) -> list[Bind
             _check_store_declared(secret, config, at=where)
             _check_has_somewhere_to_resolve_from(secret, store, config, at=where)
             _check_stageable(secret, store, config, at=where)
+            external_secret = resolve_external_secret(
+                application,
+                patches,
+                _tokens(application, account, expanded),
+                has_secret=secret is not None,
+                at=at,
+            )
             bound.append(
                 Binding(
                     application=application.name,
@@ -478,6 +486,7 @@ def _bind(config: Config, application: Application, *, at: KeyPath) -> list[Bind
                     secret=secret,
                     vault=store,
                     policy=policy if policy is not None else config.defaults.policy,
+                    external_secret=external_secret,
                 )
             )
     return bound

@@ -69,7 +69,7 @@ on which Oracle release, and what it showed.
 
 | File | Purpose |
 |---|---|
-| [schemas/sopuli-config-5.4.schema.json](schemas/sopuli-config-5.4.schema.json) | JSON Schema (2020-12) for the config file (P3). Generated from the config layer by `python -m sopuli.config.schema` — never edited by hand |
+| [schemas/sopuli-config-5.5.schema.json](schemas/sopuli-config-5.5.schema.json) | JSON Schema (2020-12) for the config file (P3). Generated from the config layer by `python -m sopuli.config.schema` — never edited by hand |
 | [schemas/sopuli-run-1.108.schema.json](schemas/sopuli-run-1.108.schema.json) | JSON Schema (2020-12) for the `--output json` document — the current one; earlier minors stay published beside it, with the exceptions that `design/03-json-output.md` §8 names, because a build emitting `schema_version: "1.20"` has to be able to fetch what it validates against |
 | [schemas/sopuli-event-1.25.schema.json](schemas/sopuli-event-1.25.schema.json) | JSON Schema for `--output jsonl` events |
 | [schemas/example-creds-check-drift.json](schemas/example-creds-check-drift.json) | Worked example: a scheduled check finding drift in one of two PDBs |
@@ -91,7 +91,7 @@ the run schema. `tests/test_schemas.py` checks this on every push and pull
 request (invariant 12).
 
 To get completion and inline errors while you edit a config, put
-`# yaml-language-server: $schema=./sopuli-config-5.4.schema.json` on the file's
+`# yaml-language-server: $schema=./sopuli-config-5.5.schema.json` on the file's
 first line. [design/01-configuration.md](design/01-configuration.md) §9b says
 why the schema's `$id` is not a URL to paste there.
 
@@ -199,6 +199,8 @@ Where: `00` to `04` are `design/00-principles.md` to `design/04-testing.md`;
 | C15 | 01 | A binding with a secret and no store | decided | caught at plan time | #118 |
 | C16 | 01 | What `--vault-token` takes | decided | refused; `--vault-token-file PATH` instead | #145 |
 | C17 | 01 | P5's built-in confirmation against `01-configuration.md` §9's ratchet rule | decided | §9 governs; P5 is reworded | #294 |
+| C18 | 01 | Should the tool tell Kubernetes about a new password? | decided | it asks ESO to refresh a named ExternalSecret | #1702 |
+| C19 | 01 | Should the tool write one key of an existing Kubernetes Secret, where there is no ESO? | open | | #1704 |
 | P1 | 02 | Default service user: common `C##` or per-PDB local? | decided | common; per-PDB is documented | #615 |
 | P2 | 02 | Grant `SELECT ON SYS.USER$` by default? | decided | no; an optional, probed grant | #86 |
 | P3 | 02 | Does `--force` exist? | decided | yes; it overrides account checks 2–5 and 7 (7 from #1059) | #89 |

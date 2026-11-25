@@ -1326,8 +1326,8 @@ same selectors and safety ratchets. It takes no run lock, because it writes no
 vault document.
 
 A verb that runs any SQL needs whatever privilege that SQL needs, and ADR-001
-rests on the service account holding `ALTER USER`, or `CREATEROLE` on PostgreSQL, and
-nothing else. So UC-3
+rests on the service account holding `ALTER USER` and nothing else, or on PostgreSQL the
+grants of [`02-postgres-privileges.md`](design/02-postgres-privileges.md) §2.1. So UC-3
 connects as a run-as account, set in `run_as:`, and never as the service
 account. The usual choice is the DBA's personal account, set under `defaults:`. A statement may change data, with
 `--write`, a row guard and a plan fingerprint. `--dry-run` runs the statement on

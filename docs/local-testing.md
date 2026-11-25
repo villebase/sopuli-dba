@@ -3806,6 +3806,8 @@ headings are `name` and `flag`. A read runs in a read-only transaction, and
 the server refuses one that would write:
 
 ```
+$ cat lock.sql
+SELECT * FROM dba_alpha.acme_settings FOR UPDATE;
 $ sopuli --config sql-run-pg.yaml sql run --file lock.sql
 read statement:
   SELECT * FROM dba_alpha.acme_settings FOR UPDATE

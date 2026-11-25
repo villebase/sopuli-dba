@@ -210,8 +210,8 @@ On PostgreSQL, two statements pass the keyword check as reads although they
 write. `SELECT ... INTO t2` creates a table, and a `WITH` whose query is an
 `UPDATE`, `INSERT` or `DELETE` changes rows. A read runs in a read-only
 transaction, so the server is what refuses them. With `--write`, both are
-refused as reads. #1691 measures what PostgreSQL's read-only transaction
-refuses, before `sql run` runs on PostgreSQL.
+refused as reads. What the server refuses, and with which code, is in
+*On PostgreSQL* below.
 
 **Why the keyword check exists.** Oracle commits before any DDL, so
 `SET TRANSACTION READ ONLY` does not stop DDL. The keyword check does.
@@ -500,7 +500,12 @@ adds no mutation record.
 - **Value types.** Dates, numbers and LOBs become strings or numbers that JSON
   can carry. A LOB is read as text or bytes, cut at 4000 characters or bytes,
   and the target is marked truncated when one was cut. Oracle `NUMBER` is read
-  as a `Decimal`, so a value with a scale is not rounded to a float.
+  as a `Decimal`, so a value with a scale is not rounded to a float. On
+  PostgreSQL, `numeric` is a `Decimal` too; `json` and `jsonb` are the server's
+  text, so a number in one is not rounded; an array and a record are JSON text;
+  a date or time that Python cannot hold, such as `infinity` or a BC date, is
+  the server's text; and any value whose text is longer than 4000 characters,
+  or a `bytea` longer than 4000 bytes, is cut.
 
 ---
 

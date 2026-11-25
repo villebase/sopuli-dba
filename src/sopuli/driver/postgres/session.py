@@ -22,11 +22,11 @@ anything, and each checks
 :func:`~sopuli.driver.postgres.scope.require_read_write` first. It also resolves
 a `role:` predicate for `account list` (:meth:`PostgresSession.accounts_matching`).
 It runs one operator's statement for `sql run` in a guarded transaction
-(:meth:`PostgresSession.run_statement`, UC-3), which the registry does not yet
-list the command for.
+(:meth:`PostgresSession.run_statement`, UC-3).
 The registry entry lists the commands it is written for: UC-1's, UC-2's
 `account list`, `reset-password`, `suspend` and `expire-password`, and UC-5's
-`report accounts`, `report history` and `report privileges`. What
+`report accounts`, `report history` and `report privileges`, and UC-3's
+`sql run`. What
 PostgreSQL has no counterpart for, such as a rollover window, a profile, or an
 expired password a role must change at login, is refused by capability, exit 5.
 :meth:`PostgresSession.apply_attributes` is never reached, because a
@@ -47,6 +47,7 @@ from typing import Any, NoReturn
 
 import psycopg
 from psycopg import pq, sql
+from psycopg.types.datetime import DateLoader, TimestampLoader, TimestamptzLoader
 from psycopg.types.string import TextLoader
 
 from sopuli.config.model import ExpandedTarget, Runtime
@@ -767,8 +768,8 @@ class PostgresSession(ClosesConnection):
                         committed = True
                     return StatementResult((), (), count, False, committed, passed)
             with self.connection.cursor(name="sopuli_sql_run") as rows:
-                for name in ("json", "jsonb"):
-                    rows.adapters.register_loader(name, TextLoader)
+                for name, loader in _READ_LOADERS:
+                    rows.adapters.register_loader(name, loader)
                 rows.execute(statement.text)
                 return _read_result(rows, max_rows)
         except psycopg.Error as error:
@@ -865,17 +866,67 @@ def _plain(value: Any) -> Any:
 def _cell(value: Any) -> tuple[JsonValue, bool]:
     """One fetched value in JSON form, and whether it was cut to get there.
 
-    An array comes back as JSON text; ``json`` and ``jsonb`` arrive as text
-    already. A text, ``bytea`` or JSON text longer than :data:`VALUE_LIMIT`
-    is cut. Any other
-    type is :func:`~sopuli.sql.values.to_json`'s: ``uuid``, ``inet`` and a
-    range become their text form.
+    An array and a record come back as JSON text; ``json`` and ``jsonb``
+    arrive as text already. Any other type is
+    :func:`~sopuli.sql.values.to_json`'s: ``uuid``, ``inet`` and a range
+    become their text form. A ``bytea`` longer than :data:`VALUE_LIMIT` bytes
+    is cut before it becomes hex, as Oracle's ``RAW`` LOB is, and any text
+    form longer than :data:`VALUE_LIMIT` characters is cut.
     """
-    if isinstance(value, dict | list):
+    if isinstance(value, dict | list | tuple):
         value = json.dumps(_plain(value), ensure_ascii=False)
-    if isinstance(value, str | bytes) and len(value) > VALUE_LIMIT:
+    if isinstance(value, bytes) and len(value) > VALUE_LIMIT:
         return to_json(value[:VALUE_LIMIT]), True
-    return to_json(value), False
+    converted = to_json(value)
+    if isinstance(converted, str) and len(converted) > VALUE_LIMIT:
+        return converted[:VALUE_LIMIT], True
+    return converted, False
+
+
+class _DateOrText(DateLoader):
+    """A ``date``, or the server's text where no Python date holds it:
+    ``infinity``, ``-infinity``, a BC date or a year past 9999. psycopg
+    raises a ``DataError`` with no SQLSTATE for those."""
+
+    def load(self, data: Any) -> Any:
+        try:
+            return super().load(data)
+        except psycopg.DataError:
+            return bytes(data).decode()
+
+
+class _TimestampOrText(TimestampLoader):
+    """A ``timestamp``, or the server's text, as :class:`_DateOrText`."""
+
+    def load(self, data: Any) -> Any:
+        try:
+            return super().load(data)
+        except psycopg.DataError:
+            return bytes(data).decode()
+
+
+class _TimestamptzOrText(TimestamptzLoader):
+    """A ``timestamptz``, or the server's text, as :class:`_DateOrText`. A
+    role's ``VALID UNTIL 'infinity'``, which `account reset-password` sets, is
+    one."""
+
+    def load(self, data: Any) -> Any:
+        try:
+            return super().load(data)
+        except psycopg.DataError:
+            return bytes(data).decode()
+
+
+#: The loaders a read's cursor uses in place of psycopg's: JSON as the
+#: server's text, so a number in it is not rounded to a float, and dates
+#: and times that fall back to the server's text where Python has no value.
+_READ_LOADERS: tuple[tuple[str, type], ...] = (
+    ("json", TextLoader),
+    ("jsonb", TextLoader),
+    ("date", _DateOrText),
+    ("timestamp", _TimestampOrText),
+    ("timestamptz", _TimestamptzOrText),
+)
 
 
 def _read_result(cursor: Any, max_rows: int) -> StatementResult:

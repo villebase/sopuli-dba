@@ -1,11 +1,14 @@
 """Check one SQL statement before `sql run` connects (UC-3).
 
 The check is by keyword. It lets a read or a plain data change through and
-refuses everything else. It does no I/O.
+refuses everything else. It scans comments and literals by the rules of one
+product, its :class:`Dialect`. It does no I/O.
 """
 
 from __future__ import annotations
 
+import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import StrEnum
 
@@ -21,6 +24,19 @@ WRITE_KEYWORDS = ("UPDATE", "INSERT", "MERGE", "DELETE")
 class StatementKind(StrEnum):
     READ = "read"
     WRITE = "write"
+
+
+class Dialect(StrEnum):
+    """Whose rules for comments and literals the scan follows.
+
+    Oracle's block comments end at the first ``*/``, and it has ``q'[...]'``
+    literals. PostgreSQL's block comments nest, and it has dollar quotes and
+    ``E'...'`` strings with backslash escapes. The value is the target's
+    ``type:``.
+    """
+
+    ORACLE = "oracle"
+    POSTGRESQL = "postgresql"
 
 
 class StatementRefusedError(RefusedError):
@@ -43,8 +59,36 @@ class Statement:
 #: ASCII whitespace only. `str.strip` would also remove Unicode spaces.
 _SPACE = " \t\n\r\f\v"
 
+#: What :func:`_literal_end` returns for a literal that never closes.
+_UNCLOSED = -1
 
-def _first_word(text: str) -> tuple[str, str]:
+
+def _comment_end(text: str, i: int, dialect: Dialect) -> int | None:
+    """Where the block comment that opens at ``text[i]`` ends, or ``None``
+    when it never closes.
+
+    On Oracle the first ``*/`` closes it. On PostgreSQL a ``/*`` inside opens
+    a nested comment, and each needs its own ``*/``.
+    """
+    if dialect is Dialect.ORACLE:
+        found = text.find("*/", i + 2)
+        return None if found == -1 else found + 2
+    depth, j, n = 1, i + 2, len(text)
+    while j < n:
+        if text.startswith("/*", j):
+            depth += 1
+            j += 2
+        elif text.startswith("*/", j):
+            depth -= 1
+            j += 2
+            if depth == 0:
+                return j
+        else:
+            j += 1
+    return None
+
+
+def _first_word(text: str, dialect: Dialect) -> tuple[str, str]:
     """The first word after any whitespace and comments, and why there is none.
 
     The reason is ``""`` when there is a word, ``"empty"`` when only whitespace
@@ -59,10 +103,10 @@ def _first_word(text: str) -> tuple[str, str]:
             end = text.find("\n", i)
             i = n if end == -1 else end + 1
         elif text.startswith("/*", i):
-            end = text.find("*/", i + 2)
-            if end == -1:
+            closed = _comment_end(text, i, dialect)
+            if closed is None:
                 return "", "unclosed"
-            i = end + 2
+            i = closed
         else:
             break
     start = i
@@ -93,13 +137,82 @@ def _q_quote_start(text: str, i: int) -> bool:
     return before < 0 or not _is_word_char(text[before])
 
 
-def _code_end(text: str) -> tuple[int, int | None]:
+def _is_postgres_word_char(char: str) -> bool:
+    """A character that can be part of a PostgreSQL name. Non-ASCII letters
+    can, and so can ``$`` after the first character."""
+    return char.isalnum() or char in "_$" or not char.isascii()
+
+
+def _after_word(text: str, i: int) -> bool:
+    return i > 0 and _is_postgres_word_char(text[i - 1])
+
+
+#: A PostgreSQL dollar-quote tag: ``$$``, or ``$name$``, where the name follows
+#: the rules for a name but holds no ``$``.
+_DOLLAR_TAG = re.compile(r"\$(?:[^\W\d]\w*)?\$")
+
+
+def _dollar_tag(text: str, i: int) -> str | None:
+    """The tag of a dollar quote that opens at ``text[i]``, or ``None``.
+
+    A ``$`` after a name character is part of the name, as in ``a$b``, and
+    ``$1`` is a parameter, so neither opens a quote.
+    """
+    if text[i] != "$" or _after_word(text, i):
+        return None
+    found = _DOLLAR_TAG.match(text, i)
+    return None if found is None else found.group()
+
+
+def _escape_string_end(text: str, i: int) -> int:
+    """Where an ``E'...'`` string ends, for the ``'`` at ``text[i]``, or
+    :data:`_UNCLOSED`. A backslash escapes the next character, so ``\\'``
+    does not end it. ``''`` does not either."""
+    j, n = i + 1, len(text)
+    while j < n:
+        if text[j] == "\\":
+            j += 2
+        elif text[j] == "'":
+            if text.startswith("''", j):
+                j += 2
+            else:
+                return j + 1
+        else:
+            j += 1
+    return _UNCLOSED
+
+
+def _literal_end(text: str, i: int, dialect: Dialect) -> int | None:
+    """Where the literal or quoted name that opens at ``text[i]`` ends,
+    :data:`_UNCLOSED` when it never closes, or ``None`` when none opens there."""
+    char = text[i]
+    if dialect is Dialect.ORACLE and _q_quote_start(text, i):
+        if i + 2 >= len(text):
+            return _UNCLOSED
+        closer = _Q_CLOSERS.get(text[i + 2], text[i + 2]) + "'"
+        found = text.find(closer, i + 3)
+        return _UNCLOSED if found == -1 else found + 2
+    if dialect is Dialect.POSTGRESQL:
+        if char in "eE" and text[i + 1 : i + 2] == "'" and not _after_word(text, i):
+            return _escape_string_end(text, i + 1)
+        tag = _dollar_tag(text, i)
+        if tag is not None:
+            found = text.find(tag, i + len(tag))
+            return _UNCLOSED if found == -1 else found + len(tag)
+    if char in "'\"":
+        found = text.find(char, i + 1)
+        return _UNCLOSED if found == -1 else found + 1
+    return None
+
+
+def _code_end(text: str, dialect: Dialect) -> tuple[int, int | None]:
     """Where the code of ``text`` ends, and where an unclosed comment starts.
 
     The first is the length of ``text`` up to its last character that is not
     whitespace and not in a comment, so what follows is whitespace and comments
-    only. String literals, q-quoted literals and quoted names are skipped whole,
-    so a ``--`` or a ``/*`` in one is not a comment.
+    only. String literals, quoted names, and Oracle's q-quoted literals or
+    PostgreSQL's dollar quotes and ``E'...'`` strings, are skipped whole, so a
+    ``--`` or a ``/*`` in one is not a comment.
 
     The second is ``None``, or the position of a ``/*`` that never closes, with
     the code end before it. An unclosed literal makes the rest of the text code:
@@ -114,23 +227,14 @@ def _code_end(text: str) -> tuple[int, int | None]:
             found = text.find("\n", i)
             i = n if found == -1 else found + 1
         elif text.startswith("/*", i):
-            found = text.find("*/", i + 2)
-            if found == -1:
+            closed = _comment_end(text, i, dialect)
+            if closed is None:
                 return end, i
-            i = found + 2
-        elif _q_quote_start(text, i):
-            if i + 2 >= n:
+            i = closed
+        elif (literal := _literal_end(text, i, dialect)) is not None:
+            if literal == _UNCLOSED:
                 return n, None
-            closer = _Q_CLOSERS.get(text[i + 2], text[i + 2]) + "'"
-            found = text.find(closer, i + 3)
-            if found == -1:
-                return n, None
-            i = end = found + 2
-        elif char in "'\"":
-            found = text.find(char, i + 1)
-            if found == -1:
-                return n, None
-            i = end = found + 1
+            i = end = literal
         else:
             i += 1
             end = i
@@ -141,7 +245,7 @@ def _is_terminated(code: str) -> bool:
     return code.endswith(";") or code.rsplit("\n", 1)[-1].strip(_SPACE) == "/"
 
 
-def _without_trailing_comments(text: str) -> str:
+def _without_trailing_comments(text: str, dialect: Dialect) -> str:
     """``text`` without the comments after its terminator.
 
     Only a comment that follows a ``;`` or a line holding only ``/`` goes, with
@@ -149,7 +253,7 @@ def _without_trailing_comments(text: str) -> str:
     statement with no terminator stays where the operator wrote it. A comment
     that never closes after a terminator is refused by name.
     """
-    end, unclosed = _code_end(text)
+    end, unclosed = _code_end(text, dialect)
     code = text[:end].rstrip(_SPACE)
     if not _is_terminated(code):
         return text
@@ -161,26 +265,32 @@ def _without_trailing_comments(text: str) -> str:
     return code
 
 
-def _strip_terminators(raw: str) -> str:
-    text = _without_trailing_comments(raw.replace("\r\n", "\n").replace("\r", "\n")).rstrip(_SPACE)
+def _strip_terminators(raw: str, dialect: Dialect) -> str:
+    text = raw.replace("\r\n", "\n").replace("\r", "\n")
+    text = _without_trailing_comments(text, dialect).rstrip(_SPACE)
     lines = text.split("\n")
     if lines[-1].strip(_SPACE) == "/":
         # A comment may sit between the `;` and the `/`, and so after the `/`.
-        text = _without_trailing_comments("\n".join(lines[:-1]).rstrip(_SPACE)).rstrip(_SPACE)
+        before = "\n".join(lines[:-1]).rstrip(_SPACE)
+        text = _without_trailing_comments(before, dialect).rstrip(_SPACE)
     if text.endswith(";"):
         text = text[:-1].rstrip(_SPACE)
     return text
 
 
-def classify(raw: str) -> Statement:
+def classify(raw: str, *, dialect: Dialect = Dialect.ORACLE) -> Statement:
     """Check ``raw`` and return the statement, or raise :class:`StatementRefusedError`.
+
+    ``dialect`` says how comments and literals are read. The trailing ``/``
+    line is SQL*Plus's terminator, and it is stripped in every dialect, so
+    one statement reads the same way on a run of more than one product.
 
     A ``;`` left after the one terminator is refused, so a second statement
     cannot ride along. A ``;`` inside a string literal is refused too. That is a
     false refusal, and UC-3 accepts it.
     """
-    text = _strip_terminators(raw)
-    word, reason = _first_word(text)
+    text = _strip_terminators(raw, dialect)
+    word, reason = _first_word(text, dialect)
     if not word:
         message = {
             "empty": "the statement is empty",
@@ -211,3 +321,32 @@ def classify(raw: str) -> Statement:
             hint="give one statement. A ';' inside a string literal is refused too",
         )
     return Statement(text=text, kind=kind, keyword=keyword)
+
+
+#: How a refusal names each dialect.
+_PRODUCT_NAMES = {Dialect.ORACLE: "Oracle", Dialect.POSTGRESQL: "PostgreSQL"}
+
+
+def classify_for(raw: str, dialects: Iterable[Dialect]) -> Statement:
+    """Check ``raw`` once for each dialect a run covers.
+
+    One refusal refuses the statement. Where two dialects give a different
+    text or keyword, the statement is refused too, and neither reading is
+    picked: the plan fingerprint and every target need one text. With no
+    dialect, Oracle's is used.
+    """
+    found = {dialect: classify(raw, dialect=dialect) for dialect in sorted(set(dialects))}
+    if not found:
+        return classify(raw)
+    readings = set(found.values())
+    if len(readings) > 1:
+        names = " and ".join(_PRODUCT_NAMES[dialect] for dialect in found)
+        raise StatementRefusedError(
+            f"the statement reads differently on {names}",
+            hint=(
+                "write it so that every product reads it the same way, without nested "
+                "comments, dollar quotes or E'...' strings, or select one product's "
+                "targets at a time"
+            ),
+        )
+    return next(iter(found.values()))

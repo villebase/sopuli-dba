@@ -5,7 +5,16 @@ from __future__ import annotations
 import pytest
 
 from sopuli.safety import RefusedError
-from sopuli.sql.statement import StatementKind, StatementRefusedError, classify
+from sopuli.sql.statement import (
+    Dialect,
+    StatementKind,
+    StatementRefusedError,
+    classify,
+    classify_for,
+)
+
+PG = Dialect.POSTGRESQL
+ORA = Dialect.ORACLE
 
 
 @pytest.mark.parametrize(
@@ -176,3 +185,104 @@ def test_a_semicolon_inside_a_literal_is_refused() -> None:
     # A known false refusal, accepted by the spec.
     with pytest.raises(StatementRefusedError):
         classify("select 'a;b' from dual")
+
+
+# PostgreSQL's rules (#1692).
+
+
+def test_postgresql_comments_nest_in_the_keyword_check() -> None:
+    # Oracle's first `*/` ends the comment, so it reads SELECT. PostgreSQL
+    # reads the whole first line as one comment and runs the DELETE.
+    raw = "/* /* */ SELECT */ DELETE FROM t"
+    assert classify(raw, dialect=ORA).keyword == "SELECT"
+    statement = classify(raw, dialect=PG)
+    assert (statement.keyword, statement.kind) == ("DELETE", StatementKind.WRITE)
+
+
+@pytest.mark.parametrize(
+    ("raw", "text"),
+    [
+        ("SELECT $$a -- b$$ FROM t; -- note", "SELECT $$a -- b$$ FROM t"),
+        ("SELECT $fn$it's /* x$fn$; /* c */", "SELECT $fn$it's /* x$fn$"),
+        ("SELECT $a$ $$ -- $a$ FROM t; -- n", "SELECT $a$ $$ -- $a$ FROM t"),
+        ("SELECT E'it\\'s -- x' FROM t; -- n", "SELECT E'it\\'s -- x' FROM t"),
+        ("SELECT e'a\\\\' FROM t; -- n", "SELECT e'a\\\\' FROM t"),
+        ("SELECT E'it''s -- x' FROM t; -- n", "SELECT E'it''s -- x' FROM t"),
+        ("SELECT 'a\\' FROM t; -- n", "SELECT 'a\\' FROM t"),
+        ("SELECT a$b$c FROM t; -- n", "SELECT a$b$c FROM t"),
+        ("SELECT 1; /* a /* b */ c */", "SELECT 1"),
+        ("SELECT 1 FROM t\n/\n-- note", "SELECT 1 FROM t"),
+        ('SELECT "a--b" FROM t; -- x', 'SELECT "a--b" FROM t'),
+    ],
+)
+def test_postgresql_literals_and_comments_after_the_terminator(raw: str, text: str) -> None:
+    assert classify(raw, dialect=PG).text == text
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        # Oracle reads `--` in the dollar quote as a comment, and the `;` stays.
+        "SELECT $$a -- b$$ FROM t; -- note",
+        # Oracle ends the literal at `\'`, and the `;` stays.
+        "SELECT E'it\\'s -- x' FROM t; -- n",
+        # Oracle's comment ends at the first `*/`.
+        "SELECT 1; /* a /* b */ c */",
+    ],
+)
+def test_the_postgresql_forms_are_refused_the_oracle_way(raw: str) -> None:
+    with pytest.raises(StatementRefusedError):
+        classify(raw, dialect=ORA)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "SELECT $$a;b$$ FROM t",
+        "SELECT E'a\\';b' FROM t",
+        "SELECT $$a; -- never closed",
+        # `q'` is no quote on PostgreSQL, so the `'` after `it` opens a literal.
+        "SELECT q'[it's]' FROM t; -- n",
+        "SELECT 1 FROM t; $$ -- $$ DELETE FROM t",
+    ],
+)
+def test_postgresql_refuses_a_semicolon_left_in_the_text(raw: str) -> None:
+    with pytest.raises(StatementRefusedError, match="';'"):
+        classify(raw, dialect=PG)
+
+
+@pytest.mark.parametrize(
+    "raw", ["SELECT 1; /* a /* b */", "/* /* */ SELECT 1", "SELECT 1\n/\n/* a /* b */"]
+)
+def test_postgresql_names_an_unclosed_nested_comment(raw: str) -> None:
+    with pytest.raises(StatementRefusedError, match="not closed"):
+        classify(raw, dialect=PG)
+
+
+def test_a_parameter_is_not_a_dollar_quote() -> None:
+    raw = "SELECT $1, '$2$' FROM t"
+    assert classify(raw, dialect=PG).text == raw
+
+
+@pytest.mark.parametrize(
+    "dialects", [[], [ORA], [ORA, PG], [PG, ORA, PG]], ids=["none", "oracle", "both", "repeated"]
+)
+def test_classify_for_returns_the_one_reading(dialects: list[Dialect]) -> None:
+    raw = "UPDATE t SET v = 'a--b' WHERE k = 1; -- note"
+    assert classify_for(raw, dialects) == classify(raw)
+
+
+def test_classify_for_refuses_two_readings() -> None:
+    with pytest.raises(StatementRefusedError, match="reads differently on Oracle and PostgreSQL"):
+        classify_for("/* /* */ SELECT */ DELETE FROM t", [PG, ORA])
+
+
+def test_classify_for_keeps_a_text_nothing_was_cut_from() -> None:
+    # The servers parse it differently, but the tool sends the same text to both.
+    raw = "SELECT 1 /* a /* b */ c */ FROM t"
+    assert classify_for(raw, [PG, ORA]).text == raw
+
+
+def test_classify_for_refuses_when_one_dialect_refuses() -> None:
+    with pytest.raises(StatementRefusedError, match="';'"):
+        classify_for("SELECT $$a -- b$$ FROM t; -- note", [ORA, PG])

@@ -24,6 +24,9 @@ The first release of UC-3 covers Oracle only. A target of another product is
 refused at plan time by `require_command`, with `SOPULI-20006`, never by a
 version check (invariant 4). The umbrella issue is #1657.
 
+UC-3 on PostgreSQL is in progress, under #1689. Its statement check is built
+(§3, #1692). `sql run` still refuses a PostgreSQL target.
+
 ---
 
 ## 1. Summary
@@ -172,6 +175,21 @@ A run is read-only unless the operator passes `--write`.
 except one at the end, which only comments may follow. A `;` inside a string literal is a known false refusal,
 and it is acceptable.
 
+**Each product reads comments and literals its own way.** The check scans by the
+rules of the target's product. On Oracle, a block comment ends at the first
+`*/`, and `q'[...]'` is a literal. On PostgreSQL, block comments nest, and
+`$$...$$`, `$tag$...$tag$` and `E'...'` are literals. In an `E'...'` literal,
+`\'` does not end it. So `/* /* */ SELECT */ DELETE FROM t` is a `SELECT` on
+Oracle and a `DELETE` on PostgreSQL. A run over both products checks the
+statement once for each. If one check refuses it, it is refused. If the two
+give a different text or a different first word, it is refused too, because
+the plan fingerprint and every target need one text.
+
+On PostgreSQL, `standard_conforming_strings = off` lets `\'` escape a quote in a
+plain `'...'` literal too. The tool cannot see the setting, and it has been on
+by default since PostgreSQL 9.1. A wrong reading can only cut the text inside a
+literal, and the server then refuses the statement as unterminated.
+
 **Why the keyword check exists.** Oracle commits before any DDL, so
 `SET TRANSACTION READ ONLY` does not stop DDL. The keyword check does.
 
@@ -254,8 +272,11 @@ without it, and the row guard, which a write needs, is what stops it. A
 comment after a statement with no terminator stays in the text, and a statement
 after a comment that follows a `;` is still refused. The scan reads string
 literals, quoted names and `q'[...]'` literals whole, so a `--` or `/*` in one
-is not a comment. A `/*` that never closes after the terminator is refused as
-an unclosed comment. A second line that holds only `/`, left at the end, is
+is not a comment. On PostgreSQL the scan reads dollar quotes and `E'...'`
+literals whole instead of `q'[...]'`, and a nested comment ends at its own
+`*/` (§3). The trailing `/` line is removed on every product, so one
+statement reads the same way on a run over more than one. A `/*` that never
+closes after the terminator is refused as an unclosed comment. A second line that holds only `/`, left at the end, is
 refused, and so is a `;` still left in the text. A `/` inside the statement, such as a
 division, stays. Nothing else changes: case, whitespace and literals inside the
 statement stay as written.

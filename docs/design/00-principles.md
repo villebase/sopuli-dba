@@ -314,6 +314,12 @@ driver an extra adds no new condition. See P2's *Backends are install extras*
 and [ADR-006](../decisions/adr-006-optional-dependencies.md). D6 is unaffected:
 an extra controls which dependencies are installed, not which modules exist.
 
+Every driver changes a password the database itself stores. IBM Db2 is not
+supported, for now ([#1696](../decisions/log.md#1696)). Db2 stores no
+password: the operating system, LDAP, Kerberos or RACF checks the logon, so
+UC-1 and UC-2 would have no statement to send. The config refuses
+`type: db2` as it refuses any unknown type.
+
 ---
 
 ## P2. Multi-vault support

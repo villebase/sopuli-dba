@@ -255,13 +255,23 @@ def test_no_connect_on_the_database_has_a_connect_hint() -> None:
 # `sql run`'s hints (#1693).
 
 
-def test_a_read_only_refusal_of_a_read_says_a_write_needs_the_flag() -> None:
+@pytest.mark.parametrize(
+    ("code", "words"),
+    [
+        ("25006", "cannot run one that writes"),
+        ("42601", "declared as a cursor"),
+        ("0A000", "WITH query that writes"),
+    ],
+)
+def test_a_refused_read_gets_a_hint_for_a_read(code: str, words: str) -> None:
     from sopuli.driver.postgres.errors import for_statement
 
-    found = for_statement(classify("25006", "cannot execute UPDATE"), read=True)
-    assert found.code == "25006"
-    assert found.message == "cannot execute UPDATE"
-    assert "--write" in (found.hint or "")
+    found = for_statement(classify(code, "server text"), read=True)
+    assert found.code == code
+    assert found.message == "server text"
+    assert words in (found.hint or "")
+    # `--write` refuses a SELECT or WITH, so it is no way out.
+    assert "--write" not in (found.hint or "")
 
 
 def test_a_read_only_refusal_of_a_write_keeps_the_standby_hint() -> None:

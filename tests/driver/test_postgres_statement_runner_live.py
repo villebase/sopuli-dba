@@ -89,7 +89,7 @@ def role(live_postgres: Any) -> Iterator[dict[str, str]]:
             owner.execute("create table slow (k int)")
             owner.execute(
                 "create function slow_check() returns trigger language plpgsql as "
-                "$$ begin perform pg_sleep(1); return null; end $$"
+                "$$ begin perform pg_sleep(2); return null; end $$"
             )
             owner.execute(
                 "create constraint trigger slow_commit after insert on slow "
@@ -211,8 +211,7 @@ def test_a_read_cannot_write(
         )
 
     assert raised.value.code == code
-    if code == "25006":
-        assert "--write" in (raised.value.hint or "")
+    assert "--write" not in (raised.value.hint or "")
     assert _values(live_postgres, role) == [(1, "a"), (2, "b"), (3, "c")]
     assert session.connection_lost is False
 
@@ -374,7 +373,9 @@ def test_a_commit_whose_connection_is_lost_is_marked(session: Any, live_postgres
         with _connect(live_postgres, live_postgres.user, live_postgres.password) as admin:
             admin.execute("select pg_terminate_backend(%s)", (pid,))
 
-    timer = threading.Timer(0.5, terminate)
+    # The COMMIT starts within milliseconds and sleeps for 2 s, so 1 s lands in it
+    # with a wide margin on each side.
+    timer = threading.Timer(1.0, terminate)
     timer.start()
     try:
         with pytest.raises(DriverError) as raised:
@@ -389,7 +390,7 @@ def test_a_commit_whose_connection_is_lost_is_marked(session: Any, live_postgres
 def test_no_timeout_bounds_the_commit(
     session: Any, live_postgres: Any, role: dict[str, str]
 ) -> None:
-    # The deferred trigger sleeps for a second in the COMMIT, past the 300 ms bound.
+    # The deferred trigger sleeps for 2 s in the COMMIT, past the 300 ms bound.
     result = _run(
         session,
         "INSERT INTO slow VALUES (2)",
@@ -422,20 +423,45 @@ def test_a_lower_timeout_on_the_role_is_kept(live_postgres: Any, role: dict[str,
     assert raised.value.code == "57014"
 
 
-def test_a_revoked_pg_control_system_is_named(
-    session: Any, live_postgres: Any, role: dict[str, str]
-) -> None:
-    revoke = "revoke execute on function pg_control_system() from public"
-    with _connect(live_postgres, live_postgres.user, live_postgres.password) as admin:
-        admin.execute(revoke)
-        try:
-            with pytest.raises(DriverError) as raised:
-                session.database_identity()
-        finally:
-            admin.execute("grant execute on function pg_control_system() to public")
+def test_a_refused_identity_read_is_named(session: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    # pg_authid stands in for a revoked pg_control_system(): the role may not
+    # read it, so the server refuses with the same 42501, and the shared
+    # server's grants are left alone.
+    monkeypatch.setattr(
+        "sopuli.driver.postgres.session.STATEMENT_IDENTITY",
+        "select rolname, rolname from pg_authid",
+    )
+
+    with pytest.raises(DriverError) as raised:
+        session.database_identity()
 
     assert raised.value.code == "42501"
     assert "pg_control_system()" in (raised.value.hint or "")
+
+
+def test_a_write_needs_prepared_statements(session: Any) -> None:
+    from sopuli.driver.protocol import InternalFaultError
+
+    session.connection.prepare_threshold = None
+
+    with pytest.raises(InternalFaultError, match="prepared statements"):
+        _run(session, "UPDATE t SET v = 'x' WHERE k = 1", guard=RowGuard(expect=1), commit=True)
+
+
+@pytest.mark.parametrize(
+    ("text", "word"),
+    [
+        ("SELECT nextval('s')", "cannot run one that writes"),
+        ("SELECT * INTO t2 FROM t", "SELECT ... INTO"),
+        ("WITH gone AS (DELETE FROM t RETURNING k) SELECT 1", "WITH query that writes"),
+    ],
+)
+def test_a_refused_read_has_a_hint_for_a_read(session: Any, text: str, word: str) -> None:
+    with pytest.raises(DriverError) as raised:
+        _run(session, text)
+
+    assert word in (raised.value.hint or "")
+    assert "--write" not in (raised.value.hint or "")
 
 
 def test_a_statement_failure_is_not_a_failed_commit(session: Any) -> None:

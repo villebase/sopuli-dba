@@ -751,11 +751,13 @@ class PostgresSession(ClosesConnection):
                 return _read_result(rows, max_rows)
         except psycopg.Error as error:
             self._connection_lost = bool(self.connection.closed)
-            if error.sqlstate is None and not isinstance(error, psycopg.OperationalError):
+            unanswered = error.sqlstate is None
+            if unanswered and not committing and not isinstance(error, psycopg.OperationalError):
                 raise
             raised = for_statement(from_error(error), read=read).as_error()
-            # A refused COMMIT was rolled back; a lost one may have taken effect.
-            raised.commit_failed = committing and self._connection_lost
+            # A COMMIT the server answered with a SQLSTATE was rolled back. One
+            # it did not answer, or whose connection was lost, may have taken effect.
+            raised.commit_failed = committing and (unanswered or self._connection_lost)
             raise raised from error
         finally:
             if begun and not committed and not self.connection.closed:
@@ -763,9 +765,18 @@ class PostgresSession(ClosesConnection):
                     self.connection.execute("rollback")
 
     def _refuse_if_lost(self) -> None:
-        """Refuse to send on a connection a statement left closed."""
+        """Refuse to send on a connection a statement left closed, or on one
+        where psycopg would not prepare a write. With ``prepare_threshold``
+        ``None``, psycopg ignores ``prepare=True`` and sends the text with the
+        simple protocol, which runs every statement in it."""
         if self.connection is None:
             raise InternalFaultError.closed_session(self.target.name)
+        if self.connection.prepare_threshold is None:
+            raise InternalFaultError(
+                f'the session to target "{self.target.name}" has prepared statements turned '
+                "off, so the server would run every statement in a write's text",
+                hint="this is a fault in sopuli: `sql run` needs psycopg to prepare a write",
+            )
         if self._connection_lost or self.connection.closed:
             raise DriverError(
                 f"{CONNECTION_FAILURE}: the connection was closed under an earlier statement",

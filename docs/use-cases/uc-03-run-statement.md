@@ -211,17 +211,26 @@ the sequence (measured on 23.26.3.0.0); `SELECT ... FOR UPDATE` does not, becaus
 the server refuses it with `ORA-01456`. This is accepted. The rights of the
 run-as account are the real limit, as §1 says.
 
-**On PostgreSQL** a read runs in `BEGIN READ ONLY`. It refuses DDL,
-`SELECT ... INTO`, a write, `nextval()`, `SELECT ... FOR UPDATE`, a `WITH`
-query that writes, and a function that writes, with `25006` (`0A000` for a
-`STABLE` function), on releases 13 to 18. PostgreSQL does not commit before
-DDL, so the transaction covers it. The gap is `dblink_exec()`: it writes
-through another connection, and the write stays after the rollback. Once the
-`dblink` extension is in a database, any role there may call it, and a role
-that is not a superuser gives a password in its connection string. This is
-accepted, for the reason above. The statement goes to the server as a
-prepared statement, which the server refuses with `42601` when the text holds
-two (`../measurements.md`, `12_statement_run_probe.py`).
+**On PostgreSQL** a read is declared as a cursor in `BEGIN READ ONLY`, so
+two guards on the server stand behind the keyword check. The cursor takes one
+query: it refuses two statements, `SELECT ... INTO` and DDL with `42601`, and
+a `WITH` query that writes with `0A000`. The read-only transaction refuses
+`nextval()`, `SELECT ... FOR UPDATE` and a function that writes with `25006`
+(`0A000` for a `STABLE` function). A write is sent as a prepared statement,
+which the server refuses with `42601` when the text holds two. PostgreSQL does
+not commit before DDL, so the transaction would cover DDL too. Measured on
+releases 13 to 18 (`../measurements.md`, `12_statement_run_probe.py`), and the
+cursor's refusals on 16.15 (#1693).
+
+The gap is any function whose effect is outside the transaction, which the
+rollback does not undo. `dblink_exec()` writes through another connection,
+and once the `dblink` extension is in a database, any role there may call it;
+a role that is not a superuser gives a password in its connection string.
+`pg_cancel_backend()` and `pg_terminate_backend()` end another session's work,
+`pg_reload_conf()` reloads the server's configuration, and a session advisory
+lock, `pg_advisory_lock()`, is still held after the rollback. Each runs in a
+read on 16.15, where the run-as account has the right to call it. This is
+accepted, for the reason above.
 
 **`readonly: true`** (`../design/00-principles.md`) refuses `--write`, with or
 without `--dry-run`, with exit 8. It does not refuse a read, and `--dry-run`

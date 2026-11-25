@@ -307,19 +307,35 @@ _STATEMENT_HINTS = {
     ),
 }
 
-#: A read runs in a read-only transaction, so the shared hint for ``25006``,
-#: about a standby, is wrong for it.
-_READ_ONLY_READ_HINT = (
-    "the statement tried to write, and a read runs in a read-only transaction. A write "
-    "needs --write. A function or a WITH query that writes is refused this way too"
-)
+#: ``feature_not_supported``. A read declared as a cursor gets it for a
+#: ``WITH`` query that writes, and a ``STABLE`` function that writes gets it.
+FEATURE_NOT_SUPPORTED = "0A000"
+
+#: A read is a ``SELECT`` or ``WITH`` declared as a cursor in a read-only
+#: transaction, so the shared hints are wrong for what either refuses. A read
+#: that writes cannot run at all: ``--write`` refuses a ``SELECT`` or ``WITH``.
+_READ_HINTS = {
+    READ_ONLY_TRANSACTION: (
+        "a SELECT or WITH runs in a read-only transaction, and `sql run` cannot run one "
+        "that writes, such as nextval(), SELECT ... FOR UPDATE, or a function that writes"
+    ),
+    SYNTAX_ERROR: (
+        "a SELECT or WITH is declared as a cursor, which takes one query. The server "
+        "could not parse it as one: the text holds two statements, it is a SELECT ... "
+        "INTO, which creates a table, or it has a syntax error"
+    ),
+    FEATURE_NOT_SUPPORTED: (
+        "the server does not allow this in a read: a WITH query that writes, or a "
+        "function that writes. `sql run` cannot run a SELECT or WITH that writes"
+    ),
+}
 
 
 def for_statement(diagnosis: Diagnosis, *, read: bool) -> Diagnosis:
     """``diagnosis`` with `sql run`'s hint, where it has one. The code and the
-    server's message are kept. ``read`` says the statement ran in a read-only
-    transaction."""
-    if read and diagnosis.code == READ_ONLY_TRANSACTION:
-        return replace(diagnosis, hint=_READ_ONLY_READ_HINT)
-    hint = _STATEMENT_HINTS.get(diagnosis.code)
+    server's message are kept. ``read`` says the statement ran as a read: a
+    cursor in a read-only transaction."""
+    hint = _READ_HINTS.get(diagnosis.code) if read else None
+    if hint is None:
+        hint = _STATEMENT_HINTS.get(diagnosis.code)
     return diagnosis if hint is None else replace(diagnosis, hint=hint)

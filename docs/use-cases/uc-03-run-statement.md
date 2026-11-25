@@ -155,7 +155,9 @@ others.
    through other roles, whatever the membership's `INHERIT` or `SET` option:
    a member without `INHERIT` can still take the role with
    `set_config('role', …)`. A superuser is not counted as a member, because
-   it gains nothing from the service role. Every role may read
+   it gains nothing from the service role. A superuser login whose default
+   role is a member is refused, because its statements run as that member.
+   Every role may read
    `pg_auth_members`. On Oracle one user is never granted to another, so
    neither read applies ([#1690](../decisions/log.md#1690)).
 
@@ -300,9 +302,9 @@ targets, never all of them. `max_targets` applies unchanged (invariant 10).
   user its session became, and its database identity, read when the tool
   connects. On Oracle that is `DB_UNIQUE_NAME` and `CON_NAME`, and on
   PostgreSQL the cluster's `system_identifier` and `current_database()`. Where
-  a PostgreSQL session starts as another role, the user is written
-  `<login> as <role>`, so a default role set between the dry run and the real
-  run changes the hash. The session user is what the
+  a PostgreSQL session starts as another role, that role is in the hash too,
+  so a default role set between the dry run and the real run changes it. The
+  session user is what the
   database reports, so an `external` login that reaches another user changes
   the hash. A target that did not connect, or that failed after it logged in,
   has its configured run-as name, or `external`, and no identity. A target of

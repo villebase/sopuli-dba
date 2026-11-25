@@ -684,7 +684,11 @@ def refuse_session_user(
             f"target {target.name!r}: the run-as login {session_user!r} starts as "
             f"{current_user!r}, {tail}",
             at=at,
-            hint=f"{hint}, or remove the login role's default role (ALTER ROLE … RESET role)",
+            hint=(
+                f"{hint}, or remove the default role: ALTER ROLE … RESET role, "
+                "ALTER ROLE … IN DATABASE … RESET role, or ALTER DATABASE … RESET role, "
+                "whichever set it"
+            ),
         )
     if member_of is not None and member_of(admin_user):
         raise ServiceAccountRefusedError(

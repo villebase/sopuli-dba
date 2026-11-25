@@ -239,6 +239,26 @@ def test_a_default_role_is_the_current_user(
         opened.close()
 
 
+def test_a_superuser_starting_as_a_member_is_one(
+    live_postgres: Any, role: dict[str, str], service: dict[str, str]
+) -> None:
+    # The login is a superuser and no member, but its statements run as
+    # `mid`, which is an ordinary role and a member of the service role.
+    _as_superuser(
+        live_postgres,
+        f'grant "{service["svc"]}" to "{service["mid"]}"',
+        f'alter role "{role["name"]}" superuser',
+        f'alter role "{role["name"]}" set role = "{service["mid"]}"',
+    )
+    opened = _open(live_postgres, role)
+    try:
+        assert opened.current_user() == service["mid"]
+        assert opened.member_of(service["svc"]) is True
+    finally:
+        opened.close()
+        _as_superuser(live_postgres, f'alter role "{role["name"]}" nosuperuser')
+
+
 def test_a_read_returns_columns_and_rows(session: Any) -> None:
     result = _run(session, "SELECT k, v FROM t ORDER BY k;")
 

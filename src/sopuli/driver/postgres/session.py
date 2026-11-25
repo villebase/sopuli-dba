@@ -674,17 +674,18 @@ class PostgresSession(ClosesConnection):
             return str(cursor.fetchone()[0])
 
     def member_of(self, account: str) -> bool:
-        """Whether the login role is a member of ``account``, directly or
-        through other roles, by ``upper()`` (decision A of #1690). Every
-        membership counts, whatever its ``INHERIT`` or ``SET`` option: a
-        member without ``INHERIT`` can still take the role with
-        ``set_config('role', …)``. A superuser is not counted, because it
-        gains nothing from ``account``. ``pg_auth_members`` is readable by
+        """Whether the login role, or the role its statements run as, is a
+        member of ``account``, directly or through other roles, by ``upper()``
+        (decision A of #1690). Every membership counts, whatever its
+        ``INHERIT`` or ``SET`` option: a member without ``INHERIT`` can still
+        take the role with ``set_config('role', …)``. A superuser is not
+        counted, because it gains nothing from ``account``. But a superuser
+        login whose default role is a member is refused, because its
+        statements run as that member. ``pg_auth_members`` is readable by
         every role."""
         with self._cursor() as cursor:
             cursor.execute(MEMBERSHIP, (account,))
-            superuser, member = cursor.fetchone()
-        return bool(member) and not superuser
+            return bool(cursor.fetchone()[0])
 
     def database_identity(self) -> tuple[str, str]:
         """``(system_identifier, current_database())``: the cluster and the
@@ -806,25 +807,27 @@ class PostgresSession(ClosesConnection):
             )
 
 
-#: Whether the login role is a superuser, and whether it is a member of the
-#: role named by the parameter, through any chain of memberships (#1690). The
-#: name is a role name from the config, never a password, so it is bound.
+#: Whether the login role or the current role, where it is not a superuser,
+#: is a member of the role named by the parameter, through any chain of
+#: memberships (#1690). The name is a role name from the config, never a
+#: password, so it is bound.
 MEMBERSHIP = """
-with recursive granted(roleid) as (
-    select m.roleid
+with recursive granted(start, roleid) as (
+    select r.rolname, m.roleid
       from pg_auth_members m
       join pg_roles r on r.oid = m.member
-     where r.rolname = session_user
+     where r.rolname in (session_user, current_user)
     union
-    select m.roleid
+    select g.start, m.roleid
       from pg_auth_members m
       join granted g on m.member = g.roleid
 )
-select (select rolsuper from pg_roles where rolname = session_user),
-       exists (select 1
+select exists (select 1
                  from granted g
+                 join pg_roles s on s.rolname = g.start
                  join pg_roles r on r.oid = g.roleid
-                where upper(r.rolname) = upper(%s))
+                where not s.rolsuper
+                  and upper(r.rolname) = upper(%s))
 """
 
 #: What `sql run` reads to tell one database from another (UC-3 §4).

@@ -643,14 +643,24 @@ def refuse_service_account(
 
 
 def refuse_session_user(
-    target: ExpandedTarget, session_user: str, as_user: str | None, *, env: Mapping[str, str]
+    target: ExpandedTarget,
+    session_user: str,
+    as_user: str | None,
+    *,
+    env: Mapping[str, str],
+    current_user: str | None = None,
+    member_of: Callable[[str], bool] | None = None,
 ) -> None:
     """`sql run`'s second check, on the account the session actually reached (UC-3 §2).
 
-    ``session_user`` is what the database says the run-as login became. It is
-    refused with ``SOPULI-20010`` when it equals the admin's name by ``upper()``.
-    An ``external`` admin has no name to compare, so nothing is checked there:
-    the accepted gap of UC-3 §2. The tool never logs in as the admin to learn it.
+    ``session_user`` is what the database says the run-as login became, and
+    ``current_user`` the account its statements run as, where the caller read
+    it. Either is refused with ``SOPULI-20010`` when it equals the admin's name
+    by ``upper()``. ``member_of`` asks the session whether its user holds the
+    admin's privileges through role membership, on PostgreSQL (#1690); that is
+    refused too. An ``external`` admin has no name to compare, so nothing is
+    checked there: the accepted gap of UC-3 §2. The tool never logs in as the
+    admin to learn it.
     """
     from sopuli.safety import ServiceAccountRefusedError
 
@@ -658,12 +668,32 @@ def refuse_session_user(
     if admin is None or (admin.auth is not None and admin.auth.method == EXTERNAL):
         return
     admin_user = _username(target, env=env)
-    if admin_user is not None and session_user.upper() == admin_user.upper():
+    if admin_user is None:
+        return
+    at = ROOT if as_user is not None else run_as_at(target)
+    hint = "name a personal or owner account with `run_as:` or `--as USER`"
+    tail = "the account the tool uses for its own work. No statement ran on any target"
+    if session_user.upper() == admin_user.upper():
         raise ServiceAccountRefusedError(
-            f"target {target.name!r}: the run-as login reached {session_user!r}, the "
-            f"account the tool uses for its own work. No statement ran on any target",
-            at=ROOT if as_user is not None else run_as_at(target),
-            hint="name a personal or owner account with `run_as:` or `--as USER`",
+            f"target {target.name!r}: the run-as login reached {session_user!r}, {tail}",
+            at=at,
+            hint=hint,
+        )
+    if current_user is not None and current_user.upper() == admin_user.upper():
+        raise ServiceAccountRefusedError(
+            f"target {target.name!r}: the run-as login {session_user!r} starts as "
+            f"{current_user!r}, {tail}",
+            at=at,
+            hint=f"{hint}, or remove the login role's default role (ALTER ROLE … RESET role)",
+        )
+    if member_of is not None and member_of(admin_user):
+        raise ServiceAccountRefusedError(
+            f"target {target.name!r}: the run-as login {session_user!r} is a member of "
+            f"{admin_user!r}, so a statement would have its privileges. {admin_user!r} is "
+            f"{tail}",
+            at=at,
+            hint=f"{hint} that is not a member of the service role, directly or through "
+            "another role",
         )
 
 

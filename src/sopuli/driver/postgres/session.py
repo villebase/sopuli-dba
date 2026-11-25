@@ -665,6 +665,27 @@ class PostgresSession(ClosesConnection):
                 self._session_user = str(cursor.fetchone()[0])
         return self._session_user
 
+    def current_user(self) -> str:
+        """The role statements run as. It differs from :meth:`session_user`
+        where the login role has a default ``role`` (``ALTER ROLE … SET
+        role``)."""
+        with self._cursor() as cursor:
+            cursor.execute("select current_user")
+            return str(cursor.fetchone()[0])
+
+    def member_of(self, account: str) -> bool:
+        """Whether the login role is a member of ``account``, directly or
+        through other roles, by ``upper()`` (decision A of #1690). Every
+        membership counts, whatever its ``INHERIT`` or ``SET`` option: a
+        member without ``INHERIT`` can still take the role with
+        ``set_config('role', …)``. A superuser is not counted, because it
+        gains nothing from ``account``. ``pg_auth_members`` is readable by
+        every role."""
+        with self._cursor() as cursor:
+            cursor.execute(MEMBERSHIP, (account,))
+            superuser, member = cursor.fetchone()
+        return bool(member) and not superuser
+
     def database_identity(self) -> tuple[str, str]:
         """``(system_identifier, current_database())``: the cluster and the
         database this session reached. Any role can read both by default
@@ -784,6 +805,27 @@ class PostgresSession(ClosesConnection):
                 code=CONNECTION_FAILURE,
             )
 
+
+#: Whether the login role is a superuser, and whether it is a member of the
+#: role named by the parameter, through any chain of memberships (#1690). The
+#: name is a role name from the config, never a password, so it is bound.
+MEMBERSHIP = """
+with recursive granted(roleid) as (
+    select m.roleid
+      from pg_auth_members m
+      join pg_roles r on r.oid = m.member
+     where r.rolname = session_user
+    union
+    select m.roleid
+      from pg_auth_members m
+      join granted g on m.member = g.roleid
+)
+select (select rolsuper from pg_roles where rolname = session_user),
+       exists (select 1
+                 from granted g
+                 join pg_roles r on r.oid = g.roleid
+                where upper(r.rolname) = upper(%s))
+"""
 
 #: What `sql run` reads to tell one database from another (UC-3 §4).
 STATEMENT_IDENTITY = "select system_identifier::text, current_database() from pg_control_system()"

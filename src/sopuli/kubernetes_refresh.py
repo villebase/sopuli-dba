@@ -21,7 +21,7 @@ import os
 import subprocess
 import sys
 import tempfile
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -29,12 +29,20 @@ from sopuli.config.model import ExternalSecretRef
 
 #: How long one ``kubectl`` call may take. A kubeconfig whose login needs a
 #: person, such as an OIDC or cloud exec plugin, cannot prompt (stdin is
-#: closed), so it fails or hangs, and this bounds the hang.
+#: closed), so it fails or hangs, and this bounds the hang. It is also the
+#: only limit on a cluster that does not answer: kubectl's own
+#: ``--request-timeout`` is not passed, because kubectl would then exit with
+#: an error of its own, and a context that timed out could not be told apart
+#: from one that refused, so the rest of its ExternalSecrets would each wait
+#: again.
 TIMEOUT_SECONDS = 30
 
-#: kubectl's own limit on each request to the API server, below the call's
-#: limit, so an unreachable cluster is reported by kubectl, in its words.
-REQUEST_TIMEOUT = "20s"
+#: Variables kubectl and its credential plugins never receive: the tool's own
+#: settings and credentials. The rest of the environment is passed, because a
+#: kubeconfig's exec plugin, such as a cloud CLI, reads its own variables from
+#: it, as it would in the operator's shell.
+_WITHHELD_PREFIXES = ("SOPULI_",)
+_WITHHELD = frozenset({"VAULT_TOKEN"})
 
 #: Kept short in a message: kubectl's own error is the useful part.
 _DETAIL_MAX = 300
@@ -73,7 +81,6 @@ def command(kubectl: str, ref: ExternalSecretRef, stamp: str) -> list[str]:
         kubectl,
         f"--context={ref.context}",
         f"--namespace={ref.namespace}",
-        f"--request-timeout={REQUEST_TIMEOUT}",
         "annotate",
         "externalsecret",
         ref.name,
@@ -171,6 +178,21 @@ def _detail(completed: subprocess.CompletedProcess[str]) -> str:
     return last if len(last) <= _DETAIL_MAX else last[: _DETAIL_MAX - 1] + "…"
 
 
+def kubectl_environment(environ: Mapping[str, str]) -> dict[str, str]:
+    """``environ`` without the tool's own settings and credentials.
+
+    A credential in a variable of another name, such as an admin password a
+    target names with ``password_env``, is passed: the operator's shell would
+    pass it to kubectl too, and the tool cannot tell it from a cloud CLI's own
+    setting.
+    """
+    return {
+        name: value
+        for name, value in environ.items()
+        if name.upper() not in _WITHHELD and not name.upper().startswith(_WITHHELD_PREFIXES)
+    }
+
+
 def _run(argv: list[str]) -> subprocess.CompletedProcess[str]:
     """One kubectl call: no shell, stdin closed, bounded in time.
 
@@ -185,6 +207,7 @@ def _run(argv: list[str]) -> subprocess.CompletedProcess[str]:
             stdin=subprocess.DEVNULL,
             stdout=out,
             stderr=err,
+            env=kubectl_environment(os.environ),
             timeout=TIMEOUT_SECONDS,
             check=False,
         )

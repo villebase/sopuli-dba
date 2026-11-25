@@ -14372,23 +14372,48 @@ def _promote_documents(
 
 
 def _refresh_external_secrets(
-    applied: Sequence[_Applied], promotions: Mapping[LockKey, _Promotion]
+    applied: Sequence[_Applied],
+    promotions: Mapping[LockKey, _Promotion],
+    *,
+    doubted: frozenset[LockKey] = frozenset(),
 ) -> dict[ExternalSecretRef, Refresh]:
     """Ask ESO to refresh each ExternalSecret whose document this run promoted (C18).
 
     Once per distinct ExternalSecret, after every promotion, so one that reads
     two documents is not refreshed between them. A document that was not
     promoted is not refreshed: ESO would copy the same `current` again.
+
+    ``doubted`` is `creds rotate`'s documents whose read-back disagreed or
+    failed (§8 step 8). An ExternalSecret that reads one is not asked: ESO
+    would copy whatever the vault serves, which may not be what the databases
+    hold. It gets ``SOPULI-W078`` saying so, and ESO reads at its next
+    ``refreshInterval`` as it would without the block.
     """
-    refs = []
+    refs: list[ExternalSecretRef] = []
+    held: set[ExternalSecretRef] = set()
     for record in applied:
         binding = record.binding
         if binding.external_secret is None or binding.secret is None or binding.vault is None:
             continue
-        promotion = promotions.get(_lock_key(binding))
-        if promotion is not None and promotion.version is not None:
+        key = _lock_key(binding)
+        promotion = promotions.get(key)
+        if promotion is None or promotion.version is None:
+            continue
+        if key in doubted:
+            held.add(binding.external_secret)
+        else:
             refs.append(binding.external_secret)
-    return {refresh.external_secret: refresh for refresh in refresh_all(refs, now=utc_now())}
+    refreshes = {
+        refresh.external_secret: refresh
+        for refresh in refresh_all([ref for ref in refs if ref not in held], now=utc_now())
+    }
+    for ref in held:
+        refreshes[ref] = Refresh(
+            ref,
+            "the vault's read-back did not show the promoted password, so ESO was not asked",
+            attempted=False,
+        )
+    return refreshes
 
 
 def _refresh_for(
@@ -15838,7 +15863,9 @@ def creds_rotate(
     # record. One call, one place, and the ordering is structural rather than a
     # property of where each early return happens to sit.
     _record_locks(document, manager)
-    refreshes = _refresh_external_secrets(sequence.applied, sequence.promotions)
+    refreshes = _refresh_external_secrets(
+        sequence.applied, sequence.promotions, doubted=sequence.doubted
+    )
     if refusal is None:
         document.results = sequence.staged_json + [
             _applied_json(record, sequence.promotions, refreshes) for record in sequence.applied
@@ -16058,6 +16085,9 @@ class _Rotation:
     #: Step 8's documents that could not be read back. Their accounts are in
     #: ``disagreed`` as well.
     unread: dict[LockKey, Error] = field(default_factory=dict)
+    #: Step 8's documents whose read-back disagreed or failed. ESO is not
+    #: asked to refresh them: the vault may not serve what was promoted (C18).
+    doubted: frozenset[LockKey] = frozenset()
     #: Windows closed by ``--finish-rollover``. ``None`` where it was not asked
     #: for, which is not the same fact as zero.
     closed: int | None = None
@@ -16220,6 +16250,7 @@ def _rotate_estate(
     # Step 8, on the documents this run actually promoted.
     promoted, into.unread = _read_promoted(into.promotions, stores, run=run)
     into.disagreed, unconfirmed = _read_back(into.applied, into.promotions, promoted)
+    into.doubted = frozenset(unconfirmed)
 
     if finish_windows:
         settled = _settled(into.applied, into.promotions, unconfirmed)

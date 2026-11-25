@@ -15,7 +15,12 @@ from pathlib import Path
 import pytest
 
 from sopuli.config.model import ExternalSecretRef
-from sopuli.kubernetes_refresh import TIMEOUT_SECONDS, find_kubectl, refresh_all
+from sopuli.kubernetes_refresh import (
+    TIMEOUT_SECONDS,
+    find_kubectl,
+    kubectl_environment,
+    refresh_all,
+)
 
 NOW = datetime(2026, 11, 25, 12, 0, 0, 123456, tzinfo=UTC)
 STAMP = "20261125T120000.123456Z"
@@ -56,7 +61,6 @@ def test_the_command_names_the_context_and_namespace_as_one_argument_each() -> N
             "/usr/local/bin/kubectl",
             "--context=prod-cluster",
             "--namespace=acme",
-            "--request-timeout=20s",
             "annotate",
             "externalsecret",
             "acme-db",
@@ -133,6 +137,23 @@ def test_after_a_timeout_the_same_context_is_not_tried_again() -> None:
         (True, True),
     ]
     assert "not tried" in (results[1].error or "")
+
+
+def test_kubectl_gets_the_environment_without_the_tools_own_credentials() -> None:
+    environ = {
+        "PATH": "/usr/bin",
+        "KUBECONFIG": "/home/dba/.kube/config",
+        "AWS_PROFILE": "prod",
+        "SOPULI_VAULT_TOKEN": "hvs.secret",
+        "SOPULI_DB_ADMIN_PASSWORD": "secret",
+        "VAULT_TOKEN": "hvs.secret",
+    }
+
+    assert kubectl_environment(environ) == {
+        "PATH": "/usr/bin",
+        "KUBECONFIG": "/home/dba/.kube/config",
+        "AWS_PROFILE": "prod",
+    }
 
 
 def test_kubectl_that_cannot_start_is_a_failure() -> None:

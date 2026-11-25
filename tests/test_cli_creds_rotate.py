@@ -532,6 +532,52 @@ def test_a_rotation_asks_eso_to_refresh_after_the_promotion(
     assert refreshed[0]["actions"][-1]["kind"] == "external_secret_refresh"
 
 
+def test_a_read_back_that_disagrees_asks_nothing_of_eso(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """§8 step 8: the vault served something other than what was promoted, so
+    ESO would copy that. It is not asked, and W078 says why."""
+
+    class Lagging(MemoryStore):
+        def read(self, path: str, *, version: int | None = None) -> Stored | None:
+            found = super().read(path, version=version)
+            if found is None or "previous" not in found.data:
+                return found
+            stale = dict(found.data)
+            stale["DB_CREDENTIALS"] = {"acme_web_user": LIVE}
+            return replace(found, data=stale)
+
+    calls: list[list[str]] = []
+
+    def kubectl(argv: list[str]) -> subprocess.CompletedProcess[str]:
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(
+        "sopuli.cli.refresh_all",
+        lambda refs, *, now: refresh_all(refs, now=now, runner=kubectl, find=lambda: "kubectl"),
+    )
+    estate(store=Lagging())
+    config = CONFIG + (
+        "    kubernetes:\n"
+        "      context: prod-cluster\n"
+        '      namespace: "acme-{tenant}"\n'
+        "      external_secret: acme-db\n"
+    )
+
+    result = run(runner, write_config(config), "--select", "tenant=alpha", "--output", "json")
+
+    assert result.exit_code == ExitCode.PARTIAL
+    assert calls == []
+    (warning,) = [
+        one for one in document(result)["diagnostics"] if one.get("code") == "SOPULI-W078"
+    ]
+    assert "read-back did not show the promoted password" in warning["message"]
+
+
 def test_a_rotation_makes_mariadb_s_reaching_login_once(
     runner: CliRunner,
     write_config: Callable[[str], Path],

@@ -942,9 +942,10 @@ WARNINGS: MappingProxyType[str, str] = MappingProxyType(
         EXTERNAL_SECRET_NOT_REFRESHED: (
             "`creds apply` or `creds rotate` promoted a document, and `kubectl annotate` "
             "could not ask External Secrets Operator to refresh the ExternalSecret an "
-            "application's `kubernetes:` block names for it (C18). The databases and the "
-            "vault are right; ESO reads the new password at its next `refreshInterval`. "
-            "One per ExternalSecret. A warning: the exit code does not change."
+            "application's `kubernetes:` block names for it (C18), or did not ask because "
+            "`creds rotate`'s read-back did not show the promoted password. ESO reads the "
+            "vault again at its next `refreshInterval`. One per ExternalSecret. A warning: "
+            "the exit code does not change."
         ),
         CONSTRAINTS_UNREAD: (
             "`creds generate` could not read a target's password constraints, so the "
@@ -1633,8 +1634,8 @@ def external_secret_not_refreshed(external_secret: str, reason: str) -> Diagnost
         level="warning",
         code=EXTERNAL_SECRET_NOT_REFRESHED,
         message=(
-            f"could not ask ESO to refresh {external_secret}: {reason}. The vault holds "
-            "the new password, and ESO reads it at its next refreshInterval"
+            f"could not ask ESO to refresh {external_secret}: {reason}. ESO reads the "
+            "vault again at its next refreshInterval"
         ),
     )
 

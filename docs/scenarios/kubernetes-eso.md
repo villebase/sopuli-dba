@@ -305,9 +305,13 @@ After `creds apply` or `creds rotate` promotes the document, or rolls it back
 with `--source previous`, sopuli runs:
 
 ```bash
-kubectl --context=dev-cluster --namespace=acme --request-timeout=20s \
+kubectl --context=dev-cluster --namespace=acme \
   annotate externalsecret acme-db-credentials force-sync=<time> --overwrite
 ```
+
+kubectl gets your environment without sopuli's own variables, every `SOPULI_*`
+and `VAULT_TOKEN`. `creds rotate` does not ask when its read-back of the vault
+did not show the promoted password: ESO would copy whatever the vault serves.
 
 ESO sees the annotation change and reads `current` at once. The row for T+1h
 then happens within seconds of T+0. Your application still has to pick up the
@@ -539,7 +543,7 @@ tier-1 PostgreSQL 16 container as the database. The application had the
   printed:
 
   ```
-  could not ask ESO to refresh ExternalSecret sopuli-test/acme-db-credentials on context no-such-context: kubectl exited 1: error: context "no-such-context" does not exist. The vault holds the new password, and ESO reads it at its next refreshInterval
+  could not ask ESO to refresh ExternalSecret sopuli-test/acme-db-credentials on context no-such-context: kubectl exited 1: error: context "no-such-context" does not exist. ESO reads the vault again at its next refreshInterval
   ```
 
 ---

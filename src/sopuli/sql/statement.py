@@ -148,8 +148,9 @@ def _after_word(text: str, i: int) -> bool:
 
 
 #: A PostgreSQL dollar-quote tag: ``$$``, or ``$name$``, where the name follows
-#: the rules for a name but holds no ``$``.
-_DOLLAR_TAG = re.compile(r"\$(?:[^\W\d]\w*)?\$")
+#: the rules for a name but holds no ``$``. As in a name, any character outside
+#: ASCII may appear, not only a letter.
+_DOLLAR_TAG = re.compile(r"\$(?:[A-Za-z_\x80-\U0010ffff][A-Za-z0-9_\x80-\U0010ffff]*)?\$")
 
 
 def _dollar_tag(text: str, i: int) -> str | None:
@@ -164,10 +165,26 @@ def _dollar_tag(text: str, i: int) -> str | None:
     return None if found is None else found.group()
 
 
+def _continued_at(text: str, i: int) -> int | None:
+    """Where a string continues after the quote that ended before ``text[i]``.
+
+    PostgreSQL joins two string literals separated only by whitespace that
+    holds a line break. The position of the next part's opening ``'`` comes
+    back, or ``None`` when no part follows.
+    """
+    j, n = i, len(text)
+    while j < n and text[j] in _SPACE:
+        j += 1
+    if j < n and text[j] == "'" and "\n" in text[i:j]:
+        return j
+    return None
+
+
 def _escape_string_end(text: str, i: int) -> int:
     """Where an ``E'...'`` string ends, for the ``'`` at ``text[i]``, or
     :data:`_UNCLOSED`. A backslash escapes the next character, so ``\\'``
-    does not end it. ``''`` does not either."""
+    does not end it. ``''`` does not either. A part that continues it on a
+    later line keeps its escapes."""
     j, n = i + 1, len(text)
     while j < n:
         if text[j] == "\\":
@@ -175,8 +192,11 @@ def _escape_string_end(text: str, i: int) -> int:
         elif text[j] == "'":
             if text.startswith("''", j):
                 j += 2
-            else:
+                continue
+            continued = _continued_at(text, j + 1)
+            if continued is None:
                 return j + 1
+            j = continued + 1
         else:
             j += 1
     return _UNCLOSED
@@ -333,11 +353,23 @@ def classify_for(raw: str, dialects: Iterable[Dialect]) -> Statement:
     One refusal refuses the statement. Where two dialects give a different
     text or keyword, the statement is refused too, and neither reading is
     picked: the plan fingerprint and every target need one text. With no
-    dialect, Oracle's is used.
+    dialect, Oracle's is used. Where more than one dialect is checked, a
+    refusal names the product whose reading refused it.
     """
-    found = {dialect: classify(raw, dialect=dialect) for dialect in sorted(set(dialects))}
-    if not found:
-        return classify(raw)
+    covered = sorted(set(dialects))
+    if len(covered) <= 1:
+        return classify(raw, dialect=covered[0] if covered else Dialect.ORACLE)
+    found: dict[Dialect, Statement] = {}
+    for dialect in covered:
+        try:
+            found[dialect] = classify(raw, dialect=dialect)
+        except StatementRefusedError as refused:
+            advice = "select one product's targets at a time"
+            hint = f"{refused.hint}. Or {advice}" if refused.hint else advice
+            raise StatementRefusedError(
+                f"read the {_PRODUCT_NAMES[dialect]} way, {refused.message}",
+                hint=hint,
+            ) from refused
     readings = set(found.values())
     if len(readings) > 1:
         names = " and ".join(_PRODUCT_NAMES[dialect] for dialect in found)

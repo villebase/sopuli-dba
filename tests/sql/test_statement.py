@@ -259,6 +259,32 @@ def test_postgresql_names_an_unclosed_nested_comment(raw: str) -> None:
         classify(raw, dialect=PG)
 
 
+@pytest.mark.parametrize(
+    ("raw", "text"),
+    [
+        # The continued part keeps the E string's escapes.
+        ("SELECT E'a'\n'b\\' -- x' FROM t; -- n", "SELECT E'a'\n'b\\' -- x' FROM t"),
+        ("SELECT E'a' \n  'b\\' -- x' FROM t; -- n", "SELECT E'a' \n  'b\\' -- x' FROM t"),
+        ("SELECT E'a''b'\n'c\\'d' FROM t; -- n", "SELECT E'a''b'\n'c\\'d' FROM t"),
+    ],
+)
+def test_an_escape_string_continued_on_a_later_line(raw: str, text: str) -> None:
+    assert classify(raw, dialect=PG).text == text
+
+
+def test_an_escape_string_is_not_continued_on_the_same_line() -> None:
+    # Without a line break between them, the second literal stands alone,
+    # and its `\` escapes nothing, so `'b\'` ends there.
+    raw = "SELECT E'a' 'b\\' FROM t; -- n"
+    assert classify(raw, dialect=PG).text == "SELECT E'a' 'b\\' FROM t"
+
+
+@pytest.mark.parametrize("tag", ["t€", "€", "é1", "_x"])
+def test_a_dollar_quote_tag_may_hold_any_non_ascii_character(tag: str) -> None:
+    raw = f"SELECT ${tag}$a -- b${tag}$ FROM t; -- n"
+    assert classify(raw, dialect=PG).text == f"SELECT ${tag}$a -- b${tag}$ FROM t"
+
+
 def test_a_parameter_is_not_a_dollar_quote() -> None:
     raw = "SELECT $1, '$2$' FROM t"
     assert classify(raw, dialect=PG).text == raw
@@ -283,6 +309,15 @@ def test_classify_for_keeps_a_text_nothing_was_cut_from() -> None:
     assert classify_for(raw, [PG, ORA]).text == raw
 
 
-def test_classify_for_refuses_when_one_dialect_refuses() -> None:
-    with pytest.raises(StatementRefusedError, match="';'"):
+def test_classify_for_names_the_product_whose_reading_refused() -> None:
+    with pytest.raises(StatementRefusedError) as raised:
         classify_for("SELECT $$a -- b$$ FROM t; -- note", [ORA, PG])
+    assert raised.value.message == "read the Oracle way, the statement holds a ';' before its end"
+    assert raised.value.hint is not None
+    assert raised.value.hint.endswith("Or select one product's targets at a time")
+
+
+def test_classify_for_with_one_dialect_does_not_name_it() -> None:
+    with pytest.raises(StatementRefusedError) as raised:
+        classify_for("drop table t", [PG])
+    assert raised.value.message.startswith("the statement starts with DROP")

@@ -179,7 +179,8 @@ and it is acceptable.
 rules of the target's product. On Oracle, a block comment ends at the first
 `*/`, and `q'[...]'` is a literal. On PostgreSQL, block comments nest, and
 `$$...$$`, `$tag$...$tag$` and `E'...'` are literals. In an `E'...'` literal,
-`\'` does not end it. So `/* /* */ SELECT */ DELETE FROM t` is a `SELECT` on
+`\'` does not end it, and a part that continues it on a later line keeps that
+rule. So `/* /* */ SELECT */ DELETE FROM t` is a `SELECT` on
 Oracle and a `DELETE` on PostgreSQL. A run over both products checks the
 statement once for each. If one check refuses it, it is refused. If the two
 give a different text or a different first word, it is refused too, because
@@ -189,6 +190,13 @@ On PostgreSQL, `standard_conforming_strings = off` lets `\'` escape a quote in a
 plain `'...'` literal too. The tool cannot see the setting, and it has been on
 by default since PostgreSQL 9.1. A wrong reading can only cut the text inside a
 literal, and the server then refuses the statement as unterminated.
+
+On PostgreSQL, two statements pass the keyword check as reads although they
+write. `SELECT ... INTO t2` creates a table, and a `WITH` whose query is an
+`UPDATE`, `INSERT` or `DELETE` changes rows. A read runs in a read-only
+transaction, so the server is what refuses them. With `--write`, both are
+refused as reads. #1691 measures what PostgreSQL's read-only transaction
+refuses, before `sql run` runs on PostgreSQL.
 
 **Why the keyword check exists.** Oracle commits before any DDL, so
 `SET TRANSACTION READ ONLY` does not stop DDL. The keyword check does.

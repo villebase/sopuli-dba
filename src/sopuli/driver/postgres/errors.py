@@ -31,6 +31,13 @@ READ_ONLY_TRANSACTION = "25006"
 INVALID_CATALOG = "3D000"
 #: ``too_many_connections``: the role is at its ``CONNECTION LIMIT``.
 TOO_MANY_CONNECTIONS = "53300"
+#: ``query_canceled``: among others, a statement past ``statement_timeout``.
+QUERY_CANCELED = "57014"
+#: ``lock_not_available``: a lock wait past ``lock_timeout``.
+LOCK_NOT_AVAILABLE = "55P03"
+#: ``syntax_error``. A prepared statement that holds more than one is refused
+#: with it.
+SYNTAX_ERROR = "42601"
 #: ``sqlclient_unable_to_establish_sqlconnection``.
 UNABLE_TO_CONNECT = "08001"
 #: ``connection_failure``.
@@ -276,3 +283,59 @@ def from_error(exc: Any, *, connecting: bool = False) -> Diagnosis:
     if _CERTIFICATE.search(message):
         return replace(diagnosis, hint=CERTIFICATE_HINT)
     return diagnosis
+
+
+#: `sql run`'s hints, where the shared ones are about the tool's own account
+#: or would mislead. The statement is the operator's, and the account is the
+#: run-as account (UC-3 §2).
+_STATEMENT_HINTS = {
+    QUERY_CANCELED: (
+        "the server cancelled the statement and rolled its transaction back. Most often "
+        "it ran longer than the timeout, --timeout or a lower statement_timeout the role "
+        "already has, which counts the time it waits for a lock another session holds. "
+        "Then raise the timeout, or find what holds the lock or makes it slow. Another "
+        "session can also cancel it, with pg_cancel_backend()"
+    ),
+    LOCK_NOT_AVAILABLE: (
+        "the statement waited longer than the role's lock_timeout for a lock that "
+        "another session holds. Its transaction was rolled back. Find what holds the lock"
+    ),
+    INSUFFICIENT_PRIVILEGE: "the run-as account lacks a privilege this statement needs",
+    SYNTAX_ERROR: (
+        "the server could not parse the statement. Two statements in one text are "
+        "refused this way too"
+    ),
+}
+
+#: ``feature_not_supported``. A read declared as a cursor gets it for a
+#: ``WITH`` query that writes, and a ``STABLE`` function that writes gets it.
+FEATURE_NOT_SUPPORTED = "0A000"
+
+#: A read is a ``SELECT`` or ``WITH`` declared as a cursor in a read-only
+#: transaction, so the shared hints are wrong for what either refuses. A read
+#: that writes cannot run at all: ``--write`` refuses a ``SELECT`` or ``WITH``.
+_READ_HINTS = {
+    READ_ONLY_TRANSACTION: (
+        "a SELECT or WITH runs in a read-only transaction, and `sql run` cannot run one "
+        "that writes, such as nextval(), SELECT ... FOR UPDATE, or a function that writes"
+    ),
+    SYNTAX_ERROR: (
+        "a SELECT or WITH is declared as a cursor, which takes one query. The server "
+        "could not parse it as one: the text holds two statements, it is a SELECT ... "
+        "INTO, which creates a table, or it has a syntax error"
+    ),
+    FEATURE_NOT_SUPPORTED: (
+        "the server does not allow this in a read: a WITH query that writes, or a "
+        "function that writes. `sql run` cannot run a SELECT or WITH that writes"
+    ),
+}
+
+
+def for_statement(diagnosis: Diagnosis, *, read: bool) -> Diagnosis:
+    """``diagnosis`` with `sql run`'s hint, where it has one. The code and the
+    server's message are kept. ``read`` says the statement ran as a read: a
+    cursor in a read-only transaction."""
+    hint = _READ_HINTS.get(diagnosis.code) if read else None
+    if hint is None:
+        hint = _STATEMENT_HINTS.get(diagnosis.code)
+    return diagnosis if hint is None else replace(diagnosis, hint=hint)

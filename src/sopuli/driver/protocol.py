@@ -1724,8 +1724,9 @@ class StatementResult:
 class StatementRunner(Protocol):
     """A session that runs one statement in a guarded transaction (UC-3).
 
-    Oracle's session only. A product whose session lacks it is refused at plan
-    time by :func:`sopuli.driver.registry.require_command`.
+    Built by the Oracle and PostgreSQL sessions. `sql run` refuses a product at
+    plan time, by :func:`sopuli.driver.registry.require_command`, until its
+    registry entry lists the command.
     """
 
     @property
@@ -1741,7 +1742,9 @@ class StatementRunner(Protocol):
         ...
 
     def database_identity(self) -> tuple[str, str]:
-        """``(DB_UNIQUE_NAME, CON_NAME)`` of the database the session reached."""
+        """Two names for the database the session reached, for the plan
+        fingerprint: ``(DB_UNIQUE_NAME, CON_NAME)`` on Oracle, and
+        ``(system_identifier, current_database())`` on PostgreSQL."""
         ...
 
     def run_statement(

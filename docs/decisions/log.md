@@ -6772,10 +6772,10 @@ the register.
   estate has asked for Db2. The facts above come from IBM's documentation
   and were not measured.
 - **Rejected:**
-  - B, a read-only Db2 driver for UC-5's reports. It needs `ibm_db`, which
-    bundles IBM's CLI driver, a privileges document measured on Db2, and the
-    Db2 Community Edition image in tier 1, which needs `--privileged`, takes
-    several GB, and takes minutes to start. It would report on accounts the
+  - B, a read-only Db2 driver for UC-5's reports. It needs three things:
+    `ibm_db`, which bundles IBM's CLI driver; a privileges document measured
+    on Db2; and the Db2 Community Edition image in tier 1, which needs
+    `--privileged`, takes several GB, and takes minutes to start. It would report on accounts the
     tool cannot then manage.
   - C, a directory target type, LDAP or Active Directory, as a new use case,
     with Db2 as one database that uses it. It changes the driver interface in

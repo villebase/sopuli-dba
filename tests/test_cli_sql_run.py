@@ -8,6 +8,7 @@ the command's text, its JSON and its exit codes.
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -22,9 +23,10 @@ from sopuli.admin import PasswordPrompt
 from sopuli.cli import _read_statement, cli
 from sopuli.config.loading import build_config
 from sopuli.driver.protocol import AuthenticationError, DriverError, StatementResult
+from sopuli.driver.registry import DRIVERS
 from sopuli.exit_codes import ExitCode
 from sopuli.output.document import SCHEMA_VERSION, Error
-from sopuli.sql.statement import Statement, StatementKind
+from sopuli.sql.statement import Dialect, Statement, StatementKind
 
 RUN_SCHEMA = json.loads(
     (
@@ -308,6 +310,61 @@ def test_non_oracle_target_refused_20006(
     assert entry["error"]["code"] == "SOPULI-20006"
     assert "outcome_unknown" not in entry
     assert sessions["opened"] == []
+
+
+PG_TARGET = (
+    "  - name: pg-alpha\n"
+    "    type: postgresql\n"
+    "    dsn: pg.example.com:5432\n"
+    "    postgres: { database: acme }\n"
+    "    admin: { username: sopuli_svc, auth: { method: env } }\n"
+)
+
+#: Oracle reads `q'[...]'` as one literal. PostgreSQL reads `'[it'` and then an
+#: unclosed literal, so a `;` is left in the text.
+ORACLE_ONLY = "SELECT q'[it's]' FROM dual; -- n\n"
+
+
+def test_a_skipped_product_does_not_check_the_statement(
+    write_config: WriteConfig, sessions: dict[str, Any]
+) -> None:
+    config = f"version: 1\ndefaults:\n{RUN_AS}{TARGETS}{PG_TARGET}"
+
+    result = sql_run(write_config, config=config, statement=ORACLE_ONLY)
+
+    assert result.exit_code == ExitCode.SUCCESS, result.output
+    (oracle,) = (one for one in sessions["opened"] if one.target == "prod-alpha")
+    sent = oracle.calls[0]["statement"]
+    assert sent.text == "SELECT q'[it's]' FROM dual"
+
+
+def test_each_product_that_runs_checks_the_statement(
+    write_config: WriteConfig, sessions: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    postgres = DRIVERS["postgresql"]
+    assert postgres.commands is not None
+    monkeypatch.setitem(
+        DRIVERS, "postgresql", replace(postgres, commands=postgres.commands | {"sql.run"})
+    )
+    config = f"version: 1\ndefaults:\n{RUN_AS}{TARGETS}{PG_TARGET}"
+
+    result = sql_run(write_config, config=config, statement=ORACLE_ONLY, json_out=True)
+
+    assert exit_of(result) == ExitCode.ABORTED, result.output
+    error = document(result)["error"]
+    assert error["code"] == "SOPULI-20009"
+    assert error["message"].startswith("read the PostgreSQL way, ")
+    assert sessions["opened"] == []
+
+
+@pytest.mark.parametrize("product", sorted(DRIVERS))
+def test_every_product_sql_run_runs_on_has_a_dialect(product: str) -> None:
+    # `_statement_dialects` turns the target's type into a `Dialect`. A driver
+    # given `sql.run` without one would crash there instead of refusing.
+    commands = DRIVERS[product].commands
+    if commands is not None and "sql.run" not in commands:
+        pytest.skip(f"`sql run` does not run on {product}")
+    assert Dialect(product)
 
 
 def test_statement_from_stdin_and_file(

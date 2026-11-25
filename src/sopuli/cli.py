@@ -442,7 +442,13 @@ from sopuli.safety import (
 )
 from sopuli.secrets import Secret
 from sopuli.sql.guard import row_guard
-from sopuli.sql.statement import Statement, StatementKind, StatementRefusedError, classify
+from sopuli.sql.statement import (
+    Dialect,
+    Statement,
+    StatementKind,
+    StatementRefusedError,
+    classify_for,
+)
 from sopuli.status import Row
 from sopuli.store import CasConflictError, SecretStore, StoreError, connect
 from sopuli.store import registry as store_registry
@@ -6750,7 +6756,24 @@ def _sql_statement(path: Path | None, config: Config, as_user: str | None) -> St
     """The statement, read and checked. Only ``--file`` is offered where a
     password is typed at the terminal."""
     typed = any(run_as_prompts(target, as_user) for target in config.expanded_targets)
-    return classify(_read_statement(path, typed=typed or as_user is not None))
+    raw = _read_statement(path, typed=typed or as_user is not None)
+    return classify_for(raw, _statement_dialects(config))
+
+
+def _statement_dialects(config: Config) -> set[Dialect]:
+    """The dialect of each selected target `sql run` runs on (UC-3 §3).
+
+    A target of a product the command does not run on is skipped, so its rules
+    do not refuse a statement it will never see.
+    """
+    dialects = set()
+    for target in config.expanded_targets:
+        try:
+            require_command(target.target, sql_run.COMMAND)
+        except DriverNotImplementedError:
+            continue
+        dialects.add(Dialect(target.target.type))
+    return dialects
 
 
 def _read_statement(path: Path | None, *, typed: bool) -> str:

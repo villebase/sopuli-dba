@@ -290,6 +290,47 @@ def test_the_resolved_view_shows_the_ref_each_account_lands_on(config: Config) -
     assert "tenants/beta#DB_CREDENTIALS/acme_web_user" in text
 
 
+def _refreshing() -> dict[str, Any]:
+    """`DOCUMENT` with a `kubernetes:` block on its application (C18)."""
+    application = {
+        **DOCUMENT["applications"][0],
+        "kubernetes": {
+            "context": "{env}-cluster",
+            "namespace": "acme-{tenant}",
+            "external_secret": "acme-db",
+        },
+    }
+    return {**DOCUMENT, "applications": [application]}
+
+
+def test_the_resolved_view_shows_the_external_secret_only_where_one_is_named(
+    config: Config,
+) -> None:
+    assert "EXTERNAL SECRET" not in render_text(PATHS, config, resolved=True)
+
+    text = render_text(PATHS, build_config(_refreshing()), resolved=True)
+
+    assert "EXTERNAL SECRET" in text
+    assert "dev-cluster:acme-alpha/acme-db" in text
+
+
+def test_a_binding_carries_its_external_secret_in_json(validator: Draft202012Validator) -> None:
+    document = _refreshing()
+    section = build_section(PATHS, build_config(document), document, resolved=True)
+
+    assert section["bindings"][0]["external_secret"] == {
+        "context": "dev-cluster",
+        "namespace": "acme-alpha",
+        "name": "acme-db",
+    }
+    from sopuli.output.document import RunDocument, Summary
+
+    run = RunDocument.start("config.show")
+    run.config = section
+    run.finish(0, Summary(total=2, ok=2, changed=0, failed=0))
+    assert [f"{list(e.path)}: {e.message}" for e in validator.iter_errors(run.to_dict())] == []
+
+
 def test_bindings_are_grouped_under_the_application_that_owns_them(config: Config) -> None:
     assert "bindings: acme (1 account, 2 targets)" in render_text(PATHS, config, resolved=True)
 

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/villebase/sopuli-dba/schemas/sopuli-run-1.109.schema.json",
+  "$id": "https://github.com/villebase/sopuli-dba/schemas/sopuli-run-1.110.schema.json",
   "title": "sopuli-dba run result",
   "description": "The single JSON document emitted by `sopuli … --output json`. One document per invocation, written to stdout after the run completes. A versioned contract: adding a property is a minor bump, renaming or removing one is major, and every release validates its own output against the published schema in CI.",
   "type": "object",
@@ -712,6 +712,27 @@
                   "string",
                   "null"
                 ]
+              },
+              "external_secret": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "context",
+                  "namespace",
+                  "name"
+                ],
+                "properties": {
+                  "context": {
+                    "type": "string"
+                  },
+                  "namespace": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  }
+                },
+                "description": "Added in 1.110: the ExternalSecret that `creds apply` and `creds rotate` ask External Secrets Operator to refresh after this binding's document is promoted, from the application's `kubernetes:` block (01-configuration.md 3, C18). Absent where the application has none."
               }
             }
           }
@@ -917,6 +938,27 @@
                   "unknown"
                 ],
                 "description": "`creds generate --promote` only: what the promotion does to the account's `current`. `seeded` where there is none, `replaced` where there is one, `unknown` where the document could not be read, the run failed before the read, or the account's ref does not resolve in the document. A real run refuses over `replaced` without `--overwrite-current`. Absent where the run does not promote."
+              },
+              "external_secret": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "context",
+                  "namespace",
+                  "name"
+                ],
+                "properties": {
+                  "context": {
+                    "type": "string"
+                  },
+                  "namespace": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  }
+                },
+                "description": "`creds apply` and `creds rotate` only (added in 1.110): the ExternalSecret that External Secrets Operator is asked to refresh after this unit's document is promoted, from the application's `kubernetes:` block (C18). Absent where the application has none."
               }
             }
           }
@@ -1614,9 +1656,10 @@
         "password_expire",
         "attribute_set",
         "verify",
-        "sql_write"
+        "sql_write",
+        "external_secret_refresh"
       ],
-      "description": "`sql_write` (added in 1.109) is `sql run --write`'s one action on each target: run the statement, and commit it where its row count passes the guard (UC-3)."
+      "description": "`external_secret_refresh` (added in 1.110) is `creds apply`'s and `creds rotate`'s request to External Secrets Operator, after a promotion, to refresh the ExternalSecret the application's `kubernetes:` block names (C18). `applied` is true once kubectl ran; the detail says whether it worked. `sql_write` (added in 1.109) is `sql run --write`'s one action on each target: run the statement, and commit it where its row count passes the guard (UC-3)."
     },
     "state": {
       "type": "string",

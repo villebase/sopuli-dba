@@ -101,6 +101,7 @@ ACTION_KINDS = frozenset(
         "attribute_set",
         "verify",
         "sql_write",
+        "external_secret_refresh",
     )
 )
 
@@ -129,6 +130,10 @@ class PlanUnit:
     #: `creds generate --promote` only: what the promotion does to `current`.
     #: :data:`CURRENT_STATES`, or ``None`` where the run does not promote.
     current: str | None = None
+    #: `creds apply` and `creds rotate` only: the ExternalSecret ESO is asked
+    #: to refresh after this unit's promotion (C18), as ``context``,
+    #: ``namespace`` and ``name``, or ``None``.
+    external_secret: dict[str, str] | None = None
 
     def as_json(self) -> dict[str, Any]:
         """The run schema's ``plan.units[]`` item.
@@ -150,6 +155,8 @@ class PlanUnit:
             item["pending"] = self.pending
         if self.current is not None:
             item["current"] = self.current
+        if self.external_secret is not None:
+            item["external_secret"] = dict(self.external_secret)
         return item
 
 
@@ -219,7 +226,7 @@ class Plan:
         return section
 
 
-def build(config: Config, *, intent: Sequence[str]) -> Plan:
+def build(config: Config, *, intent: Sequence[str], refreshes: bool = False) -> Plan:
     """The plan for running ``intent`` over everything ``config`` still declares.
 
     ``config`` is the **already-selected** estate --
@@ -233,15 +240,22 @@ def build(config: Config, *, intent: Sequence[str]) -> Plan:
     units are the estate it intends it over. A run that meant different things for
     different accounts would be two runs, and `results[]` would have no way to say
     which was which.
+
+    One addition is per unit. With ``refreshes``, which `creds apply` and
+    `creds rotate` pass, a unit whose application names an ExternalSecret
+    also intends ``external_secret_refresh`` after its promotion (C18). That
+    is where the promotion goes, not a different thing done to the account.
     """
     kinds = _checked_intent(intent)
+    refreshed = (*kinds, *_checked_intent(["external_secret_refresh"]))
     environments = _environments(config)
     units = tuple(
         PlanUnit(
             account=binding.account,
             target=binding.target,
-            intent=kinds,
+            intent=refreshed if refreshes and binding.external_secret is not None else kinds,
             secret=_secret_json(binding),
+            external_secret=_external_secret_json(binding) if refreshes else None,
         )
         for binding in config.bindings
     )
@@ -330,6 +344,13 @@ def _checked_intent(intent: Sequence[str]) -> tuple[str, ...]:
             f"not an action_kind: {', '.join(unknown)} -- the enum is in sopuli.plan.ACTION_KINDS"
         )
     return kinds
+
+
+def _external_secret_json(binding: Binding) -> dict[str, str] | None:
+    ref = binding.external_secret
+    if ref is None:
+        return None
+    return {"context": ref.context, "namespace": ref.namespace, "name": ref.name}
 
 
 def _secret_json(binding: Binding) -> dict[str, Any] | None:

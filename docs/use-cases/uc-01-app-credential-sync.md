@@ -742,6 +742,21 @@ sopuli creds apply --application acme
   server accepted the statement and the verification then failed, that database
   did change, and its row says the password was changed.
 
+**After the promotion: ask ESO to refresh** ([C18](../decisions/log.md#c18))
+
+An application whose `kubernetes:` block names an ExternalSecret
+(`01-configuration.md` §3) reads its password through External Secrets
+Operator. Once every promotion of the run is written, the tool runs
+`kubectl annotate externalsecret … force-sync=<time> --overwrite` once for each
+ExternalSecret whose document was promoted. ESO then copies the new `current`
+into the Kubernetes Secret at once, not at its next `refreshInterval`. A
+document that was not promoted is not refreshed, so a run that changes nothing
+sends nothing. The refresh comes after the promotion, so ESO never reads a
+password a database does not have. A failure is `SOPULI-W078`, a warning: the
+databases and the vault are right, and ESO catches up at its next refresh. Each
+promoted row gets an `external_secret_refresh` action. `creds rotate` does the
+same after its promotion.
+
 These rules decide what `apply` does with each account:
 
 - **The database is asked before it is changed.** Invariant 9 makes `apply` a

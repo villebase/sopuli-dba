@@ -24,6 +24,7 @@ Two properties carry the rest:
 from __future__ import annotations
 
 import json
+import subprocess
 from collections.abc import Callable, Mapping
 from dataclasses import replace
 from datetime import timedelta
@@ -65,6 +66,7 @@ from sopuli.driver.protocol import (
     VerifyResult,
 )
 from sopuli.exit_codes import ExitCode
+from sopuli.kubernetes_refresh import refresh_all
 from sopuli.lock import Holder, LockDeniedError, LockKey, LockRecord, lock_path
 from sopuli.output.document import SCHEMA_VERSION
 from sopuli.output.emit import EVENT_SCHEMA_VERSION
@@ -490,6 +492,44 @@ def test_a_rotation_generates_applies_and_promotes(
     issued = changed(harness)
     assert len(issued) == 1
     assert body["DB_CREDENTIALS"]["acme_web_user"] == issued[0][1]
+
+
+def test_a_rotation_asks_eso_to_refresh_after_the_promotion(
+    runner: CliRunner,
+    write_config: Callable[[str], Path],
+    estate: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """C18: rotate promotes through the same step as apply, so it refreshes too."""
+    calls: list[list[str]] = []
+
+    def kubectl(argv: list[str]) -> subprocess.CompletedProcess[str]:
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(
+        "sopuli.cli.refresh_all",
+        lambda refs, *, now: refresh_all(refs, now=now, runner=kubectl, which=lambda _: "kubectl"),
+    )
+    estate()
+    config = CONFIG + (
+        "    kubernetes:\n"
+        "      context: prod-cluster\n"
+        '      namespace: "acme-{tenant}"\n'
+        "      external_secret: acme-db\n"
+    )
+
+    result = run(runner, write_config(config), "--select", "tenant=alpha", "--output", "json")
+
+    assert result.exit_code == ExitCode.SUCCESS
+    assert [call[1:3] for call in calls] == [["--context=prod-cluster", "--namespace=acme-alpha"]]
+    refreshed = [
+        one
+        for one in document(result)["results"]
+        if any(action["kind"] == "external_secret_refresh" for action in one.get("actions", []))
+    ]
+    assert len(refreshed) == 1
+    assert refreshed[0]["actions"][-1]["kind"] == "external_secret_refresh"
 
 
 def test_a_rotation_makes_mariadb_s_reaching_login_once(

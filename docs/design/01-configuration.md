@@ -889,9 +889,15 @@ The context sits on the application, not on the target. One database can serve
 tenants whose applications run on different clusters, and only the application
 entry knows where its application runs.
 
-The block is read and checked when the file is read. No command uses it yet:
-the refresh after a promotion, and the block in `config show`, are #1706. It
-was added in config schema 5.5 (#1705).
+After `creds apply` or `creds rotate` promotes a document, the tool runs
+`kubectl annotate externalsecret <name> force-sync=<time> --overwrite`, with
+`--context=` and `--namespace=` from the block, once for each ExternalSecret
+(UC-1 §5, #1706). `kubectl` comes from `PATH` and uses the operator's own
+kubeconfig, so the tool needs no cluster credential, and the kubeconfig needs
+only `patch` on ExternalSecrets. A failure is `SOPULI-W078`, and the exit code
+does not change. `--dry-run` lists each ExternalSecret under the plan, and
+`config show --resolved` shows it beside each binding. The block was added in
+config schema 5.5 (#1705).
 
 ---
 

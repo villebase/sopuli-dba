@@ -458,7 +458,7 @@ def test_json_validates_against_1_109(write_config: WriteConfig, sessions: dict[
 
     loaded = document(sql_run(write_config, json_out=True))
 
-    assert SCHEMA_VERSION == "1.109"
+    assert SCHEMA_VERSION == "1.110"
     # A read commits nothing, so its outcome is never unknown (#1687).
     assert all("outcome_unknown" not in entry for entry in loaded["results"])
     assert loaded["command"] == "sql.run"

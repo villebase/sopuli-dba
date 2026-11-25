@@ -50,6 +50,7 @@ from sopuli.diagnostics import (
 )
 from sopuli.driver.guardrails import Refusal
 from sopuli.driver.protocol import FAIL, PASS, AttributeChange, VerifyResult
+from sopuli.kubernetes_refresh import Refresh, describe
 from sopuli.output.document import Error, Summary
 from sopuli.output.palette import Role, paint, state_cell
 from sopuli.output.table import Cell, Column, render_table
@@ -122,8 +123,13 @@ def build_result(
     duration_ms: int | None = None,
     error: Error | None = None,
     redraws: int = 0,
+    refresh: Refresh | None = None,
 ) -> dict[str, Any]:
     """One ``results[]`` entry for an account this run acted on.
+
+    ``refresh`` is the request to External Secrets Operator that followed this
+    row's promotion (C18), where its application names an ExternalSecret. It
+    becomes an ``external_secret_refresh`` action, after ``vault_promote``.
 
     ``changed`` is *did this run issue the DDL*, and it is passed in rather than
     derived from the state: ``IN_SYNC`` is reached both by changing the password
@@ -195,6 +201,8 @@ def build_result(
         promotion_error=promotion_error,
         attributes=attributes,
     )
+    if refresh is not None:
+        entry["actions"].append(refresh_action(refresh))
     if outcome.verification is not None:
         entry["verification"] = verification_json(outcome.verification)
     if rollover is not None:
@@ -317,6 +325,18 @@ def _actions(
             }
         )
     return actions
+
+
+def refresh_action(refresh: Refresh) -> dict[str, Any]:
+    """The ``external_secret_refresh`` action: ``applied`` because kubectl ran,
+    and the detail says whether ESO took the request (C18)."""
+    where = describe(refresh.external_secret)
+    detail = (
+        f"asked ESO to refresh {where}"
+        if refresh.ok
+        else f"could not ask ESO to refresh {where}: {refresh.error}"
+    )
+    return {"kind": "external_secret_refresh", "applied": True, "detail": detail}
 
 
 def _attempted(result: VerifyResult | None) -> bool:

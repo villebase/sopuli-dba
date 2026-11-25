@@ -13,8 +13,9 @@ with no grants but its own schema, unless a step says otherwise:
        table and the sequence are read afterwards
   S1g  dblink_exec(), inside BEGIN READ ONLY, inserting a row into a second
        database on the same server, and whether the row is there after the
-       rollback. The superuser installs dblink
-  S2   what psycopg does with two statements in one text, an UPDATE and a
+       rollback. The superuser installs dblink where the server lacks it,
+       and grants the run-as role EXECUTE on dblink_exec(text, text) alone
+  S2  what psycopg does with two statements in one text, an UPDATE and a
        DELETE, and two SELECTs: cursor.execute(text), execute(text, ()) and
        execute(text, prepare=True). Then the same three calls on a text with
        a % inside a literal
@@ -23,9 +24,8 @@ with no grants but its own schema, unless a step says otherwise:
        locked. The SQLSTATE, the time, the transaction state after, and
        whether a ROLLBACK and a SELECT 1 then work. Three runs each
   S4   whether statement_timeout bounds a COMMIT that runs a deferred
-       constraint trigger that sleeps 2 s: with SET LOCAL, with SET LOCAL
-       and then SET LOCAL statement_timeout = 0, and with a session's SET.
-       Whether the row is kept. Three runs each
+       constraint trigger that sleeps 2 s: with SET LOCAL, and with a
+       session's SET. Whether the row is kept. Three runs each
   S5   cursor.rowcount after an UPDATE to the values the rows hold, an
        UPDATE, INSERT ... ON CONFLICT DO NOTHING with one new row and one
        conflict, MERGE, DELETE, UPDATE ... RETURNING and an UPDATE of no row
@@ -43,9 +43,12 @@ STATUS: run on 13.23, 14.24, 15.19, 16.15, 17.11 and 18.6, the postgres:13 to
 postgres:18 images of test/compose.yaml profile postgres-matrix, and on
 16.15, the postgres:16-alpine image of the tier-1 postgres service, on
 2026-11-25 (#1691). The client was psycopg 3.3.6 with libpq 18.4, Python
-3.13.12, on Windows 11 AMD64. Twice, after two earlier runs without the
-SELECT ... INTO case. Exit 0 each time, and the same result each time but for
-system_identifier and the timings, which are the ranges below.
+3.13.12, on Windows 11 AMD64. Twice with this version of the probe. Four
+earlier runs of earlier versions, which granted the run-as role every
+function of dblink, had a third S4 case, and two of which had no SELECT ...
+INTO case, are not counted; they agreed. Exit 0 each time, and the same
+result each time but for system_identifier and the timings, which are the
+ranges below.
 
 RESULTS
 
@@ -61,12 +64,14 @@ RESULTS
        called. An INSERT into a temporary table and nextval() of a temporary
        sequence run
   S1g  dblink_exec() runs inside BEGIN READ ONLY, and its row is in the
-       second database after the rollback. The read-only transaction does
-       not reach the connection dblink opens, which commits on its own.
-       Through 127.0.0.1 it was refused, 2F003, "password or GSSAPI
-       delegated credentials required": the images trust a loopback login,
-       and dblink refuses a role that is not a superuser a connection that
-       used no password. Through the server's own address it ran
+       second database after the rollback. EXECUTE on dblink_exec(text,
+       text) is the one grant it needs. The read-only transaction does not
+       reach the connection dblink opens, which commits on its own. In an
+       earlier, uncounted run, through 127.0.0.1, it was refused, 2F003,
+       "password or GSSAPI delegated credentials required": the images
+       trust a loopback login, and dblink refuses a role that is not a
+       superuser a connection that used no password. So the probe connects
+       through the server's own address
   S2   execute(text) and execute(text, ()) run both statements, and give two
        result sets. execute(text, prepare=True) refuses them, 42601, "cannot
        insert multiple commands into a prepared statement". With a % in a
@@ -76,10 +81,10 @@ RESULTS
   S3   statement_timeout cancels pg_sleep(3), 57014, "canceling statement
        due to statement timeout". lock_timeout cancels the UPDATE of the
        locked row, 55P03, "canceling statement due to lock timeout", and
-       statement_timeout cancels it with 57014. Each fires at 0.50 s, in all
-       three runs. The transaction is then INERROR, and a ROLLBACK and a
+       statement_timeout cancels it with 57014. Each fires at 0.50 to 0.51
+       s, in all three runs. The transaction is then INERROR, and a ROLLBACK and a
        SELECT 1 work: the session stays usable
-  S4   statement_timeout does not bound the COMMIT, in any of the three
+  S4   statement_timeout does not bound the COMMIT, in either of the two
        ways. Each COMMIT takes 2.00 to 2.02 s, ends IDLE, and keeps the row
   S5   rowcount is 3 for the UPDATE to the values the rows hold: the rows
        matched, not the rows changed. It is 1 for the one-row UPDATE, 1 for
@@ -104,10 +109,14 @@ RESULTS
 
   So BEGIN READ ONLY stops every write a statement can make in its own
   database, SELECT INTO and a data-modifying CTE included, but not one that
-  dblink makes on another connection. psycopg sends a text with no
-  parameters by the simple query protocol, which runs more than one
-  statement. Only prepare=True, the extended protocol, refuses that, and it
-  does not read % as a placeholder. A timeout cancels the statement and
+  dblink makes on another connection. psycopg runs both statements of a text
+  that holds two, with no parameters or an empty tuple of them. Only
+  prepare=True is refused, and it does not read % as a placeholder. The
+  probe does not see the protocol. psycopg's documentation gives it as the
+  reason: a query with parameters is bound on the server and holds one
+  statement, and one without has no such limit ("Multiple statements in the
+  same query", https://www.psycopg.org/psycopg3/docs/basic/from_pg2.html).
+  A timeout cancels the statement and
   leaves the session usable, and it never bounds a COMMIT.
 
 HOW TO RUN, against the matrix (test/README.md), from the repo root, with the
@@ -121,9 +130,11 @@ and SOPULI_TEST_POSTGRES_PORT for --tier1, so a second clone's servers are the
 ones it uses. S8 imports sopuli from src/.
 
 THROWAWAY SERVERS ONLY. It creates the role sopuli_probe_runas, its schema
-sopuli_probe, the database sopuli_probe_db2 and the extension dblink, and
-drops them at the end. Before it starts, it drops what an interrupted run
-left.
+sopuli_probe and the database sopuli_probe_db2, and drops them at the end.
+It creates the extension dblink only where the server lacks it, and drops it
+only then. Before it starts, it drops what an interrupted run left, but not
+dblink, which an interrupted run may leave behind. A cleanup that fails is
+printed, and the next release still runs.
 """
 
 from __future__ import annotations
@@ -191,18 +202,26 @@ def _outcome(error: psycopg.Error | None) -> str:
     return f"{error.sqlstate} {error.diag.message_primary}"
 
 
-def _clean(version: int | None) -> None:
+#: The one grant S1g adds to the run-as role.
+DBLINK_GRANT = f"GRANT EXECUTE ON FUNCTION dblink_exec(text, text) TO {RUN_AS}"
+
+
+def _clean(version: int | None, *, drop_dblink: bool = False) -> None:
+    """Drop what this probe creates. dblink only where this run created it,
+    so a server that already had the extension keeps it."""
     with _connect(version) as su:
         su.execute(sql.SQL("DROP DATABASE IF EXISTS {}").format(sql.Identifier(DB2)))
         su.execute(sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(sql.Identifier(SCHEMA)))
         if _one(su, "SELECT count(*) FROM pg_roles WHERE rolname = %s", (RUN_AS,)):
             su.execute(sql.SQL("DROP OWNED BY {}").format(sql.Identifier(RUN_AS)))
             su.execute(sql.SQL("DROP ROLE {}").format(sql.Identifier(RUN_AS)))
-        su.execute("DROP EXTENSION IF EXISTS dblink")
+        if drop_dblink:
+            su.execute("DROP EXTENSION IF EXISTS dblink")
 
 
-def _setup(version: int | None) -> bool:
-    """The fixture. Returns whether dblink could be installed."""
+def _setup(version: int | None) -> tuple[bool, bool]:
+    """The fixture. Returns whether dblink can be used, and whether this run
+    created it."""
     with _connect(version) as su:
         for statement in (
             f"CREATE ROLE {RUN_AS} LOGIN PASSWORD '{RUN_AS_PASSWORD}'",
@@ -210,12 +229,15 @@ def _setup(version: int | None) -> bool:
             f"CREATE DATABASE {DB2}",
         ):
             su.execute(statement)
+        created = False
         try:
-            su.execute("CREATE EXTENSION dblink")
-            su.execute(f"GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO {RUN_AS}")
+            if not _one(su, "SELECT count(*) FROM pg_extension WHERE extname = 'dblink'"):
+                su.execute("CREATE EXTENSION dblink")
+                created = True
+            su.execute(DBLINK_GRANT)
             dblink = True
         except psycopg.Error as error:
-            print(f"  S1g  CREATE EXTENSION dblink: {_outcome(error)}")
+            print(f"  S1g  dblink: {_outcome(error)}")
             dblink = False
     with _connect(version, dbname=DB2) as su2:
         su2.execute("CREATE TABLE r (n int)")
@@ -237,7 +259,7 @@ def _setup(version: int | None) -> bool:
             f" DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION {SCHEMA}.slow()",
         ):
             conn.execute(statement)
-    return dblink
+    return dblink, created
 
 
 def _read_only(conn: psycopg.Connection[Any], statement: str) -> str:
@@ -292,6 +314,7 @@ def _s1(version: int | None, dblink: bool) -> None:
         nextval = _read_only(conn, "SELECT nextval('tmps')")
         print(f"  S1   nextval on a temporary sequence: {nextval}")
         if dblink:
+            print(f"  S1g  the run-as role is given: {DBLINK_GRANT}")
             # The server's own address, not 127.0.0.1: the images trust a
             # loopback login, and dblink refuses a role that is not a
             # superuser a login that used no password (2F003).
@@ -396,25 +419,13 @@ def _s3(version: int | None) -> None:
 
 def _s4(version: int | None) -> None:
     d = f"{SCHEMA}.d"
+    # The bound, set inside the transaction or for the session.
     modes = {
-        "with SET LOCAL statement_timeout": (
-            None,
-            f"SET LOCAL statement_timeout = {TIMEOUT_MS}",
-            None,
-        ),
-        "after SET LOCAL statement_timeout = 0": (
-            None,
-            f"SET LOCAL statement_timeout = {TIMEOUT_MS}",
-            "SET LOCAL statement_timeout = 0",
-        ),
-        "with a session's SET statement_timeout": (
-            f"SET statement_timeout = {TIMEOUT_MS}",
-            None,
-            None,
-        ),
+        "with SET LOCAL statement_timeout": (None, f"SET LOCAL statement_timeout = {TIMEOUT_MS}"),
+        "with a session's SET statement_timeout": (f"SET statement_timeout = {TIMEOUT_MS}", None),
     }
     for run in range(1, REPEAT + 1):
-        for label, (session, local, before_commit) in modes.items():
+        for label, (session, local) in modes.items():
             with _run_as(version) as conn:
                 conn.execute(f"TRUNCATE {d}")
                 if session:
@@ -423,8 +434,6 @@ def _s4(version: int | None) -> None:
                 if local:
                     conn.execute(local)
                 conn.execute(f"INSERT INTO {d} VALUES (1)")
-                if before_commit:
-                    conn.execute(before_commit)
                 outcome, took = _timed(conn, "COMMIT")
                 state = conn.info.transaction_status.name
                 if state != "IDLE":
@@ -545,8 +554,9 @@ def probe(version: int | None) -> None:
         release = _one(su, "SHOW server_version")
     print(f"PostgreSQL {release} (port {_port(version)})")
     _clean(version)
+    created = False
     try:
-        dblink = _setup(version)
+        dblink, created = _setup(version)
         _s1(version, dblink)
         _s2(version)
         _s3(version)
@@ -556,7 +566,12 @@ def probe(version: int | None) -> None:
         _s7(version)
         _s8(version)
     finally:
-        _clean(version)
+        # A cleanup that fails is printed, not raised, so it cannot hide the
+        # failure of a step before it.
+        try:
+            _clean(version, drop_dblink=created)
+        except Exception as error:  # noqa: BLE001 -- printed, the run goes on
+            print(f"  cleanup failed: {type(error).__name__}: {error}")
 
 
 def main() -> int:
@@ -569,9 +584,10 @@ def main() -> int:
     for version in (None,) if tier1 else VERSIONS:
         try:
             probe(version)
-        except (psycopg.Error, RuntimeError) as error:
+        except Exception as error:  # noqa: BLE001 -- one release's failure; the rest still run
             failed += 1
-            print(f"PostgreSQL {version}: FAILED: {error}")
+            name = "tier-1" if version is None else f"PostgreSQL {version}"
+            print(f"{name} (port {_port(version)}): FAILED: {type(error).__name__}: {error}")
     return 1 if failed else 0
 
 

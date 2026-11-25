@@ -582,11 +582,15 @@ such as "from 16", means the one release of it that was measured.
   `sql/postgres/12_statement_run_probe.py` measures it.
 - `verified` `psycopg-multiple-statements` (#1691) — **Does psycopg refuse a
   text that holds two statements?**
-  Not by default. psycopg 3.3.6 sends a text with no parameters, or with an
-  empty tuple of them, by the simple query protocol, which runs every
-  statement in it. With `prepare=True` it uses the extended protocol, and the
-  server refuses a second statement with `42601`, "cannot insert multiple
-  commands into a prepared statement". `prepare=True` reads no `%` as a
+  Not by default. With psycopg 3.3.6, `execute(text)` and `execute(text, ())`
+  run both statements of a text that holds two. `execute(text, prepare=True)`
+  is refused by the server with `42601`, "cannot insert multiple commands into
+  a prepared statement". The reason is the protocol, which the probe does not
+  observe: psycopg's documentation, [*Multiple statements in the same
+  query*](https://www.psycopg.org/psycopg3/docs/basic/from_pg2.html#multiple-statements-in-the-same-query),
+  says a query with parameters is bound on the server and so holds one
+  statement, and that a query with none has no such limit. A prepared
+  statement is bound on the server too. `prepare=True` reads no `%` as a
   placeholder; an empty tuple does, and refuses `LIKE 'a%'` in the client.
   `sql/postgres/12_statement_run_probe.py` measures it.
 - `verified` `pg-statement-timeout` (#1691) — **What does a timeout leave

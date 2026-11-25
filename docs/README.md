@@ -578,7 +578,10 @@ such as "from 16", means the one release of it that was measured.
   with `0A000` before that. A temporary table or sequence can still be
   written. `dblink_exec()` is not refused: it writes through its own
   connection, which commits, and the rollback does not undo it. It is the
-  counterpart of Oracle's autonomous transaction (UC-3 §3).
+  counterpart of Oracle's autonomous transaction (UC-3 §3). Once dblink is
+  installed in the database, any role can call `dblink_exec()`, because
+  `PUBLIC` has `EXECUTE` on it. A role that is not a superuser must give a
+  password in the connection string.
   `sql/postgres/12_statement_run_probe.py` measures it.
 - `verified` `psycopg-multiple-statements` (#1691) — **Does psycopg refuse a
   text that holds two statements?**

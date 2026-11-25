@@ -14,8 +14,10 @@ with no grants but its own schema, unless a step says otherwise:
   S1g  dblink_exec(), inside BEGIN READ ONLY, inserting a row into a second
        database on the same server, and whether the row is there after the
        rollback. The superuser installs dblink where the server lacks it,
-       and grants the run-as role EXECUTE on dblink_exec(text, text) alone
-  S2  what psycopg does with two statements in one text, an UPDATE and a
+       and grants the run-as role nothing on it. First, has_function_
+       privilege() says whether the run-as role may execute
+       dblink_exec(text, text) and dblink_connect_u(text)
+  S2   what psycopg does with two statements in one text, an UPDATE and a
        DELETE, and two SELECTs: cursor.execute(text), execute(text, ()) and
        execute(text, prepare=True). Then the same three calls on a text with
        a % inside a literal
@@ -43,10 +45,10 @@ STATUS: run on 13.23, 14.24, 15.19, 16.15, 17.11 and 18.6, the postgres:13 to
 postgres:18 images of test/compose.yaml profile postgres-matrix, and on
 16.15, the postgres:16-alpine image of the tier-1 postgres service, on
 2026-11-25 (#1691). The client was psycopg 3.3.6 with libpq 18.4, Python
-3.13.12, on Windows 11 AMD64. Twice with this version of the probe. Four
-earlier runs of earlier versions, which granted the run-as role every
-function of dblink, had a third S4 case, and two of which had no SELECT ...
-INTO case, are not counted; they agreed. Exit 0 each time, and the same
+3.13.12, on Windows 11 AMD64. Twice with this version of the probe. Six
+earlier runs of earlier versions are not counted: they granted the run-as
+role EXECUTE on dblink, four had a third S4 case, and two had no SELECT ...
+INTO case. Where they measured the same thing, they agreed. Exit 0 each time, and the same
 result each time but for system_identifier and the timings, which are the
 ranges below.
 
@@ -63,10 +65,13 @@ RESULTS
        the rollbacks the table has its 3 rows and the sequence was never
        called. An INSERT into a temporary table and nextval() of a temporary
        sequence run
-  S1g  dblink_exec() runs inside BEGIN READ ONLY, and its row is in the
-       second database after the rollback. EXECUTE on dblink_exec(text,
-       text) is the one grant it needs. The read-only transaction does not
-       reach the connection dblink opens, which commits on its own. In an
+  S1g  with no grant, the run-as role may execute dblink_exec(text, text),
+       and may not execute dblink_connect_u(text). Once dblink is installed
+       in the database, PUBLIC has EXECUTE on dblink_exec(). It runs inside
+       BEGIN READ ONLY, with the role's password in the connection string,
+       and its row is in the second database after the rollback. The
+       read-only transaction does not reach the connection dblink opens,
+       which commits on its own. In an
        earlier, uncounted run, through 127.0.0.1, it was refused, 2F003,
        "password or GSSAPI delegated credentials required": the images
        trust a loopback login, and dblink refuses a role that is not a
@@ -85,7 +90,7 @@ RESULTS
        s, in all three runs. The transaction is then INERROR, and a ROLLBACK and a
        SELECT 1 work: the session stays usable
   S4   statement_timeout does not bound the COMMIT, in either of the two
-       ways. Each COMMIT takes 2.00 to 2.02 s, ends IDLE, and keeps the row
+       ways. Each COMMIT takes 2.00 to 2.05 s, ends IDLE, and keeps the row
   S5   rowcount is 3 for the UPDATE to the values the rows hold: the rows
        matched, not the rows changed. It is 1 for the one-row UPDATE, 1 for
        INSERT ... ON CONFLICT DO NOTHING (the new row only), 3 for the MERGE
@@ -109,7 +114,8 @@ RESULTS
 
   So BEGIN READ ONLY stops every write a statement can make in its own
   database, SELECT INTO and a data-modifying CTE included, but not one that
-  dblink makes on another connection. psycopg runs both statements of a text
+  dblink makes on another connection. Where dblink is installed, any role
+  can call dblink_exec() with no grant. psycopg runs both statements of a text
   that holds two, with no parameters or an empty tuple of them. Only
   prepare=True is refused, and it does not read % as a placeholder. The
   probe does not see the protocol. psycopg's documentation gives it as the
@@ -132,8 +138,9 @@ ones it uses. S8 imports sopuli from src/.
 THROWAWAY SERVERS ONLY. It creates the role sopuli_probe_runas, its schema
 sopuli_probe and the database sopuli_probe_db2, and drops them at the end.
 It creates the extension dblink only where the server lacks it, and drops it
-only then. Before it starts, it drops what an interrupted run left, but not
-dblink, which an interrupted run may leave behind. A cleanup that fails is
+only then, even where the setup fails after creating it. Before it starts, it
+drops what an interrupted run left, but not dblink, which an interrupted run
+may leave behind. A cleanup that fails is
 printed, and the next release still runs.
 """
 
@@ -202,10 +209,6 @@ def _outcome(error: psycopg.Error | None) -> str:
     return f"{error.sqlstate} {error.diag.message_primary}"
 
 
-#: The one grant S1g adds to the run-as role.
-DBLINK_GRANT = f"GRANT EXECUTE ON FUNCTION dblink_exec(text, text) TO {RUN_AS}"
-
-
 def _clean(version: int | None, *, drop_dblink: bool = False) -> None:
     """Drop what this probe creates. dblink only where this run created it,
     so a server that already had the extension keeps it."""
@@ -219,9 +222,11 @@ def _clean(version: int | None, *, drop_dblink: bool = False) -> None:
             su.execute("DROP EXTENSION IF EXISTS dblink")
 
 
-def _setup(version: int | None) -> tuple[bool, bool]:
-    """The fixture. Returns whether dblink can be used, and whether this run
-    created it."""
+def _setup(version: int | None, created: list[bool]) -> bool:
+    """The fixture. Returns whether dblink can be used. ``created`` gets True
+    as soon as this run creates dblink, before any later step can raise, so
+    the cleanup drops it even when the setup fails after it. The run-as role
+    is granted nothing on dblink."""
     with _connect(version) as su:
         for statement in (
             f"CREATE ROLE {RUN_AS} LOGIN PASSWORD '{RUN_AS_PASSWORD}'",
@@ -229,12 +234,10 @@ def _setup(version: int | None) -> tuple[bool, bool]:
             f"CREATE DATABASE {DB2}",
         ):
             su.execute(statement)
-        created = False
         try:
             if not _one(su, "SELECT count(*) FROM pg_extension WHERE extname = 'dblink'"):
                 su.execute("CREATE EXTENSION dblink")
-                created = True
-            su.execute(DBLINK_GRANT)
+                created.append(True)
             dblink = True
         except psycopg.Error as error:
             print(f"  S1g  dblink: {_outcome(error)}")
@@ -259,7 +262,7 @@ def _setup(version: int | None) -> tuple[bool, bool]:
             f" DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION {SCHEMA}.slow()",
         ):
             conn.execute(statement)
-    return dblink, created
+    return dblink
 
 
 def _read_only(conn: psycopg.Connection[Any], statement: str) -> str:
@@ -314,13 +317,21 @@ def _s1(version: int | None, dblink: bool) -> None:
         nextval = _read_only(conn, "SELECT nextval('tmps')")
         print(f"  S1   nextval on a temporary sequence: {nextval}")
         if dblink:
-            print(f"  S1g  the run-as role is given: {DBLINK_GRANT}")
+            # Before anything is granted: what the run-as role may run as
+            # the extension installed it.
+            for function in ("dblink_exec(text, text)", "dblink_connect_u(text)"):
+                allowed = _one(
+                    conn, "SELECT has_function_privilege(%s, %s, 'EXECUTE')", (RUN_AS, function)
+                )
+                print(f"  S1g  {RUN_AS} may execute {function}, with no grant: {allowed}")
             # The server's own address, not 127.0.0.1: the images trust a
             # loopback login, and dblink refuses a role that is not a
             # superuser a login that used no password (2F003).
-            address = _one(conn, "SELECT host(inet_server_addr())")
+            address, port = conn.execute(
+                "SELECT host(inet_server_addr()), inet_server_port()"
+            ).fetchone() or (None, None)
             target = (
-                f"host={address} port=5432 dbname={DB2} user={RUN_AS} password={RUN_AS_PASSWORD}"
+                f"host={address} port={port} dbname={DB2} user={RUN_AS} password={RUN_AS_PASSWORD}"
             )
             outcome = _read_only(
                 conn, f"SELECT dblink_exec('{target}', 'INSERT INTO r VALUES (1)')"
@@ -554,9 +565,9 @@ def probe(version: int | None) -> None:
         release = _one(su, "SHOW server_version")
     print(f"PostgreSQL {release} (port {_port(version)})")
     _clean(version)
-    created = False
+    created: list[bool] = []
     try:
-        dblink, created = _setup(version)
+        dblink = _setup(version, created)
         _s1(version, dblink)
         _s2(version)
         _s3(version)
@@ -569,7 +580,7 @@ def probe(version: int | None) -> None:
         # A cleanup that fails is printed, not raised, so it cannot hide the
         # failure of a step before it.
         try:
-            _clean(version, drop_dblink=created)
+            _clean(version, drop_dblink=bool(created))
         except Exception as error:  # noqa: BLE001 -- printed, the run goes on
             print(f"  cleanup failed: {type(error).__name__}: {error}")
 

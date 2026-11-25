@@ -11,6 +11,7 @@ account would.
 from __future__ import annotations
 
 import os
+import threading
 import uuid
 from collections.abc import Iterator
 from contextlib import suppress
@@ -85,6 +86,15 @@ def role(live_postgres: Any) -> Iterator[dict[str, str]]:
             owner.execute("create sequence s")
             owner.execute("create table d (k int, unique (k) deferrable initially deferred)")
             owner.execute("insert into d values (1)")
+            owner.execute("create table slow (k int)")
+            owner.execute(
+                "create function slow_check() returns trigger language plpgsql as "
+                "$$ begin perform pg_sleep(1); return null; end $$"
+            )
+            owner.execute(
+                "create constraint trigger slow_commit after insert on slow "
+                "deferrable initially deferred for each row execute function slow_check()"
+            )
         yield {"name": name, "password": password}
     finally:
         with _connect(live_postgres, *superuser) as admin:
@@ -94,8 +104,7 @@ def role(live_postgres: Any) -> Iterator[dict[str, str]]:
                 admin.execute(f'drop role "{name}"')
 
 
-@pytest.fixture
-def session(live_postgres: Any, role: dict[str, str]) -> Iterator[Any]:
+def _open(live_postgres: Any, role: dict[str, str]) -> Any:
     """A session as the run-as role, built the way `sql run` builds one."""
     from sopuli.driver.postgres.session import build_driver
 
@@ -108,9 +117,14 @@ def session(live_postgres: Any, role: dict[str, str]) -> Iterator[Any]:
             postgres=TargetPostgres(sslmode="disable"),
         )
     )
-    opened = driver.connect(
+    return driver.connect(
         target, Credential(username=role["name"], secret=Secret(role["password"]))
     )
+
+
+@pytest.fixture
+def session(live_postgres: Any, role: dict[str, str]) -> Iterator[Any]:
+    opened = _open(live_postgres, role)
     try:
         yield opened
     finally:
@@ -177,26 +191,68 @@ def test_values_become_json(session: Any) -> None:
 
 
 @pytest.mark.parametrize(
-    "text",
+    ("text", "code"),
     [
-        "UPDATE t SET v = 'x'",
-        "SELECT nextval('s')",
-        "WITH gone AS (DELETE FROM t RETURNING k) SELECT count(*) FROM gone",
-        "SELECT * INTO t2 FROM t",
+        # A read is declared as a cursor, which takes a query only.
+        ("UPDATE t SET v = 'x'", "42601"),
+        ("SELECT * INTO t2 FROM t", "42601"),
+        ("WITH gone AS (DELETE FROM t RETURNING k) SELECT count(*) FROM gone", "0A000"),
+        # The read-only transaction refuses what the cursor accepts.
+        ("SELECT nextval('s')", "25006"),
+        ("SELECT * FROM t FOR UPDATE", "25006"),
     ],
 )
 def test_a_read_cannot_write(
-    session: Any, live_postgres: Any, role: dict[str, str], text: str
+    session: Any, live_postgres: Any, role: dict[str, str], text: str, code: str
 ) -> None:
     with pytest.raises(DriverError) as raised:
         session.run_statement(
             _hand_built_read(text), guard=None, commit=False, max_rows=100, timeout_ms=0
         )
 
-    assert raised.value.code == "25006"
-    assert "--write" in (raised.value.hint or "")
+    assert raised.value.code == code
+    if code == "25006":
+        assert "--write" in (raised.value.hint or "")
     assert _values(live_postgres, role) == [(1, "a"), (2, "b"), (3, "c")]
     assert session.connection_lost is False
+
+
+def test_two_statements_in_a_read_are_refused_by_the_server(session: Any) -> None:
+    with pytest.raises(DriverError) as raised:
+        session.run_statement(
+            _hand_built_read("SELECT 1; SELECT 2"),
+            guard=None,
+            commit=False,
+            max_rows=100,
+            timeout_ms=0,
+        )
+
+    assert raised.value.code == "42601"
+
+
+def test_a_read_fetches_only_up_to_max_rows(session: Any) -> None:
+    # A client-side cursor would load all ten million rows first.
+    result = _run(session, "SELECT g FROM generate_series(1, 10000000) g", max_rows=2)
+
+    assert result.rows == ((1,), (2,))
+    assert result.truncated is True
+
+
+def test_a_transaction_left_open_is_ended_before_a_read(
+    session: Any, live_postgres: Any, role: dict[str, str]
+) -> None:
+    session.connection.execute("begin")
+
+    with pytest.raises(DriverError) as raised:
+        session.run_statement(
+            _hand_built_read("SELECT nextval('s')"),
+            guard=None,
+            commit=False,
+            max_rows=100,
+            timeout_ms=0,
+        )
+
+    assert raised.value.code == "25006"
 
 
 def test_two_statements_in_one_text_are_refused_by_the_server(
@@ -294,14 +350,92 @@ def test_a_statement_past_the_timeout_is_cancelled(session: Any) -> None:
     assert _run(session, "SELECT 1").rows == ((1,),)
 
 
-def test_a_failed_commit_is_marked(session: Any) -> None:
+def test_a_commit_the_server_refused_was_rolled_back(
+    session: Any, live_postgres: Any, role: dict[str, str]
+) -> None:
     # The deferred unique constraint is checked at the commit, so the
-    # statement passes and the COMMIT fails.
+    # statement passes and the COMMIT fails. The server rolled it back, so
+    # the outcome is known.
     with pytest.raises(DriverError) as raised:
         _run(session, "INSERT INTO d VALUES (1)", guard=RowGuard(expect=1), commit=True)
 
     assert raised.value.code == "23505"
+    assert raised.value.commit_failed is False
+    with _connect(live_postgres, role["name"], role["password"]) as check:
+        assert check.execute("select count(*) from d").fetchone() == (1,)
+
+
+def test_a_commit_whose_connection_is_lost_is_marked(session: Any, live_postgres: Any) -> None:
+    # The deferred trigger sleeps in the COMMIT, and another session ends
+    # this one there, so whether it committed is unknown.
+    pid = session.connection.info.backend_pid
+
+    def terminate() -> None:
+        with _connect(live_postgres, live_postgres.user, live_postgres.password) as admin:
+            admin.execute("select pg_terminate_backend(%s)", (pid,))
+
+    timer = threading.Timer(0.5, terminate)
+    timer.start()
+    try:
+        with pytest.raises(DriverError) as raised:
+            _run(session, "INSERT INTO slow VALUES (1)", guard=RowGuard(expect=1), commit=True)
+    finally:
+        timer.join()
+
     assert raised.value.commit_failed is True
+    assert session.connection_lost is True
+
+
+def test_no_timeout_bounds_the_commit(
+    session: Any, live_postgres: Any, role: dict[str, str]
+) -> None:
+    # The deferred trigger sleeps for a second in the COMMIT, past the 300 ms bound.
+    result = _run(
+        session,
+        "INSERT INTO slow VALUES (2)",
+        guard=RowGuard(expect=1),
+        commit=True,
+        timeout_ms=300,
+    )
+
+    assert result.committed is True
+    with _connect(live_postgres, role["name"], role["password"]) as check:
+        assert check.execute("select count(*) from slow").fetchone() == (1,)
+
+
+def test_a_lower_timeout_on_the_role_is_kept(live_postgres: Any, role: dict[str, str]) -> None:
+    from psycopg import sql
+
+    with _connect(live_postgres, live_postgres.user, live_postgres.password) as admin:
+        admin.execute(
+            sql.SQL("alter role {} set statement_timeout = 300").format(
+                sql.Identifier(role["name"])
+            )
+        )
+    opened = _open(live_postgres, role)
+    try:
+        with pytest.raises(DriverError) as raised:
+            _run(opened, "SELECT pg_sleep(3)", timeout_ms=30_000)
+    finally:
+        opened.close()
+
+    assert raised.value.code == "57014"
+
+
+def test_a_revoked_pg_control_system_is_named(
+    session: Any, live_postgres: Any, role: dict[str, str]
+) -> None:
+    revoke = "revoke execute on function pg_control_system() from public"
+    with _connect(live_postgres, live_postgres.user, live_postgres.password) as admin:
+        admin.execute(revoke)
+        try:
+            with pytest.raises(DriverError) as raised:
+                session.database_identity()
+        finally:
+            admin.execute("grant execute on function pg_control_system() to public")
+
+    assert raised.value.code == "42501"
+    assert "pg_control_system()" in (raised.value.hint or "")
 
 
 def test_a_statement_failure_is_not_a_failed_commit(session: Any) -> None:

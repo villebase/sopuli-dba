@@ -336,9 +336,13 @@ A session that waits on a lock ends when the wait does. The session reports
 timeout does not bound the commit, so a commit is never abandoned half done.
 
 On PostgreSQL the timeout is `statement_timeout`, set for the statement's
-transaction only. It counts the time a statement waits for a lock. The server
+transaction only. Where the role or the database already has a lower one, the
+lower one stays. It counts the time a statement waits for a lock. The server
 cancels a statement past it with `57014` and rolls its transaction back, and
-the session stays usable. No timeout bounds the commit.
+the session stays usable. No timeout bounds the commit. A commit the server
+refuses, such as on a deferred constraint, was rolled back, so its outcome is
+known. Only a commit whose connection is lost has `outcome_unknown: true`
+(§5).
 
 ---
 
@@ -374,7 +378,9 @@ so the plan leaves it out too, and it counts for neither `max_targets` nor
 `confirm_environments`.
 
 **A commit that fails has an unknown outcome.** The statement ran and the
-commit was sent, so the change may have taken effect. The target is `ERROR`,
+commit was sent, so the change may have taken effect. On PostgreSQL this
+holds only where the connection was lost: a commit the server refused was
+rolled back, and is an ordinary `ERROR` (§4). The target is `ERROR`,
 with a message that says the outcome is unknown and to check the rows before
 running again, and the server's code and message. Its result in the run
 document has `outcome_unknown: true`, so a script need not parse the message.

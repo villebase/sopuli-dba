@@ -290,9 +290,11 @@ def from_error(exc: Any, *, connecting: bool = False) -> Diagnosis:
 #: run-as account (UC-3 §2).
 _STATEMENT_HINTS = {
     QUERY_CANCELED: (
-        "the statement ran longer than the timeout, which counts the time it waits for "
-        "a lock another session holds. The server cancelled it and its transaction was "
-        "rolled back. Raise --timeout, or find what holds the lock or makes it slow"
+        "the server cancelled the statement and rolled its transaction back. Most often "
+        "it ran longer than the timeout, --timeout or a lower statement_timeout the role "
+        "already has, which counts the time it waits for a lock another session holds. "
+        "Then raise the timeout, or find what holds the lock or makes it slow. Another "
+        "session can also cancel it, with pg_cancel_backend()"
     ),
     LOCK_NOT_AVAILABLE: (
         "the statement waited longer than the role's lock_timeout for a lock that "

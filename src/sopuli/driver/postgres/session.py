@@ -668,10 +668,21 @@ class PostgresSession(ClosesConnection):
     def database_identity(self) -> tuple[str, str]:
         """``(system_identifier, current_database())``: the cluster and the
         database this session reached. Any role can read both by default
-        (``12_statement_run_probe.py``)."""
-        with self._cursor() as cursor:
-            cursor.execute(STATEMENT_IDENTITY)
-            row = cursor.fetchone()
+        (``12_statement_run_probe.py``). A site that revoked
+        ``pg_control_system()`` is refused with a hint that names it: the plan
+        fingerprint needs the cluster's identity, and nothing else names it."""
+        try:
+            with self._cursor() as cursor:
+                cursor.execute(STATEMENT_IDENTITY)
+                row = cursor.fetchone()
+        except DriverError as error:
+            if error.code == INSUFFICIENT_PRIVILEGE:
+                error.hint = (
+                    "the run-as account may not run pg_control_system(), which every "
+                    "role may by default. The plan fingerprint reads the cluster's "
+                    "system_identifier from it. Grant EXECUTE on it to the run-as account"
+                )
+            raise
         return str(row[0]), str(row[1])
 
     def run_statement(
@@ -691,17 +702,25 @@ class PostgresSession(ClosesConnection):
         other outcome rolls back. ``dblink_exec()`` and the like write through
         another connection, which neither covers (UC-3 §3).
 
-        The statement is sent as written, with no bind, as a prepared
-        statement: psycopg sends a plain one with the simple protocol, which
-        runs every statement in the text, and a prepared one is refused with
-        ``42601`` when the text holds two (``12_statement_run_probe.py``).
-        ``statement_timeout`` is ``timeout_ms`` for this transaction only;
-        ``0`` means no bound. It covers a lock wait too, so a write that waits
-        on an application's row lock is cancelled with ``57014``, and the
-        session stays usable. No timeout bounds the ``COMMIT``. An error the
-        commit itself raised has ``commit_failed`` set, because the commit may
-        still have taken effect. ``json`` and ``jsonb`` are read as the
-        server's text, so a number in one is not rounded to a float.
+        The statement is sent as written, with no bind, so that the server
+        refuses a text that holds two statements with ``42601``. psycopg's
+        plain ``execute`` would run them all (``12_statement_run_probe.py``).
+        A read goes through a server-side cursor, so only the rows up to
+        ``max_rows`` cross the network, and ``DECLARE`` takes one query. A
+        write is a prepared statement.
+
+        ``statement_timeout`` is ``timeout_ms`` for this transaction only, or
+        the one the role or the session already has where that is lower; ``0``
+        means no bound. It covers a lock wait too, so a write that waits on an
+        application's row lock is cancelled with ``57014``, and the session
+        stays usable. No timeout bounds the ``COMMIT``.
+
+        A ``COMMIT`` the server refused with a SQLSTATE was rolled back. Only
+        one whose connection was lost has ``commit_failed`` set, because it
+        may still have taken effect. A transaction an earlier caller left open
+        is rolled back first, so the read-only transaction is a new one.
+        ``json`` and ``jsonb`` are read as the server's text, so a number in
+        one is not rounded to a float.
         """
         if commit and guard is None:
             raise ValueError("run_statement commits only with a row guard")
@@ -709,29 +728,34 @@ class PostgresSession(ClosesConnection):
         read = statement.kind is StatementKind.READ
         begun = committed = committing = False
         try:
-            with self.connection.cursor() as cursor:
-                cursor.execute("begin read only" if read else "begin")
+            if self.connection.info.transaction_status != pq.TransactionStatus.IDLE:
+                self.connection.execute("rollback")
+            with self.connection.cursor() as control:
+                control.execute("begin read only" if read else "begin")
                 begun = True
-                cursor.execute(f"set local statement_timeout = {int(timeout_ms)}")
+                bound = _bound(timeout_ms, _session_timeout_ms(control))
+                control.execute(f"set local statement_timeout = {bound}")
+                if not read:
+                    control.execute(statement.text, prepare=True)
+                    count = control.rowcount
+                    passed = None if guard is None else guard.passes(count)
+                    if commit and passed is not False and count > 0:
+                        committing = True
+                        control.execute("commit")
+                        committed = True
+                    return StatementResult((), (), count, False, committed, passed)
+            with self.connection.cursor(name="sopuli_sql_run") as rows:
                 for name in ("json", "jsonb"):
-                    cursor.adapters.register_loader(name, TextLoader)
-                cursor.execute(statement.text, prepare=True)
-                if read:
-                    return _read_result(cursor, max_rows)
-                count = cursor.rowcount
-                passed = None if guard is None else guard.passes(count)
-                if commit and passed is not False and count > 0:
-                    committing = True
-                    cursor.execute("commit")
-                    committed = True
-                return StatementResult((), (), count, False, committed, passed)
+                    rows.adapters.register_loader(name, TextLoader)
+                rows.execute(statement.text)
+                return _read_result(rows, max_rows)
         except psycopg.Error as error:
             self._connection_lost = bool(self.connection.closed)
             if error.sqlstate is None and not isinstance(error, psycopg.OperationalError):
                 raise
             raised = for_statement(from_error(error), read=read).as_error()
-            # A commit that raised may still have taken effect.
-            raised.commit_failed = committing
+            # A refused COMMIT was rolled back; a lost one may have taken effect.
+            raised.commit_failed = committing and self._connection_lost
             raise raised from error
         finally:
             if begun and not committed and not self.connection.closed:
@@ -752,6 +776,21 @@ class PostgresSession(ClosesConnection):
 
 #: What `sql run` reads to tell one database from another (UC-3 §4).
 STATEMENT_IDENTITY = "select system_identifier::text, current_database() from pg_control_system()"
+
+
+def _session_timeout_ms(cursor: Any) -> int:
+    """The ``statement_timeout`` in force before `sql run` sets one, in
+    milliseconds: the role's, the database's or the session's. ``0`` is none."""
+    cursor.execute("select setting::bigint from pg_settings where name = 'statement_timeout'")
+    return int(cursor.fetchone()[0])
+
+
+def _bound(requested_ms: int, existing_ms: int) -> int:
+    """The lower of two timeouts, where ``0`` means no bound."""
+    if requested_ms == 0 or existing_ms == 0:
+        return max(requested_ms, existing_ms)
+    return min(requested_ms, existing_ms)
+
 
 #: The longest text or ``bytea`` value `sql run` returns, in characters or
 #: bytes, as Oracle's LOB limit. A longer one is cut.

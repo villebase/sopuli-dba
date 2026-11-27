@@ -775,9 +775,9 @@ profile of `test/compose.yaml`.
   `sql/mysql/13_statement_run_probe.py` measures it.
 - `verified` `mysql-statement-timeout` (#1714) — **What does a timeout leave
   behind on MySQL, and does any bound a `COMMIT`?**
-  `max_execution_time` interrupts a `SELECT` with `3024`, and cuts `SLEEP()`
-  short with no error. It does not bound an `UPDATE`, a lock wait or a
-  `COMMIT`. `innodb_lock_wait_timeout` ends a wait on a row lock and
+  `max_execution_time` interrupts a `SELECT` with `3024`, a locking `SELECT`
+  that waits on a row lock included, and cuts `SLEEP()` short with no error.
+  It does not bound an `UPDATE`, its wait on a row lock, or a `COMMIT`. `innodb_lock_wait_timeout` ends a wait on a row lock and
   `lock_wait_timeout` one on a table lock, both `1205`, and the transaction
   stays open with its earlier writes, so the runner must roll back. Only
   `lock_wait_timeout` bounds a `COMMIT`, waiting on a global read lock.
@@ -791,8 +791,8 @@ profile of `test/compose.yaml`.
   `EXPLAIN FORMAT=TRADITIONAL` names every table of a multi-table `UPDATE`,
   a `DELETE` with a join, an `INSERT … SELECT` and a subquery, and a view's
   base table. It does not name a table that a trigger or a stored function
-  writes. On 9.7.4 a plain `EXPLAIN` gives no `table` column, because
-  `explain_format` is `TREE` there. `information_schema.TABLES` gives the run-as
+  writes. A plain `EXPLAIN` names the same tables on 8.0.46 and 8.4.13; on
+  9.7.4, where `explain_format` is `TREE`, it gives no `table` column. `information_schema.TABLES` gives the run-as
   account each table's engine. A `ROLLBACK` after a MyISAM write gives warning
   `1196`, which PyMySQL reads with `SHOW WARNINGS`, after a `ROLLBACK`
   statement or `connection.rollback()`. Where `enforce_gtid_consistency` is
@@ -965,8 +965,8 @@ in `sql/mariadb/`, and the matrix of 10.11, 11.4, 11.8 and 12.3 is the
   `START TRANSACTION READ ONLY` refuse on MariaDB?**
   The same as on MySQL (`mysql-read-only-transaction`), and also a write to
   an Aria table, `NEXTVAL` of a sequence and `DELETE … RETURNING`, `1792`.
-  `WITH … UPDATE` and `WITH … DELETE` are a syntax error before 12.3.3, which
-  parses and refuses them. `FOR SHARE` is a syntax error; `LOCK IN SHARE
+  `WITH … UPDATE` and `WITH … DELETE` are a syntax error, `1064`, on
+  10.11.19, 11.4.13 and 11.8.9; 12.3.3 parses them and refuses them. `FOR SHARE` is a syntax error; `LOCK IN SHARE
   MODE` holds the row. `CREATE TABLE` and `TRUNCATE` commit and run, and a
   file, `@v` and `GET_LOCK()` outlive the rollback, as on MySQL.
   `sql/mariadb/18_statement_run_probe.py` measures it.
@@ -979,7 +979,7 @@ in `sql/mariadb/`, and the matrix of 10.11, 11.4, 11.8 and 12.3 is the
 - `verified` `mariadb-statement-timeout` (#1714) — **What does a timeout leave
   behind on MariaDB, and does any bound a `COMMIT`?**
   `max_statement_time` interrupts every statement with `1969`: a `SELECT`,
-  an `UPDATE`, a wait on a row lock, and a `COMMIT` that waits on a global
+  an `UPDATE`, the wait of either on a row lock, and a `COMMIT` that waits on a global
   read lock, which then does not commit. The lock timeouts give `1205`, as
   on MySQL. After each, the transaction stays open, `@@in_transaction` 1,
   with its earlier writes. `read_timeout` closes the connection as on MySQL,

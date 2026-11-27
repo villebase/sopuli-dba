@@ -49,7 +49,8 @@ every release, except where noted
        INSERT ... RETURNING the rows it inserted, 2, both ways
   T5   max_statement_time 0.5 interrupts every statement with 1969 after
        0.50 s: SELECT SLEEP(2), a slow SELECT, UPDATE ... SET v = SLEEP(2),
-       and a wait on root's row lock with innodb_lock_wait_timeout 3. Its
+       and the wait of an UPDATE, a SELECT ... FOR UPDATE and a SELECT ...
+       LOCK IN SHARE MODE on root's row lock with innodb_lock_wait_timeout 3. Its
        message is "Query execution was interrupted (max_statement_time
        exceeded)" up to 11.8.9, and "Query was interrupted: execution time
        limit 0.5 sec exceeded" on 12.3.3. After each 1205 and 1969 the

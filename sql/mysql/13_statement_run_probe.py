@@ -30,8 +30,10 @@ and FILE, unless a step says otherwise:
        DUPLICATE KEY UPDATE for a new, a changed and an unchanged row, INSERT
        IGNORE, DELETE, a multi-table UPDATE and an UPDATE of no row
   T5   timeouts. The product's statement timer, at 500 ms, on SELECT SLEEP(2),
-       a slow SELECT and UPDATE ... SET v = SLEEP(2). innodb_lock_wait_timeout
-       on a row root holds locked, and lock_wait_timeout on a table root
+       a slow SELECT and UPDATE ... SET v = SLEEP(2). innodb_lock_wait_timeout,
+       alone and beside the timer, on an UPDATE, a SELECT ... FOR UPDATE and
+       a SELECT ... LOCK IN SHARE MODE that wait on a row root holds locked,
+       and lock_wait_timeout on a table root
        holds with LOCK TABLES WRITE: the error, the time, and whether the
        transaction's earlier write is still there. PyMySQL's read_timeout
        firing in a SELECT SLEEP(3) inside a transaction that holds a row
@@ -42,7 +44,8 @@ and FILE, unless a step says otherwise:
   T6   EXPLAIN of a multi-table UPDATE, a DELETE with a join, an INSERT ...
        SELECT, an UPDATE with a subquery, an UPDATE of a view over a MyISAM
        table, an UPDATE whose trigger writes a MyISAM table, and an UPDATE
-       that calls a function that does: which tables each names. The engine
+       that calls a function that does: which tables each names, with
+       EXPLAIN FORMAT=TRADITIONAL and with a plain EXPLAIN. The engine
        of each table, as the run-as account reads it. Then a ROLLBACK after a
        MyISAM write, sent as a statement and with connection.rollback():
        the warnings PyMySQL reads, and what root reads afterwards
@@ -108,9 +111,10 @@ RESULTS -- the same on every release, except where noted
        to 0.51 s. It cuts a SELECT SLEEP(2) short at 0.50 s too, but SLEEP
        returns 1 and there is no error. It does not bound an UPDATE: UPDATE
        ... SET v = SLEEP(2) runs for 2.00 s. innodb_lock_wait_timeout 1 ends
-       a wait on root's row lock with 1205 after 1.00 s. With
-       innodb_lock_wait_timeout 3 the timer does not cut the wait short:
-       1205 after 3.00 s. lock_wait_timeout 1 ends a wait on root's LOCK
+       a wait on root's row lock with 1205 after 1.00 s, for the UPDATE and
+       both locking SELECTs. With innodb_lock_wait_timeout 3, the timer ends
+       the wait of each locking SELECT, 3024 after 0.50 to 0.51 s, and not the
+       UPDATE's: 1205 after 3.00 s. lock_wait_timeout 1 ends a wait on root's LOCK
        TABLES WRITE with 1205 after 1.00 s. After each 1205 the transaction
        is still open, with its earlier write; innodb_rollback_on_timeout is
        0. The session runs the next statement after each. read_timeout 1 s
@@ -132,8 +136,9 @@ RESULTS -- the same on every release, except where noted
        sent as a statement or with connection.rollback(): SHOW WARNINGS
        reads it, and cursor.warning_count is 1 after a ROLLBACK sent as a
        statement. ti is rolled back and tm keeps its change.
-       On 9.7.4, explain_format is TREE, which has no table column, so a
-       plain EXPLAIN names no table. gtid_mode and enforce_gtid_consistency
+       A plain EXPLAIN names the same tables on 8.0.46 and 8.4.13. On 9.7.4,
+       explain_format is TREE, and a plain EXPLAIN gives no table column, so
+       it names no table. gtid_mode and enforce_gtid_consistency
        are ON there, and OFF on 8.0.46 and 8.4.13. So on 9.7.4 EXPLAIN of
        the UPDATE whose trigger writes tm, and of the one whose function
        does, is refused, 1785, and so is a write to tm after one to ti in a
@@ -175,7 +180,8 @@ RESULTS -- the same on every release, except where noted
   included, but not DDL, which commits first, and not a lock, a file, a user
   variable or GET_LOCK(), which outlive the rollback. EXPLAIN names the
   tables a statement reads and writes, but not those that its triggers and
-  functions write. A timeout in the client does not stop the server: a
+  functions write. max_execution_time bounds a SELECT, its lock waits
+  included, and no write. A timeout in the client does not stop the server: a
   COMMIT the client gave up on can still commit.
 
 HOW TO RUN, against the matrix (test/README.md), from the repo root, with the
@@ -768,6 +774,13 @@ def t5(ctx: Ctx) -> None:
             print(f"  T5     then SELECT 1: {_try(conn, 'SELECT 1')}")
 
     # A row lock root holds, with innodb_lock_wait_timeout, and with the timer.
+    # The waiting statement is an UPDATE, which MySQL's timer does not apply
+    # to, and two locking SELECTs, which it may.
+    waits = (
+        ("UPDATE", f"UPDATE {s}.ti SET v = v + 1 WHERE id = 1"),
+        ("SELECT ... FOR UPDATE", f"SELECT v FROM {s}.ti WHERE id = 1 FOR UPDATE"),
+        ("SELECT ... LOCK IN SHARE MODE", f"SELECT v FROM {s}.ti WHERE id = 1 LOCK IN SHARE MODE"),
+    )
     for label, settings in (
         ("innodb_lock_wait_timeout 1", ("SET SESSION innodb_lock_wait_timeout = 1",)),
         (
@@ -775,19 +788,20 @@ def t5(ctx: Ctx) -> None:
             ("SET SESSION innodb_lock_wait_timeout = 3", ctx.product.timer),
         ),
     ):
-        with ctx.connect() as root, ctx.run_as() as conn:
-            _exec(conn, *settings)
-            _exec(root, "START TRANSACTION", f"SELECT v FROM {s}.ti WHERE id = 1 FOR UPDATE")
-            try:
-                _exec(conn, "START TRANSACTION", f"UPDATE {s}.tj SET w = 101 WHERE id = 1")
-                got = _timed(conn, f"UPDATE {s}.ti SET v = v + 1 WHERE id = 1")
-                state = _in_transaction(ctx, conn)
-                _exec(conn, "ROLLBACK")
-            finally:
-                _exec(root, "ROLLBACK")
-            print(f"  T5   a row root holds, {label}: {got}; {state}")
-        with ctx.connect() as root:
-            _reset(root, ctx)
+        for waiting, statement in waits:
+            with ctx.connect() as root, ctx.run_as() as conn:
+                _exec(conn, *settings)
+                _exec(root, "START TRANSACTION", f"SELECT v FROM {s}.ti WHERE id = 1 FOR UPDATE")
+                try:
+                    _exec(conn, "START TRANSACTION", f"UPDATE {s}.tj SET w = 101 WHERE id = 1")
+                    got = _timed(conn, statement)
+                    state = _in_transaction(ctx, conn)
+                    _exec(conn, "ROLLBACK")
+                finally:
+                    _exec(root, "ROLLBACK")
+                print(f"  T5   a row root holds, {label}, {waiting}: {got}; {state}")
+            with ctx.connect() as root:
+                _reset(root, ctx)
     with ctx.connect() as root:
         print(
             "  T5   innodb_rollback_on_timeout"
@@ -819,15 +833,19 @@ def _t5_read_timeout(ctx: Ctx) -> None:
     s = SCHEMA
     with ctx.connect() as root:
         conn = ctx.run_as(read_timeout=1)
-        thread = _one(conn, "SELECT CONNECTION_ID()")
-        _exec(conn, "START TRANSACTION", f"UPDATE {s}.ti SET v = 77 WHERE id = 1")
-        started = time.monotonic()
         try:
-            got = _try(conn, "SELECT SLEEP(3)")
-        except Exception as error:  # noqa: BLE001 -- printed
-            got = _outcome(error)
-        raised = time.monotonic() - started
-        is_open = conn.open
+            thread = _one(conn, "SELECT CONNECTION_ID()")
+            _exec(conn, "START TRANSACTION", f"UPDATE {s}.ti SET v = 77 WHERE id = 1")
+            started = time.monotonic()
+            try:
+                got = _try(conn, "SELECT SLEEP(3)")
+            except Exception as error:  # noqa: BLE001 -- printed
+                got = _outcome(error)
+            raised = time.monotonic() - started
+            is_open = conn.open
+        finally:
+            with contextlib.suppress(Exception):  # the connection may already be gone
+                conn.close()
         free_at = gone_at = None
         _exec(root, "SET SESSION innodb_lock_wait_timeout = 1")
         while time.monotonic() - started < 12 and (free_at is None or gone_at is None):
@@ -848,8 +866,6 @@ def _t5_read_timeout(ctx: Ctx) -> None:
                 finally:
                     _exec(root, "ROLLBACK")
             time.sleep(0.2)
-        with contextlib.suppress(Exception):  # the connection may already be gone
-            conn.close()
 
     def at(t: float | None) -> str:
         return "not within 12 s" if t is None else f"at {t:.1f} s"
@@ -870,31 +886,34 @@ def _t5_commit(ctx: Ctx) -> None:
         (
             f"the timer {TIMER_MS} ms and lock_wait_timeout 2",
             (ctx.product.timer, "SET SESSION lock_wait_timeout = 2"),
-            None,
+            # Only a bound on the probe itself, should nothing else end the wait.
+            10,
         ),
         ("read_timeout 1 s", (), 1),
     ):
         with ctx.connect() as root:
             _reset(root, ctx)
             conn = ctx.run_as(read_timeout=read_timeout)
-            _exec(conn, *settings)
-            _exec(conn, "START TRANSACTION", f"UPDATE {s}.ti SET v = 55 WHERE id = 3")
-            _exec(root, "FLUSH TABLES WITH READ LOCK")
             try:
-                started = time.monotonic()
+                _exec(conn, *settings)
+                _exec(conn, "START TRANSACTION", f"UPDATE {s}.ti SET v = 55 WHERE id = 3")
+                _exec(root, "FLUSH TABLES WITH READ LOCK")
                 try:
-                    conn.commit()
-                    got = "committed"
-                except Exception as error:  # noqa: BLE001 -- printed
-                    got = _outcome(error)
-                took = time.monotonic() - started
+                    started = time.monotonic()
+                    try:
+                        conn.commit()
+                        got = "committed"
+                    except Exception as error:  # noqa: BLE001 -- printed
+                        got = _outcome(error)
+                    took = time.monotonic() - started
+                    time.sleep(1)
+                finally:
+                    _exec(root, "UNLOCK TABLES")
                 time.sleep(1)
+                kept = _one(root, f"SELECT v FROM {s}.ti WHERE id = 3")
             finally:
-                _exec(root, "UNLOCK TABLES")
-            time.sleep(1)
-            kept = _one(root, f"SELECT v FROM {s}.ti WHERE id = 3")
-            with contextlib.suppress(Exception):  # the connection may already be gone
-                conn.close()
+                with contextlib.suppress(Exception):  # the connection may already be gone
+                    conn.close()
         print(
             f"  T5   a COMMIT waiting on FLUSH TABLES WITH READ LOCK, {label}: {got}"
             f" after {took:.2f} s; after UNLOCK TABLES the row reads v = {kept}"
@@ -950,6 +969,9 @@ def t6(ctx: Ctx) -> None:
         ):
             tables = _explain_tables(conn, ctx.product.explain, statement)
             print(f"  T6   {ctx.product.explain} {label}: tables {tables}")
+            if ctx.product.explain != "EXPLAIN":
+                plain = _explain_tables(conn, "EXPLAIN", statement)
+                print(f"  T6   EXPLAIN {label}: tables {plain}")
 
     cases = [(f"ti and {t}", ("ti", t)) for t in ctx.product.nontransactional]
     cases += [(f"{t} alone", (t,)) for t in ctx.product.nontransactional]
@@ -992,7 +1014,7 @@ def _dba_reads(ctx: Ctx, label: str, before: Iterable[str] = ()) -> None:
         )
         # MariaDB's SHOW GRANTS holds the stored hash; it is never printed.
         grants = [
-            re.sub(r"PASSWORD '[^']*'", "PASSWORD '<hash>'", row[0])
+            re.sub(r"(PASSWORD|USING) '[^']*'", r"\1 '<hash>'", row[0])
             for row in _rows(conn, "SHOW GRANTS")
         ]
         current = _try(conn, "SELECT CURRENT_ROLE()")

@@ -17,8 +17,10 @@ account can answer, and names the server by its ``server_uuid``. For UC-2 it
 resolves a `role:` rule (:mod:`~sopuli.driver.mysql.roles`), resets a
 password, suspends an account and expires a password. For UC-5 it surveys
 every account and every privilege, for `report accounts` and `report
-privileges`. The registry lists `doctor`, the `creds` commands, every
-`account` command and the `report` commands.
+privileges`. For UC-3 it runs one statement in a guarded transaction
+(:class:`~sopuli.driver.mysql_family.statement_run.StatementRunning`), which
+`sql run` does not use yet (#1718). The registry lists `doctor`, the `creds`
+commands, every `account` command and the `report` commands.
 :meth:`MysqlSession.apply_attributes`, which a policy's `account:` block needs,
 is never reached, because a capability check refuses the block first. If it
 is, it raises :class:`~sopuli.driver.protocol.InternalFaultError` without a
@@ -64,7 +66,9 @@ from sopuli.driver.mysql_family.errors import (
     ACCESS_DENIED,
     COLUMN_ACCESS_DENIED,
     TABLE_ACCESS_DENIED,
+    Diagnosis,
 )
+from sopuli.driver.mysql_family.statement_run import StatementRunning
 from sopuli.driver.protocol import (
     ACCOUNT_LOCK,
     ACCOUNT_UNLOCK,
@@ -137,7 +141,7 @@ T = TypeVar("T")
 
 
 @dataclass
-class MysqlSession(ClosesConnection):
+class MysqlSession(StatementRunning, ClosesConnection):
     """One open connection to a server. A
     :class:`~sopuli.driver.protocol.Session` by its methods."""
 
@@ -183,6 +187,11 @@ class MysqlSession(ClosesConnection):
     #: Why the lockout guard cannot read ``temporary_account_locks``, once a
     #: read was refused; ``None`` until then (#1515).
     _unguarded: str | None = field(default=None, init=False, repr=False)
+    #: A `sql run` statement left the connection closed (UC-3).
+    _connection_lost: bool = field(default=False, init=False, repr=False)
+    #: `sql run`'s bounds: ``max_execution_time`` bounds a ``SELECT`` alone.
+    bounds_every_statement = False
+    identity_query = "SELECT @@global.server_uuid, DATABASE()"
     #: The words for two targets that are one server
     #: (:class:`~sopuli.driver.clusters.ClusterIdentity`). Not fields.
     #: ``identity_caveat`` is always ``None``: any account reads ``server_uuid``
@@ -443,6 +452,10 @@ class MysqlSession(ClosesConnection):
         with the view where :meth:`survey_privileges` needed it for the partial
         revokes and could not use it, for ``SOPULI-W073``."""
         return None if self._restrictions is None else self._restrictions.broken
+
+    def _diagnose(self, error: Any) -> Diagnosis:
+        """A PyMySQL error, classified by :mod:`~sopuli.driver.mysql.errors`."""
+        return from_error(error)
 
     def _read(self, reader: Callable[[Any], T], *, scrub: Callable[[str], str] | None = None) -> T:
         """Run ``reader`` on a cursor of this session. A closed session is a

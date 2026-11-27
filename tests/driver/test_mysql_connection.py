@@ -9,7 +9,7 @@ import pytest
 
 from sopuli.config.errors import ConfigError
 from sopuli.config.model import ExpandedTarget, Target, TargetMysql
-from sopuli.driver.mysql_family.connection import connect_arguments, tls_arguments
+from sopuli.driver.mysql_family.connection import FOUND_ROWS, connect_arguments, tls_arguments
 from sopuli.driver.protocol import Credential, Timeouts
 from sopuli.secrets import Secret
 
@@ -49,12 +49,19 @@ def test_a_target_with_no_block_connects_verifying_the_server_and_its_name() -> 
         "connect_timeout": Timeouts().connect_s,
         "program_name": f"sopuli {RUN}",
         "autocommit": True,
+        "client_flag": FOUND_ROWS,
         "init_command": "SET time_zone = '+00:00'",
         "password": PASSWORD.encode("utf-8"),
     }
     assert isinstance(context, ssl.SSLContext)
     assert context.verify_mode == ssl.CERT_REQUIRED
     assert context.check_hostname is True
+
+
+def test_the_found_rows_flag_is_pymysqls() -> None:
+    client = pytest.importorskip("pymysql.constants.CLIENT")
+    assert client.FOUND_ROWS == FOUND_ROWS
+    assert not FOUND_ROWS & client.MULTI_STATEMENTS
 
 
 def test_disabled_turns_tls_off() -> None:

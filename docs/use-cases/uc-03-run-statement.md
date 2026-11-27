@@ -299,10 +299,17 @@ targets, never all of them. `max_targets` applies unchanged (invariant 10).
 - the sorted list of resolved targets, each with its name, its `dsn`, the
   user its session became, and its database identity, read when the tool
   connects. On Oracle that is `DB_UNIQUE_NAME` and `CON_NAME`, and on
-  PostgreSQL the cluster's `system_identifier` and `current_database()`. Where
+  PostgreSQL the cluster's `system_identifier` and `current_database()`. On
+  MySQL it is `@@global.server_uuid` and `DATABASE()`, and on MariaDB
+  `@@global.server_uid` and `DATABASE()`; a session with no default database
+  has `""`. MariaDB's `server_uid` changes at each restart, so a restart
+  between the dry run and the real run changes the hash, and the operator runs
+  the dry run again. Where
   a PostgreSQL session starts as another role, that role is in the hash too,
-  so a default role set between the dry run and the real run changes it. The
-  session user is what the
+  so a default role set between the dry run and the real run changes it. On
+  MySQL and MariaDB the account the server matched, `user@host`, is in the
+  hash, so a login that reaches another account of the same user changes it.
+  The session user is what the
   database reports, so an `external` login that reaches another user changes
   the hash. A target that did not connect, or that failed after it logged in,
   has its configured run-as name, or `external`, and no identity. A target of
@@ -368,6 +375,24 @@ the session stays usable. No timeout bounds the commit. A commit the server
 refuses, such as on a deferred constraint, was rolled back, so its outcome is
 known. Only a commit whose connection is lost has `outcome_unknown: true`
 (§5).
+
+On MariaDB the timeout is `max_statement_time`, which bounds every statement
+and counts a lock wait. The server ends a statement past it with `1969`, and
+the session stays usable. On MySQL, `max_execution_time` bounds a `SELECT`
+alone, a locking `SELECT`'s wait for a row lock included (`3024`), and
+`innodb_lock_wait_timeout` and `lock_wait_timeout`, in whole seconds, bound a
+write's wait for a row or a table lock (`1205`). Nothing on the
+server bounds a long write, so the client's read timeout does, one second past
+the lock timeouts. It closes the connection, and the server finishes the
+statement and then rolls it back. On both, a lower bound the account already
+has stays, and the session's own values come back after the statement. After
+`1205` or `1969` the server leaves the transaction open, and the tool rolls it
+back. No bound is left on the commit: on MySQL a commit the client lost to its
+read timeout still commits. A commit whose connection is lost has
+`outcome_unknown: true` (§5). Measured on MySQL 8.0.46, 8.4.13 and 9.7.4 and
+MariaDB 10.11.19, 11.4.13, 11.8.9 and 12.3.3 (`13_statement_run_probe.py`,
+`18_statement_run_probe.py`, #1714). `sql run` does not yet run on MySQL or
+MariaDB targets (#1718).
 
 ---
 
@@ -505,7 +530,14 @@ adds no mutation record.
   text, so a number in one is not rounded; an array and a record are JSON text;
   a date or time that Python cannot hold, such as `infinity` or a BC date, is
   the server's text; and any value whose text is longer than 4000 characters,
-  or a `bytea` longer than 4000 bytes, is cut.
+  or a `bytea` longer than 4000 bytes, is cut. On MySQL and MariaDB, `DECIMAL`
+  is a `Decimal`; `JSON`, `ENUM`, `SET` and a zero date are the server's text;
+  `TIME` is an ISO 8601 duration, so a negative one and one past 24 hours keep
+  their value; `BIT`, the binary types and a geometry are hex; and a text
+  longer than 4000 characters, or a binary value longer than 4000 bytes, is
+  cut. A write's row count is the rows it matched, as on Oracle and
+  PostgreSQL, so `UPDATE … SET v = 1` counts a row whose `v` is already 1
+  (#1713, Q2).
 
 ---
 

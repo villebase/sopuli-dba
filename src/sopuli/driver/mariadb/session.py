@@ -27,7 +27,9 @@ for `report privileges`, with the global level from the optional view
 `creds generate`, `apply`, `check`, `rotate`, `status` and `finish-rollover`,
 UC-2's four verbs, and UC-5's `report accounts`, `report history` and
 `report privileges`; another command refuses a MariaDB target with
-``SOPULI-20006``.
+``SOPULI-20006``. For UC-3 it runs one statement in a guarded transaction
+(:class:`~sopuli.driver.mysql_family.statement_run.StatementRunning`), which
+`sql run` does not use yet (#1718).
 
 The session names its server by ``@@server_uid``, so the CLI refuses two
 targets that are one server, as on MySQL (#1286). MariaDB has no
@@ -67,7 +69,8 @@ from sopuli.driver.mysql_family.accounts import Principal, current_user, locked_
 from sopuli.driver.mysql_family.client import client_lines
 from sopuli.driver.mysql_family.connection import connect_arguments, require_tls
 from sopuli.driver.mysql_family.encryption import read_encryption
-from sopuli.driver.mysql_family.errors import COLUMN_ACCESS_DENIED, TABLE_ACCESS_DENIED
+from sopuli.driver.mysql_family.errors import COLUMN_ACCESS_DENIED, TABLE_ACCESS_DENIED, Diagnosis
+from sopuli.driver.mysql_family.statement_run import StatementRunning
 from sopuli.driver.protocol import (
     ACCOUNT_LOCK,
     EXPIRE_ON_RESET,
@@ -268,7 +271,7 @@ GALERA_HINT = (
 
 
 @dataclass
-class MariadbSession(ClosesConnection):
+class MariadbSession(StatementRunning, ClosesConnection):
     """One open connection to a MariaDB server. Implements the
     :class:`~sopuli.driver.protocol.Session` methods `doctor` uses, and those
     the module docstring names. :meth:`apply_attributes` is never reached,
@@ -306,6 +309,11 @@ class MariadbSession(ClosesConnection):
     #: ``None``. An account with only ``CREATE USER`` reads ``@@server_uid``
     #: and the wsrep status (probe 13, SI1; probe 14, GI1).
     identity_caveat: str | None = field(default=None, init=False, repr=False)
+    #: A `sql run` statement left the connection closed (UC-3).
+    _connection_lost: bool = field(default=False, init=False, repr=False)
+    #: `sql run`'s bounds: ``max_statement_time`` bounds every statement.
+    bounds_every_statement = True
+    identity_query = "SELECT @@global.server_uid, DATABASE()"
     #: The words for two targets that are one server
     #: (:class:`~sopuli.driver.clusters.ClusterIdentity`), as on MySQL. Not
     #: fields.
@@ -1108,6 +1116,10 @@ class MariadbSession(ClosesConnection):
                 f"sent the {which} password's value, so the command must pass it"
             ),
         )
+
+    def _diagnose(self, error: Any) -> Diagnosis:
+        """A PyMySQL error, classified by :mod:`~sopuli.driver.mariadb.errors`."""
+        return from_error(error)
 
     def _read(self, reader: Callable[[Any], T], *, scrub: Callable[[str], str] | None = None) -> T:
         """Run ``reader`` on a cursor of this session. A closed session is a

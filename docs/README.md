@@ -738,6 +738,94 @@ profile of `test/compose.yaml`.
   `performance_schema.temporary_account_locks`, read with `SELECT` on it.
   `02-mysql-privileges.md` §2.4 has the details.
   `sql/mysql/10_report_read_probe.py` measures it.
+- `verified` `mysql-read-only-transaction` (#1714) — **Which statements does
+  `START TRANSACTION READ ONLY` refuse, for UC-3's reads?**
+  Every write to a table, with `1792`: `INSERT`, `UPDATE` and `DELETE` on
+  InnoDB and on MyISAM, `WITH … UPDATE` and `WITH … DELETE`, `SELECT … FOR
+  UPDATE`, `CREATE TEMPORARY TABLE`, and a stored function that writes,
+  `DEFINER` or `INVOKER`. Not DDL: `CREATE TABLE` and `TRUNCATE` commit the
+  transaction and run, so the keyword check is the only guard against them.
+  Not `FOR SHARE` or `LOCK IN SHARE MODE`, which hold the row until the
+  rollback. Not `SELECT … INTO OUTFILE` or `INTO DUMPFILE`: the file is
+  written and outlives the rollback. `SELECT … INTO @v` and `GET_LOCK()`
+  outlive it too. A temporary table made before the transaction can be
+  written. `sql/mysql/13_statement_run_probe.py` measures it.
+- `verified` `pymysql-multiple-statements` (#1714) — **Does PyMySQL refuse a
+  text that holds two statements?**
+  Yes, while `CLIENT.MULTI_STATEMENTS` is not set, which PyMySQL 2.2.8 does
+  not set by default: the server refuses the text with `1064`, on MySQL and
+  MariaDB, and nothing runs. `execute(text)` with no parameters sends a `%`
+  as written; `execute(text, ())` formats the text in the client and fails
+  on it. `sql/mysql/13_statement_run_probe.py` measures it.
+- `verified` `mysql-executable-comments` (#1714) — **Does MySQL run the text
+  inside an executable comment?**
+  Yes. `/*! … */` runs its content, and `/*!NNNNN … */` does when the server's
+  version is at least `NNNNN`: `/*!80000 DELETE …` deletes on every
+  release measured, and `/*!99999` does not. A comment can add to a
+  statement: `SELECT 1 /*!, 2 */` returns two columns. `/*M! … */` is a plain
+  comment on MySQL. `sql/mysql/13_statement_run_probe.py` measures it.
+- `verified` `mysql-write-rowcount` (#1714) — **What does PyMySQL's
+  `rowcount` count after a write, with and without `CLIENT.FOUND_ROWS`?**
+  Without it, the rows a statement changed: an `UPDATE` to the values the
+  rows hold counts 0. With it, the rows it matched. `ON DUPLICATE KEY
+  UPDATE` counts 1 for a new row and 2 for a changed one, and an unchanged
+  one 0, or 1 with `FOUND_ROWS`. `INSERT IGNORE` counts the rows inserted. A
+  multi-table `UPDATE` counts the rows of every table it touches. MariaDB is
+  the same, and its `RETURNING` counts the rows returned.
+  `sql/mysql/13_statement_run_probe.py` measures it.
+- `verified` `mysql-statement-timeout` (#1714) — **What does a timeout leave
+  behind on MySQL, and does any bound a `COMMIT`?**
+  `max_execution_time` interrupts a `SELECT` with `3024`, and cuts `SLEEP()`
+  short with no error. It does not bound an `UPDATE`, a lock wait or a
+  `COMMIT`. `innodb_lock_wait_timeout` ends a wait on a row lock and
+  `lock_wait_timeout` one on a table lock, both `1205`, and the transaction
+  stays open with its earlier writes, so the runner must roll back. Only
+  `lock_wait_timeout` bounds a `COMMIT`, waiting on a global read lock.
+  PyMySQL's `read_timeout` raises `2013` and closes the connection, but the
+  server finishes the statement first, holding its locks, and **a `COMMIT`
+  the client lost to `read_timeout` still commits**.
+  `sql/mysql/13_statement_run_probe.py` measures it.
+- `verified` `mysql-nontransactional-explain` (#1714) — **Does `EXPLAIN` name
+  every table a write touches, and can PyMySQL read the `1196` a rollback
+  gives?**
+  `EXPLAIN FORMAT=TRADITIONAL` names every table of a multi-table `UPDATE`,
+  a `DELETE` with a join, an `INSERT … SELECT` and a subquery, and a view's
+  base table. It does not name a table that a trigger or a stored function
+  writes. On 9.7.4 a plain `EXPLAIN` gives no `table` column, because
+  `explain_format` is `TREE` there. `information_schema.TABLES` gives the run-as
+  account each table's engine. A `ROLLBACK` after a MyISAM write gives warning
+  `1196`, which PyMySQL reads with `SHOW WARNINGS`, after a `ROLLBACK`
+  statement or `connection.rollback()`. Where `enforce_gtid_consistency` is
+  `ON`, as on 9.7.4 by default, a MyISAM write after an InnoDB one in a
+  transaction is refused, `1785`. `sql/mysql/13_statement_run_probe.py`
+  measures it.
+- `verified` `mysql-account-as-role` (#1714) — **What does an account read
+  about another account granted to it as a role?**
+  With no other grant, it reads the grant in
+  `information_schema.APPLICABLE_ROLES` and `SHOW GRANTS`, active or not,
+  and through a role that holds it: `APPLICABLE_ROLES` gives each edge of
+  the path. `CURRENT_ROLE()` gives only the active roles, `NONE` until `SET
+  ROLE` or a default role, and `SHOW GRANTS` gives the role's privileges only
+  while it is active. `mysql.role_edges` is refused, `1142`. A proxy grant is
+  a `GRANT PROXY ON … TO …` line of `SHOW GRANTS`, and is not in
+  `APPLICABLE_ROLES`. `sql/mysql/13_statement_run_probe.py` measures it.
+- `verified` `pymysql-value-types` (#1714) — **What does PyMySQL return for
+  each MySQL type?**
+  `Decimal` for `DECIMAL`; `int` for the integers, `YEAR` and `BIGINT
+  UNSIGNED`; `float`; `str` for `JSON`, `ENUM`, `SET`, the text types, and a
+  zero date or datetime; `bytes` for `BIT`, the binary types and a geometry,
+  which is the server's own form; `date`, `datetime` and `timedelta`, which
+  holds a negative `TIME` and one over 24 hours. A `TEXT` of 5000 characters
+  comes back whole. MariaDB's `UUID` and `INET6` are `str`.
+  `sql/mysql/13_statement_run_probe.py` measures it.
+- `verified` `mysql-run-as-identity` (#1714) — **What does an account with no
+  grant read about itself, and what does a wrong password give?**
+  `CURRENT_USER()`, `USER()`, `DATABASE()`, NULL with no database, and
+  `@@global.server_uuid`, or `@@server_uid` on MariaDB. Its connection with a
+  database it holds no grant on is refused, `1044`. A wrong password and an
+  account that does not exist both give `1045`, which the driver makes
+  `AuthenticationError`, on MySQL and MariaDB.
+  `sql/mysql/13_statement_run_probe.py` measures it.
 
 ### MariaDB
 
@@ -873,6 +961,45 @@ in `sql/mariadb/`, and the matrix of 10.11, 11.4, 11.8 and 12.3 is the
   `max_password_errors` blocked an account with `CONNECTION ADMIN` or `SUPER`
   as it blocked one with no global privilege. `02-mariadb-privileges.md` §2.4 has the details.
   `sql/mariadb/15_report_read_probe.py` measures it.
+- `verified` `mariadb-read-only-transaction` (#1714) — **Which statements does
+  `START TRANSACTION READ ONLY` refuse on MariaDB?**
+  The same as on MySQL (`mysql-read-only-transaction`), and also a write to
+  an Aria table, `NEXTVAL` of a sequence and `DELETE … RETURNING`, `1792`.
+  `WITH … UPDATE` and `WITH … DELETE` are a syntax error before 12.3.3, which
+  parses and refuses them. `FOR SHARE` is a syntax error; `LOCK IN SHARE
+  MODE` holds the row. `CREATE TABLE` and `TRUNCATE` commit and run, and a
+  file, `@v` and `GET_LOCK()` outlive the rollback, as on MySQL.
+  `sql/mariadb/18_statement_run_probe.py` measures it.
+- `verified` `mariadb-executable-comments` (#1714) — **Does MariaDB run the
+  text inside an executable comment?**
+  Yes. `/*M! … */` and `/*M!NNNNNN … */` run their content. `/*! … */` runs
+  only for a MySQL version below 5.7: `/*!50600 DELETE …` deletes, and
+  `/*!50700` and `/*!80000` are comments.
+  `sql/mariadb/18_statement_run_probe.py` measures it.
+- `verified` `mariadb-statement-timeout` (#1714) — **What does a timeout leave
+  behind on MariaDB, and does any bound a `COMMIT`?**
+  `max_statement_time` interrupts every statement with `1969`: a `SELECT`,
+  an `UPDATE`, a wait on a row lock, and a `COMMIT` that waits on a global
+  read lock, which then does not commit. The lock timeouts give `1205`, as
+  on MySQL. After each, the transaction stays open, `@@in_transaction` 1,
+  with its earlier writes. `read_timeout` closes the connection as on MySQL,
+  but a `COMMIT` the client lost to it did not commit.
+  `sql/mariadb/18_statement_run_probe.py` measures it.
+- `verified` `mariadb-nontransactional-explain` (#1714) — **Does `EXPLAIN`
+  name every table a write touches on MariaDB?**
+  Not for `INSERT … SELECT`: it names the table read and not the table
+  written. The other writes are as on MySQL
+  (`mysql-nontransactional-explain`): every table of a multi-table write and
+  a subquery, a view's base table, and no table that a trigger or a function
+  writes. A `ROLLBACK` after a MyISAM or an Aria write gives `1196`, read as
+  on MySQL. `sql/mariadb/18_statement_run_probe.py` measures it.
+- `verified` `mariadb-account-as-role` (#1714) — **Can MariaDB grant an
+  account to another as a role?**
+  No: `GRANT 'svc'@'%' TO 'dba'@'%'` is a syntax error, `1064`, because a
+  MariaDB role is not an account. A proxy grant is a `GRANT PROXY ON … TO …`
+  line of `SHOW GRANTS`, as on MySQL, and root at `%` may make one. An
+  account's own `SHOW GRANTS` holds its stored hash.
+  `sql/mariadb/18_statement_run_probe.py` measures it.
 
 ### SQL Server
 

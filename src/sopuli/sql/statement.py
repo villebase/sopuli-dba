@@ -31,12 +31,21 @@ class Dialect(StrEnum):
 
     Oracle's block comments end at the first ``*/``, and it has ``q'[...]'``
     literals. PostgreSQL's block comments nest, and it has dollar quotes and
-    ``E'...'`` strings with backslash escapes. The value is the target's
-    ``type:``.
+    ``E'...'`` strings with backslash escapes. MySQL and MariaDB read a
+    statement the same way: ``#`` starts a comment, ``--`` starts one only
+    before whitespace or a control character, block comments do not nest,
+    ``'...'`` and ``"..."`` take backslash escapes, and `````...````` is a name.
+    The value is the target's ``type:``.
     """
 
     ORACLE = "oracle"
     POSTGRESQL = "postgresql"
+    MYSQL = "mysql"
+    MARIADB = "mariadb"
+
+
+#: The dialects that follow MySQL's rules. One scan serves both.
+_MYSQL_FAMILY = frozenset({Dialect.MYSQL, Dialect.MARIADB})
 
 
 class StatementRefusedError(RefusedError):
@@ -63,14 +72,54 @@ _SPACE = " \t\n\r\f\v"
 _UNCLOSED = -1
 
 
+def _line_comment_at(text: str, i: int, dialect: Dialect) -> bool:
+    """Whether a comment that runs to the end of the line opens at ``text[i]``.
+
+    On MySQL and MariaDB ``#`` opens one, and ``--`` opens one only before
+    whitespace, a control character or the end of the text: ``1--1`` is
+    ``1 - -1``.
+    """
+    if dialect not in _MYSQL_FAMILY:
+        return text.startswith("--", i)
+    if text[i] == "#":
+        return True
+    if not text.startswith("--", i):
+        return False
+    after = text[i + 2 : i + 3]
+    return after == "" or after in _SPACE or ord(after) < 0x20 or after == "\x7f"
+
+
+def _line_end(text: str, i: int) -> int:
+    """Where the line comment that opens at ``text[i]`` ends, after its line feed."""
+    found = text.find("\n", i)
+    return len(text) if found == -1 else found + 1
+
+
+def _refuse_executable_comment(text: str, i: int) -> None:
+    """Refuse a MySQL or MariaDB executable comment that opens at ``text[i]``.
+
+    The server runs the text inside ``/*! ... */``, ``/*!NNNNN ... */`` and
+    MariaDB's ``/*M! ... */``. Read as a comment, it would hide a keyword from
+    the check.
+    """
+    if text.startswith("/*!", i) or text[i : i + 4].upper() == "/*M!":
+        raise StatementRefusedError(
+            "the statement holds an executable comment, /*! or /*M!, whose text the server runs",
+            hint="remove the /*! and */ markers, and write the text as part of the statement",
+        )
+
+
 def _comment_end(text: str, i: int, dialect: Dialect) -> int | None:
     """Where the block comment that opens at ``text[i]`` ends, or ``None``
     when it never closes.
 
-    On Oracle the first ``*/`` closes it. On PostgreSQL a ``/*`` inside opens
-    a nested comment, and each needs its own ``*/``.
+    On Oracle, MySQL and MariaDB the first ``*/`` closes it. On PostgreSQL a
+    ``/*`` inside opens a nested comment, and each needs its own ``*/``. On
+    MySQL and MariaDB an executable comment is refused.
     """
-    if dialect is Dialect.ORACLE:
+    if dialect in _MYSQL_FAMILY:
+        _refuse_executable_comment(text, i)
+    if dialect is not Dialect.POSTGRESQL:
         found = text.find("*/", i + 2)
         return None if found == -1 else found + 2
     depth, j, n = 1, i + 2, len(text)
@@ -99,9 +148,8 @@ def _first_word(text: str, dialect: Dialect) -> tuple[str, str]:
     while i < n:
         if text[i] in _SPACE:
             i += 1
-        elif text.startswith("--", i):
-            end = text.find("\n", i)
-            i = n if end == -1 else end + 1
+        elif _line_comment_at(text, i, dialect):
+            i = _line_end(text, i)
         elif text.startswith("/*", i):
             closed = _comment_end(text, i, dialect)
             if closed is None:
@@ -213,10 +261,47 @@ def _escape_string_end(text: str, i: int) -> int:
     return _UNCLOSED
 
 
-def _literal_end(text: str, i: int, dialect: Dialect) -> int | None:
+#: The quotes whose strings take backslash escapes in MySQL's default
+#: ``sql_mode``. A backtick quotes a name, which never does.
+_ESCAPING_QUOTES = "'\""
+
+#: Each way a MySQL or MariaDB server can read backslashes, by the quotes
+#: whose literals take escapes: the default; ``NO_BACKSLASH_ESCAPES``, with
+#: or without ``ANSI_QUOTES``; and ``ANSI_QUOTES`` alone, where ``"..."`` is a
+#: name with no escapes and ``'...'`` is still a string with them.
+_SQL_MODE_READINGS = (_ESCAPING_QUOTES, "", "'")
+
+
+def _mysql_quoted_end(text: str, i: int, escapes: str) -> int:
+    """Where a MySQL string or name that opens at ``text[i]`` ends, or
+    :data:`_UNCLOSED`. A doubled quote is one quote. Where the quote is in
+    ``escapes``, a backslash escapes the next character, as the server reads
+    a string unless its ``sql_mode`` says otherwise."""
+    quote, j, n = text[i], i + 1, len(text)
+    while j < n:
+        if quote in escapes and text[j] == "\\":
+            j += 2
+        elif text[j] == quote:
+            if text.startswith(quote * 2, j):
+                j += 2
+                continue
+            return j + 1
+        else:
+            j += 1
+    return _UNCLOSED
+
+
+def _literal_end(
+    text: str, i: int, dialect: Dialect, *, escapes: str = _ESCAPING_QUOTES
+) -> int | None:
     """Where the literal or quoted name that opens at ``text[i]`` ends,
-    :data:`_UNCLOSED` when it never closes, or ``None`` when none opens there."""
+    :data:`_UNCLOSED` when it never closes, or ``None`` when none opens there.
+
+    ``escapes`` holds the quotes whose MySQL or MariaDB literals take
+    backslash escapes. The other dialects ignore it."""
     char = text[i]
+    if dialect in _MYSQL_FAMILY:
+        return _mysql_quoted_end(text, i, escapes) if char in "'\"`" else None
     if dialect is Dialect.ORACLE and _q_quote_start(text, i):
         if i + 2 >= len(text):
             return _UNCLOSED
@@ -236,7 +321,9 @@ def _literal_end(text: str, i: int, dialect: Dialect) -> int | None:
     return None
 
 
-def _code_end(text: str, dialect: Dialect) -> tuple[int, int | None]:
+def _code_end(
+    text: str, dialect: Dialect, *, escapes: str = _ESCAPING_QUOTES
+) -> tuple[int, int | None]:
     """Where the code of ``text`` ends, and where an unclosed comment starts.
 
     The first is the length of ``text`` up to its last character that is not
@@ -254,15 +341,14 @@ def _code_end(text: str, dialect: Dialect) -> tuple[int, int | None]:
         char = text[i]
         if char in _SPACE:
             i += 1
-        elif text.startswith("--", i):
-            found = text.find("\n", i)
-            i = n if found == -1 else found + 1
+        elif _line_comment_at(text, i, dialect):
+            i = _line_end(text, i)
         elif text.startswith("/*", i):
             closed = _comment_end(text, i, dialect)
             if closed is None:
                 return end, i
             i = closed
-        elif (literal := _literal_end(text, i, dialect)) is not None:
+        elif (literal := _literal_end(text, i, dialect, escapes=escapes)) is not None:
             if literal == _UNCLOSED:
                 return n, None
             i = end = literal
@@ -276,7 +362,7 @@ def _is_terminated(code: str) -> bool:
     return code.endswith(";") or code.rsplit("\n", 1)[-1].strip(_SPACE) == "/"
 
 
-def _without_trailing_comments(text: str, dialect: Dialect) -> str:
+def _without_trailing_comments(text: str, dialect: Dialect, escapes: str) -> str:
     """``text`` without the comments after its terminator.
 
     Only a comment that follows a ``;`` or a line holding only ``/`` goes, with
@@ -284,7 +370,7 @@ def _without_trailing_comments(text: str, dialect: Dialect) -> str:
     statement with no terminator stays where the operator wrote it. A comment
     that never closes after a terminator is refused by name.
     """
-    end, unclosed = _code_end(text, dialect)
+    end, unclosed = _code_end(text, dialect, escapes=escapes)
     code = text[:end].rstrip(_SPACE)
     if not _is_terminated(code):
         return text
@@ -296,31 +382,71 @@ def _without_trailing_comments(text: str, dialect: Dialect) -> str:
     return code
 
 
-def _strip_terminators(raw: str, dialect: Dialect) -> str:
+def _strip_terminators(raw: str, dialect: Dialect, escapes: str) -> str:
     text = raw.replace("\r\n", "\n").replace("\r", "\n")
-    text = _without_trailing_comments(text, dialect).rstrip(_SPACE)
+    text = _without_trailing_comments(text, dialect, escapes).rstrip(_SPACE)
     lines = text.split("\n")
     if lines[-1].strip(_SPACE) == "/":
         # A comment may sit between the `;` and the `/`, and so after the `/`.
         before = "\n".join(lines[:-1]).rstrip(_SPACE)
-        text = _without_trailing_comments(before, dialect).rstrip(_SPACE)
+        text = _without_trailing_comments(before, dialect, escapes).rstrip(_SPACE)
     if text.endswith(";"):
         text = text[:-1].rstrip(_SPACE)
     return text
 
 
-def classify(raw: str, *, dialect: Dialect = Dialect.ORACLE) -> Statement:
-    """Check ``raw`` and return the statement, or raise :class:`StatementRefusedError`.
+def _is_mysql_word_char(char: str) -> bool:
+    """A character that can be part of an unquoted MySQL name or keyword."""
+    return char.isalnum() or char in "_$" or not char.isascii()
 
-    ``dialect`` says how comments and literals are read. The trailing ``/``
-    line is SQL*Plus's terminator, and it is stripped in every dialect, so
-    one statement reads the same way on a run of more than one product.
 
-    A ``;`` left after the one terminator is refused, so a second statement
-    cannot ride along. A ``;`` inside a string literal is refused too. That is a
-    false refusal, and UC-3 accepts it.
-    """
-    text = _strip_terminators(raw, dialect)
+def _code_words(text: str, dialect: Dialect, escapes: str) -> list[str]:
+    """The tokens of ``text`` outside comments, in order: each word in upper
+    case, and ``""`` for a literal, a quoted name or any other character."""
+    tokens: list[str] = []
+    i, n = 0, len(text)
+    while i < n:
+        if text[i] in _SPACE:
+            i += 1
+        elif _line_comment_at(text, i, dialect):
+            i = _line_end(text, i)
+        elif text.startswith("/*", i):
+            closed = _comment_end(text, i, dialect)
+            i = n if closed is None else closed
+        elif (literal := _literal_end(text, i, dialect, escapes=escapes)) is not None:
+            tokens.append("")
+            i = n if literal == _UNCLOSED else literal
+        elif _is_mysql_word_char(text[i]):
+            start = i
+            while i < n and _is_mysql_word_char(text[i]):
+                i += 1
+            tokens.append(text[start:i].upper())
+        else:
+            tokens.append("")
+            i += 1
+    return tokens
+
+
+#: What may follow ``INTO`` in a MySQL statement that writes a file on the server.
+_FILE_TARGETS = ("OUTFILE", "DUMPFILE")
+
+
+def _refuse_file_writes(text: str, dialect: Dialect, escapes: str) -> None:
+    """Refuse ``INTO OUTFILE`` and ``INTO DUMPFILE`` outside literals and
+    comments. Each writes a file on the database server, which no transaction
+    covers (#1713, Q4)."""
+    tokens = _code_words(text, dialect, escapes)
+    for word, after in zip(tokens, tokens[1:], strict=False):
+        if word == "INTO" and after in _FILE_TARGETS:
+            raise StatementRefusedError(
+                f"the statement writes a file on the server, with INTO {after}",
+                hint="`sql run` does not write files. Return the rows instead, and save "
+                "them with --output json",
+            )
+
+
+def _classify(raw: str, dialect: Dialect, escapes: str) -> Statement:
+    text = _strip_terminators(raw, dialect, escapes)
     word, reason = _first_word(text, dialect)
     if not word:
         message = {
@@ -351,11 +477,48 @@ def classify(raw: str, *, dialect: Dialect = Dialect.ORACLE) -> Statement:
             "the statement holds a ';' before its end",
             hint="give one statement. A ';' inside a string literal is refused too",
         )
+    if dialect in _MYSQL_FAMILY:
+        _refuse_file_writes(text, dialect, escapes)
     return Statement(text=text, kind=kind, keyword=keyword)
 
 
+def classify(raw: str, *, dialect: Dialect = Dialect.ORACLE) -> Statement:
+    """Check ``raw`` and return the statement, or raise :class:`StatementRefusedError`.
+
+    ``dialect`` says how comments and literals are read. The trailing ``/``
+    line is SQL*Plus's terminator, and it is stripped in every dialect, so
+    one statement reads the same way on a run of more than one product.
+
+    A ``;`` left after the one terminator is refused, so a second statement
+    cannot ride along. A ``;`` inside a string literal is refused too. That is a
+    false refusal, and UC-3 accepts it.
+
+    On MySQL and MariaDB the server's ``sql_mode`` decides whether a backslash
+    escapes a quote, and the tool cannot see it before it connects. So the
+    statement is read each way a server can read it (:data:`_SQL_MODE_READINGS`).
+    What any reading refuses is refused, and so is a statement two readings
+    cut differently.
+    """
+    if dialect not in _MYSQL_FAMILY:
+        return _classify(raw, dialect, escapes=_ESCAPING_QUOTES)
+    first, *others = (_classify(raw, dialect, escapes) for escapes in _SQL_MODE_READINGS)
+    if any(other != first for other in others):
+        raise StatementRefusedError(
+            "the statement reads differently with and without backslash escapes, "
+            "which the server's sql_mode decides",
+            hint="write it without a backslash before a quote, or without a comment "
+            "after its terminator",
+        )
+    return first
+
+
 #: How a refusal names each dialect.
-_PRODUCT_NAMES = {Dialect.ORACLE: "Oracle", Dialect.POSTGRESQL: "PostgreSQL"}
+_PRODUCT_NAMES = {
+    Dialect.ORACLE: "Oracle",
+    Dialect.POSTGRESQL: "PostgreSQL",
+    Dialect.MYSQL: "MySQL",
+    Dialect.MARIADB: "MariaDB",
+}
 
 
 def classify_for(raw: str, dialects: Iterable[Dialect]) -> Statement:
@@ -396,8 +559,8 @@ def classify_for(raw: str, dialects: Iterable[Dialect]) -> Statement:
             f"the statement reads differently on {names}",
             hint=(
                 "write it so that every product reads it the same way, without nested "
-                "comments, dollar quotes or E'...' strings, or select one product's "
-                "targets at a time"
+                "comments, dollar quotes, E'...' strings, # comments or backslash "
+                "escapes, or select one product's targets at a time"
             ),
         )
     return next(iter(found.values()))

@@ -20,6 +20,9 @@ The parts were built in this order, each by its own issue:
 | The PostgreSQL runner | #1693, built. `PostgresSession.run_statement` |
 | The refusal of a run-as role that holds the service role's privileges | #1700, built (§2) |
 | `sql run` on PostgreSQL | #1694, built |
+| MySQL and MariaDB: decisions | #1713, decided |
+| The statement check's MySQL and MariaDB dialect | #1715, built (§3) |
+| The MySQL and MariaDB runner, its checks, and `sql run` on them | #1714, #1716, #1717, #1718, not built |
 
 `sql run` runs on Oracle and PostgreSQL. A target of another product is
 refused at plan time by `require_command`, with `SOPULI-20006`, never by a
@@ -211,6 +214,26 @@ statement once for each. If one check refuses it, it is refused. If the two
 give a different text or a different first word, it is refused too, because
 the plan fingerprint and every target need one text.
 
+MySQL and MariaDB share one set of rules. `#` starts a comment, and `--` starts
+one only before whitespace, a control character or the end of the text, so
+`SELECT 1--1` is arithmetic. A block comment ends at the first `*/`. `'...'`
+and `"..."` are strings in which `\` escapes the next character, and
+`` `...` `` is a name. `/*! ... */`, `/*!NNNNN ... */` and MariaDB's
+`/*M! ... */` look like comments, but the server runs the text inside them, so
+the check refuses each one anywhere outside a literal. `INTO OUTFILE` and
+`INTO DUMPFILE` write a file on the database server, which no transaction
+covers, so the check refuses them too (#1713, Q4). The server's `sql_mode`
+decides whether a backslash escapes a quote (`NO_BACKSLASH_ESCAPES`) and whether
+`"..."` is a name (`ANSI_QUOTES`), and the tool cannot see it before it
+connects. So the check reads the statement each way a server can: with
+backslash escapes in `'...'` and `"..."`, with none, and with `ANSI_QUOTES`
+alone, where `"..."` is a name with no escapes and `'...'` keeps them. It
+refuses what any reading refuses, and a statement that two readings cut
+differently. A `\'` followed by a comment after the
+terminator is then a false refusal; `''` reads the same way in both. The
+MySQL and MariaDB dialect is built, but `sql run` does not yet run on those
+targets, so they are still skipped (#1718).
+
 On PostgreSQL, `standard_conforming_strings = off` lets `\'` escape a quote in a
 plain `'...'` literal too. The tool cannot see the setting, and it has been on
 by default since PostgreSQL 9.1. A wrong reading can only cut the text inside a
@@ -339,7 +362,9 @@ after a comment that follows a `;` is still refused. The scan reads string
 literals, quoted names and `q'[...]'` literals whole, so a `--` or `/*` in one
 is not a comment. On PostgreSQL the scan reads dollar quotes and `E'...'`
 literals whole instead of `q'[...]'`, and a nested comment ends at its own
-`*/` (§3). The trailing `/` line is removed on every product, so one
+`*/` (§3). On MySQL and MariaDB it reads backtick names whole, and `#` is a
+comment, and so is `--` followed by whitespace, a control character or the
+end of the text (§3). The trailing `/` line is removed on every product, so one
 statement reads the same way on a run over more than one. A `/*` that never
 closes after the terminator is refused as an unclosed comment. A second line that holds only `/`, left at the end, is
 refused, and so is a `;` still left in the text. A `/` inside the statement, such as a

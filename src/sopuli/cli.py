@@ -6685,6 +6685,8 @@ def _sql_write(
             assert plan_given is not None  # refused above
             sql_run.refuse_unconnected(connections)
             sql_run.refuse_another_plan(plan_given, computed)
+        # Dry or real: a dry run that a rollback could not undo is not a dry run.
+        sql_run.refuse_unrollable(connections, statement, timeout_ms=timeout * 1000)
         _ask_environments(plan, run, demand, action=action, noun="write", secret_column=False)
         outcomes: list[sql_run.TargetOutcome] = []
         try:

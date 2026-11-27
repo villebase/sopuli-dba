@@ -93,6 +93,10 @@ class FakeSession:
         #: The ``--as`` the opener was given, set by the fixture.
         self.as_user: str | None = None
         self.identity_reads = 0
+        #: What :meth:`check_write` raises, such as a table without
+        #: transactions (#1713 Q3); ``None`` refuses nothing.
+        self.check_error: Exception | None = None
+        self.checked: list[Statement] = []
 
     @property
     def connection_lost(self) -> bool:
@@ -114,6 +118,11 @@ class FakeSession:
         if self.identity_error is not None:
             raise self.identity_error
         return "FREE", "FREEPDB1"
+
+    def check_write(self, statement: Statement, *, timeout_ms: int) -> None:
+        self.checked.append(statement)
+        if self.check_error is not None:
+            raise self.check_error
 
     def run_statement(self, statement: Statement, **options: Any) -> StatementResult:
         self.calls.append({"statement": statement, **options})

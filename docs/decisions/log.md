@@ -6868,7 +6868,19 @@ the register.
   - Q3: a write that `EXPLAIN` shows touches a non-transactional table is
     refused before any statement runs, and a rollback that warns `1196`
     reports the target `ERROR` with `outcome_unknown: true`. #1717 builds it,
-    after Q1.
+    after Q1. #1717 later decided it, the maintainer's choice twice: first A′,
+    because `EXPLAIN` gives an alias where the statement has one and on MariaDB
+    leaves out the target of an `INSERT … SELECT`; then, in the review of
+    #1723, with no `EXPLAIN` at all, because it also names the alias inside a
+    view's definition, MariaDB's can run a stored function that writes, and a
+    view's base tables are often hidden from the run-as account. As built, a
+    write is refused before any statement runs where it names a table without
+    transactions that the run-as account can see, as `schema.name` or as a name
+    in the session's default database, read in every `sql_mode`. A write
+    through a trigger, a function or a view is left to the `1196` backstop,
+    which reports the target `ERROR` with `outcome_unknown: true` and stops the
+    run, a dry run included. The cost accepted: a column or an alias with such
+    a table's name is refused too.
   - Q4: the MySQL and MariaDB dialect refuses `INTO OUTFILE` and `INTO
     DUMPFILE`. Built in #1715.
 - **Why:** Q1, as #1690: a statement would run with the service account's

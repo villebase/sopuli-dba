@@ -23,7 +23,13 @@ from sopuli.config.model import ExpandedTarget, Target, TargetMysql
 from sopuli.driver.protocol import Credential, DriverError
 from sopuli.secrets import Secret
 from sopuli.sql.guard import RowGuard
-from sopuli.sql.statement import Statement, StatementKind, classify
+from sopuli.sql.statement import (
+    Dialect,
+    Statement,
+    StatementKind,
+    StatementRefusedError,
+    classify,
+)
 
 pymysql = pytest.importorskip("pymysql")
 
@@ -263,6 +269,92 @@ def test_the_session_keeps_its_own_bounds_afterwards(run_as: RunAs) -> None:
         timeout_ms=2000,
     )
     assert bounds() == before
+
+
+@pytest.fixture
+def unrollable(run_as: RunAs) -> RunAs:
+    """``run_as``'s schema with a MyISAM table ``tm``, a view ``vm`` over it,
+    and an InnoDB table ``tt`` whose trigger writes ``tm``."""
+    s = run_as.schema
+    with run_as.live.connect() as root, root.cursor() as cursor:
+        cursor.execute(f"create table {s}.tm (id int primary key, v int) engine=MyISAM")
+        cursor.execute(f"insert into {s}.tm values (1, 0)")
+        cursor.execute(f"create view {s}.vm as select id, v from {s}.tm")
+        cursor.execute(f"create table {s}.tt (id int primary key, v int) engine=InnoDB")
+        cursor.execute(f"insert into {s}.tt values (1, 0)")
+        cursor.execute(
+            f"create trigger {s}.tt_writes_tm after update on {s}.tt for each row "
+            f"update {s}.tm set v = new.v where id = new.id"
+        )
+    return run_as
+
+
+def _tm(state: RunAs) -> int:
+    with state.live.connect() as root, root.cursor() as cursor:
+        cursor.execute(f"select v from {state.schema}.tm where id = 1")
+        (value,) = cursor.fetchone()
+    return int(value)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "UPDATE {s}.tm AS m SET v = 1",
+        "UPDATE `{s}`.`tm` SET v = 1",
+        "INSERT INTO {s}.tm SELECT k + 10, 0 FROM {s}.t",
+        "DELETE {s}.t FROM {s}.t JOIN {s}.tm ON {s}.t.k = {s}.tm.id WHERE 0",
+    ],
+    ids=["alias", "backticks", "insert-select", "join"],
+)
+def test_a_write_naming_a_myisam_table_is_refused_before_it_runs(
+    unrollable: RunAs, text: str
+) -> None:
+    statement = classify(text.format(s=unrollable.schema), dialect=Dialect(unrollable.product))
+    with pytest.raises(StatementRefusedError, match="no transactions") as raised:
+        unrollable.session.check_write(statement, timeout_ms=5000)
+    assert f"{unrollable.schema}.tm (MyISAM)" in raised.value.message
+    assert _tm(unrollable) == 0
+    assert unrollable.session.connection_lost is False
+
+
+def test_a_write_through_a_view_over_myisam_is_caught_by_the_rollback(
+    unrollable: RunAs,
+) -> None:
+    """The check does not name a view's base table (UC-3 §4), so the write
+    passes it, and the dry run's rollback warning is what catches it."""
+    statement = classify(
+        f"UPDATE {unrollable.schema}.vm SET v = 1", dialect=Dialect(unrollable.product)
+    )
+    unrollable.session.check_write(statement, timeout_ms=5000)
+    with pytest.raises(DriverError) as raised:
+        _run(unrollable, statement, guard=RowGuard(expect=1), commit=False)
+    assert raised.value.rollback_incomplete is True
+    assert _tm(unrollable) == 1, "the dry run's change to MyISAM stayed"
+
+
+def test_a_write_to_innodb_alone_passes_the_check(unrollable: RunAs) -> None:
+    statement = classify(
+        f"UPDATE {unrollable.schema}.t SET v = 'z' WHERE k = 1",
+        dialect=Dialect(unrollable.product),
+    )
+    unrollable.session.check_write(statement, timeout_ms=5000)
+
+
+def test_a_trigger_that_writes_myisam_is_caught_by_the_rollback(unrollable: RunAs) -> None:
+    """The check sees only ``tt``. Its trigger writes ``tm``, which the dry
+    run's rollback cannot undo: the server warns ``1196``, and the write says
+    so instead of reporting a clean rollback."""
+    text = f"UPDATE {unrollable.schema}.tt SET v = 7 WHERE id = 1"
+    statement = classify(text, dialect=Dialect(unrollable.product))
+    unrollable.session.check_write(statement, timeout_ms=5000)
+    with pytest.raises(DriverError) as raised:
+        _run(unrollable, statement, guard=RowGuard(expect=1), commit=False)
+    assert raised.value.code == "1196"
+    assert raised.value.rollback_incomplete is True
+    assert _tm(unrollable) == 7, "MyISAM kept the trigger's change"
+    with unrollable.live.connect() as root, root.cursor() as cursor:
+        cursor.execute(f"select v from {unrollable.schema}.tt where id = 1")
+        assert cursor.fetchone() == (0,), "InnoDB rolled back"
 
 
 @pytest.mark.parametrize("grant", ["none", "direct", "default", "nested"])

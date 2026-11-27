@@ -120,6 +120,7 @@ from sopuli.driver.survey import SurveyedAccount
 from sopuli.output.debug import logger
 from sopuli.passwords import ByteLimit
 from sopuli.secrets import Secret
+from sopuli.sql.statement import Dialect
 
 LOG = logger("mysql")
 
@@ -192,6 +193,7 @@ class MysqlSession(StatementRunning, ClosesConnection):
     #: `sql run`'s bounds: ``max_execution_time`` bounds a ``SELECT`` alone.
     bounds_every_statement = False
     identity_query = "SELECT @@global.server_uuid, DATABASE()"
+    dialect = Dialect.MYSQL
     #: The words for two targets that are one server
     #: (:class:`~sopuli.driver.clusters.ClusterIdentity`). Not fields.
     #: ``identity_caveat`` is always ``None``: any account reads ``server_uuid``

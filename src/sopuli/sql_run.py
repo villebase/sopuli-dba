@@ -28,7 +28,13 @@ from sopuli.admin import (
 from sopuli.apply import SKIPPED
 from sopuli.check import ERROR
 from sopuli.config.model import Config, ExpandedTarget
-from sopuli.driver.protocol import AuthenticationError, Session, StatementResult, StatementRunner
+from sopuli.driver.protocol import (
+    AuthenticationError,
+    DriverError,
+    Session,
+    StatementResult,
+    StatementRunner,
+)
 from sopuli.driver.registry import DriverNotImplementedError, require_command
 from sopuli.exit_codes import ExitCode
 from sopuli.output.document import Error
@@ -407,6 +413,43 @@ def refuse_another_plan(given: str, computed: str) -> None:
     )
 
 
+def refuse_unrollable(
+    connections: Sequence[Connection], statement: Statement, *, timeout_ms: int
+) -> None:
+    """Refuse a write, dry or real, that a rollback could not undo on some
+    target, before any statement runs on any target (#1713, Q3 A′).
+
+    Each connected session checks the statement (:meth:`StatementRunner.check_write`).
+    On MySQL and MariaDB that refuses a write that names a table without
+    transactions; elsewhere it refuses nothing. A check that cannot be made
+    refuses the run too: the tool does not run a write it could not check.
+    Every target's answer is gathered first, so the refusal names them all.
+    """
+    from sopuli.sql.statement import StatementRefusedError
+
+    refused: list[str] = []
+    for one in sorted(connections, key=lambda each: each.target.name):
+        session = one.session
+        if session is None:
+            continue
+        assert isinstance(session, StatementRunner)  # checked by _connect
+        try:
+            session.check_write(statement, timeout_ms=timeout_ms)
+        except StatementRefusedError as error:
+            refused.append(error.message)
+        except DriverError as error:
+            refused.append(
+                f"target {one.target.name!r}: the check for tables without transactions "
+                f"failed: {error.message}"
+            )
+    if refused:
+        raise StatementRefusedError(
+            "; ".join(refused),
+            hint="nothing was run on any target. `sql run` writes only tables with "
+            "transactions, so a dry run and a refused guard can roll every change back",
+        )
+
+
 def run_write(
     connections: Sequence[Connection],
     statement: Statement,
@@ -431,7 +474,8 @@ def run_write(
     with a target that did not connect (:func:`refuse_unconnected`), and the
     check here covers it too. The targets after it are
     :data:`NOT_ATTEMPTED`. A target of another product is :data:`SKIPPED` and
-    does not stop it. A dry run never stops, so it reports every count. The
+    does not stop it. A dry run stops only where a rollback could not undo
+    a change to a table without transactions; otherwise it reports every count. The
     caller closes the sessions.
     """
     outcomes: list[TargetOutcome] = [] if into is None else into
@@ -452,6 +496,10 @@ def run_write(
             outcomes.append(outcome)
             in_flight = None
             if commit and outcome.state not in (COMMITTED, ROLLED_BACK, SKIPPED):
+                stopped_at = one.target.name
+            elif outcome.outcome_unknown:
+                # A dry run stops too where the rows changed although nothing
+                # was committed: the next target would change the same way.
                 stopped_at = one.target.name
     except BaseException:
         # _write_one keeps every Exception, so this is Ctrl-C or an exit. The
@@ -517,6 +565,10 @@ def _write_one(
         )
     except Exception as error:  # noqa: BLE001 -- a per-target finding
         found = finding(error)
+        if getattr(error, "rollback_incomplete", False):
+            # Nothing was committed, but a table without transactions kept
+            # the change (#1713, Q3): the rows are not what they were.
+            return TargetOutcome(name, one.run_as, ERROR, error=found, outcome_unknown=True)
         if not getattr(error, "commit_failed", False):
             return TargetOutcome(name, one.run_as, ERROR, error=found)
         # The commit was sent and raised: it may have taken effect.
@@ -565,9 +617,11 @@ def write_exit_code(outcomes: Sequence[TargetOutcome], *, dry_run: bool) -> int:
     passed = sum(1 for outcome in counted if outcome.state in (COMMITTED, ROLLED_BACK))
     if passed == len(counted):
         return int(ExitCode.SUCCESS)
-    # A commit whose outcome is unknown may have taken effect, so it counts.
+    # A commit whose outcome is unknown may have taken effect, so it counts. On
+    # a dry run, a rollback that kept a change has outcome_unknown too (#1713
+    # Q3): rows changed there, so the run did not do nothing.
     progressed = (
-        passed
+        passed + sum(1 for one in counted if one.outcome_unknown)
         if dry_run
         else sum(1 for one in counted if one.state == COMMITTED or one.outcome_unknown)
     )

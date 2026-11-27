@@ -21,6 +21,7 @@ from sopuli.driver.mysql.session import APPLICABLE_ROLES, MysqlSession  # noqa: 
 from sopuli.driver.mysql_family.accounts import CURRENT_USER  # noqa: E402
 from sopuli.driver.mysql_family.connection import UTC_SESSION  # noqa: E402
 from sopuli.driver.mysql_family.statement_run import (  # noqa: E402
+    NON_TRANSACTIONAL,
     SERVER_STATUS_IN_TRANS,
     SERVER_TIME_ZONE,
     VALUE_LIMIT,
@@ -32,7 +33,12 @@ from sopuli.driver.protocol import (  # noqa: E402
     Timeouts,
 )
 from sopuli.sql.guard import RowGuard  # noqa: E402
-from sopuli.sql.statement import classify  # noqa: E402
+from sopuli.sql.statement import (  # noqa: E402
+    Dialect,
+    Statement,
+    StatementRefusedError,
+    classify,
+)
 
 IN_TRANS = pymysql.constants.SERVER_STATUS.SERVER_STATUS_IN_TRANS
 
@@ -75,6 +81,8 @@ class _Cursor:
             self._rows = [(connection.account,)]
         elif sql == APPLICABLE_ROLES:
             self._rows = list(connection.roles)
+        elif sql == NON_TRANSACTIONAL:
+            self._rows = list(connection.unrollable)
         elif sql in (READ.text,):
             if connection.columns:
                 self.description = tuple((name,) for name in connection.columns)
@@ -112,6 +120,13 @@ class _Connection:
         self.identity: tuple[Any, ...] = ("uuid-1", "acme")
         self.account = "dba_alpha@%"
         self.roles: list[tuple[str]] = []
+        #: ``NON_TRANSACTIONAL``'s rows: schema, table, engine, ``DATABASE()``.
+        self.unrollable: list[tuple[str, str, str, str | None]] = []
+        #: What ``SHOW WARNINGS`` gives after a rollback.
+        self.warnings: list[tuple[str, int, str]] = []
+        #: What it gives only before the first rollback: the failed
+        #: statement's own warnings, as after a deadlock the server rolled back.
+        self.statement_warnings: list[tuple[str, int, str]] = []
         self.drained = False
         self.closed = False
         #: PyMySQL's unbuffered result in flight, or ``None``.
@@ -135,6 +150,11 @@ class _Connection:
 
     def rollback(self) -> None:
         self.sent.append("ROLLBACK")
+
+    def show_warnings(self) -> tuple[tuple[str, int, str], ...]:
+        if "ROLLBACK" not in self.sent:
+            return tuple(self.warnings + self.statement_warnings)
+        return tuple(self.warnings)
 
 
 def _target(product: str) -> ExpandedTarget:
@@ -580,3 +600,164 @@ def test_a_mysql_account_held_as_a_role_is_found_by_upper(
     connection.roles = roles
     assert session.member_of("sopuli_svc") is held
     assert connection.sent == [APPLICABLE_ROLES]
+
+
+# A write to a table without transactions (#1713, Q3 A′).
+
+MYISAM = ("acme", "settings", "MyISAM", None)
+
+
+def _write(text: str, product: str = "mysql") -> Statement:
+    return classify(text, dialect=Dialect(product))
+
+
+CHECK = 5000
+
+
+@pytest.mark.parametrize("build", [_mysql, _mariadb], ids=["mysql", "mariadb"])
+def test_a_server_with_no_table_without_transactions_needs_one_read(build: Any) -> None:
+    session, connection = build()
+    session.check_write(_write("UPDATE acme.settings SET v = 1"), timeout_ms=CHECK)
+    assert connection.sent == [NON_TRANSACTIONAL]
+
+
+@pytest.mark.parametrize("build", [_mysql, _mariadb], ids=["mysql", "mariadb"])
+@pytest.mark.parametrize(
+    ("text", "unrollable"),
+    [
+        ("UPDATE acme.settings AS s SET v = 1", [MYISAM]),
+        ("UPDATE `acme`.`settings` SET v = 1", [MYISAM]),
+        ('UPDATE "acme"."settings" SET v = 1', [MYISAM]),
+        ("UPDATE settings SET v = 1", [("acme", "settings", "Aria", "acme")]),
+        ("INSERT INTO acme.settings SELECT k, v FROM acme.staged", [MYISAM]),
+        # NO_BACKSLASH_ESCAPES reads `acme.settings` as code, not as a literal.
+        (
+            "UPDATE acme.ti a JOIN acme.tx x ON x.k = 'a\\' JOIN acme.settings AS m ON 1 -- '\n"
+            "SET m.v = 1",
+            [MYISAM],
+        ),
+    ],
+    ids=["qualified-alias", "backticks", "ansi-quotes", "default-database", "insert", "sql-mode"],
+)
+def test_a_write_that_names_a_table_without_transactions_is_refused(
+    build: Any, text: str, unrollable: list[Any]
+) -> None:
+    session, connection = build()
+    connection.unrollable = unrollable
+    product = "mysql" if build is _mysql else "mariadb"
+    with pytest.raises(StatementRefusedError, match="no transactions") as raised:
+        session.check_write(_write(text, product), timeout_ms=CHECK)
+    assert "acme.settings" in raised.value.message
+    assert connection.sent == [NON_TRANSACTIONAL], "one read, and nothing else is sent"
+
+
+@pytest.mark.parametrize("build", [_mysql, _mariadb], ids=["mysql", "mariadb"])
+@pytest.mark.parametrize(
+    ("text", "unrollable"),
+    [
+        ("UPDATE acme.orders SET v = 1", [MYISAM]),
+        ("UPDATE settings SET v = 1", [MYISAM]),
+        ("UPDATE acme.event SET v = 1", [("mysql", "event", "Aria", None)]),
+        ("UPDATE acme.orders SET note = 'acme.settings'", [MYISAM]),
+        ("UPDATE acme.v_settings SET v = 1", [MYISAM]),
+    ],
+    ids=["another-table", "no-default-database", "same-name-elsewhere", "in-a-literal", "view"],
+)
+def test_a_write_that_names_no_table_without_transactions_passes(
+    build: Any, text: str, unrollable: list[Any]
+) -> None:
+    """A view's base table is not named here: the rollback's warning catches
+    a write through it (UC-3 §4)."""
+    session, connection = build()
+    connection.unrollable = unrollable
+    product = "mysql" if build is _mysql else "mariadb"
+    session.check_write(_write(text, product), timeout_ms=CHECK)
+    assert connection.sent == [NON_TRANSACTIONAL], "no EXPLAIN is sent"
+
+
+@pytest.mark.parametrize(("timeout_ms", "bound"), [(CHECK, 6), (0, 30)], ids=["bounded", "none"])
+def test_the_checks_read_is_bounded_by_the_timeout(timeout_ms: int, bound: int) -> None:
+    session, connection = _mysql()
+    seen: list[float | None] = []
+    execute = _Cursor.execute
+
+    def watch(cursor: _Cursor, sql: str, *args: object) -> None:
+        seen.append(connection._read_timeout)
+        execute(cursor, sql, *args)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(_Cursor, "execute", watch)
+        session.check_write(_write("UPDATE acme.t SET v = 1"), timeout_ms=timeout_ms)
+    assert seen == [bound]
+    assert connection._read_timeout == 30, "the session's budget comes back"
+
+
+def test_a_check_whose_read_fails_is_a_driver_error() -> None:
+    session, connection = _mysql()
+    connection.failures[NON_TRANSACTIONAL] = pymysql.err.OperationalError(1205, "Lock wait")
+    with pytest.raises(DriverError) as raised:
+        session.check_write(_write("UPDATE acme.t SET v = 1"), timeout_ms=CHECK)
+    assert raised.value.code == "1205"
+
+
+def test_a_failed_warnings_read_still_rolls_back() -> None:
+    session, connection = _mysql()
+    calls = {"n": 0}
+
+    def flaky() -> tuple[tuple[str, int, str], ...]:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise pymysql.err.OperationalError(2013, "Lost connection")
+        return ()
+
+    connection.show_warnings = flaky  # type: ignore[method-assign]
+    result = _run(session, commit=False)
+    assert result.committed is False
+    assert "ROLLBACK" in connection.sent
+
+
+@pytest.mark.parametrize("build", [_mysql, _mariadb], ids=["mysql", "mariadb"])
+@pytest.mark.parametrize("commit", [False, True], ids=["dry-run", "guard-fails"])
+def test_a_rollback_that_warns_1196_reports_an_incomplete_rollback(
+    build: Any, commit: bool
+) -> None:
+    session, connection = build()
+    connection.rowcount = 2
+    connection.warnings = [("Warning", 1196, "Some non-transactional changed tables ...")]
+    with pytest.raises(DriverError) as raised:
+        _run(session, commit=commit)
+    assert raised.value.rollback_incomplete is True
+    assert raised.value.code == "1196"
+    assert raised.value.commit_failed is False
+    assert connection.sent.count("ROLLBACK") == 1
+    assert "COMMIT" not in connection.sent
+
+
+def test_a_statement_that_fails_after_writing_a_table_without_transactions_says_so() -> None:
+    session, connection = _mariadb()
+    connection.failures[WRITE.text] = pymysql.err.OperationalError(1205, "Lock wait timeout")
+    connection.warnings = [("Warning", 1196, "Some non-transactional changed tables ...")]
+    with pytest.raises(DriverError) as raised:
+        _run(session)
+    assert raised.value.code == "1205"
+    assert raised.value.rollback_incomplete is True
+    assert connection.sent.count("ROLLBACK") == 1
+
+
+def test_a_deadlock_the_server_rolled_back_still_reports_the_kept_change() -> None:
+    """On a deadlock the server rolls back itself, and its 1196 is the failed
+    statement's warning: the explicit rollback after it warns nothing."""
+    session, connection = _mysql()
+    connection.failures[WRITE.text] = pymysql.err.OperationalError(1213, "Deadlock found")
+    connection.statement_warnings = [("Warning", 1196, "Some non-transactional ...")]
+    with pytest.raises(DriverError) as raised:
+        _run(session)
+    assert raised.value.code == "1213"
+    assert raised.value.rollback_incomplete is True
+
+
+def test_a_rollback_without_the_warning_is_complete() -> None:
+    session, connection = _mysql()
+    connection.warnings = [("Note", 1003, "something else")]
+    result = _run(session, commit=False)
+    assert result.committed is False

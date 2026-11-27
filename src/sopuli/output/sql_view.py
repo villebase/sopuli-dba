@@ -152,6 +152,16 @@ def _next_step(
     of a product `sql run` does not run on."""
     if all(outcome.state == SKIPPED for outcome in outcomes):
         return ["nothing would run: no selected target is of a product `sql run` runs on"]
+    kept = [outcome.target for outcome in outcomes if outcome.outcome_unknown]
+    if kept:
+        # A rollback kept a change to a table without transactions (UC-3 §4).
+        # Another dry run would change the same rows again.
+        return [
+            "the dry run stopped: on " + ", ".join(kept) + " a table without transactions "
+            "kept the statement's change, although nothing was committed",
+            "check the rows there, and move the table to InnoDB before you dry-run this "
+            "statement again; the targets after it were not run",
+        ]
     failing = [outcome for outcome in outcomes if outcome.state not in (ROLLED_BACK, SKIPPED)]
     if not failing:
         lines = [f"to run it, drop --dry-run and add:  --plan {plan}"]

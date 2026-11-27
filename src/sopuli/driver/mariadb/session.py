@@ -114,6 +114,7 @@ from sopuli.driver.survey import SurveyedAccount
 from sopuli.output.debug import logger
 from sopuli.passwords import ByteLimit
 from sopuli.secrets import Secret
+from sopuli.sql.statement import Dialect
 
 LOG = logger("mariadb")
 
@@ -314,6 +315,7 @@ class MariadbSession(StatementRunning, ClosesConnection):
     #: `sql run`'s bounds: ``max_statement_time`` bounds every statement.
     bounds_every_statement = True
     identity_query = "SELECT @@global.server_uid, DATABASE()"
+    dialect = Dialect.MARIADB
     #: The words for two targets that are one server
     #: (:class:`~sopuli.driver.clusters.ClusterIdentity`), as on MySQL. Not
     #: fields.

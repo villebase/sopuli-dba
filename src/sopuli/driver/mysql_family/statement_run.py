@@ -41,6 +41,7 @@ from typing import Any, ClassVar, TypeVar
 
 from sopuli.config.model import ExpandedTarget
 from sopuli.driver.mysql_family.accounts import current_user
+from sopuli.driver.mysql_family.connection import UTC_SESSION
 from sopuli.driver.mysql_family.errors import (
     COLUMN_ACCESS_DENIED,
     DATABASE_ACCESS_DENIED,
@@ -121,6 +122,16 @@ _STATEMENT_HINTS = {
         "way on MySQL: the server finishes it and then rolls it back"
     ),
 }
+
+#: The hint for a connection lost under the ``COMMIT``, which replaces the one
+#: above: the change may have been made.
+_LOST_COMMIT = (
+    "the connection was lost during the COMMIT, so whether it took effect is unknown: "
+    "on MySQL a commit lost this way still commits. Check the rows before running again"
+)
+
+#: Sent before the operator's statement, and :data:`UTC_SESSION` after it.
+SERVER_TIME_ZONE = "SET time_zone = @@global.time_zone"
 
 #: A read runs in ``START TRANSACTION READ ONLY``, so the shared hint is wrong
 #: for what that refuses.
@@ -207,6 +218,24 @@ class _Bounds:
     restore: str | None = None
     #: The connection's read timeout before the statement, in seconds.
     read_timeout: float | None = None
+    #: PyMySQL's read timeout for the statement itself, in seconds, or
+    #: ``None`` for none.
+    statement_read_timeout: float | None = None
+
+
+def _seconds(value: float) -> str:
+    """A ``max_statement_time`` in seconds, to the microsecond the server
+    keeps. A positive value never rounds to ``0``, which means no bound."""
+    if 0 < value < 0.000001:
+        value = 0.000001
+    return f"{value:.6f}"
+
+
+def _streaming(connection: Any) -> bool:
+    """Whether an unbuffered result is still being read on ``connection``.
+    ``MySQLResult.unbuffered_active`` is PyMySQL's private state (2.2.8)."""
+    result = getattr(connection, "_result", None)
+    return bool(connection.open and getattr(result, "unbuffered_active", False))
 
 
 class StatementRunning:
@@ -321,17 +350,25 @@ class StatementRunning:
 
         connection = self._open_connection()
         read = statement.kind is StatementKind.READ
-        begun = committed = committing = False
+        begun = committed = committing = zoned = False
         bounds = _Bounds(read_timeout=connection._read_timeout)
+        rows: Any = None
         try:
             if connection.server_status & SERVER_STATUS_IN_TRANS:
                 connection.rollback()
             with connection.cursor() as control:
                 bounds = self._bound(connection, control, timeout_ms)
+                # Every session runs in UTC for the tool's own reads
+                # (`UTC_SESSION`). The operator's statement runs in the server's
+                # own zone, as their own client's would, so NOW() and a
+                # TIMESTAMP literal mean what they mean there.
+                control.execute(SERVER_TIME_ZONE)
+                zoned = True
                 control.execute(
                     "START TRANSACTION READ ONLY" if read else "START TRANSACTION READ WRITE"
                 )
                 begun = True
+            connection._read_timeout = bounds.statement_read_timeout
             if read:
                 rows = connection.cursor(pymysql.cursors.SSCursor)
                 rows.execute(statement.text)
@@ -354,20 +391,29 @@ class StatementRunning:
         except pymysql.err.MySQLError as error:
             self._connection_lost = not connection.open
             raised = for_statement(self._diagnose(error), read=read)
+            if committing and raised.number in _LOST:
+                raised = replace(raised, hint=_LOST_COMMIT)
             failure = raised.as_error()
             # A COMMIT the server refused with a number was not applied. One
             # whose connection was lost may have been: on MySQL it still commits.
             failure.commit_failed = committing and (self._connection_lost or raised.number in _LOST)
             raise failure from error
         finally:
+            if rows is not None and _streaming(connection):
+                # Stopped partway through a read, by an error or an interrupt.
+                # A ROLLBACK would first read every row left.
+                self._abandon(connection, rows)
             connection._read_timeout = bounds.read_timeout
             if connection.open:
                 if begun and not committed:
                     with suppress(pymysql.err.MySQLError):
                         connection.rollback()
-                if bounds.restore is not None:
+                undo = [bounds.restore] if bounds.restore is not None else []
+                if zoned:
+                    undo.append(UTC_SESSION)
+                for sql in undo:
                     with suppress(pymysql.err.MySQLError), connection.cursor() as cursor:
-                        cursor.execute(bounds.restore)
+                        cursor.execute(sql)
 
     def _abandon(self, connection: Any, cursor: Any) -> None:
         """Close the connection without reading the rest of a result, and
@@ -388,15 +434,17 @@ class StatementRunning:
         connection.close()
 
     def _open_connection(self) -> Any:
-        """The connection, or a refusal to send on one that is closed."""
-        if self.connection is None:
-            raise InternalFaultError.closed_session(self.target.name)
-        if self._connection_lost or not self.connection.open:
+        """The connection, or a refusal to send on one that is closed. A
+        statement that closed it is checked first: a capped read leaves no
+        connection, and that is a lost one, not a fault in sopuli."""
+        if self._connection_lost or (self.connection is not None and not self.connection.open):
             raise DriverError(
                 f"{SERVER_LOST}: the connection was closed under an earlier statement",
                 hint="close this session and open another",
                 code=str(SERVER_LOST),
             )
+        if self.connection is None:
+            raise InternalFaultError.closed_session(self.target.name)
         return self.connection
 
     def _bound(self, connection: Any, cursor: Any, timeout_ms: int) -> _Bounds:
@@ -406,20 +454,22 @@ class StatementRunning:
         timeout. On MySQL it is ``max_execution_time`` for a ``SELECT``, in
         milliseconds, the two lock timeouts, in whole seconds of at least 1,
         and PyMySQL's read timeout, one second past them, so that the server's
-        own error comes first where it has one. The session's own read
-        timeout, its query budget, is replaced either way and comes back
-        after the statement.
+        own error comes first where it has one.
+
+        The read timeout is :attr:`_Bounds.statement_read_timeout`, which the
+        caller sets just before the statement: the statements here keep the
+        session's own query budget. ``--timeout`` replaces that budget for
+        the statement alone, and ``0`` leaves it without one.
         """
         bounds = _Bounds(read_timeout=connection._read_timeout)
-        connection._read_timeout = None
         if timeout_ms == 0:
             return bounds
         if self.bounds_every_statement:
             cursor.execute("SELECT @@session.max_statement_time")
             (existing,) = cursor.fetchone()
             limit = _lower(timeout_ms / 1000, float(existing))
-            cursor.execute(f"SET SESSION max_statement_time = {limit:.6f}")
-            bounds.restore = f"SET SESSION max_statement_time = {float(existing):.6f}"
+            cursor.execute(f"SET SESSION max_statement_time = {_seconds(limit)}")
+            bounds.restore = f"SET SESSION max_statement_time = {_seconds(float(existing))}"
             return bounds
         cursor.execute(
             "SELECT @@session.max_execution_time, @@session.innodb_lock_wait_timeout, "
@@ -436,7 +486,7 @@ class StatementRunning:
             f"SET SESSION max_execution_time = {execution}, "
             f"innodb_lock_wait_timeout = {row_lock}, lock_wait_timeout = {metadata}"
         )
-        connection._read_timeout = seconds + 1
+        bounds.statement_read_timeout = seconds + 1
         return bounds
 
     def _lift(self, connection: Any, bounds: _Bounds) -> None:

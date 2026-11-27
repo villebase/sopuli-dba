@@ -141,6 +141,14 @@ def test_a_read_returns_rows_capped_and_cut(run_as: RunAs) -> None:
     assert run_as.session.connection_lost is True
 
 
+def test_the_statement_runs_in_the_servers_time_zone(run_as: RunAs) -> None:
+    (zones,) = _run(run_as, "SELECT @@session.time_zone, @@global.time_zone").rows
+    assert zones[0] == zones[1]
+    with run_as.session.connection.cursor() as cursor:
+        cursor.execute("SELECT @@session.time_zone")
+        assert cursor.fetchone() == ("+00:00",), "the tool's own reads are in UTC again"
+
+
 def test_a_percent_sign_is_sent_as_written(run_as: RunAs) -> None:
     assert _run(run_as, "SELECT '100%' AS p").rows == (("100%",),)
 

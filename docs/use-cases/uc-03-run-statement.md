@@ -386,7 +386,10 @@ server bounds a long write, so the client's read timeout does, one second past
 the lock timeouts. It closes the connection, and the server finishes the
 statement and then rolls it back. On both, a lower bound the account already
 has stays, `--timeout` replaces the tool's own query budget for the
-statement, and the session's own values come back after it. After
+statement, and the session's own values come back after it. The tool reads
+its own queries in UTC, but the statement runs in the server's own time zone,
+`@@global.time_zone`, so `NOW()` and a `TIMESTAMP` value mean what they mean
+in the operator's own client. After
 `1205` or `1969` the server leaves the transaction open, and the tool rolls it
 back. No bound is left on the commit: on MySQL a commit the client lost to its
 read timeout still commits. A commit whose connection is lost has
@@ -532,7 +535,9 @@ adds no mutation record.
   a date or time that Python cannot hold, such as `infinity` or a BC date, is
   the server's text; and any value whose text is longer than 4000 characters,
   or a `bytea` longer than 4000 bytes, is cut. On MySQL and MariaDB, `DECIMAL`
-  is a `Decimal`; `JSON`, `ENUM`, `SET` and a zero date are the server's text;
+  is read as a `Decimal`, so a whole value is a JSON number and any other is
+  its text, such as `"1.50"`; `JSON`, `ENUM`, `SET` and a zero date are the
+  server's text;
   `TIME` is an ISO 8601 duration, so a negative one and one past 24 hours keep
   their value; `BIT`, the binary types and a geometry are hex; and a text
   longer than 4000 characters, or a binary value longer than 4000 bytes, is

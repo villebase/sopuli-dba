@@ -19,11 +19,18 @@ from sopuli.config.model import ExpandedTarget, Target  # noqa: E402
 from sopuli.driver.mariadb.session import MariadbSession  # noqa: E402
 from sopuli.driver.mysql.session import MysqlSession  # noqa: E402
 from sopuli.driver.mysql_family.accounts import CURRENT_USER  # noqa: E402
+from sopuli.driver.mysql_family.connection import UTC_SESSION  # noqa: E402
 from sopuli.driver.mysql_family.statement_run import (  # noqa: E402
     SERVER_STATUS_IN_TRANS,
+    SERVER_TIME_ZONE,
     VALUE_LIMIT,
 )
-from sopuli.driver.protocol import DriverError, StatementRunner, Timeouts  # noqa: E402
+from sopuli.driver.protocol import (  # noqa: E402
+    DriverError,
+    InternalFaultError,
+    StatementRunner,
+    Timeouts,
+)
 from sopuli.sql.guard import RowGuard  # noqa: E402
 from sopuli.sql.statement import classify  # noqa: E402
 
@@ -101,6 +108,8 @@ class _Connection:
         self.account = "dba_alpha@%"
         self.drained = False
         self.closed = False
+        #: PyMySQL's unbuffered result in flight, or ``None``.
+        self._result: Any = None
 
     def close(self) -> None:
         self.closed = True
@@ -174,11 +183,13 @@ def test_a_mysql_read_runs_read_only_bounded_and_rolled_back() -> None:
         "@@session.lock_wait_timeout",
         "SET SESSION max_execution_time = 5000, innodb_lock_wait_timeout = 5, "
         "lock_wait_timeout = 5",
+        SERVER_TIME_ZONE,
         "START TRANSACTION READ ONLY",
         READ.text,
         "ROLLBACK",
         "SET SESSION max_execution_time = 0, innodb_lock_wait_timeout = 50, "
         "lock_wait_timeout = 31536000",
+        UTC_SESSION,
     ]
     assert pymysql.cursors.SSCursor in connection.cursor_classes
     assert result.columns == ("a", "b")
@@ -219,11 +230,13 @@ def test_a_mariadb_write_lifts_its_bound_before_the_commit() -> None:
     assert connection.sent == [
         "SELECT @@session.max_statement_time",
         "SET SESSION max_statement_time = 5.000000",
+        SERVER_TIME_ZONE,
         "START TRANSACTION READ WRITE",
         WRITE.text,
         "SET SESSION max_statement_time = 0",
         "COMMIT",
         "SET SESSION max_statement_time = 0.000000",
+        UTC_SESSION,
     ]
     assert result.committed is True
     assert result.guard_passed is True
@@ -231,12 +244,68 @@ def test_a_mariadb_write_lifts_its_bound_before_the_commit() -> None:
     assert connection.timeout_at_commit is None
 
 
-def test_a_mariadb_bound_keeps_its_microseconds() -> None:
+@pytest.mark.parametrize(("existing", "text"), [(0.0004, "0.000400"), (1e-7, "0.000001")])
+def test_a_mariadb_bound_keeps_its_microseconds(existing: float, text: str) -> None:
     session, connection = _mariadb()
-    connection.bounds = (0.0004,)
+    connection.bounds = (existing,)
     _run(session)
-    assert "SET SESSION max_statement_time = 0.000400" in connection.sent
-    assert connection.sent[-1] == "SET SESSION max_statement_time = 0.000400"
+    assert f"SET SESSION max_statement_time = {text}" in connection.sent
+    assert connection.sent[-2] == f"SET SESSION max_statement_time = {text}"
+
+
+def test_the_statement_runs_in_the_servers_time_zone_and_the_session_returns_to_utc() -> None:
+    session, connection = _mysql()
+    _run(session, timeout_ms=0)
+    start = connection.sent.index("START TRANSACTION READ WRITE")
+    assert connection.sent[start - 1] == SERVER_TIME_ZONE
+    assert connection.sent[-1] == UTC_SESSION
+
+
+def test_the_statements_before_the_operators_keep_the_query_budget() -> None:
+    session, connection = _mysql()
+    budgets: dict[str, float | None] = {}
+    execute = _Cursor.execute
+
+    def watch(cursor: _Cursor, sql: str, *args: object) -> None:
+        budgets[sql] = connection._read_timeout
+        execute(cursor, sql, *args)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(_Cursor, "execute", watch)
+        _run(session, timeout_ms=0)
+
+    assert budgets[SERVER_TIME_ZONE] == 30
+    assert budgets["START TRANSACTION READ WRITE"] == 30
+    assert budgets[WRITE.text] is None, "--timeout 0 is no bound"
+
+
+def test_an_interrupted_read_closes_the_connection_rather_than_drain_it() -> None:
+    session, connection = _mysql()
+
+    class _Streaming:
+        unbuffered_active = True
+
+    def interrupted(cursor: _Cursor, size: int) -> list[tuple[Any, ...]]:
+        connection._result = _Streaming()
+        raise KeyboardInterrupt
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(_Cursor, "fetchmany", interrupted)
+        with pytest.raises(KeyboardInterrupt):
+            _run(session, READ, guard=None, commit=False)
+
+    assert connection.closed is True
+    assert connection.drained is False
+    assert "ROLLBACK" not in connection.sent
+    assert session.connection_lost is True
+
+
+def test_a_session_after_a_capped_read_refuses_as_lost_not_as_a_fault() -> None:
+    session, _ = _mysql()
+    _run(session, READ, guard=None, commit=False, max_rows=1)
+    with pytest.raises(DriverError, match="closed under an earlier statement") as raised:
+        _run(session, READ, guard=None, commit=False)
+    assert not isinstance(raised.value, InternalFaultError)
 
 
 def test_a_mysql_write_puts_its_own_lock_timeouts_back_before_the_commit() -> None:
@@ -357,7 +426,7 @@ def test_an_open_transaction_is_rolled_back_before_the_new_one() -> None:
     session, connection = _mysql()
     connection.server_status = IN_TRANS
     _run(session, READ, guard=None, commit=False, timeout_ms=0)
-    assert connection.sent[:2] == ["ROLLBACK", "START TRANSACTION READ ONLY"]
+    assert connection.sent[:3] == ["ROLLBACK", SERVER_TIME_ZONE, "START TRANSACTION READ ONLY"]
 
 
 @pytest.mark.parametrize("build", [_mysql, _mariadb], ids=["mysql", "mariadb"])
@@ -374,7 +443,9 @@ def test_a_lock_wait_timeout_rolls_back_with_its_hint(build: Any) -> None:
     assert raised.value.hint is not None
     assert "lock another session holds" in raised.value.hint
     assert raised.value.commit_failed is False
-    assert connection.sent[-2] == "ROLLBACK"
+    after = connection.sent[connection.sent.index(WRITE.text) + 1 :]
+    assert after[0] == "ROLLBACK"
+    assert after[-1] == UTC_SESSION
     assert session.connection_lost is False
 
 
@@ -400,6 +471,9 @@ def test_a_commit_lost_with_its_connection_has_an_unknown_outcome(build: Any) ->
         _run(session)
 
     assert raised.value.commit_failed is True
+    assert raised.value.hint is not None
+    assert "whether it took effect is unknown" in raised.value.hint
+    assert "rolls it back" not in raised.value.hint
     assert session.connection_lost is True
     assert connection.sent[-1] == "COMMIT", "nothing is sent on a closed connection"
 

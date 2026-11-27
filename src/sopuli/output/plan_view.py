@@ -74,6 +74,23 @@ def render_plan(plan: Plan, *, noun: str = "change", secret_column: bool = True)
         lines.extend(["", *_table(plan, secret_column=secret_column)])
     if plan.shared:
         lines.extend(["", *_shared(plan.shared)])
+    refreshed = sorted(
+        {
+            (
+                unit.external_secret["context"],
+                unit.external_secret["namespace"],
+                unit.external_secret["name"],
+            )
+            for unit in plan.units
+            if unit.external_secret is not None
+        }
+    )
+    if refreshed:
+        lines.extend(["", "After a promotion, ESO is asked to refresh:"])
+        lines.extend(
+            f"  ExternalSecret {namespace}/{name} on context {context}"
+            for context, namespace, name in refreshed
+        )
     return "\n".join(lines)
 
 

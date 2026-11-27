@@ -1,28 +1,31 @@
 # UC-3 — Run one statement across many targets
 
 Depends on: `../design/00-principles.md`, `../design/01-configuration.md`,
-`../design/02-oracle-privileges.md`
+`../design/02-oracle-privileges.md`, `../design/02-postgres-privileges.md`
 
 This document specifies a command that runs one statement against a selected
-set of declared targets and shows what each target returned. **The statement
-check, the row guard, the plan fingerprint and the value conversion are built
-(#1659), and so is the `run_as:` configuration with its plan-time refusal of the
-service account (#1660), and so is the Oracle runner (#1661), and so is `sql
-run` for reads (#1662) and for writes (#1663). UC-3 on Oracle is built.** The
-command name, `sopuli sql run`, is a working name. The parts were built in this
-order, each by its own issue:
+set of declared targets and shows what each target returned. **UC-3 is built on
+Oracle and PostgreSQL.** The command name, `sopuli sql run`, is a working name.
+The parts were built in this order, each by its own issue:
 
 | Part | Issue |
 |---|---|
 | The pure layer: the statement check, the plan fingerprint and the row guards | #1659, built |
 | The `run_as:` configuration | #1660, built. The session check of §2 is part of the runner |
-| The Oracle runner | #1661, built. `OracleSession.run_statement`, with `session_user()` for the check of §2. `sql.run` is not in the shared command set, so every other product is refused |
+| The Oracle runner | #1661, built. `OracleSession.run_statement`, with `session_user()` for the check of §2 |
 | `sql run` for reads | #1662, built |
 | `--write` | #1663, built |
+| What PostgreSQL does, measured | #1691, built. `sql/postgres/12_statement_run_probe.py` |
+| The statement check's PostgreSQL dialect | #1692, built (§3) |
+| The PostgreSQL runner | #1693, built. `PostgresSession.run_statement` |
+| The refusal of a run-as role that holds the service role's privileges | #1700, built (§2) |
+| `sql run` on PostgreSQL | #1694, built |
 
-The first release of UC-3 covers Oracle only. A target of another product is
+`sql run` runs on Oracle and PostgreSQL. A target of another product is
 refused at plan time by `require_command`, with `SOPULI-20006`, never by a
-version check (invariant 4). The umbrella issue is #1657.
+version check (invariant 4): `sql.run` is not in the shared command set, and
+only the Oracle and PostgreSQL drivers list it. The umbrella issues are #1657
+for Oracle and #1689 for PostgreSQL.
 
 ---
 
@@ -43,8 +46,8 @@ small:
 
 **Not in scope:**
 
-- PostgreSQL, MySQL, MariaDB and SQL Server. The driver interface leaves room
-  for them, and they come later.
+- MySQL, MariaDB and SQL Server. The driver interface leaves room for them,
+  and they come later.
 - Statements declared by name in the config. They can be added later without
   changing this design.
 - DDL, PL/SQL blocks, `ALTER SYSTEM`, and anything else that is not one query
@@ -141,6 +144,21 @@ others.
    account's user name from the config. One match refuses the run on every
    target, before any statement runs. The error is `SOPULI-20010`.
 
+   On PostgreSQL a login role can hold another role's privileges without
+   logging in as it, so two more reads refuse the run the same way. The
+   tool reads `current_user`, which differs from the session user where the
+   login role has a default role (`ALTER ROLE … SET role`), and refuses it
+   when it is the service account. It also reads `pg_auth_members`, and
+   refuses a login role that is a member of the service role, directly or
+   through other roles, whatever the membership's `INHERIT` or `SET` option:
+   a member without `INHERIT` can still take the role with
+   `set_config('role', …)`. A superuser is not counted as a member, because
+   it gains nothing from the service role. A superuser login whose default
+   role is a member is refused, because its statements run as that member.
+   Every role may read
+   `pg_auth_members`. On Oracle one user is never granted to another, so
+   neither read applies ([#1690](../decisions/log.md#1690)).
+
    There is a gap here, and it is accepted. When `admin:` is `external`, the
    config holds no service-account name, so the session check has nothing to
    compare and does not run. The tool never opens a connection with `admin:` to
@@ -172,6 +190,29 @@ A run is read-only unless the operator passes `--write`.
 except one at the end, which only comments may follow. A `;` inside a string literal is a known false refusal,
 and it is acceptable.
 
+**Each product reads comments and literals its own way.** The check scans by the
+rules of the target's product. On Oracle, a block comment ends at the first
+`*/`, and `q'[...]'` is a literal. On PostgreSQL, block comments nest, and
+`$$...$$`, `$tag$...$tag$` and `E'...'` are literals. In an `E'...'` literal,
+`\'` does not end it, and a part that continues it on a later line keeps that
+rule. So `/* /* */ SELECT */ DELETE FROM t` is a `SELECT` on
+Oracle and a `DELETE` on PostgreSQL. A run over both products checks the
+statement once for each. If one check refuses it, it is refused. If the two
+give a different text or a different first word, it is refused too, because
+the plan fingerprint and every target need one text.
+
+On PostgreSQL, `standard_conforming_strings = off` lets `\'` escape a quote in a
+plain `'...'` literal too. The tool cannot see the setting, and it has been on
+by default since PostgreSQL 9.1. A wrong reading can only cut the text inside a
+literal, and the server then refuses the statement as unterminated.
+
+On PostgreSQL, two statements pass the keyword check as reads although they
+write. `SELECT ... INTO t2` creates a table, and a `WITH` whose query is an
+`UPDATE`, `INSERT` or `DELETE` changes rows. A read runs in a read-only
+transaction, so the server is what refuses them. With `--write`, both are
+refused as reads. What the server refuses, and with which code, is in
+*On PostgreSQL* below.
+
 **Why the keyword check exists.** Oracle commits before any DDL, so
 `SET TRANSACTION READ ONLY` does not stop DDL. The keyword check does.
 
@@ -183,6 +224,27 @@ A `SELECT seq.NEXTVAL FROM dual` also runs in a read-only transaction and moves
 the sequence (measured on 23.26.3.0.0); `SELECT ... FOR UPDATE` does not, because
 the server refuses it with `ORA-01456`. This is accepted. The rights of the
 run-as account are the real limit, as §1 says.
+
+**On PostgreSQL** a read is declared as a cursor in `BEGIN READ ONLY`, so
+two guards on the server stand behind the keyword check. The cursor takes one
+query: it refuses two statements, `SELECT ... INTO` and DDL with `42601`, and
+a `WITH` query that writes with `0A000`. The read-only transaction refuses
+`nextval()`, `SELECT ... FOR UPDATE` and a function that writes with `25006`
+(`0A000` for a `STABLE` function). A write is sent as a prepared statement,
+which the server refuses with `42601` when the text holds two. PostgreSQL does
+not commit before DDL, so the transaction would cover DDL too. Measured on
+releases 13 to 18 (`../measurements.md`, `12_statement_run_probe.py`), and the
+cursor's refusals on 16.15 (#1693).
+
+The gap is any function whose effect is outside the transaction, which the
+rollback does not undo. `dblink_exec()` writes through another connection,
+and once the `dblink` extension is in a database, any role there may call it;
+a role that is not a superuser gives a password in its connection string.
+`pg_cancel_backend()` and `pg_terminate_backend()` end another session's work,
+`pg_reload_conf()` reloads the server's configuration, and a session advisory
+lock, `pg_advisory_lock()`, is still held after the rollback. Each runs in a
+read on 16.15, where the run-as account has the right to call it. This is
+accepted, for the reason above.
 
 **`readonly: true`** (`../design/00-principles.md`) refuses `--write`, with or
 without `--dry-run`, with exit 8. It does not refuse a read, and `--dry-run`
@@ -235,8 +297,12 @@ targets, never all of them. `max_targets` applies unchanged (invariant 10).
 - the normalised statement text;
 - the row guard: its kind (`expect` or `max`) and its value;
 - the sorted list of resolved targets, each with its name, its `dsn`, the
-  user its session became, and its database identity, which is `DB_UNIQUE_NAME`
-  and `CON_NAME`, read when the tool connects. The session user is what the
+  user its session became, and its database identity, read when the tool
+  connects. On Oracle that is `DB_UNIQUE_NAME` and `CON_NAME`, and on
+  PostgreSQL the cluster's `system_identifier` and `current_database()`. Where
+  a PostgreSQL session starts as another role, that role is in the hash too,
+  so a default role set between the dry run and the real run changes it. The
+  session user is what the
   database reports, so an `external` login that reaches another user changes
   the hash. A target that did not connect, or that failed after it logged in,
   has its configured run-as name, or `external`, and no identity. A target of
@@ -254,8 +320,11 @@ without it, and the row guard, which a write needs, is what stops it. A
 comment after a statement with no terminator stays in the text, and a statement
 after a comment that follows a `;` is still refused. The scan reads string
 literals, quoted names and `q'[...]'` literals whole, so a `--` or `/*` in one
-is not a comment. A `/*` that never closes after the terminator is refused as
-an unclosed comment. A second line that holds only `/`, left at the end, is
+is not a comment. On PostgreSQL the scan reads dollar quotes and `E'...'`
+literals whole instead of `q'[...]'`, and a nested comment ends at its own
+`*/` (§3). The trailing `/` line is removed on every product, so one
+statement reads the same way on a run over more than one. A `/*` that never
+closes after the terminator is refused as an unclosed comment. A second line that holds only `/`, left at the end, is
 refused, and so is a `;` still left in the text. A `/` inside the statement, such as a
 division, stays. Nothing else changes: case, whitespace and literals inside the
 statement stay as written.
@@ -291,6 +360,15 @@ A session that waits on a lock ends when the wait does. The session reports
 `DPY-4011`, with `ORA-03156` in its message, and the tool keeps both. The
 timeout does not bound the commit, so a commit is never abandoned half done.
 
+On PostgreSQL the timeout is `statement_timeout`, set for the statement's
+transaction only. Where the role or the database already has a lower one, the
+lower one stays. It counts the time a statement waits for a lock. The server
+cancels a statement past it with `57014` and rolls its transaction back, and
+the session stays usable. No timeout bounds the commit. A commit the server
+refuses, such as on a deferred constraint, was rolled back, so its outcome is
+known. Only a commit whose connection is lost has `outcome_unknown: true`
+(§5).
+
 ---
 
 ## 5. Order and failure
@@ -325,7 +403,9 @@ so the plan leaves it out too, and it counts for neither `max_targets` nor
 `confirm_environments`.
 
 **A commit that fails has an unknown outcome.** The statement ran and the
-commit was sent, so the change may have taken effect. The target is `ERROR`,
+commit was sent, so the change may have taken effect. On PostgreSQL this
+holds only where the connection was lost: a commit the server refused was
+rolled back, and is an ordinary `ERROR` (§4). The target is `ERROR`,
 with a message that says the outcome is unknown and to check the rows before
 running again, and the server's code and message. Its result in the run
 document has `outcome_unknown: true`, so a script need not parse the message.
@@ -420,7 +500,12 @@ adds no mutation record.
 - **Value types.** Dates, numbers and LOBs become strings or numbers that JSON
   can carry. A LOB is read as text or bytes, cut at 4000 characters or bytes,
   and the target is marked truncated when one was cut. Oracle `NUMBER` is read
-  as a `Decimal`, so a value with a scale is not rounded to a float.
+  as a `Decimal`, so a value with a scale is not rounded to a float. On
+  PostgreSQL, `numeric` is a `Decimal` too; `json` and `jsonb` are the server's
+  text, so a number in one is not rounded; an array and a record are JSON text;
+  a date or time that Python cannot hold, such as `infinity` or a BC date, is
+  the server's text; and any value whose text is longer than 4000 characters,
+  or a `bytea` longer than 4000 bytes, is cut.
 
 ---
 

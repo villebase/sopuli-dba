@@ -54,16 +54,21 @@ The whole arrangement is three parties, and **no party talks to more than two**:
 
 | Party | Talks to | Never talks to |
 |---|---|---|
-| **sopuli-dba** | the vault, and the Oracle database | the Kubernetes API. It has no Kubernetes client. It can log in to the vault with the vault's `kubernetes` auth method, but that login goes to the vault, not to Kubernetes |
+| **sopuli-dba** | the vault, and the Oracle database. With a `kubernetes:` block (section 5), also the Kubernetes API, through `kubectl`, only to annotate an ExternalSecret | a Kubernetes Secret. It never reads or writes one. It can log in to the vault with the vault's `kubernetes` auth method, but that login goes to the vault, not to Kubernetes |
 | **ESO** | the vault, and the Kubernetes API | any database. It has no idea a database exists |
 | **your application** | the Kubernetes Secret, and the database | the vault. It never authenticates to the vault at all |
 
-**Nothing talks to both Kubernetes and the database.** That is the property that
-makes this arrangement worth setting up, rather than an accident of how the tools
-happen to be built:
+**Nothing can reach both a Kubernetes Secret and the database.** That is the
+property that makes this arrangement worth setting up, rather than an accident of
+how the tools happen to be built:
 
 - The credential that lets sopuli change passwords in Oracle never leaves the
   machine or job that runs sopuli. It is not in your cluster.
+- If you use the refresh in section 5, the machine that runs sopuli also has a
+  kubeconfig. It needs `get` and `patch` on the named ExternalSecrets, which
+  cannot read a Secret. But `patch` can change an ExternalSecret's whole spec,
+  such as which vault key it reads and which Secret it writes, so limit the
+  role to those ExternalSecrets (section 5 has the role).
 - The credential that lets ESO read your vault is scoped to reading one path. It
   cannot change a database password, because it has no database access at all.
 - Your application never holds a vault credential. It reads a file or an
@@ -277,9 +282,78 @@ its documentation's business, not this document's.
 **Without a rollover window, this becomes an outage.** If the account's profile
 grants no window, the old password stops working the instant `apply` runs, and
 every pod is broken until ESO refreshes and the pods pick it up. With a
-`refreshInterval` of one hour that is up to an hour of failed logins. Either
-configure a rollover window, or shorten `refreshInterval` drastically and accept
-a short outage on every rotation.
+`refreshInterval` of one hour that is up to an hour of failed logins. Configure
+a rollover window, or have sopuli ask ESO to refresh at once, below.
+
+### Without the wait: ask ESO to refresh
+
+sopuli can remove the hour between T+0 and T+1h. Name the ExternalSecret in the
+application's `kubernetes:` block:
+
+```yaml
+applications:
+  - name: acme
+    accounts: [acme_app_user]
+    secret_template: "acme/{env}/{application}#DB_CREDENTIALS/{account}"
+    kubernetes:
+      context: dev-cluster              # as `kubectl config get-contexts` lists it
+      namespace: acme
+      external_secret: acme-db-credentials
+```
+
+After `creds apply` or `creds rotate` promotes the document, or rolls it back
+with `--source previous`, sopuli runs:
+
+```bash
+kubectl --context=dev-cluster --namespace=acme \
+  annotate externalsecret acme-db-credentials force-sync=<time> --overwrite
+```
+
+kubectl gets your environment without sopuli's own variables, every `SOPULI_*`
+and `VAULT_TOKEN`. `creds rotate` does not ask when its read-back of the vault
+did not show the promoted password: ESO would copy whatever the vault serves.
+
+ESO sees the annotation change and reads `current` at once. The row for T+1h
+then happens within seconds of T+0. Your application still has to pick up the
+new Secret, so an environment variable still needs a restart, and a rollover
+window is still the safe choice.
+
+What this needs:
+
+- `kubectl` in a directory on the `PATH` of the machine that runs sopuli. sopuli
+  never runs a `kubectl` from the current directory, or from a relative `PATH`
+  entry.
+- A kubeconfig with the context named in the block. sopuli never uses the
+  current context.
+- In that context, `get` and `patch` on the named ExternalSecrets. `kubectl
+  annotate` reads the object before it patches it, so `patch` alone is refused.
+  Nothing more: the annotation is a timestamp, and no password passes through
+  `kubectl`. Name the ExternalSecrets in the role, because `patch` could change
+  any part of an ExternalSecret it is allowed:
+
+  ```yaml
+  apiVersion: rbac.authorization.k8s.io/v1
+  kind: Role
+  metadata:
+    name: sopuli-refresh
+    namespace: acme
+  rules:
+    - apiGroups: ["external-secrets.io"]
+      resources: ["externalsecrets"]
+      resourceNames: ["acme-db-credentials"]
+      verbs: ["get", "patch"]
+  ```
+
+- A kubeconfig that logs in without a person. `kubectl`'s input is closed, so a
+  login that asks a question fails. Each call stops after 30 seconds, and after
+  a timeout the other ExternalSecrets on that context are not tried.
+
+A refresh that fails is the warning `SOPULI-W078`, which names the
+ExternalSecret and what `kubectl` said. The run still exits 0: the database and
+the vault are right, and ESO reads the new password at its next
+`refreshInterval`, as it would have without the block. `--dry-run` lists the
+ExternalSecrets it would refresh. A run that promotes nothing refreshes nothing.
+`01-configuration.md` §3 has the rules for the block.
 
 ---
 
@@ -439,6 +513,39 @@ mount name and the path.
   was no Oracle and therefore no rollover window. Section 5 is reasoning about
   how the pieces compose, not a measurement.
 
+### The refresh, run by hand
+
+The refresh in section 5 was run on 2026-11-25 (#1706) against the objects the
+probe leaves up with `--keep`: ESO 2.10.0 on Docker Desktop's cluster, Kubernetes
+v1.36.1, the probe's in-cluster Vault through `kubectl port-forward`, and the
+tier-1 PostgreSQL 16 container as the database. The application had the
+`kubernetes:` block of section 5, with `context: docker-desktop`,
+`namespace: sopuli-test` and `external_secret: acme-db-credentials`.
+
+- Before the run, the ExternalSecret's `refreshInterval` was `1h` and its last
+  refresh was at 20:05:36. `creds rotate` finished at 20:06:30, and ESO's
+  `status.refreshTime` was 20:06:30. The Kubernetes Secret's SHA-256 changed
+  from `27dd5292b527` to `1438595e8251`, the hash of `current` in vault
+  version 3. The row's last two actions were:
+
+  ```
+  vault_promote            promoted `pending` to `current` in v3
+  external_secret_refresh  asked ESO to refresh ExternalSecret sopuli-test/acme-db-credentials on context docker-desktop
+  ```
+
+- A `creds apply` straight after reported `IN_SYNC`, `nothing changed`, and
+  left the `force-sync` annotation as it was.
+- A service account holding the role above, `get` and `patch` on
+  `acme-db-credentials` only, annotated it (`kubectl --as`). With `patch`
+  alone it was refused: `cannot get resource "externalsecrets"`. With the role,
+  it was refused reading the Secret and annotating another ExternalSecret.
+- With `context: no-such-context`, `creds rotate` promoted, exited 0, and
+  printed:
+
+  ```
+  could not ask ESO to refresh ExternalSecret sopuli-test/acme-db-credentials on context no-such-context: kubectl exited 1: error: context "no-such-context" does not exist. ESO reads the vault again at its next refreshInterval
+  ```
+
 ---
 
 ## 8. With OCI Vault as the store
@@ -539,10 +646,11 @@ ESO was not tested.
 
 Said plainly rather than left for you to discover:
 
-- **sopuli has no Kubernetes integration and none is planned for this use case.**
-  Everything above works because both tools use the vault, not because they know
-  about each other. If you want the pods restarted automatically, that is ESO's
-  feature, not this project's.
+- **sopuli never reads or writes a Kubernetes Secret.** Everything above works
+  because both tools use the vault. The one thing sopuli does in Kubernetes is
+  the optional refresh in section 5, which annotates an ExternalSecret. Writing
+  a Secret where there is no ESO is an open question (#1704). If you want the
+  pods restarted automatically, that is ESO's feature, not this project's.
 - **sopuli writes to two of the stores ESO can read:** HashiCorp Vault and OCI
   Vault (section 8). A `file` store is one encrypted file on the tool's own
   machine, for development and CI, and ESO cannot read it.

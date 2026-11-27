@@ -451,5 +451,27 @@ longer password is refused before anything is sent.
 | `sql/postgres/09_supabase_roles_probe.sql` | which roles a Supabase database lets the tool account change, and what supautils refuses |
 | `sql/postgres/10_report_read_probe.py` | what the UC-5 reports can read with the tool account's grants: roles, memberships with their path, and object privileges (§2.5) |
 | `sql/postgres/11_password_set_function_probe.py` | whether a `SECURITY DEFINER` function can tell the tool account which roles have a password, and who may own it (§2.5) |
+| `sql/postgres/12_statement_run_probe.py` | what `sql run` relies on: what a read-only transaction refuses, `dblink_exec()`, two statements in one text, the timeouts, the commit and the row counts (§8) |
 
 The probes are for throwaway servers only: each header says what it creates.
+
+## 8. UC-3 adds no grant
+
+UC-3 (`../use-cases/uc-03-run-statement.md`) runs a statement the operator
+writes. That statement needs whatever privilege it needs, so UC-3 never runs it
+as the tool account. It connects as the run-as role, which the config names in
+`run_as:`. The usual choice is the DBA's personal role.
+
+- UC-3 adds no grant to the tool account, and §2.1 does not change.
+- UC-3 never connects as the tool account, and never as a role that holds its
+  privileges. The tool checks the name from the config at plan time. Before any
+  statement runs, it reads `session_user` and `current_user`, and refuses either
+  when it is the tool account. It also refuses a run-as role that is a member of
+  the tool account, directly or through other roles, from `pg_auth_members`. A
+  superuser role is not counted, because it gains nothing from the tool account
+  ([#1690](../decisions/log.md#1690)).
+- The run-as role needs nothing beyond what its statements need. It reads
+  `pg_control_system()`, which every role may run by default, for the plan
+  fingerprint, and `pg_auth_members`, which every role may read.
+- ADR-001 is unchanged. The tool account still holds `CREATEROLE` and the
+  `ADMIN OPTION` of §2.1, and §3 still lists what it must never hold.

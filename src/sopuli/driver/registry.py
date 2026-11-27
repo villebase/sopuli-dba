@@ -274,8 +274,11 @@ DRIVERS: dict[str, DatabaseDriver] = {
         # with no database date, because PostgreSQL keeps none (#1460); `report
         # privileges`, from the catalogs' ACLs of the database the target
         # connects to, with the cluster's other databases not checked (#1481)
-        # unless another declared target connects to them (#1501).
-        commands=CONNECTING_COMMANDS,
+        # unless another declared target connects to them (#1501). UC-3: `sql
+        # run`, a read declared as a cursor in a read-only transaction and a
+        # write as a prepared statement (#1693), as a run-as role that is not
+        # the service role or a member of it (#1700).
+        commands=CONNECTING_COMMANDS | {"sql.run"},
     ),
     # The module that imports PyMySQL, for the reason the Oracle entry names
     # `session`. `pymysql` is the module the `mysql` extra installs (#1202,

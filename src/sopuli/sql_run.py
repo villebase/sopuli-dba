@@ -85,10 +85,15 @@ class Connection:
     run_as: str
     session: Session | None = None
     error: Error | None = None
-    #: ``(DB_UNIQUE_NAME, CON_NAME)``, read when the session opened.
+    #: The database's identity (:meth:`StatementRunner.database_identity`),
+    #: read when the session opened.
     identity: tuple[str, str] | None = None
     #: The user the database says the session became, read when it opened.
     session_user: str | None = None
+    #: The role its statements run as, where that is not ``session_user``: a
+    #: PostgreSQL login role with a default role. In the plan fingerprint, so
+    #: a changed default role changes it.
+    current_user: str | None = None
     #: The login worked, and a later step failed, such as the identity read.
     #: The session is closed and ``session`` is ``None``.
     logged_in: bool = False
@@ -238,7 +243,10 @@ def _connect(
                 f"target {target.name!r}: this driver cannot run a statement"
             )
         user = session.session_user()
-        refuse_session_user(target, user, as_user, env=env)
+        current = session.current_user()
+        refuse_session_user(
+            target, user, as_user, env=env, current_user=current, member_of=session.member_of
+        )
         identity = session.database_identity() if need_identity else None
     except DriverNotImplementedError as error:
         with suppress(Exception):
@@ -257,7 +265,14 @@ def _connect(
         with suppress(Exception):
             session.close()
         raise
-    return Connection(target, who, session=session, identity=identity, session_user=user)
+    return Connection(
+        target,
+        who,
+        session=session,
+        identity=identity,
+        session_user=user,
+        current_user=None if current == user else current,
+    )
 
 
 def run_read(
@@ -345,6 +360,7 @@ def plan_fingerprint(
                 one.target.target.dsn,
                 one.session_user or one.run_as,
                 *(one.identity or (ABSENT, ABSENT)),
+                role=one.current_user,
             )
             for one in connections
         ],

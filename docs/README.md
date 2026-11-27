@@ -69,7 +69,7 @@ on which Oracle release, and what it showed.
 
 | File | Purpose |
 |---|---|
-| [schemas/sopuli-config-5.4.schema.json](schemas/sopuli-config-5.4.schema.json) | JSON Schema (2020-12) for the config file (P3). Generated from the config layer by `python -m sopuli.config.schema` — never edited by hand |
+| [schemas/sopuli-config-5.5.schema.json](schemas/sopuli-config-5.5.schema.json) | JSON Schema (2020-12) for the config file (P3). Generated from the config layer by `python -m sopuli.config.schema` — never edited by hand |
 | [schemas/sopuli-run-1.108.schema.json](schemas/sopuli-run-1.108.schema.json) | JSON Schema (2020-12) for the `--output json` document — the current one; earlier minors stay published beside it, with the exceptions that `design/03-json-output.md` §8 names, because a build emitting `schema_version: "1.20"` has to be able to fetch what it validates against |
 | [schemas/sopuli-event-1.25.schema.json](schemas/sopuli-event-1.25.schema.json) | JSON Schema for `--output jsonl` events |
 | [schemas/example-creds-check-drift.json](schemas/example-creds-check-drift.json) | Worked example: a scheduled check finding drift in one of two PDBs |
@@ -91,7 +91,7 @@ the run schema. `tests/test_schemas.py` checks this on every push and pull
 request (invariant 12).
 
 To get completion and inline errors while you edit a config, put
-`# yaml-language-server: $schema=./sopuli-config-5.4.schema.json` on the file's
+`# yaml-language-server: $schema=./sopuli-config-5.5.schema.json` on the file's
 first line. [design/01-configuration.md](design/01-configuration.md) §9b says
 why the schema's `$id` is not a URL to paste there.
 
@@ -199,6 +199,8 @@ Where: `00` to `04` are `design/00-principles.md` to `design/04-testing.md`;
 | C15 | 01 | A binding with a secret and no store | decided | caught at plan time | #118 |
 | C16 | 01 | What `--vault-token` takes | decided | refused; `--vault-token-file PATH` instead | #145 |
 | C17 | 01 | P5's built-in confirmation against `01-configuration.md` §9's ratchet rule | decided | §9 governs; P5 is reworded | #294 |
+| C18 | 01 | Should the tool tell Kubernetes about a new password? | decided | it asks ESO to refresh a named ExternalSecret | #1702 |
+| C19 | 01 | Should the tool write one key of an existing Kubernetes Secret, where there is no ESO? | open | | #1704 |
 | P1 | 02 | Default service user: common `C##` or per-PDB local? | decided | common; per-PDB is documented | #615 |
 | P2 | 02 | Grant `SELECT ON SYS.USER$` by default? | decided | no; an optional, probed grant | #86 |
 | P3 | 02 | Does `--force` exist? | decided | yes; it overrides account checks 2–5 and 7 (7 from #1059) | #89 |
@@ -455,9 +457,9 @@ These entries share a setup. The probe is
 
 ### PostgreSQL
 
-These entries are for the PostgreSQL driver, which runs UC-1's commands. The
-probes are in `sql/postgres/`, and the matrix of releases 13 to 18 is the
-`postgres-matrix` profile of `test/compose.yaml`. A major release named here,
+These entries are for the PostgreSQL driver. The probes are in
+`sql/postgres/`, and the matrix of releases 13 to 18 is the `postgres-matrix`
+profile of `test/compose.yaml`. A major release named here,
 such as "from 16", means the one release of it that was measured.
 [measurements.md](measurements.md) names each in full.
 
@@ -569,6 +571,48 @@ such as "from 16", means the one release of it that was measured.
   member's `INHERIT`, and from 16 the grant's `inherit_option`.
   `02-postgres-privileges.md` §2.5 has the details.
   `sql/postgres/10_report_read_probe.py` measures it.
+- `verified` `pg-read-only-transaction` (#1691) — **Which statements does
+  `BEGIN READ ONLY` refuse, for UC-3's reads?**
+  Every write a statement makes in its own database, with SQLSTATE `25006`:
+  DDL, `SELECT … INTO`, `INSERT`, `UPDATE`, `DELETE`, `MERGE` from 15,
+  `nextval()`, `SELECT … FOR UPDATE` and `FOR SHARE`, a data-modifying CTE,
+  and a function that writes. A `STABLE` function that writes is refused
+  with `0A000` before that. A temporary table or sequence can still be
+  written. `dblink_exec()` is not refused: it writes through its own
+  connection, which commits, and the rollback does not undo it. It is the
+  counterpart of Oracle's autonomous transaction (UC-3 §3). Once dblink is
+  installed in the database, any role can call `dblink_exec()`, because
+  `PUBLIC` has `EXECUTE` on it. A role that is not a superuser must give a
+  password in the connection string.
+  `sql/postgres/12_statement_run_probe.py` measures it.
+- `verified` `psycopg-multiple-statements` (#1691) — **Does psycopg refuse a
+  text that holds two statements?**
+  Not by default. With psycopg 3.3.6, `execute(text)` and `execute(text, ())`
+  run both statements of a text that holds two. `execute(text, prepare=True)`
+  is refused by the server with `42601`, "cannot insert multiple commands into
+  a prepared statement". The reason is the protocol, which the probe does not
+  observe: psycopg's documentation, [*Multiple statements in the same
+  query*](https://www.psycopg.org/psycopg3/docs/basic/from_pg2.html#multiple-statements-in-the-same-query),
+  says a query with parameters is bound on the server and so holds one
+  statement, and that a query with none has no such limit. A prepared
+  statement is bound on the server too. `prepare=True` reads no `%` as a
+  placeholder; an empty tuple does, and refuses `LIKE 'a%'` in the client.
+  `sql/postgres/12_statement_run_probe.py` measures it.
+- `verified` `pg-statement-timeout` (#1691) — **What does a timeout leave
+  behind, and does it bound a `COMMIT`?**
+  `statement_timeout` cancels a statement with `57014`, and `lock_timeout`
+  cancels a wait on a row lock with `55P03`. The transaction is then failed,
+  and after a `ROLLBACK` the session runs the next statement: the connection
+  is not lost. No `statement_timeout`, local or the session's, bounds a
+  `COMMIT`, even one that runs a deferred trigger that sleeps.
+  `sql/postgres/12_statement_run_probe.py` measures it.
+- `verified` `pg-write-rowcount` (#1691) — **What does psycopg's `rowcount`
+  count after a write?**
+  The rows a statement matched, not the rows it changed: an `UPDATE` that
+  sets the values the rows hold counts each of them. `INSERT … ON CONFLICT DO
+  NOTHING` counts only the rows it inserted, and `MERGE` each row it updated
+  or inserted. `UPDATE … RETURNING` counts its rows and also returns them.
+  `sql/postgres/12_statement_run_probe.py` measures it.
 - `unverified` `psycopg-libpq-macos` (#1032) — **Which libpq does psycopg's
   binary wheel bundle on macOS?**
   Not run: there is no macOS host. Linux arm64 is not run either. The libpq 16
@@ -1267,7 +1311,7 @@ No 1Password store exists. These answer #1193, whether one could. The probe is
 ## Next use cases
 
 UC-5 has a document and is built. UC-3 has a document and is built on
-Oracle. The others are not specified. Each has
+Oracle and PostgreSQL. The others are not specified. Each has
 a number so that work deferred from a
 specified use case can name where it goes. A number does not change once it is
 written down, because documents, issues and pull requests cite it. A new use case
@@ -1277,13 +1321,15 @@ takes the next free number.
 
 Run one statement against a selected set of targets and report what each one
 returned: "run this against all twenty-one PDBs and tell me what each one said".
-[UC-3](use-cases/uc-03-run-statement.md) specifies it, on Oracle. **UC-3 on Oracle is built,
-reads (#1662) and writes (#1663).** It uses the run document's per-target results and the
+[UC-3](use-cases/uc-03-run-statement.md) specifies it, on Oracle and PostgreSQL. **UC-3 is
+built on Oracle, reads (#1662) and writes (#1663), and on PostgreSQL (#1689).** It uses the
+run document's per-target results and the
 same selectors and safety ratchets. It takes no run lock, because it writes no
 vault document.
 
 A verb that runs any SQL needs whatever privilege that SQL needs, and ADR-001
-rests on the service account holding `ALTER USER` and nothing else. So UC-3
+rests on the service account holding `ALTER USER` and nothing else, or on PostgreSQL the
+grants of [`02-postgres-privileges.md`](design/02-postgres-privileges.md) §2.1. So UC-3
 connects as a run-as account, set in `run_as:`, and never as the service
 account. The usual choice is the DBA's personal account, set under `defaults:`. A statement may change data, with
 `--write`, a row guard and a plan fingerprint. `--dry-run` runs the statement on

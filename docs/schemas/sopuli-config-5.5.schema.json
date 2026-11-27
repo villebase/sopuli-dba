@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/villebase/sopuli-dba/schemas/sopuli-config-5.4.schema.json",
+  "$id": "https://github.com/villebase/sopuli-dba/schemas/sopuli-config-5.5.schema.json",
   "title": "sopuli-dba configuration",
   "type": "object",
   "description": "A sopuli-dba configuration file (docs/design/01-configuration.md).\n\nStructural only, and deliberately so. It describes key names, types, closed sets, required keys, and rejects unknown keys -- which is what makes editor completion and P3's \"a typo in a credential tool must never be silently ignored\" work while somebody is typing.\n\nThe rules it does not express are enforced by `sopuli config validate`, whose errors name the offending key: the inline form and `applications:` are mutually exclusive; `secret` and `secret_template` are mutually exclusive; two accounts may not resolve to one secret ref; `require:` may not exceed `length:` or ask for specials a charset does not have; `allow:` belongs to `charset: custom`; an `auth:` block may carry only the keys its own `method:` takes; every vault, policy, group, profile and target name written anywhere must be declared in the section that declares it; a `for_each` must use one inner dimension throughout; a profile may not set a key that would change scope; a `reports.accounts` rule needs `login:`, `settings:`, `oracle.profile` or `postgresql.valid_until`, names each account once across the rules, and may not give an application account an `oracle.profile`; and a `reports.oracle.profiles` name appears once. A file this schema accepts may still be refused there.",
@@ -1502,6 +1502,9 @@
         "oracle": {
           "$ref": "#/$defs/oracle_options"
         },
+        "kubernetes": {
+          "$ref": "#/$defs/kubernetes_options"
+        },
         "overrides": {
           "$ref": "#/$defs/overrides"
         }
@@ -1567,6 +1570,29 @@
         }
       }
     },
+    "kubernetes_options": {
+      "type": "object",
+      "description": "The ExternalSecret that creds apply and creds rotate ask External Secrets Operator to refresh after a promotion (C18). Each value may hold §7's tokens. Once the entry and its matching overrides set any key, all three are required.",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "context": {
+          "type": "string",
+          "minLength": 1,
+          "description": "A kubeconfig context, as kubectl lists it."
+        },
+        "namespace": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The ExternalSecret's namespace."
+        },
+        "external_secret": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The ExternalSecret's name."
+        }
+      }
+    },
     "overrides": {
       "type": "array",
       "items": {
@@ -1608,6 +1634,9 @@
         },
         "oracle": {
           "$ref": "#/$defs/oracle_options"
+        },
+        "kubernetes": {
+          "$ref": "#/$defs/kubernetes_options"
         }
       }
     }

@@ -21,9 +21,12 @@ with a passed ``VALID UNTIL`` cleared to ``infinity`` in it. Those two
 anything, and each checks
 :func:`~sopuli.driver.postgres.scope.require_read_write` first. It also resolves
 a `role:` predicate for `account list` (:meth:`PostgresSession.accounts_matching`).
+It runs one operator's statement for `sql run` in a guarded transaction
+(:meth:`PostgresSession.run_statement`, UC-3).
 The registry entry lists the commands it is written for: UC-1's, UC-2's
 `account list`, `reset-password`, `suspend` and `expire-password`, and UC-5's
-`report accounts`, `report history` and `report privileges`. What
+`report accounts`, `report history` and `report privileges`, and UC-3's
+`sql run`. What
 PostgreSQL has no counterpart for, such as a rollover window, a profile, or an
 expired password a role must change at login, is refused by capability, exit 5.
 :meth:`PostgresSession.apply_attributes` is never reached, because a
@@ -33,6 +36,7 @@ raises :class:`~sopuli.driver.protocol.InternalFaultError`.
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 import time
@@ -43,13 +47,20 @@ from typing import Any, NoReturn
 
 import psycopg
 from psycopg import pq, sql
+from psycopg.types.datetime import DateLoader, TimestampLoader, TimestamptzLoader
+from psycopg.types.string import TextLoader
 
 from sopuli.config.model import ExpandedTarget, Runtime
 from sopuli.driver.grants import GrantSurvey
 from sopuli.driver.postgres import roles
 from sopuli.driver.postgres.client import REQUIRE_AUTH_FROM, client_lines, libpq_release
 from sopuli.driver.postgres.connection import connect_arguments
-from sopuli.driver.postgres.errors import INSUFFICIENT_PRIVILEGE, from_error
+from sopuli.driver.postgres.errors import (
+    CONNECTION_FAILURE,
+    INSUFFICIENT_PRIVILEGE,
+    for_statement,
+    from_error,
+)
 from sopuli.driver.postgres.grants import survey_grants
 from sopuli.driver.postgres.limits import LIMIT
 from sopuli.driver.postgres.password import (
@@ -95,6 +106,7 @@ from sopuli.driver.protocol import (
     InternalFaultError,
     PrivilegeAudit,
     Scope,
+    StatementResult,
     Timeouts,
     UnsupportedCapabilityError,
     UserState,
@@ -106,6 +118,10 @@ from sopuli.driver.survey import SurveyedAccount
 from sopuli.output.debug import logger
 from sopuli.passwords import ByteLimit
 from sopuli.secrets import Secret
+from sopuli.sql.guard import RowGuard
+from sopuli.sql.statement import Statement as RunStatement
+from sopuli.sql.statement import StatementKind
+from sopuli.sql.values import JsonValue, to_json
 
 LOG = logger("postgres")
 
@@ -142,6 +158,10 @@ class PostgresSession(ClosesConnection):
     _scope: Scope | None = field(default=None, init=False, repr=False)
     #: Why :meth:`cluster_identity` found no answer, or ``None``.
     identity_caveat: str | None = field(default=None, init=False)
+    #: `sql run`'s: the role the login became, read once.
+    _session_user: str | None = field(default=None, init=False, repr=False)
+    #: `sql run`'s: a statement left the connection closed.
+    _connection_lost: bool = field(default=False, init=False, repr=False)
     #: The words for two targets that are one cluster
     #: (:class:`~sopuli.driver.clusters.ClusterIdentity`). Not fields.
     identity_kind = "PostgreSQL cluster"
@@ -629,6 +649,297 @@ class PostgresSession(ClosesConnection):
         refuses by capability for any other caller."""
         self.require_rollover(account)
         raise UnsupportedCapabilityError(PASSWORD_ROLLOVER, target=self.target.name)
+
+    # ------------------------------------------------------------ sql run ---
+
+    @property
+    def connection_lost(self) -> bool:
+        """A statement left the connection closed. A timeout does not: the
+        server cancels the statement and the session stays usable."""
+        return self._connection_lost
+
+    def session_user(self) -> str:
+        """The role this session logged in as, read once and cached."""
+        if self._session_user is None:
+            with self._cursor() as cursor:
+                cursor.execute("select session_user")
+                self._session_user = str(cursor.fetchone()[0])
+        return self._session_user
+
+    def current_user(self) -> str:
+        """The role statements run as. It differs from :meth:`session_user`
+        where the login role has a default ``role`` (``ALTER ROLE … SET
+        role``)."""
+        with self._cursor() as cursor:
+            cursor.execute("select current_user")
+            return str(cursor.fetchone()[0])
+
+    def member_of(self, account: str) -> bool:
+        """Whether the login role, or the role its statements run as, is a
+        member of ``account``, directly or through other roles, by ``upper()``
+        (decision A of #1690). Every membership counts, whatever its
+        ``INHERIT`` or ``SET`` option: a member without ``INHERIT`` can still
+        take the role with ``set_config('role', …)``. A superuser is not
+        counted, because it gains nothing from ``account``. But a superuser
+        login whose default role is a member is refused, because its
+        statements run as that member. ``pg_auth_members`` is readable by
+        every role."""
+        with self._cursor() as cursor:
+            cursor.execute(MEMBERSHIP, (account,))
+            return bool(cursor.fetchone()[0])
+
+    def database_identity(self) -> tuple[str, str]:
+        """``(system_identifier, current_database())``: the cluster and the
+        database this session reached. Any role can read both by default
+        (``12_statement_run_probe.py``). A site that revoked
+        ``pg_control_system()`` is refused with a hint that names it: the plan
+        fingerprint needs the cluster's identity, and nothing else names it."""
+        try:
+            with self._cursor() as cursor:
+                cursor.execute(STATEMENT_IDENTITY)
+                row = cursor.fetchone()
+        except DriverError as error:
+            if error.code == INSUFFICIENT_PRIVILEGE:
+                error.hint = (
+                    "the run-as account may not run pg_control_system(), which every "
+                    "role may by default. The plan fingerprint reads the cluster's "
+                    "system_identifier from it. Grant EXECUTE on it to the run-as account"
+                )
+            raise
+        return str(row[0]), str(row[1])
+
+    def run_statement(
+        self,
+        statement: RunStatement,
+        *,
+        guard: RowGuard | None,
+        commit: bool,
+        max_rows: int,
+        timeout_ms: int,
+    ) -> StatementResult:
+        """Run one statement in a transaction that ends the way UC-3 says.
+
+        A read runs in ``BEGIN READ ONLY``, so the server refuses a write that
+        got past the keyword check, and is rolled back. A write is committed
+        only when ``commit`` is true, the guard passes and a row matched; any
+        other outcome rolls back. ``dblink_exec()`` and the like write through
+        another connection, which neither covers (UC-3 §3).
+
+        The statement is sent as written, with no bind, so that the server
+        refuses a text that holds two statements with ``42601``. psycopg's
+        plain ``execute`` would run them all (``12_statement_run_probe.py``).
+        A read goes through a server-side cursor, so only the rows up to
+        ``max_rows`` cross the network, and ``DECLARE`` takes one query. A
+        write is a prepared statement.
+
+        ``statement_timeout`` is ``timeout_ms`` for this transaction only, or
+        the one the role or the session already has where that is lower; ``0``
+        means no bound. It covers a lock wait too, so a write that waits on an
+        application's row lock is cancelled with ``57014``, and the session
+        stays usable. No timeout bounds the ``COMMIT``.
+
+        A ``COMMIT`` the server refused with a SQLSTATE was rolled back. Only
+        one whose connection was lost has ``commit_failed`` set, because it
+        may still have taken effect. A transaction an earlier caller left open
+        is rolled back first, so the read-only transaction is a new one.
+        ``json`` and ``jsonb`` are read as the server's text, so a number in
+        one is not rounded to a float.
+        """
+        if commit and guard is None:
+            raise ValueError("run_statement commits only with a row guard")
+        self._refuse_if_lost()
+        read = statement.kind is StatementKind.READ
+        begun = committed = committing = False
+        try:
+            if self.connection.info.transaction_status != pq.TransactionStatus.IDLE:
+                self.connection.execute("rollback")
+            with self.connection.cursor() as control:
+                control.execute("begin read only" if read else "begin")
+                begun = True
+                bound = _bound(timeout_ms, _session_timeout_ms(control))
+                control.execute(f"set local statement_timeout = {bound}")
+                if not read:
+                    control.execute(statement.text, prepare=True)
+                    count = control.rowcount
+                    passed = None if guard is None else guard.passes(count)
+                    if commit and passed is not False and count > 0:
+                        committing = True
+                        control.execute("commit")
+                        committed = True
+                    return StatementResult((), (), count, False, committed, passed)
+            with self.connection.cursor(name="sopuli_sql_run") as rows:
+                for name, loader in _READ_LOADERS:
+                    rows.adapters.register_loader(name, loader)
+                rows.execute(statement.text)
+                return _read_result(rows, max_rows)
+        except psycopg.Error as error:
+            self._connection_lost = bool(self.connection.closed)
+            unanswered = error.sqlstate is None
+            if unanswered and not committing and not isinstance(error, psycopg.OperationalError):
+                raise
+            raised = for_statement(from_error(error), read=read).as_error()
+            # A COMMIT the server answered with a SQLSTATE was rolled back. One
+            # it did not answer, or whose connection was lost, may have taken effect.
+            raised.commit_failed = committing and (unanswered or self._connection_lost)
+            raise raised from error
+        finally:
+            if begun and not committed and not self.connection.closed:
+                with suppress(psycopg.Error):
+                    self.connection.execute("rollback")
+
+    def _refuse_if_lost(self) -> None:
+        """Refuse to send on a connection a statement left closed, or on one
+        where psycopg would not prepare a write. With ``prepare_threshold``
+        ``None``, psycopg ignores ``prepare=True`` and sends the text with the
+        simple protocol, which runs every statement in it."""
+        if self.connection is None:
+            raise InternalFaultError.closed_session(self.target.name)
+        if self.connection.prepare_threshold is None:
+            raise InternalFaultError(
+                f'the session to target "{self.target.name}" has prepared statements turned '
+                "off, so the server would run every statement in a write's text",
+                hint="this is a fault in sopuli: `sql run` needs psycopg to prepare a write",
+            )
+        if self._connection_lost or self.connection.closed:
+            raise DriverError(
+                f"{CONNECTION_FAILURE}: the connection was closed under an earlier statement",
+                hint="close this session and open another",
+                code=CONNECTION_FAILURE,
+            )
+
+
+#: Whether the login role or the current role, where it is not a superuser,
+#: is a member of the role named by the parameter, through any chain of
+#: memberships (#1690). The name is a role name from the config, never a
+#: password, so it is bound.
+MEMBERSHIP = """
+with recursive granted(start, roleid) as (
+    select r.rolname, m.roleid
+      from pg_auth_members m
+      join pg_roles r on r.oid = m.member
+     where r.rolname in (session_user, current_user)
+    union
+    select g.start, m.roleid
+      from pg_auth_members m
+      join granted g on m.member = g.roleid
+)
+select exists (select 1
+                 from granted g
+                 join pg_roles s on s.rolname = g.start
+                 join pg_roles r on r.oid = g.roleid
+                where not s.rolsuper
+                  and upper(r.rolname) = upper(%s))
+"""
+
+#: What `sql run` reads to tell one database from another (UC-3 §4).
+STATEMENT_IDENTITY = "select system_identifier::text, current_database() from pg_control_system()"
+
+
+def _session_timeout_ms(cursor: Any) -> int:
+    """The ``statement_timeout`` in force before `sql run` sets one, in
+    milliseconds: the role's, the database's or the session's. ``0`` is none."""
+    cursor.execute("select setting::bigint from pg_settings where name = 'statement_timeout'")
+    return int(cursor.fetchone()[0])
+
+
+def _bound(requested_ms: int, existing_ms: int) -> int:
+    """The lower of two timeouts, where ``0`` means no bound."""
+    if requested_ms == 0 or existing_ms == 0:
+        return max(requested_ms, existing_ms)
+    return min(requested_ms, existing_ms)
+
+
+#: The longest text or ``bytea`` value `sql run` returns, in characters or
+#: bytes, as Oracle's LOB limit. A longer one is cut.
+VALUE_LIMIT = 4000
+
+
+def _plain(value: Any) -> Any:
+    """A JSON value or array, with every scalar in it in JSON form."""
+    if isinstance(value, dict):
+        return {str(key): _plain(item) for key, item in value.items()}
+    if isinstance(value, list | tuple):
+        return [_plain(item) for item in value]
+    return to_json(value)
+
+
+def _cell(value: Any) -> tuple[JsonValue, bool]:
+    """One fetched value in JSON form, and whether it was cut to get there.
+
+    An array and a record come back as JSON text; ``json`` and ``jsonb``
+    arrive as text already. Any other type is
+    :func:`~sopuli.sql.values.to_json`'s: ``uuid``, ``inet`` and a range
+    become their text form. A ``bytea`` longer than :data:`VALUE_LIMIT` bytes
+    is cut before it becomes hex, as Oracle's ``RAW`` LOB is, and any text
+    form longer than :data:`VALUE_LIMIT` characters is cut.
+    """
+    if isinstance(value, dict | list | tuple):
+        value = json.dumps(_plain(value), ensure_ascii=False)
+    if isinstance(value, bytes) and len(value) > VALUE_LIMIT:
+        return to_json(value[:VALUE_LIMIT]), True
+    converted = to_json(value)
+    if isinstance(converted, str) and len(converted) > VALUE_LIMIT:
+        return converted[:VALUE_LIMIT], True
+    return converted, False
+
+
+class _DateOrText(DateLoader):
+    """A ``date``, or the server's text where no Python date holds it:
+    ``infinity``, ``-infinity``, a BC date or a year past 9999. psycopg
+    raises a ``DataError`` with no SQLSTATE for those."""
+
+    def load(self, data: Any) -> Any:
+        try:
+            return super().load(data)
+        except psycopg.DataError:
+            return bytes(data).decode()
+
+
+class _TimestampOrText(TimestampLoader):
+    """A ``timestamp``, or the server's text, as :class:`_DateOrText`."""
+
+    def load(self, data: Any) -> Any:
+        try:
+            return super().load(data)
+        except psycopg.DataError:
+            return bytes(data).decode()
+
+
+class _TimestamptzOrText(TimestamptzLoader):
+    """A ``timestamptz``, or the server's text, as :class:`_DateOrText`. A
+    role's ``VALID UNTIL 'infinity'``, which `account reset-password` sets, is
+    one."""
+
+    def load(self, data: Any) -> Any:
+        try:
+            return super().load(data)
+        except psycopg.DataError:
+            return bytes(data).decode()
+
+
+#: The loaders a read's cursor uses in place of psycopg's: JSON as the
+#: server's text, so a number in it is not rounded to a float, and dates
+#: and times that fall back to the server's text where Python has no value.
+_READ_LOADERS: tuple[tuple[str, type], ...] = (
+    ("json", TextLoader),
+    ("jsonb", TextLoader),
+    ("date", _DateOrText),
+    ("timestamp", _TimestampOrText),
+    ("timestamptz", _TimestamptzOrText),
+)
+
+
+def _read_result(cursor: Any, max_rows: int) -> StatementResult:
+    """The rows of a query, at most ``max_rows`` of them."""
+    columns = tuple(column.name for column in cursor.description)
+    fetched = cursor.fetchmany(max_rows + 1)
+    truncated = len(fetched) > max_rows
+    rows: list[tuple[JsonValue, ...]] = []
+    for row in fetched[:max_rows]:
+        cells = [_cell(value) for value in row]
+        truncated = truncated or any(cut for _, cut in cells)
+        rows.append(tuple(value for value, _ in cells))
+    return StatementResult(columns, tuple(rows), len(rows), truncated, False, None)
 
 
 @dataclass(frozen=True)

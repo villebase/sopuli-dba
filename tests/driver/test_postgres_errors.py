@@ -250,3 +250,51 @@ def test_no_connect_on_the_database_has_a_connect_hint() -> None:
     assert diagnosis.code == "42501"
     assert "GRANT CONNECT ON DATABASE" in str(diagnosis.hint)
     assert "statement" not in str(diagnosis.hint)
+
+
+# `sql run`'s hints (#1693).
+
+
+@pytest.mark.parametrize(
+    ("code", "words"),
+    [
+        ("25006", "cannot run one that writes"),
+        ("42601", "declared as a cursor"),
+        ("0A000", "WITH query that writes"),
+    ],
+)
+def test_a_refused_read_gets_a_hint_for_a_read(code: str, words: str) -> None:
+    from sopuli.driver.postgres.errors import for_statement
+
+    found = for_statement(classify(code, "server text"), read=True)
+    assert found.code == code
+    assert found.message == "server text"
+    assert words in (found.hint or "")
+    # `--write` refuses a SELECT or WITH, so it is no way out.
+    assert "--write" not in (found.hint or "")
+
+
+def test_a_read_only_refusal_of_a_write_keeps_the_standby_hint() -> None:
+    from sopuli.driver.postgres.errors import for_statement
+
+    shared = classify("25006", "cannot execute UPDATE")
+    assert for_statement(shared, read=False) == shared
+
+
+@pytest.mark.parametrize(
+    ("code", "word"),
+    [("57014", "lock"), ("55P03", "lock_timeout"), ("42501", "run-as"), ("42601", "Two")],
+)
+def test_statement_hints(code: str, word: str) -> None:
+    from sopuli.driver.postgres.errors import for_statement
+
+    found = for_statement(classify(code, "server text"), read=False)
+    assert word in (found.hint or "")
+    assert found.message == "server text"
+
+
+def test_a_code_with_no_statement_hint_is_unchanged() -> None:
+    from sopuli.driver.postgres.errors import for_statement
+
+    shared = classify("23505", "duplicate key")
+    assert for_statement(shared, read=False) == shared

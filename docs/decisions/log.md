@@ -6867,7 +6867,8 @@ the register.
     `CLIENT.FOUND_ROWS`. Built in #1716.
   - Q3: a write that `EXPLAIN` shows touches a non-transactional table is
     refused before any statement runs, and a rollback that warns `1196`
-    reports the target `ERROR` with `outcome_unknown: true`. Built in #1717.
+    reports the target `ERROR` with `outcome_unknown: true`. #1717 builds it,
+    after Q1.
   - Q4: the MySQL and MariaDB dialect refuses `INTO OUTFILE` and `INTO
     DUMPFILE`. Built in #1715.
 - **Why:** Q1, as #1690: a statement would run with the service account's

@@ -275,18 +275,6 @@ def test_a_mysql_account_granted_the_service_account_is_a_member(
     suffix = uuid.uuid4().hex[:8]
     service, dba, middle = f"acme_svc_{suffix}", f"dba_{suffix}", f"r_{suffix}"
     password = uuid.uuid4().hex
-    with live_mysql.connect() as root, root.cursor() as cursor:
-        for name in (service, dba):
-            cursor.execute("create user %s@'%%' identified by %s", (name, password))
-        cursor.execute("create role %s@'%%'", (middle,))
-        if grant == "direct":
-            cursor.execute("grant %s@'%%' to %s@'%%'", (service, dba))
-        elif grant == "default":
-            cursor.execute("grant %s@'%%' to %s@'%%'", (service, dba))
-            cursor.execute("set default role all to %s@'%%'", (dba,))
-        elif grant == "nested":
-            cursor.execute("grant %s@'%%' to %s@'%%'", (service, middle))
-            cursor.execute("grant %s@'%%' to %s@'%%'", (middle, dba))
     target = ExpandedTarget(
         target=Target(
             name="tier1-mysql",
@@ -297,14 +285,28 @@ def test_a_mysql_account_granted_the_service_account_is_a_member(
     )
     from sopuli.driver.mysql.session import MysqlDriver
 
-    session = MysqlDriver(correlation_id="sqlrun").connect(
-        target, Credential(username=dba, secret=Secret(password))
-    )
+    session = None
     try:
+        with live_mysql.connect() as root, root.cursor() as cursor:
+            for name in (service, dba):
+                cursor.execute("create user %s@'%%' identified by %s", (name, password))
+            cursor.execute("create role %s@'%%'", (middle,))
+            if grant == "direct":
+                cursor.execute("grant %s@'%%' to %s@'%%'", (service, dba))
+            elif grant == "default":
+                cursor.execute("grant %s@'%%' to %s@'%%'", (service, dba))
+                cursor.execute("set default role all to %s@'%%'", (dba,))
+            elif grant == "nested":
+                cursor.execute("grant %s@'%%' to %s@'%%'", (service, middle))
+                cursor.execute("grant %s@'%%' to %s@'%%'", (middle, dba))
+        session = MysqlDriver(correlation_id="sqlrun").connect(
+            target, Credential(username=dba, secret=Secret(password))
+        )
         assert session.member_of(service.upper()) is (grant != "none")
         assert session.member_of("acme_other") is False
     finally:
-        session.close()
+        if session is not None:
+            session.close()
         with live_mysql.connect() as root, root.cursor() as cursor:
             for name in (dba, middle, service):
                 with suppress(pymysql.Error):

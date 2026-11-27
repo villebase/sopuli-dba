@@ -263,3 +263,49 @@ def test_the_session_keeps_its_own_bounds_afterwards(run_as: RunAs) -> None:
         timeout_ms=2000,
     )
     assert bounds() == before
+
+
+@pytest.mark.parametrize("grant", ["none", "direct", "default", "nested"])
+def test_a_mysql_account_granted_the_service_account_is_a_member(
+    live_mysql: Any, grant: str
+) -> None:
+    """#1713 Q1 A: the run-as account holds the service account as a role,
+    active or not, directly or through another role. The check reads it as
+    the run-as account, with no grant of its own beyond the role's."""
+    suffix = uuid.uuid4().hex[:8]
+    service, dba, middle = f"acme_svc_{suffix}", f"dba_{suffix}", f"r_{suffix}"
+    password = uuid.uuid4().hex
+    with live_mysql.connect() as root, root.cursor() as cursor:
+        for name in (service, dba):
+            cursor.execute("create user %s@'%%' identified by %s", (name, password))
+        cursor.execute("create role %s@'%%'", (middle,))
+        if grant == "direct":
+            cursor.execute("grant %s@'%%' to %s@'%%'", (service, dba))
+        elif grant == "default":
+            cursor.execute("grant %s@'%%' to %s@'%%'", (service, dba))
+            cursor.execute("set default role all to %s@'%%'", (dba,))
+        elif grant == "nested":
+            cursor.execute("grant %s@'%%' to %s@'%%'", (service, middle))
+            cursor.execute("grant %s@'%%' to %s@'%%'", (middle, dba))
+    target = ExpandedTarget(
+        target=Target(
+            name="tier1-mysql",
+            type="mysql",
+            dsn=live_mysql.dsn,
+            mysql=TargetMysql(ssl_mode="REQUIRED"),
+        )
+    )
+    from sopuli.driver.mysql.session import MysqlDriver
+
+    session = MysqlDriver(correlation_id="sqlrun").connect(
+        target, Credential(username=dba, secret=Secret(password))
+    )
+    try:
+        assert session.member_of(service.upper()) is (grant != "none")
+        assert session.member_of("acme_other") is False
+    finally:
+        session.close()
+        with live_mysql.connect() as root, root.cursor() as cursor:
+            for name in (dba, middle, service):
+                with suppress(pymysql.Error):
+                    cursor.execute("drop user %s@'%%'", (name,))

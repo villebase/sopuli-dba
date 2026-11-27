@@ -17,7 +17,7 @@ pymysql = pytest.importorskip("pymysql")
 
 from sopuli.config.model import ExpandedTarget, Target  # noqa: E402
 from sopuli.driver.mariadb.session import MariadbSession  # noqa: E402
-from sopuli.driver.mysql.session import MysqlSession  # noqa: E402
+from sopuli.driver.mysql.session import APPLICABLE_ROLES, MysqlSession  # noqa: E402
 from sopuli.driver.mysql_family.accounts import CURRENT_USER  # noqa: E402
 from sopuli.driver.mysql_family.connection import UTC_SESSION  # noqa: E402
 from sopuli.driver.mysql_family.statement_run import (  # noqa: E402
@@ -73,6 +73,8 @@ class _Cursor:
             self._rows = [connection.identity]
         elif sql == CURRENT_USER:
             self._rows = [(connection.account,)]
+        elif sql == APPLICABLE_ROLES:
+            self._rows = list(connection.roles)
         elif sql in (READ.text,):
             if connection.columns:
                 self.description = tuple((name,) for name in connection.columns)
@@ -85,6 +87,9 @@ class _Cursor:
 
     def fetchmany(self, size: int) -> list[tuple[Any, ...]]:
         return self._rows[:size]
+
+    def fetchall(self) -> list[tuple[Any, ...]]:
+        return list(self._rows)
 
     def close(self) -> None:
         """An unbuffered cursor reads the rest of its result here."""
@@ -106,6 +111,7 @@ class _Connection:
         self.rowcount = 1
         self.identity: tuple[Any, ...] = ("uuid-1", "acme")
         self.account = "dba_alpha@%"
+        self.roles: list[tuple[str]] = []
         self.drained = False
         self.closed = False
         #: PyMySQL's unbuffered result in flight, or ``None``.
@@ -556,7 +562,21 @@ def test_the_identity_is_the_server_and_its_default_database(build: Any, query: 
     assert connection.sent == [query]
 
 
-def test_no_account_is_held_as_a_role_yet() -> None:
-    session, connection = _mysql()
+def test_a_mariadb_account_is_never_held_as_a_role() -> None:
+    session, connection = _mariadb()
     assert session.member_of("sopuli_svc") is False
     assert connection.sent == []
+
+
+@pytest.mark.parametrize(
+    ("roles", "held"),
+    [([], False), ([("acme_reader",)], False), ([("r1",), ("SOPULI_SVC",)], True)],
+    ids=["none", "another", "nested"],
+)
+def test_a_mysql_account_held_as_a_role_is_found_by_upper(
+    roles: list[tuple[str]], held: bool
+) -> None:
+    session, connection = _mysql()
+    connection.roles = roles
+    assert session.member_of("sopuli_svc") is held
+    assert connection.sent == [APPLICABLE_ROLES]

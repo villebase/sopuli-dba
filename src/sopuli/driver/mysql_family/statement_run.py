@@ -292,8 +292,10 @@ class StatementRunning:
         return self._account()
 
     def member_of(self, account: str) -> bool:
-        """Whether the session's account holds ``account`` as a role. Not read
-        yet: #1717 reads it on MySQL. A MariaDB role is never an account."""
+        """Whether the session's account holds ``account`` as a role. ``False``
+        here, which is MariaDB's answer: a MariaDB role is never an account,
+        so the service account cannot be granted (``1064``, probe 18). The
+        MySQL session reads it."""
         return False
 
     def database_identity(self) -> tuple[str, str]:

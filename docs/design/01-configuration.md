@@ -1726,7 +1726,9 @@ compare, and a `run_as:` that names a user is allowed
 (`../use-cases/uc-03-run-statement.md` §2). On PostgreSQL the session is
 refused too where the run-as role starts as the service role, or is a member
 of it, directly or through other roles. A superuser is not counted as a member
-([#1690](../decisions/log.md#1690)).
+([#1690](../decisions/log.md#1690)). On MySQL the session is refused where the
+run-as account is granted the service account as a role, directly or through
+other roles, active or not ([#1713](../decisions/log.md#1713)).
 
 ### `oracle:` on a target — assertions, not settings
 

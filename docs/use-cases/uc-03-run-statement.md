@@ -159,6 +159,16 @@ others.
    `pg_auth_members`. On Oracle one user is never granted to another, so
    neither read applies ([#1690](../decisions/log.md#1690)).
 
+   On MySQL a role is an account, so the service account can be granted to
+   the run-as account, and a default role gives a statement its privileges at
+   login. The tool reads `information_schema.APPLICABLE_ROLES`, which any
+   account may read for itself, and refuses the run the same way when the
+   service account's user name is among the roles, directly or through other
+   roles, active or not. A `GRANT PROXY` is not refused: a password login does
+   not become the proxied account, and a login that does is refused by its
+   name. On MariaDB a role is never an account, so the read does not apply
+   ([#1713](../decisions/log.md#1713), Q1).
+
    There is a gap here, and it is accepted. When `admin:` is `external`, the
    config holds no service-account name, so the session check has nothing to
    compare and does not run. The tool never opens a connection with `admin:` to

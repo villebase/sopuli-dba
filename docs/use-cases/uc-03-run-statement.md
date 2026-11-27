@@ -22,7 +22,10 @@ The parts were built in this order, each by its own issue:
 | `sql run` on PostgreSQL | #1694, built |
 | MySQL and MariaDB: decisions | #1713, decided |
 | The statement check's MySQL and MariaDB dialect | #1715, built (§3) |
-| The MySQL and MariaDB runner, its checks, and `sql run` on them | #1714, #1716, #1717, #1718, not built |
+| What MySQL and MariaDB do, measured | #1714, built. `13_statement_run_probe.py`, `18_statement_run_probe.py` |
+| The MySQL and MariaDB runner | #1716, built. `StatementRunning` in `src/sopuli/driver/mysql_family/statement_run.py` |
+| The refusal of a MySQL run-as account that holds the service account as a role, and of a write to a table without transactions | #1717, built (§2, §4) |
+| `sql run` on MySQL and MariaDB | #1718, not built |
 
 `sql run` runs on Oracle and PostgreSQL. A target of another product is
 refused at plan time by `require_command`, with `SOPULI-20006`, never by a
@@ -390,6 +393,29 @@ before any statement runs.
 
 A write that affects 0 rows is rolled back, and reports `changed: false` (§6).
 
+### A table without transactions
+
+On MySQL and MariaDB a table's engine may have no transactions: MyISAM, Aria,
+MEMORY and others. A rollback does not undo a change to such a table, so a dry
+run, or a write its guard refuses, would leave the rows changed. So a write,
+dry or real, is refused before any statement runs on any target where it names
+such a table that the run-as account can see. It names one where it writes
+`schema.name`, with backticks or double quotes or neither, where it writes the
+name alone and the session's default database holds it, or where `EXPLAIN`
+names it; on MySQL `EXPLAIN` names a view's base table. The refusal exits 8
+with `SOPULI-20009` and names each table and its engine. A column or an alias
+with such a table's name is refused too. A check that cannot be made, such as
+an `EXPLAIN` the server refuses, refuses the run as well. `EXPLAIN` of a write
+runs in an ordinary transaction, which is rolled back, because both servers
+refuse it in a read-only one (`1792`).
+
+A trigger or a function can still write such a table, and on MariaDB so can a
+write through a view. The rollback then tells: the server warns `1196`, and the
+target is `ERROR` with `outcome_unknown: true`, because the rows changed
+although nothing was committed. The run stops there, a dry run included
+([#1713](../decisions/log.md#1713), Q3). Oracle and PostgreSQL roll every table
+back, and refuse nothing here.
+
 ### Lock waits
 
 A write, dry or real, sets a call timeout on its session, so a row that the
@@ -485,8 +511,11 @@ before it exits, and under `--output json` the run document holds them in
 abort and for every verb, even when some targets committed. Exit `8` here does
 not mean nothing ran: `results[]` and `summary` say what did.
 
-Every other write result has `outcome_unknown: false`, a dry run's included,
-because a dry run commits nothing. A read's results do not have the field.
+On MySQL and MariaDB a rollback that could not undo a change to a table
+without transactions has `outcome_unknown: true` too, a dry run's included,
+and stops the run (§4). Every other write result has `outcome_unknown: false`,
+a dry run's included, because a dry run commits nothing. A read's results do
+not have the field.
 
 **A read does not stop.** It reports every target it could read, and the ones it
 could not. It exits `0` when every target answered, `4` when some did and some

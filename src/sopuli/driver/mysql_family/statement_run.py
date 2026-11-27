@@ -53,7 +53,13 @@ from sopuli.driver.mysql_family.errors import (
 )
 from sopuli.driver.protocol import DriverError, InternalFaultError, StatementResult
 from sopuli.sql.guard import RowGuard
-from sopuli.sql.statement import Statement, StatementKind
+from sopuli.sql.statement import (
+    Dialect,
+    Statement,
+    StatementKind,
+    StatementRefusedError,
+    table_references,
+)
 from sopuli.sql.values import JsonValue, to_json
 
 T = TypeVar("T")
@@ -231,6 +237,87 @@ def _seconds(value: float) -> str:
     return f"{value:.6f}"
 
 
+#: ``ER_WARNING_NOT_COMPLETE_ROLLBACK``: a rollback could not undo a change to
+#: a table without transactions.
+INCOMPLETE_ROLLBACK = 1196
+
+#: The tables the run-as account can see whose engine has no transactions, and
+#: the session's default database. An engine the server has turned off has no
+#: ``TRANSACTIONS`` value, and is counted as having none.
+NON_TRANSACTIONAL = (
+    "select t.table_schema, t.table_name, t.engine, database() "
+    "from information_schema.tables t "
+    "join information_schema.engines e on e.engine = t.engine "
+    "where coalesce(e.transactions, 'NO') <> 'YES' and t.table_type = 'BASE TABLE'"
+)
+
+#: Schemas whose tables :meth:`StatementRunning.check_write` matches only by a
+#: qualified name: ``performance_schema`` holds tables such as ``users`` and
+#: ``accounts``, which an alias in ``EXPLAIN``'s output would match by chance.
+_QUALIFIED_ONLY = frozenset({"PERFORMANCE_SCHEMA", "INFORMATION_SCHEMA"})
+
+
+@dataclass(frozen=True)
+class _Table:
+    """One table without transactions, as ``information_schema`` names it."""
+
+    schema: str
+    name: str
+    engine: str
+
+    def named_by(
+        self,
+        references: frozenset[tuple[str | None, str]],
+        explained: frozenset[str],
+        database: str | None,
+    ) -> bool:
+        """Whether the statement names this table: qualified, alone in the
+        session's default database, or in ``EXPLAIN``'s output."""
+        schema, name = self.schema.upper(), self.name.upper()
+        if (schema, name) in references:
+            return True
+        if database is not None and schema == database.upper() and (None, name) in references:
+            return True
+        return schema not in _QUALIFIED_ONLY and name in explained
+
+
+def _non_transactional(cursor: Any) -> tuple[list[_Table], str | None]:
+    """:data:`NON_TRANSACTIONAL`'s tables, and the default database."""
+    cursor.execute(NON_TRANSACTIONAL)
+    rows = cursor.fetchall()
+    database = None if not rows or rows[0][3] is None else str(rows[0][3])
+    tables = [_Table(str(schema), str(name), str(engine)) for schema, name, engine, _ in rows]
+    return tables, database
+
+
+def _rolled_back_in_part(connection: Any) -> bool:
+    """Roll back, and say whether the server warned that it could not undo
+    every change (:data:`INCOMPLETE_ROLLBACK`). PyMySQL reads the warning with
+    ``SHOW WARNINGS`` after ``rollback()`` (probe 13, item 6)."""
+    connection.rollback()
+    warnings = connection.show_warnings() or ()
+    return any(int(row[1]) == INCOMPLETE_ROLLBACK for row in warnings)
+
+
+def _incomplete_rollback() -> DriverError:
+    """The backstop of #1713 Q3: a write rolled back, and a table without
+    transactions kept its change. :meth:`StatementRunning.check_write`
+    refuses a write that names one; a trigger, a function or, on MariaDB, a
+    view can still reach one."""
+    error = DriverError(
+        f"{INCOMPLETE_ROLLBACK}: the rollback could not undo every change: a table "
+        "without transactions, which a trigger, a function or a view wrote, keeps what "
+        "the statement wrote",
+        hint=(
+            "nothing was committed, but the rows may have changed: check them on this "
+            "target before running again. Move the table to InnoDB before a write reaches it"
+        ),
+        code=str(INCOMPLETE_ROLLBACK),
+    )
+    error.rollback_incomplete = True
+    return error
+
+
 def _streaming(connection: Any) -> bool:
     """Whether an unbuffered result is still being read on ``connection``.
     ``MySQLResult.unbuffered_active`` is PyMySQL's private state (2.2.8)."""
@@ -243,8 +330,8 @@ class StatementRunning:
     session that holds one PyMySQL connection.
 
     A session that takes these declares the fields below, and its
-    ``_read``. It sets :attr:`bounds_every_statement` and
-    :attr:`identity_query`.
+    ``_read``. It sets :attr:`bounds_every_statement`, :attr:`identity_query`,
+    :attr:`explain` and :attr:`dialect`.
     """
 
     #: MariaDB's ``max_statement_time`` bounds every statement. MySQL's
@@ -252,6 +339,12 @@ class StatementRunning:
     bounds_every_statement: ClassVar[bool]
     #: Reads the server's identity and ``DATABASE()``, for the plan fingerprint.
     identity_query: ClassVar[str]
+    #: What :meth:`check_write` puts before the statement to have the server
+    #: name its tables. MySQL 9.7.4 defaults to a tree with no table column,
+    #: so MySQL asks for the table form, which MariaDB does not accept.
+    explain: ClassVar[str]
+    #: The statement check's dialect for this product.
+    dialect: ClassVar[Dialect]
 
     connection: Any
     target: ExpandedTarget
@@ -311,6 +404,78 @@ class StatementRunning:
 
         return self._read(read)
 
+    def check_write(self, statement: Statement) -> None:
+        """Refuse a write that names a table without transactions, such as
+        MyISAM, Aria or MEMORY, before any statement runs (#1713, Q3 A′). A
+        rollback does not undo a change to such a table, so a dry run, or a
+        write its guard refuses, would leave the rows changed.
+
+        The statement names a table where it writes it as ``schema.name``,
+        as a name alone in the session's default database, or where
+        ``EXPLAIN`` names it, which resolves a view to its base table on
+        MySQL. A column or an alias with a table's name is refused too, and
+        the message names the table. A write a trigger or a function makes
+        is not seen here: the rollback reports it (:data:`INCOMPLETE_ROLLBACK`).
+        """
+        tables, database = self._read(_non_transactional)
+        if not tables:
+            return
+        references = table_references(statement, self.dialect)
+        named = [table for table in tables if table.named_by(references, frozenset(), database)]
+        if not named:
+            # Only where the statement's own names match nothing: EXPLAIN adds
+            # a view's base table, and an EXPLAIN that fails then refuses.
+            explained = self._explained(statement)
+            named = [table for table in tables if table.named_by(references, explained, database)]
+        if not named:
+            return
+        listed = ", ".join(f"{table.schema}.{table.name} ({table.engine})" for table in named)
+        raise StatementRefusedError(
+            f"target {self.target.name!r}: the write names a table whose engine has no "
+            f"transactions, {listed}. A rollback does not undo a change to it, so a dry run "
+            "or a write its guard refuses would leave it changed",
+            hint=(
+                "`sql run` writes only tables with transactions: move the table to InnoDB, "
+                "or change it another way. A column or an alias with the table's name is "
+                "refused too: rename it in the statement"
+            ),
+        )
+
+    def _explained(self, statement: Statement) -> frozenset[str]:
+        """The table names ``EXPLAIN`` gives for ``statement``, in upper case.
+
+        The server refuses ``EXPLAIN`` of a write in a read-only transaction
+        (``1792``), so it runs in an ordinary one, rolled back. ``EXPLAIN``
+        does not run the statement. It names an alias where the statement
+        gives one, and on MariaDB it can name nothing, so these names add to
+        the statement's own and never replace them.
+        """
+        import pymysql
+
+        connection = self._open_connection()
+        try:
+            with connection.cursor() as cursor:
+                if connection.server_status & SERVER_STATUS_IN_TRANS:
+                    connection.rollback()
+                cursor.execute("START TRANSACTION READ WRITE")
+                try:
+                    cursor.execute(f"{self.explain} {statement.text}")
+                    columns = [str(column[0]).lower() for column in cursor.description or ()]
+                    rows = cursor.fetchall()
+                finally:
+                    connection.rollback()
+        except pymysql.err.MySQLError as error:
+            self._connection_lost = not connection.open
+            raise for_statement(self._diagnose(error), read=False).as_error() from error
+        if "table" not in columns:
+            return frozenset()
+        at = columns.index("table")
+        return frozenset(
+            str(row[at]).upper()
+            for row in rows
+            if row[at] is not None and not str(row[at]).startswith("<")
+        )
+
     def run_statement(
         self,
         statement: Statement,
@@ -352,7 +517,7 @@ class StatementRunning:
 
         connection = self._open_connection()
         read = statement.kind is StatementKind.READ
-        begun = committed = committing = zoned = False
+        begun = committed = committing = zoned = rolled = False
         bounds = _Bounds(read_timeout=connection._read_timeout)
         rows: Any = None
         try:
@@ -389,6 +554,10 @@ class StatementRunning:
                 committing = True
                 connection.commit()
                 committed = True
+            else:
+                rolled = True
+                if _rolled_back_in_part(connection):
+                    raise _incomplete_rollback()
             return StatementResult((), (), count, False, committed, passed)
         except pymysql.err.MySQLError as error:
             self._connection_lost = not connection.open
@@ -399,6 +568,12 @@ class StatementRunning:
             # A COMMIT the server refused with a number was not applied. One
             # whose connection was lost may have been: on MySQL it still commits.
             failure.commit_failed = committing and (self._connection_lost or raised.number in _LOST)
+            if begun and not read and not committing and not rolled and connection.open:
+                # A statement that failed part way may have written a table
+                # without transactions before it failed.
+                rolled = True
+                with suppress(pymysql.err.MySQLError):
+                    failure.rollback_incomplete = _rolled_back_in_part(connection)
             raise failure from error
         finally:
             if rows is not None and _streaming(connection):
@@ -407,7 +582,7 @@ class StatementRunning:
                 self._abandon(connection, rows)
             connection._read_timeout = bounds.read_timeout
             if connection.open:
-                if begun and not committed:
+                if begun and not committed and not rolled:
                     with suppress(pymysql.err.MySQLError):
                         connection.rollback()
                 undo = [bounds.restore] if bounds.restore is not None else []

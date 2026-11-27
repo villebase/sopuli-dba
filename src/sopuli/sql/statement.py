@@ -427,6 +427,68 @@ def _code_words(text: str, dialect: Dialect, escapes: str) -> list[str]:
     return tokens
 
 
+def _name_tokens(text: str, dialect: Dialect) -> list[str | None]:
+    """The names in ``text`` outside comments and ``'...'`` literals, in
+    order, each in upper case: a word, or the content of a backtick or
+    double-quoted name with a doubled quote made one. ``"."`` stands for a
+    dot, and ``None`` for anything else, a ``'...'`` literal included."""
+    tokens: list[str | None] = []
+    i, n = 0, len(text)
+    while i < n:
+        if text[i] in _SPACE:
+            i += 1
+        elif _line_comment_at(text, i, dialect):
+            i = _line_end(text, i)
+        elif text.startswith("/*", i):
+            closed = _comment_end(text, i, dialect)
+            i = n if closed is None else closed
+        elif text[i] in '`"':
+            # A double-quoted string is a name under ANSI_QUOTES, which the
+            # tool cannot see, so it is read as one: that can only refuse more.
+            quote = text[i]
+            end = _mysql_quoted_end(text, i, _ESCAPING_QUOTES)
+            close = n if end == _UNCLOSED else end - 1
+            tokens.append(text[i + 1 : close].replace(quote * 2, quote).upper())
+            i = n if end == _UNCLOSED else end
+        elif (literal := _literal_end(text, i, dialect)) is not None:
+            tokens.append(None)
+            i = n if literal == _UNCLOSED else literal
+        elif _is_mysql_word_char(text[i]):
+            start = i
+            while i < n and _is_mysql_word_char(text[i]):
+                i += 1
+            tokens.append(text[start:i].upper())
+        else:
+            tokens.append("." if text[i] == "." else None)
+            i += 1
+    return tokens
+
+
+def table_references(statement: Statement, dialect: Dialect) -> frozenset[tuple[str | None, str]]:
+    """Every name in a MySQL or MariaDB statement that could be a table, in
+    upper case: ``(schema, name)`` for each ``schema.name``, and ``(None,
+    name)`` for each name alone, so a qualified name gives both pairs.
+
+    The check for a write to a table without transactions matches these
+    against the tables the run-as account can see (#1713, Q3 A′). A column,
+    an alias, a keyword or a ``"..."`` string is a name here too, which can
+    only make that check refuse more, never less. ``'...'`` literals and
+    comments are not read.
+    """
+    if dialect not in _MYSQL_FAMILY:
+        raise ValueError(f"table_references reads MySQL and MariaDB statements, not {dialect}")
+    tokens = _name_tokens(statement.text, dialect)
+    found: set[tuple[str | None, str]] = set()
+    for at, token in enumerate(tokens):
+        if token is None or token == ".":
+            continue
+        found.add((None, token))
+        follows = tokens[at + 1 : at + 3]
+        if len(follows) == 2 and follows[0] == "." and follows[1] not in (None, "."):
+            found.add((token, str(follows[1])))
+    return frozenset(found)
+
+
 #: What may follow ``INTO`` in a MySQL statement that writes a file on the server.
 _FILE_TARGETS = ("OUTFILE", "DUMPFILE")
 

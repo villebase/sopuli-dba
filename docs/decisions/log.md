@@ -6865,10 +6865,15 @@ the register.
     role is never an account. Built in #1717.
   - Q2: the guard counts matched rows: every MySQL-family session sets
     `CLIENT.FOUND_ROWS`. Built in #1716.
-  - Q3: a write that `EXPLAIN` shows touches a non-transactional table is
-    refused before any statement runs, and a rollback that warns `1196`
-    reports the target `ERROR` with `outcome_unknown: true`. #1717 builds it,
-    after Q1.
+  - Q3, as A′, which the maintainer chose the same day once the probes showed
+    that `EXPLAIN` gives an alias where the statement has one, and on MariaDB
+    leaves out the target of an `INSERT … SELECT`: a write is refused before
+    any statement runs where it names a table without transactions that the
+    run-as account can see, as `schema.name`, as a name in the session's
+    default database, or in `EXPLAIN`'s output, which resolves a view on
+    MySQL. A rollback that warns `1196` reports the target `ERROR` with
+    `outcome_unknown: true` and stops the run, a dry run included. Built in
+    #1717.
   - Q4: the MySQL and MariaDB dialect refuses `INTO OUTFILE` and `INTO
     DUMPFILE`. Built in #1715.
 - **Why:** Q1, as #1690: a statement would run with the service account's
@@ -6880,7 +6885,9 @@ the register.
   so the read would be a write that no guard sees (probes 13 and 18, #1714).
 - **Rejected:** Q1: refusing a proxy grant too (B), which a password login
   does not use, and accepting the role as a gap (C). Q2: counting changed
-  rows (B), which makes the guard mean another thing on MySQL. Q3: the
-  `1196` backstop alone (B), which learns of the change only after it was
-  made, and documenting the gap (C). Q4: documenting it beside PostgreSQL's
+  rows (B), which makes the guard mean another thing on MySQL. Q3: `EXPLAIN`
+  alone (A), which misses a table behind an alias; the `1196` backstop alone
+  (B), which learns of the change only after it was made; and documenting the
+  gap (C). The cost of A′: a column or an alias with such a table's name is
+  refused too, and the message names the table. Q4: documenting it beside PostgreSQL's
   `dblink_exec()` (B).

@@ -30,7 +30,7 @@ from sopuli.exit_codes import ExitCode
 from sopuli.output import sql_view as sql_view_module
 from sopuli.sql.fingerprint import PlannedTarget, fingerprint
 from sopuli.sql.guard import RowGuard
-from sopuli.sql.statement import Statement, classify
+from sopuli.sql.statement import Statement, StatementRefusedError, classify
 from test_cli_sql_run import (
     RUN_AS,
     RUN_SCHEMA,
@@ -658,6 +658,63 @@ def test_a_statement_error_stops_a_real_run(
     assert loaded["results"][1]["error"]["code"] == "ORA-00942"
     # The statement failed before a commit was sent, so nothing is unknown.
     assert loaded["results"][1]["outcome_unknown"] is False
+    assert loaded["exit_code"] == ExitCode.PARTIAL
+
+
+@pytest.mark.parametrize("dry_run", [True, False], ids=["dry-run", "real"])
+@pytest.mark.parametrize(
+    "refusal",
+    [
+        StatementRefusedError(
+            "target 'c-gamma': the write names a table whose engine has no transactions, "
+            "acme.settings (MyISAM)"
+        ),
+        DriverError("1146: Table 'acme.settings' doesn't exist", code="1146"),
+    ],
+    ids=["no-transactions", "check-failed"],
+)
+def test_a_write_a_rollback_could_not_undo_is_refused_before_any_statement_runs(
+    write_config: WriteConfig, fleet: dict[str, Any], dry_run: bool, refusal: Exception
+) -> None:
+    """#1713 Q3 A′: one target's refusal refuses the write everywhere, a dry
+    run included, before any target runs a statement."""
+    plan = None if dry_run else dry_hash(write_config, fleet, *ALL, "--expect-rows", "1")
+    gamma = WriteSession("c-gamma")
+    gamma.check_error = refusal
+    fleet["c-gamma"] = gamma
+    args = ("--dry-run",) if dry_run else ("--plan", str(plan))
+
+    result = sql(write_config, "--write", *args, *ALL, "--expect-rows", "1", json_out=True)
+
+    assert exit_of(result) == ExitCode.ABORTED, result.output
+    error = document(result)["error"]
+    assert error["code"] == "SOPULI-20009"
+    assert "c-gamma" in error["message"]
+    assert "nothing was run" in error["hint"]
+    for name in ORDER:
+        assert fleet[name].calls == [], f"{name} ran a statement"
+        assert fleet[name].closed
+
+
+def test_a_rollback_that_kept_a_change_stops_even_a_dry_run(
+    write_config: WriteConfig, fleet: dict[str, Any]
+) -> None:
+    kept = DriverError("1196: the rollback could not undo every change", code="1196")
+    kept.rollback_incomplete = True
+    fleet["b-beta"] = WriteSession("b-beta", error=kept)
+
+    loaded = document(
+        sql(write_config, "--write", "--dry-run", *ALL, "--expect-rows", "1", json_out=True)
+    )
+
+    assert states(loaded) == [
+        ("a-alpha", "ROLLED_BACK"),
+        ("b-beta", "ERROR"),
+        ("c-gamma", "NOT_ATTEMPTED"),
+        ("d-delta", "NOT_ATTEMPTED"),
+    ]
+    assert loaded["results"][1]["outcome_unknown"] is True
+    assert loaded["results"][1]["error"]["code"] == "1196"
     assert loaded["exit_code"] == ExitCode.PARTIAL
 
 

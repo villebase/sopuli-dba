@@ -21,6 +21,7 @@ from sopuli.driver.mysql.session import APPLICABLE_ROLES, MysqlSession  # noqa: 
 from sopuli.driver.mysql_family.accounts import CURRENT_USER  # noqa: E402
 from sopuli.driver.mysql_family.connection import UTC_SESSION  # noqa: E402
 from sopuli.driver.mysql_family.statement_run import (  # noqa: E402
+    NON_TRANSACTIONAL,
     SERVER_STATUS_IN_TRANS,
     SERVER_TIME_ZONE,
     VALUE_LIMIT,
@@ -32,7 +33,12 @@ from sopuli.driver.protocol import (  # noqa: E402
     Timeouts,
 )
 from sopuli.sql.guard import RowGuard  # noqa: E402
-from sopuli.sql.statement import classify  # noqa: E402
+from sopuli.sql.statement import (  # noqa: E402
+    Dialect,
+    Statement,
+    StatementRefusedError,
+    classify,
+)
 
 IN_TRANS = pymysql.constants.SERVER_STATUS.SERVER_STATUS_IN_TRANS
 
@@ -75,6 +81,11 @@ class _Cursor:
             self._rows = [(connection.account,)]
         elif sql == APPLICABLE_ROLES:
             self._rows = list(connection.roles)
+        elif sql == NON_TRANSACTIONAL:
+            self._rows = list(connection.unrollable)
+        elif sql.startswith("EXPLAIN"):
+            self.description = (("id",), ("table",))
+            self._rows = [(1, name) for name in connection.explained]
         elif sql in (READ.text,):
             if connection.columns:
                 self.description = tuple((name,) for name in connection.columns)
@@ -112,6 +123,12 @@ class _Connection:
         self.identity: tuple[Any, ...] = ("uuid-1", "acme")
         self.account = "dba_alpha@%"
         self.roles: list[tuple[str]] = []
+        #: ``NON_TRANSACTIONAL``'s rows: schema, table, engine, ``DATABASE()``.
+        self.unrollable: list[tuple[str, str, str, str | None]] = []
+        #: The table names ``EXPLAIN`` gives.
+        self.explained: list[str | None] = []
+        #: What ``SHOW WARNINGS`` gives after a rollback.
+        self.warnings: list[tuple[str, int, str]] = []
         self.drained = False
         self.closed = False
         #: PyMySQL's unbuffered result in flight, or ``None``.
@@ -135,6 +152,9 @@ class _Connection:
 
     def rollback(self) -> None:
         self.sent.append("ROLLBACK")
+
+    def show_warnings(self) -> tuple[tuple[str, int, str], ...]:
+        return tuple(self.warnings)
 
 
 def _target(product: str) -> ExpandedTarget:
@@ -580,3 +600,125 @@ def test_a_mysql_account_held_as_a_role_is_found_by_upper(
     connection.roles = roles
     assert session.member_of("sopuli_svc") is held
     assert connection.sent == [APPLICABLE_ROLES]
+
+
+# A write to a table without transactions (#1713, Q3 A′).
+
+MYISAM = ("acme", "settings", "MyISAM", None)
+
+
+def _write(text: str, product: str = "mysql") -> Statement:
+    return classify(text, dialect=Dialect(product))
+
+
+@pytest.mark.parametrize("build", [_mysql, _mariadb], ids=["mysql", "mariadb"])
+def test_a_server_with_no_table_without_transactions_is_not_explained(build: Any) -> None:
+    session, connection = build()
+    session.check_write(_write("UPDATE acme.settings SET v = 1"))
+    assert connection.sent == [NON_TRANSACTIONAL]
+
+
+@pytest.mark.parametrize(
+    ("text", "unrollable", "explained"),
+    [
+        ("UPDATE acme.settings AS s SET v = 1", [MYISAM], ["s"]),
+        ("UPDATE `acme`.`settings` SET v = 1", [MYISAM], ["settings"]),
+        ('UPDATE "acme"."settings" SET v = 1', [MYISAM], [None]),
+        ("UPDATE settings SET v = 1", [("acme", "settings", "Aria", "acme")], [None]),
+        ("UPDATE acme.v_settings SET v = 1", [MYISAM], ["settings"]),
+        (
+            "INSERT INTO acme.settings SELECT k, v FROM acme.staged",
+            [MYISAM],
+            ["staged"],
+        ),
+    ],
+    ids=["qualified-alias", "backticks", "ansi-quotes", "default-database", "view", "insert"],
+)
+def test_a_write_that_names_a_table_without_transactions_is_refused(
+    text: str, unrollable: list[Any], explained: list[str | None]
+) -> None:
+    session, connection = _mariadb()
+    connection.unrollable = unrollable
+    connection.explained = explained
+    with pytest.raises(StatementRefusedError, match="no transactions") as raised:
+        session.check_write(_write(text, "mariadb"))
+    assert "acme.settings" in raised.value.message
+    explains = [sql for sql in connection.sent if sql.startswith("EXPLAIN")]
+    if "v_settings" in text:
+        # Only EXPLAIN names the view's base table, in a transaction rolled back.
+        assert explains
+        assert "ROLLBACK" in connection.sent
+    else:
+        assert explains == [], "the statement's own names refuse it without EXPLAIN"
+
+
+@pytest.mark.parametrize(
+    ("text", "unrollable", "explained"),
+    [
+        ("UPDATE acme.orders SET v = 1", [MYISAM], ["orders"]),
+        ("UPDATE settings SET v = 1", [MYISAM], [None]),
+        (
+            "UPDATE acme.orders u SET v = 1",
+            [("performance_schema", "u", "PERFORMANCE_SCHEMA", None)],
+            ["u"],
+        ),
+        ("UPDATE acme.orders SET note = 'acme.settings'", [MYISAM], ["orders"]),
+    ],
+    ids=["another-table", "no-default-database", "performance-schema-alias", "in-a-literal"],
+)
+def test_a_write_that_names_no_table_without_transactions_passes(
+    text: str, unrollable: list[Any], explained: list[str | None]
+) -> None:
+    session, connection = _mysql()
+    connection.unrollable = unrollable
+    connection.explained = explained
+    session.check_write(_write(text))
+    assert any(sql.startswith("EXPLAIN FORMAT=TRADITIONAL ") for sql in connection.sent)
+
+
+def test_an_explain_the_server_refuses_is_a_driver_error() -> None:
+    session, connection = _mysql()
+    connection.unrollable = [MYISAM]
+    write = _write("UPDATE acme.orders SET v = 1")
+    connection.failures[f"EXPLAIN FORMAT=TRADITIONAL {write.text}"] = pymysql.err.ProgrammingError(
+        1146, "Table 'acme.orders' doesn't exist"
+    )
+    with pytest.raises(DriverError) as raised:
+        session.check_write(write)
+    assert raised.value.code == "1146"
+    assert connection.sent[-1] == "ROLLBACK"
+
+
+@pytest.mark.parametrize("build", [_mysql, _mariadb], ids=["mysql", "mariadb"])
+@pytest.mark.parametrize("commit", [False, True], ids=["dry-run", "guard-fails"])
+def test_a_rollback_that_warns_1196_reports_an_incomplete_rollback(
+    build: Any, commit: bool
+) -> None:
+    session, connection = build()
+    connection.rowcount = 2
+    connection.warnings = [("Warning", 1196, "Some non-transactional changed tables ...")]
+    with pytest.raises(DriverError) as raised:
+        _run(session, commit=commit)
+    assert raised.value.rollback_incomplete is True
+    assert raised.value.code == "1196"
+    assert raised.value.commit_failed is False
+    assert connection.sent.count("ROLLBACK") == 1
+    assert "COMMIT" not in connection.sent
+
+
+def test_a_statement_that_fails_after_writing_a_table_without_transactions_says_so() -> None:
+    session, connection = _mariadb()
+    connection.failures[WRITE.text] = pymysql.err.OperationalError(1205, "Lock wait timeout")
+    connection.warnings = [("Warning", 1196, "Some non-transactional changed tables ...")]
+    with pytest.raises(DriverError) as raised:
+        _run(session)
+    assert raised.value.code == "1205"
+    assert raised.value.rollback_incomplete is True
+    assert connection.sent.count("ROLLBACK") == 1
+
+
+def test_a_rollback_without_the_warning_is_complete() -> None:
+    session, connection = _mysql()
+    connection.warnings = [("Note", 1003, "something else")]
+    result = _run(session, commit=False)
+    assert result.committed is False

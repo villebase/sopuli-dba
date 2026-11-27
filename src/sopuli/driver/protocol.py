@@ -539,6 +539,12 @@ class DriverError(Exception):
     #: unknown. ``False`` on the class; the Oracle runner sets it.
     commit_failed = False
 
+    #: Whether a rollback in `sql run` could not undo every change: a table
+    #: without transactions, such as MyISAM, keeps what the statement wrote
+    #: (MySQL and MariaDB warning ``1196``, #1713 Q3). The rows may have
+    #: changed although nothing was committed. ``False`` on the class.
+    rollback_incomplete = False
+
     def __init__(
         self,
         message: str,
@@ -1764,6 +1770,15 @@ class StatementRunner(Protocol):
         ``(system_identifier, current_database())`` on PostgreSQL, and
         ``(server_uuid, DATABASE())`` on MySQL, with ``server_uid`` on
         MariaDB."""
+        ...
+
+    def check_write(self, statement: Statement) -> None:
+        """Refuse a write the rollback could not undo, before any statement
+        runs on any target. On MySQL and MariaDB that is a write to a table
+        whose engine has no transactions (#1713, Q3). Oracle and PostgreSQL
+        roll back every table, and refuse nothing here. Raises
+        :class:`~sopuli.sql.statement.StatementRefusedError`, or
+        :class:`DriverError` where the check could not be made."""
         ...
 
     def run_statement(

@@ -11,6 +11,7 @@ from sopuli.sql.statement import (
     StatementRefusedError,
     classify,
     classify_for,
+    table_references,
 )
 
 PG = Dialect.POSTGRESQL
@@ -561,3 +562,49 @@ def test_classify_for_refuses_postgresql_and_mysql_readings_that_differ() -> Non
 def test_classify_for_names_oracle_when_a_hash_comment_is_not_one_there() -> None:
     with pytest.raises(StatementRefusedError, match="read the Oracle way"):
         classify_for("# note\nSELECT 1 FROM t", [ORA, MARIA])
+
+
+# The table names a MySQL or MariaDB write gives (#1717, #1713 Q3 A′).
+
+
+def _references(text: str, dialect: Dialect = MY) -> frozenset[tuple[str | None, str]]:
+    return table_references(classify(text, dialect=dialect), dialect)
+
+
+@MYSQL_FAMILY
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("UPDATE acme.settings SET v = 1", {("ACME", "SETTINGS"), (None, "SETTINGS")}),
+        ("UPDATE acme . settings SET v = 1", {("ACME", "SETTINGS")}),
+        ("UPDATE `acme`.`set``tings` SET v = 1", {("ACME", "SET`TINGS")}),
+        ('UPDATE "acme"."settings" SET v = 1', {("ACME", "SETTINGS")}),
+        ("DELETE x FROM acme.ti x JOIN acme.tm y ON x.id = y.id", {("ACME", "TM"), (None, "X")}),
+        ("INSERT INTO acme.tm SELECT * FROM acme.ti", {("ACME", "TM"), ("ACME", "TI")}),
+    ],
+)
+def test_table_references_holds_every_name(
+    dialect: Dialect, text: str, expected: set[tuple[str | None, str]]
+) -> None:
+    assert expected <= _references(text, dialect)
+
+
+@MYSQL_FAMILY
+@pytest.mark.parametrize(
+    "text",
+    [
+        "UPDATE acme.ti SET note = 'acme.tm' WHERE id = 1",
+        "UPDATE acme.ti SET v = 1 -- acme.tm\n",
+        "UPDATE acme.ti SET v = 1 # acme.tm\n",
+        "UPDATE acme.ti /* acme.tm */ SET v = 1",
+    ],
+)
+def test_table_references_skips_literals_and_comments(dialect: Dialect, text: str) -> None:
+    found = _references(text, dialect)
+    assert ("ACME", "TM") not in found
+    assert ("ACME", "TI") in found
+
+
+def test_table_references_reads_only_mysql_and_mariadb() -> None:
+    with pytest.raises(ValueError, match="MySQL and MariaDB"):
+        table_references(classify("UPDATE t SET v = 1"), ORA)

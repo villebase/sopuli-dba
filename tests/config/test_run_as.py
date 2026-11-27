@@ -84,9 +84,16 @@ def test_run_as_external_needs_a_tns_alias() -> None:
     assert "must be a TNS alias" in str(caught.value)
 
 
-def test_run_as_external_on_a_host_and_port_product_is_refused() -> None:
-    entry = {"type": "postgresql", "dsn": "db.example.com:5432"}
-
+@pytest.mark.parametrize(
+    "entry",
+    [
+        {"type": "postgresql", "dsn": "db.example.com:5432"},
+        {"type": "mysql", "dsn": "mysql-dev.example.com:3306"},
+        {"type": "mariadb", "dsn": "mariadb-dev.example.com:3306"},
+    ],
+    ids=["postgresql", "mysql", "mariadb"],
+)
+def test_run_as_external_on_a_host_and_port_product_is_refused(entry: dict[str, str]) -> None:
     with pytest.raises(ConfigError) as caught:
         build_config(document(targets=[{**TARGET, **entry, "run_as": {"auth": "external"}}]))
 

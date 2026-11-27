@@ -873,7 +873,7 @@ def test_a_refused_typed_password_refuses_a_real_run(
 def test_a_target_of_another_product_does_not_refuse_a_real_run(
     write_config: WriteConfig, fleet: dict[str, Any]
 ) -> None:
-    config = WITH_MYSQL
+    config = WITH_MSSQL
     plan = dry_hash(write_config, fleet, *ALL, "--expect-rows", "1", config=config)
 
     result = sql(
@@ -889,18 +889,18 @@ def test_a_target_of_another_product_does_not_refuse_a_real_run(
     )
 
     loaded = document(result)
-    assert states(loaded)[-1] == ("e-my", "SKIPPED")
+    assert states(loaded)[-1] == ("e-ms", "SKIPPED")
     assert [state for _, state in states(loaded)[:4]] == ["COMMITTED"] * 4
     assert loaded["exit_code"] == ExitCode.SUCCESS
 
 
-#: The fleet with a MySQL target, which `sql run` skips.
-WITH_MYSQL = CONFIG + (
-    "  - name: e-my\n"
-    "    type: mysql\n"
-    "    dsn: mysql.example.com:3306\n"
+#: The fleet with a SQL Server target, which `sql run` skips.
+WITH_MSSQL = CONFIG + (
+    "  - name: e-ms\n"
+    "    type: mssql\n"
+    "    dsn: mssql.example.com:1433\n"
     "    labels: { fleet: acme }\n"
-    '    admin: { username: "sopuli_svc@%", auth: { method: env } }\n'
+    "    admin: { username: sopuli_svc, auth: { method: env } }\n"
 )
 
 
@@ -910,10 +910,10 @@ def test_zero_rows_and_a_skipped_target_exit_0(
     """Nothing failed and nothing changed: a skipped target does not make it partial."""
     for name in ORDER:
         fleet[name] = WriteSession(name, count=0)
-    plan = dry_hash(write_config, fleet, *ALL, "--max-rows", "5", config=WITH_MYSQL)
+    plan = dry_hash(write_config, fleet, *ALL, "--max-rows", "5", config=WITH_MSSQL)
 
     result = sql(
-        write_config, "--write", *ALL, "--max-rows", "5", "--plan", plan, config=WITH_MYSQL
+        write_config, "--write", *ALL, "--max-rows", "5", "--plan", plan, config=WITH_MSSQL
     )
 
     assert result.exit_code == ExitCode.SUCCESS, result.output
@@ -925,10 +925,10 @@ def test_every_target_skipped_exits_5(write_config: WriteConfig, fleet: dict[str
         "--write",
         "--dry-run",
         "--target",
-        "e-my",
+        "e-ms",
         "--expect-rows",
         "1",
-        config=WITH_MYSQL,
+        config=WITH_MSSQL,
     )
 
     assert result.exit_code == ExitCode.UNSUPPORTED_CAPABILITY, result.output
@@ -960,7 +960,7 @@ def test_a_dry_run_with_a_skipped_target_still_offers_the_plan(
     write_config: WriteConfig, fleet: dict[str, Any]
 ) -> None:
     result = sql(
-        write_config, "--write", "--dry-run", *ALL, "--expect-rows", "1", config=WITH_MYSQL
+        write_config, "--write", "--dry-run", *ALL, "--expect-rows", "1", config=WITH_MSSQL
     )
 
     assert "to run it, drop --dry-run" in click.unstyle(result.output)
@@ -1174,10 +1174,10 @@ def test_a_skipped_target_is_not_in_the_plan(
 ) -> None:
     """It never runs, so it counts for neither `max_targets` nor
     `confirm_environments`."""
-    config = WITH_MYSQL.replace(
+    config = WITH_MSSQL.replace(
         "defaults:\n",
         "defaults:\n  safety: { max_targets: 4, confirm_environments: [prod] }\n",
-    ).replace("  - name: e-my\n", "  - name: e-my\n    environment: prod\n")
+    ).replace("  - name: e-ms\n", "  - name: e-ms\n    environment: prod\n")
 
     loaded = document(
         sql(
@@ -1194,7 +1194,7 @@ def test_a_skipped_target_is_not_in_the_plan(
 
     assert [unit["target"] for unit in loaded["plan"]["units"]] == ORDER
     assert loaded["plan"]["confirmation_required"] is False
-    assert states(loaded)[-1] == ("e-my", "SKIPPED")
+    assert states(loaded)[-1] == ("e-ms", "SKIPPED")
 
 
 def test_readonly_on_a_write_names_the_read_instead(
@@ -1222,10 +1222,10 @@ def test_a_dry_run_where_every_target_is_skipped_says_nothing_would_run(
         "--write",
         "--dry-run",
         "--target",
-        "e-my",
+        "e-ms",
         "--expect-rows",
         "1",
-        config=WITH_MYSQL,
+        config=WITH_MSSQL,
     )
     text = click.unstyle(result.output)
 

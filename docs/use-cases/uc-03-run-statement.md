@@ -1,11 +1,13 @@
 # UC-3 — Run one statement across many targets
 
 Depends on: `../design/00-principles.md`, `../design/01-configuration.md`,
-`../design/02-oracle-privileges.md`, `../design/02-postgres-privileges.md`
+`../design/02-oracle-privileges.md`, `../design/02-postgres-privileges.md`,
+`../design/02-mysql-privileges.md`, `../design/02-mariadb-privileges.md`
 
 This document specifies a command that runs one statement against a selected
 set of declared targets and shows what each target returned. **UC-3 is built on
-Oracle and PostgreSQL.** The command name, `sopuli sql run`, is a working name.
+Oracle, PostgreSQL, MySQL and MariaDB.** The command name, `sopuli sql run`, is
+a working name.
 The parts were built in this order, each by its own issue:
 
 | Part | Issue |
@@ -25,13 +27,13 @@ The parts were built in this order, each by its own issue:
 | What MySQL and MariaDB do, measured | #1714, built. `13_statement_run_probe.py`, `18_statement_run_probe.py` |
 | The MySQL and MariaDB runner | #1716, built. `StatementRunning` in `src/sopuli/driver/mysql_family/statement_run.py` |
 | The refusal of a MySQL run-as account that holds the service account as a role, and of a write to a table without transactions | #1717, built (§2, §4) |
-| `sql run` on MySQL and MariaDB | #1718, not built |
+| `sql run` on MySQL and MariaDB | #1718, built |
 
-`sql run` runs on Oracle and PostgreSQL. A target of another product is
-refused at plan time by `require_command`, with `SOPULI-20006`, never by a
-version check (invariant 4): `sql.run` is not in the shared command set, and
-only the Oracle and PostgreSQL drivers list it. The umbrella issues are #1657
-for Oracle and #1689 for PostgreSQL.
+`sql run` runs on Oracle, PostgreSQL, MySQL and MariaDB. A target of another
+product, SQL Server today, is refused at plan time by `require_command`, with
+`SOPULI-20006`, never by a version check (invariant 4): `sql.run` is not in the
+shared command set, and only those four drivers list it. The umbrella issues
+are #1657 for Oracle, #1689 for PostgreSQL and #1712 for MySQL and MariaDB.
 
 ---
 
@@ -52,8 +54,7 @@ small:
 
 **Not in scope:**
 
-- MySQL, MariaDB and SQL Server. The driver interface leaves room for them,
-  and they come later.
+- SQL Server. The driver interface leaves room for it, and it comes later.
 - Statements declared by name in the config. They can be added later without
   changing this design.
 - DDL, PL/SQL blocks, `ALTER SYSTEM`, and anything else that is not one query
@@ -233,9 +234,18 @@ backslash escapes in `'...'` and `"..."`, with none, and with `ANSI_QUOTES`
 alone, where `"..."` is a name with no escapes and `'...'` keeps them. It
 refuses what any reading refuses, and a statement that two readings cut
 differently. A `\'` followed by a comment after the
-terminator is then a false refusal; `''` reads the same way in both. The
-MySQL and MariaDB dialect is built, but `sql run` does not yet run on those
-targets, so they are still skipped (#1718).
+terminator is then a false refusal; `''` reads the same way in both.
+
+On MySQL and MariaDB a read runs in `START TRANSACTION READ ONLY`, and the
+server refuses a write with `1792`, `SELECT ... FOR UPDATE` and a `WITH` that
+writes among them. As on Oracle, DDL commits before it runs, so the keyword
+check is the only guard against it. The server refuses two statements in one
+text with `1064`. The gaps are a session's effects that outlive the rollback:
+a user lock (`GET_LOCK()`), a user variable (`SELECT ... INTO @v`, which is
+refused because it returns no rows), and a write to a table without
+transactions (§4). Measured on MySQL 8.0.46, 8.4.13 and 9.7.4 and MariaDB
+10.11.19, 11.4.13, 11.8.9 and 12.3.3 (`13_statement_run_probe.py`,
+`18_statement_run_probe.py`).
 
 On PostgreSQL, `standard_conforming_strings = off` lets `\'` escape a quote in a
 plain `'...'` literal too. The tool cannot see the setting, and it has been on
@@ -462,8 +472,7 @@ back. No bound is left on the commit: on MySQL a commit the client lost to its
 read timeout still commits. A commit whose connection is lost has
 `outcome_unknown: true` (§5). Measured on MySQL 8.0.46, 8.4.13 and 9.7.4 and
 MariaDB 10.11.19, 11.4.13, 11.8.9 and 12.3.3 (`13_statement_run_probe.py`,
-`18_statement_run_probe.py`, #1714). `sql run` does not yet run on MySQL or
-MariaDB targets (#1718).
+`18_statement_run_probe.py`, #1714).
 
 ---
 

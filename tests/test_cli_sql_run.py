@@ -310,18 +310,19 @@ def test_all_down_exit_1(write_config: WriteConfig, sessions: dict[str, Any]) ->
     assert result.exit_code == ExitCode.FAILURE, result.output
 
 
-MYSQL_TARGET = (
-    "  - name: my-alpha\n"
-    "    type: mysql\n"
-    "    dsn: mysql.example.com:3306\n"
-    '    admin: { username: "sopuli_svc@%", auth: { method: env } }\n'
+#: A product `sql run` does not run on.
+MSSQL_TARGET = (
+    "  - name: ms-alpha\n"
+    "    type: mssql\n"
+    "    dsn: mssql.example.com:1433\n"
+    "    admin: { username: sopuli_svc, auth: { method: env } }\n"
 )
 
 
 def test_a_target_of_a_product_it_does_not_run_on_is_skipped_20006(
     write_config: WriteConfig, sessions: dict[str, Any]
 ) -> None:
-    config = f"version: 1\ndefaults:\n{RUN_AS}targets:\n{MYSQL_TARGET}"
+    config = f"version: 1\ndefaults:\n{RUN_AS}targets:\n{MSSQL_TARGET}"
 
     result = sql_run(write_config, config=config, json_out=True)
 
@@ -349,7 +350,7 @@ ORACLE_ONLY = "SELECT q'[it's]' FROM dual; -- n\n"
 def test_a_skipped_product_does_not_check_the_statement(
     write_config: WriteConfig, sessions: dict[str, Any]
 ) -> None:
-    config = f"version: 1\ndefaults:\n{RUN_AS}{TARGETS}{MYSQL_TARGET}"
+    config = f"version: 1\ndefaults:\n{RUN_AS}{TARGETS}{MSSQL_TARGET}"
 
     result = sql_run(write_config, config=config, statement=ORACLE_ONLY)
 

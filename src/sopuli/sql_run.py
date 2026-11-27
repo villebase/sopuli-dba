@@ -446,7 +446,9 @@ def refuse_unrollable(
         raise StatementRefusedError(
             "; ".join(refused),
             hint="nothing was run on any target. `sql run` writes only tables with "
-            "transactions, so a dry run and a refused guard can roll every change back",
+            "transactions, so that a dry run and a refused guard can roll every change "
+            "back: move the table to InnoDB, or change it another way. A column or an "
+            "alias with such a table's name is refused too: rename it in the statement",
         )
 
 

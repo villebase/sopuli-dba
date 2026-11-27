@@ -47,6 +47,13 @@ TLS_REQUIRED_MODES = ("REQUIRED", "VERIFY_CA", "VERIFY_IDENTITY")
 #: Sent once at login: every TIMESTAMP the session reads is then in UTC.
 UTC_SESSION = "SET time_zone = '+00:00'"
 
+#: ``pymysql.constants.CLIENT.FOUND_ROWS``, written out so that this module
+#: imports no vendor client (ADR-006). With it, a write's row count is the rows
+#: it matched, not the rows it changed, as on Oracle and PostgreSQL, so a row
+#: guard means one thing on every product (#1713, Q2). Only `sql run` reads a
+#: MySQL or MariaDB row count, so every session sets it.
+FOUND_ROWS = 2
+
 
 def settings_of(target: ExpandedTarget) -> TargetMysql:
     """The target's own block, ``mariadb:`` on a MariaDB target and ``mysql:``
@@ -158,6 +165,9 @@ def connect_arguments(
         # Every statement stands alone. `ALTER USER` commits on its own anyway,
         # and a read must not hold a transaction open over a later change.
         "autocommit": True,
+        # PyMySQL adds its own capabilities to this, MULTI_STATEMENTS not among
+        # them, so a text that holds two statements is refused, 1064.
+        "client_flag": FOUND_ROWS,
         # A TIMESTAMP, such as `mysql.user.password_last_changed`, comes back in
         # the session's time zone, which is the server's own by default. UTC
         # makes it the UTC time the rest of the tool reads a naive time as.

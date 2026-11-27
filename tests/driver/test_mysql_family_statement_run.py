@@ -67,7 +67,8 @@ class _Cursor:
         elif sql == CURRENT_USER:
             self._rows = [(connection.account,)]
         elif sql in (READ.text,):
-            self.description = tuple((name,) for name in connection.columns)
+            if connection.columns:
+                self.description = tuple((name,) for name in connection.columns)
             self._rows = list(connection.rows)
         elif sql == WRITE.text:
             self.rowcount = connection.rowcount
@@ -77,6 +78,10 @@ class _Cursor:
 
     def fetchmany(self, size: int) -> list[tuple[Any, ...]]:
         return self._rows[:size]
+
+    def close(self) -> None:
+        """An unbuffered cursor reads the rest of its result here."""
+        self.connection.drained = True
 
 
 class _Connection:
@@ -94,6 +99,12 @@ class _Connection:
         self.rowcount = 1
         self.identity: tuple[Any, ...] = ("uuid-1", "acme")
         self.account = "dba_alpha@%"
+        self.drained = False
+        self.closed = False
+
+    def close(self) -> None:
+        self.closed = True
+        self.open = False
 
     def cursor(self, cursor_class: Any = None) -> _Cursor:
         self.cursor_classes.append(cursor_class)
@@ -174,6 +185,31 @@ def test_a_mysql_read_runs_read_only_bounded_and_rolled_back() -> None:
     assert result.rows == ((1, "x"), (2, "y"))
     assert result.committed is False
     assert connection._read_timeout == 30
+    assert connection.closed is False
+    assert session.connection_lost is False
+
+
+def test_a_read_cut_at_max_rows_closes_the_connection_rather_than_drain_it() -> None:
+    session, connection = _mysql()
+    result = _run(session, READ, guard=None, commit=False, max_rows=1)
+
+    assert result.rows == ((1, "x"),)
+    assert result.truncated is True
+    assert connection.drained is False
+    assert connection.closed is True
+    assert session.connection_lost is True
+    assert session.connection is None
+    session.close()
+
+
+def test_a_select_into_variables_is_refused() -> None:
+    session, connection = _mariadb()
+    connection.columns = ()
+    with pytest.raises(DriverError, match="no rows to show") as raised:
+        _run(session, READ, guard=None, commit=False)
+    assert raised.value.hint is not None
+    assert "INTO" in raised.value.hint
+    assert "ROLLBACK" in connection.sent
 
 
 def test_a_mariadb_write_lifts_its_bound_before_the_commit() -> None:
@@ -182,16 +218,68 @@ def test_a_mariadb_write_lifts_its_bound_before_the_commit() -> None:
 
     assert connection.sent == [
         "SELECT @@session.max_statement_time",
-        "SET SESSION max_statement_time = 5.000",
+        "SET SESSION max_statement_time = 5.000000",
         "START TRANSACTION READ WRITE",
         WRITE.text,
         "SET SESSION max_statement_time = 0",
         "COMMIT",
-        "SET SESSION max_statement_time = 0.000",
+        "SET SESSION max_statement_time = 0.000000",
     ]
     assert result.committed is True
     assert result.guard_passed is True
     assert result.row_count == 1
+    assert connection.timeout_at_commit is None
+
+
+def test_a_mariadb_bound_keeps_its_microseconds() -> None:
+    session, connection = _mariadb()
+    connection.bounds = (0.0004,)
+    _run(session)
+    assert "SET SESSION max_statement_time = 0.000400" in connection.sent
+    assert connection.sent[-1] == "SET SESSION max_statement_time = 0.000400"
+
+
+def test_a_mysql_write_puts_its_own_lock_timeouts_back_before_the_commit() -> None:
+    session, connection = _mysql()
+    _run(session)
+    restore = (
+        "SET SESSION max_execution_time = 0, innodb_lock_wait_timeout = 50, "
+        "lock_wait_timeout = 31536000"
+    )
+    commit = connection.sent.index("COMMIT")
+    assert connection.sent[commit - 1] == restore
+
+
+@pytest.mark.parametrize("build", [_mysql, _mariadb], ids=["mysql", "mariadb"])
+def test_the_session_query_budget_does_not_cap_the_timeout(build: Any) -> None:
+    session, connection = build(read_timeout=2)
+    seen: list[float | None] = []
+    execute = _Cursor.execute
+
+    def watch(cursor: _Cursor, sql: str, *args: object) -> None:
+        if sql == WRITE.text:
+            seen.append(connection._read_timeout)
+        execute(cursor, sql, *args)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(_Cursor, "execute", watch)
+        _run(session, timeout_ms=60000)
+
+    # MySQL bounds the call one second past --timeout; MariaDB's server does.
+    assert seen == ([61] if build is _mysql else [None])
+    assert connection.timeout_at_commit is None
+    assert connection._read_timeout == 2
+
+
+def test_a_connection_lost_before_the_commit_is_not_a_failed_commit() -> None:
+    session, connection = _mariadb()
+    connection.failures["SET SESSION max_statement_time = 0"] = pymysql.err.OperationalError(
+        2013, "Lost connection"
+    )
+    with pytest.raises(DriverError) as raised:
+        _run(session)
+    assert raised.value.commit_failed is False
+    assert "COMMIT" not in connection.sent
 
 
 def test_a_mysql_write_bounds_the_client_and_lifts_it_before_the_commit() -> None:
@@ -352,6 +440,19 @@ def test_rows_are_capped_and_long_values_cut() -> None:
     assert row[1] == "01" * VALUE_LIMIT
     assert row[2] == "-P0DT12H0M0S"
     assert row[3] == "1.50"
+
+
+@pytest.mark.parametrize(
+    ("size", "cut"), [(3000, False), (VALUE_LIMIT, False), (VALUE_LIMIT + 1, True)]
+)
+def test_a_binary_value_is_cut_by_its_bytes_not_its_hex(size: int, cut: bool) -> None:
+    session, connection = _mysql()
+    connection.columns = ("b",)
+    connection.rows = [(b"\xab" * size,)]
+    result = _run(session, READ, guard=None, commit=False)
+
+    assert result.rows[0][0] == "ab" * min(size, VALUE_LIMIT)
+    assert result.truncated is cut
 
 
 @pytest.mark.parametrize(

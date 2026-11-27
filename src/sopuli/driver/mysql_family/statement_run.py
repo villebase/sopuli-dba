@@ -155,25 +155,41 @@ def _cell(value: Any) -> tuple[JsonValue, bool]:
     ``timedelta`` for ``TIME``, which becomes an ISO 8601 duration (probe item
     8). Bytes are cut before they become hex.
     """
-    if isinstance(value, bytes | bytearray) and len(value) > VALUE_LIMIT:
-        return to_json(bytes(value[:VALUE_LIMIT])), True
+    if isinstance(value, bytes | bytearray):
+        # Hex is twice as long as the bytes, so the text limit below must not
+        # cut it again.
+        return to_json(bytes(value[:VALUE_LIMIT])), len(value) > VALUE_LIMIT
     converted = to_json(value)
     if isinstance(converted, str) and len(converted) > VALUE_LIMIT:
         return converted[:VALUE_LIMIT], True
     return converted, False
 
 
-def read_result(cursor: Any, max_rows: int) -> StatementResult:
-    """The rows of a query, at most ``max_rows`` of them."""
+def read_result(cursor: Any, max_rows: int) -> tuple[StatementResult, bool]:
+    """The rows of a query, at most ``max_rows`` of them, and whether the
+    server has more to send.
+
+    A ``SELECT … INTO @v`` returns no result set, and is refused: it stores
+    its rows in variables, which `sql run` cannot show.
+    """
+    if cursor.description is None:
+        raise DriverError(
+            "the SELECT returned no rows to show",
+            hint=(
+                "a SELECT ... INTO stores its rows in variables, which `sql run` does not "
+                "show. Leave out the INTO"
+            ),
+        )
     columns = tuple(str(column[0]) for column in cursor.description)
     fetched = cursor.fetchmany(max_rows + 1)
-    truncated = len(fetched) > max_rows
+    more = len(fetched) > max_rows
+    truncated = more
     rows: list[tuple[JsonValue, ...]] = []
     for row in fetched[:max_rows]:
         cells = [_cell(value) for value in row]
         truncated = truncated or any(cut for _, cut in cells)
         rows.append(tuple(value for value, _ in cells))
-    return StatementResult(columns, tuple(rows), len(rows), truncated, False, None)
+    return StatementResult(columns, tuple(rows), len(rows), truncated, False, None), more
 
 
 def _lower(requested: float, existing: float) -> float:
@@ -283,8 +299,17 @@ class StatementRunning:
         because every MySQL-family session sets ``FOUND_ROWS``.
 
         ``timeout_ms`` bounds the statement, and ``0`` means no bound; a lower
-        bound the account already has stays. The bounds are lifted before the
-        ``COMMIT``, and the session's own values are put back after.
+        bound the account already has stays. The session's own query budget
+        does not: ``--timeout`` replaces PyMySQL's read timeout for the
+        statement. Every bound is lifted before the ``COMMIT``, and the
+        session's own values are put back after.
+
+        A read that stops at ``max_rows`` with rows left on the server closes
+        the connection rather than read the rest: MySQL's protocol has no way
+        to stop a result partway, and closing the cursor would stream every
+        row. The server then rolls the read-only transaction back. `sql run`
+        closes each session after its one read, so nothing is lost, and the
+        session reports :attr:`connection_lost`.
 
         A transaction an earlier caller left open is rolled back first, because
         ``START TRANSACTION`` would commit it.
@@ -308,16 +333,21 @@ class StatementRunning:
                 )
                 begun = True
             if read:
-                with connection.cursor(pymysql.cursors.SSCursor) as rows:
-                    rows.execute(statement.text)
-                    return read_result(rows, max_rows)
+                rows = connection.cursor(pymysql.cursors.SSCursor)
+                rows.execute(statement.text)
+                result, more = read_result(rows, max_rows)
+                if more:
+                    self._abandon(connection, rows)
+                else:
+                    rows.close()
+                return result
             with connection.cursor() as cursor:
                 cursor.execute(statement.text)
                 count = int(cursor.rowcount)
             passed = None if guard is None else guard.passes(count)
             if commit and passed is not False and count > 0:
-                committing = True
                 self._lift(connection, bounds)
+                committing = True
                 connection.commit()
                 committed = True
             return StatementResult((), (), count, False, committed, passed)
@@ -339,6 +369,24 @@ class StatementRunning:
                     with suppress(pymysql.err.MySQLError), connection.cursor() as cursor:
                         cursor.execute(bounds.restore)
 
+    def _abandon(self, connection: Any, cursor: Any) -> None:
+        """Close the connection without reading the rest of a result, and
+        leave the session closed: ``close`` then has nothing to close.
+
+        PyMySQL reads the rest when the unbuffered cursor or its result is
+        closed or collected, and on a closed connection it then prints a
+        traceback. So the result is marked done and the cursor let go first.
+        Both are PyMySQL's private state (2.2.8's ``SSCursor.close`` and
+        ``MySQLResult.__del__``)."""
+        result = getattr(connection, "_result", None)
+        if result is not None:
+            result.unbuffered_active = False
+        connection._result = None
+        cursor.connection = None
+        self._connection_lost = True
+        self.connection = None
+        connection.close()
+
     def _open_connection(self) -> Any:
         """The connection, or a refusal to send on one that is closed."""
         if self.connection is None:
@@ -354,21 +402,24 @@ class StatementRunning:
     def _bound(self, connection: Any, cursor: Any, timeout_ms: int) -> _Bounds:
         """Bound the next statement by ``timeout_ms``, and say how to undo it.
 
-        On MariaDB that is ``max_statement_time``, in seconds. On MySQL it is
-        ``max_execution_time`` for a ``SELECT``, in milliseconds, the two lock
-        timeouts, in whole seconds of at least 1, and PyMySQL's read timeout,
-        one second past them, so that the server's own error comes first where
-        it has one.
+        On MariaDB that is ``max_statement_time``, in seconds, and no client
+        timeout. On MySQL it is ``max_execution_time`` for a ``SELECT``, in
+        milliseconds, the two lock timeouts, in whole seconds of at least 1,
+        and PyMySQL's read timeout, one second past them, so that the server's
+        own error comes first where it has one. The session's own read
+        timeout, its query budget, is replaced either way and comes back
+        after the statement.
         """
         bounds = _Bounds(read_timeout=connection._read_timeout)
+        connection._read_timeout = None
         if timeout_ms == 0:
             return bounds
         if self.bounds_every_statement:
             cursor.execute("SELECT @@session.max_statement_time")
             (existing,) = cursor.fetchone()
             limit = _lower(timeout_ms / 1000, float(existing))
-            cursor.execute(f"SET SESSION max_statement_time = {limit:.3f}")
-            bounds.restore = f"SET SESSION max_statement_time = {float(existing):.3f}"
+            cursor.execute(f"SET SESSION max_statement_time = {limit:.6f}")
+            bounds.restore = f"SET SESSION max_statement_time = {float(existing):.6f}"
             return bounds
         cursor.execute(
             "SELECT @@session.max_execution_time, @@session.innodb_lock_wait_timeout, "
@@ -385,15 +436,20 @@ class StatementRunning:
             f"SET SESSION max_execution_time = {execution}, "
             f"innodb_lock_wait_timeout = {row_lock}, lock_wait_timeout = {metadata}"
         )
-        existing_read = bounds.read_timeout or 0
-        connection._read_timeout = _lower(seconds + 1, existing_read) or None
+        connection._read_timeout = seconds + 1
         return bounds
 
     def _lift(self, connection: Any, bounds: _Bounds) -> None:
-        """Take the statement's bounds off before the ``COMMIT``, which none of
-        them may cut: the session's own read timeout comes back, and on MariaDB
-        ``max_statement_time`` is 0 until :attr:`_Bounds.restore` runs."""
-        connection._read_timeout = bounds.read_timeout
-        if self.bounds_every_statement and bounds.restore is not None:
-            with connection.cursor() as cursor:
+        """Take every bound off before the ``COMMIT``, which none may cut: no
+        client read timeout, MariaDB's ``max_statement_time`` at 0 until
+        :attr:`_Bounds.restore` runs, and MySQL's own lock timeouts back, so a
+        commit that waits on a global read lock is not ended at
+        ``--timeout``."""
+        connection._read_timeout = None
+        if bounds.restore is None:
+            return
+        with connection.cursor() as cursor:
+            if self.bounds_every_statement:
                 cursor.execute("SET SESSION max_statement_time = 0")
+            else:
+                cursor.execute(bounds.restore)

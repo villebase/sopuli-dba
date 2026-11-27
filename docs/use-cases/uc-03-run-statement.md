@@ -385,7 +385,8 @@ write's wait for a row or a table lock (`1205`). Nothing on the
 server bounds a long write, so the client's read timeout does, one second past
 the lock timeouts. It closes the connection, and the server finishes the
 statement and then rolls it back. On both, a lower bound the account already
-has stays, and the session's own values come back after the statement. After
+has stays, `--timeout` replaces the tool's own query budget for the
+statement, and the session's own values come back after it. After
 `1205` or `1969` the server leaves the transaction open, and the tool rolls it
 back. No bound is left on the commit: on MySQL a commit the client lost to its
 read timeout still commits. A commit whose connection is lost has

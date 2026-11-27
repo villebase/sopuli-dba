@@ -128,14 +128,17 @@ def test_the_session_user_and_the_identity(run_as: RunAs) -> None:
 
 
 def test_a_read_returns_rows_capped_and_cut(run_as: RunAs) -> None:
+    long = _run(run_as, f"SELECT body FROM {run_as.schema}.bodies")
+    assert len(long.rows[0][0]) == 4000
+    assert long.truncated is True
+    assert run_as.session.connection_lost is False
+
     result = _run(run_as, f"SELECT k, v FROM {run_as.schema}.t ORDER BY k", max_rows=2)
     assert result.columns == ("k", "v")
     assert result.rows == ((1, "a"), (2, "b"))
     assert result.truncated is True
-
-    long = _run(run_as, f"SELECT body FROM {run_as.schema}.bodies")
-    assert len(long.rows[0][0]) == 4000
-    assert long.truncated is True
+    # The third row is left on the server: the connection is closed, not drained.
+    assert run_as.session.connection_lost is True
 
 
 def test_a_percent_sign_is_sent_as_written(run_as: RunAs) -> None:

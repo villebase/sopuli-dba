@@ -261,14 +261,25 @@ def _escape_string_end(text: str, i: int) -> int:
     return _UNCLOSED
 
 
-def _mysql_quoted_end(text: str, i: int, escapes: bool) -> int:
+#: The quotes whose strings take backslash escapes in MySQL's default
+#: ``sql_mode``. A backtick quotes a name, which never does.
+_ESCAPING_QUOTES = "'\""
+
+#: Each way a MySQL or MariaDB server can read backslashes, by the quotes
+#: whose literals take escapes: the default; ``NO_BACKSLASH_ESCAPES``, with
+#: or without ``ANSI_QUOTES``; and ``ANSI_QUOTES`` alone, where ``"..."`` is a
+#: name with no escapes and ``'...'`` is still a string with them.
+_SQL_MODE_READINGS = (_ESCAPING_QUOTES, "", "'")
+
+
+def _mysql_quoted_end(text: str, i: int, escapes: str) -> int:
     """Where a MySQL string or name that opens at ``text[i]`` ends, or
-    :data:`_UNCLOSED`. A doubled quote is one quote. With ``escapes``, a
-    backslash escapes the next character, as the server reads a string unless
-    its ``sql_mode`` holds ``NO_BACKSLASH_ESCAPES``."""
+    :data:`_UNCLOSED`. A doubled quote is one quote. Where the quote is in
+    ``escapes``, a backslash escapes the next character, as the server reads
+    a string unless its ``sql_mode`` says otherwise."""
     quote, j, n = text[i], i + 1, len(text)
     while j < n:
-        if escapes and quote != "`" and text[j] == "\\":
+        if quote in escapes and text[j] == "\\":
             j += 2
         elif text[j] == quote:
             if text.startswith(quote * 2, j):
@@ -280,12 +291,14 @@ def _mysql_quoted_end(text: str, i: int, escapes: bool) -> int:
     return _UNCLOSED
 
 
-def _literal_end(text: str, i: int, dialect: Dialect, *, escapes: bool = True) -> int | None:
+def _literal_end(
+    text: str, i: int, dialect: Dialect, *, escapes: str = _ESCAPING_QUOTES
+) -> int | None:
     """Where the literal or quoted name that opens at ``text[i]`` ends,
     :data:`_UNCLOSED` when it never closes, or ``None`` when none opens there.
 
-    ``escapes`` says whether a backslash escapes a quote in a MySQL or MariaDB
-    string. The other dialects ignore it."""
+    ``escapes`` holds the quotes whose MySQL or MariaDB literals take
+    backslash escapes. The other dialects ignore it."""
     char = text[i]
     if dialect in _MYSQL_FAMILY:
         return _mysql_quoted_end(text, i, escapes) if char in "'\"`" else None
@@ -308,7 +321,9 @@ def _literal_end(text: str, i: int, dialect: Dialect, *, escapes: bool = True) -
     return None
 
 
-def _code_end(text: str, dialect: Dialect, *, escapes: bool = True) -> tuple[int, int | None]:
+def _code_end(
+    text: str, dialect: Dialect, *, escapes: str = _ESCAPING_QUOTES
+) -> tuple[int, int | None]:
     """Where the code of ``text`` ends, and where an unclosed comment starts.
 
     The first is the length of ``text`` up to its last character that is not
@@ -347,7 +362,7 @@ def _is_terminated(code: str) -> bool:
     return code.endswith(";") or code.rsplit("\n", 1)[-1].strip(_SPACE) == "/"
 
 
-def _without_trailing_comments(text: str, dialect: Dialect, escapes: bool) -> str:
+def _without_trailing_comments(text: str, dialect: Dialect, escapes: str) -> str:
     """``text`` without the comments after its terminator.
 
     Only a comment that follows a ``;`` or a line holding only ``/`` goes, with
@@ -367,7 +382,7 @@ def _without_trailing_comments(text: str, dialect: Dialect, escapes: bool) -> st
     return code
 
 
-def _strip_terminators(raw: str, dialect: Dialect, escapes: bool) -> str:
+def _strip_terminators(raw: str, dialect: Dialect, escapes: str) -> str:
     text = raw.replace("\r\n", "\n").replace("\r", "\n")
     text = _without_trailing_comments(text, dialect, escapes).rstrip(_SPACE)
     lines = text.split("\n")
@@ -385,7 +400,7 @@ def _is_mysql_word_char(char: str) -> bool:
     return char.isalnum() or char in "_$" or not char.isascii()
 
 
-def _code_words(text: str, dialect: Dialect, escapes: bool) -> list[str]:
+def _code_words(text: str, dialect: Dialect, escapes: str) -> list[str]:
     """The tokens of ``text`` outside comments, in order: each word in upper
     case, and ``""`` for a literal, a quoted name or any other character."""
     tokens: list[str] = []
@@ -416,7 +431,7 @@ def _code_words(text: str, dialect: Dialect, escapes: bool) -> list[str]:
 _FILE_TARGETS = ("OUTFILE", "DUMPFILE")
 
 
-def _refuse_file_writes(text: str, dialect: Dialect, escapes: bool) -> None:
+def _refuse_file_writes(text: str, dialect: Dialect, escapes: str) -> None:
     """Refuse ``INTO OUTFILE`` and ``INTO DUMPFILE`` outside literals and
     comments. Each writes a file on the database server, which no transaction
     covers (#1713, Q4)."""
@@ -430,7 +445,7 @@ def _refuse_file_writes(text: str, dialect: Dialect, escapes: bool) -> None:
             )
 
 
-def _classify(raw: str, dialect: Dialect, escapes: bool) -> Statement:
+def _classify(raw: str, dialect: Dialect, escapes: str) -> Statement:
     text = _strip_terminators(raw, dialect, escapes)
     word, reason = _first_word(text, dialect)
     if not word:
@@ -480,20 +495,21 @@ def classify(raw: str, *, dialect: Dialect = Dialect.ORACLE) -> Statement:
 
     On MySQL and MariaDB the server's ``sql_mode`` decides whether a backslash
     escapes a quote, and the tool cannot see it before it connects. So the
-    statement is read both ways. What either reading refuses is refused, and
-    so is a statement the two readings cut differently.
+    statement is read each way a server can read it (:data:`_SQL_MODE_READINGS`).
+    What any reading refuses is refused, and so is a statement two readings
+    cut differently.
     """
     if dialect not in _MYSQL_FAMILY:
-        return _classify(raw, dialect, escapes=True)
-    with_escapes = _classify(raw, dialect, escapes=True)
-    if _classify(raw, dialect, escapes=False) != with_escapes:
+        return _classify(raw, dialect, escapes=_ESCAPING_QUOTES)
+    first, *others = (_classify(raw, dialect, escapes) for escapes in _SQL_MODE_READINGS)
+    if any(other != first for other in others):
         raise StatementRefusedError(
             "the statement reads differently with and without backslash escapes, "
             "which the server's sql_mode decides",
             hint="write it without a backslash before a quote, or without a comment "
             "after its terminator",
         )
-    return with_escapes
+    return first
 
 
 #: How a refusal names each dialect.

@@ -215,9 +215,11 @@ the check refuses each one anywhere outside a literal. `INTO OUTFILE` and
 covers, so the check refuses them too (#1713, Q4). The server's `sql_mode`
 decides whether a backslash escapes a quote (`NO_BACKSLASH_ESCAPES`) and whether
 `"..."` is a name (`ANSI_QUOTES`), and the tool cannot see it before it
-connects. So the check reads the statement twice, with backslash escapes and
-without them. It refuses what either reading refuses, and a statement that the
-two readings cut differently. A `\'` followed by a comment after the
+connects. So the check reads the statement each way a server can: with
+backslash escapes in `'...'` and `"..."`, with none, and with `ANSI_QUOTES`
+alone, where `"..."` is a name with no escapes and `'...'` keeps them. It
+refuses what any reading refuses, and a statement that two readings cut
+differently. A `\'` followed by a comment after the
 terminator is then a false refusal; `''` reads the same way in both. The
 MySQL and MariaDB dialect is built, but `sql run` does not yet run on those
 targets, so they are still skipped (#1718).
@@ -343,8 +345,9 @@ after a comment that follows a `;` is still refused. The scan reads string
 literals, quoted names and `q'[...]'` literals whole, so a `--` or `/*` in one
 is not a comment. On PostgreSQL the scan reads dollar quotes and `E'...'`
 literals whole instead of `q'[...]'`, and a nested comment ends at its own
-`*/` (§3). On MySQL and MariaDB it reads backtick names whole, and `#` and
-`--` followed by whitespace are comments (§3). The trailing `/` line is removed on every product, so one
+`*/` (§3). On MySQL and MariaDB it reads backtick names whole, and `#` is a
+comment, and so is `--` followed by whitespace, a control character or the
+end of the text (§3). The trailing `/` line is removed on every product, so one
 statement reads the same way on a run over more than one. A `/*` that never
 closes after the terminator is refused as an unclosed comment. A second line that holds only `/`, left at the end, is
 refused, and so is a `;` still left in the text. A `/` inside the statement, such as a

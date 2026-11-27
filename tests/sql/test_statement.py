@@ -521,6 +521,23 @@ def test_a_file_write_one_reading_sees_is_refused(dialect: Dialect) -> None:
         classify(r"SELECT 'a\' INTO OUTFILE '/x' -- '", dialect=dialect)
 
 
+@MYSQL_FAMILY
+@pytest.mark.parametrize(
+    ("raw", "match"),
+    [
+        (r"""SELECT "\" '\' "' INTO OUTFILE '/x' FROM t""", "writes a file on the server"),
+        (r"""SELECT "\" '\' "' /*! INTO OUTFILE '/x' */ FROM t""", "executable comment"),
+    ],
+)
+def test_what_only_the_ansi_quotes_reading_sees_is_refused(
+    dialect: Dialect, raw: str, match: str
+) -> None:
+    # With ANSI_QUOTES alone, `"\"` is a name with no escapes and `'\' "'` is a
+    # string, so the server sees what follows it as code (review of #1719).
+    with pytest.raises(StatementRefusedError, match=match):
+        classify(raw, dialect=dialect)
+
+
 def test_classify_for_reads_mysql_and_mariadb_alike() -> None:
     raw = r"UPDATE t SET v = 'a\\b' WHERE k = 1; # note"
     assert classify_for(raw, [MY, MARIA]) == classify(raw, dialect=MY)

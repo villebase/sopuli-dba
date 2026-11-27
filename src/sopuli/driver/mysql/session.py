@@ -193,7 +193,6 @@ class MysqlSession(StatementRunning, ClosesConnection):
     #: `sql run`'s bounds: ``max_execution_time`` bounds a ``SELECT`` alone.
     bounds_every_statement = False
     identity_query = "SELECT @@global.server_uuid, DATABASE()"
-    explain = "EXPLAIN FORMAT=TRADITIONAL"
     dialect = Dialect.MYSQL
     #: The words for two targets that are one server
     #: (:class:`~sopuli.driver.clusters.ClusterIdentity`). Not fields.

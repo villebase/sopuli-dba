@@ -402,16 +402,14 @@ dry or real, is refused before any statement runs on any target where it names
 such a table that the run-as account can see. It names one where it writes
 `schema.name`, with backticks or double quotes or neither, or where it writes
 the name alone and the session's default database holds it. The statement is
-read each way a server's `sql_mode` can read a backslash, as in §3. On MySQL,
-where the statement's own names match nothing, the tool also asks `EXPLAIN`,
-which names a view's base table. The refusal exits 8 with `SOPULI-20009` and
-names each table and its engine. A column or an alias with such a table's name
-is refused too. A check that cannot be made, such as an `EXPLAIN` the server
-refuses, refuses the run as well. `EXPLAIN` of a write runs in an ordinary
-transaction, bounded by `--timeout` and rolled back, because the server refuses
-it in a read-only one (`1792`). MariaDB gets no `EXPLAIN`: its `EXPLAIN` of a
-write ran a `DETERMINISTIC` stored function in the `WHERE`, which wrote a MyISAM
-table, on 11.8 (2026-11-27), and it names an alias or nothing.
+read each way a server's `sql_mode` can read a backslash, as in §3. The refusal
+exits 8 with `SOPULI-20009` and names each table and its engine. A column or an
+alias with such a table's name is refused too. The check sends one read of
+`information_schema`, bounded by `--timeout`; a read that fails refuses the run
+as well. It does not ask `EXPLAIN`: `EXPLAIN` names an alias, the alias inside
+a view's own definition too, and MariaDB's can run a stored function that
+writes. A view's base tables are often hidden from the run-as account, so the
+check cannot name them.
 
 A trigger or a function can still write such a table, and on MariaDB so can a
 write through a view. The rollback then tells: the server warns `1196`, and the
@@ -493,8 +491,10 @@ again.
 A run where some targets committed and others did not exits `4` (partial
 success), and its output names each target's outcome. A run where every target
 committed, or affected 0 rows and rolled back, exits `0`. A run where no target
-committed exits `1`. A dry run exits `0` when every target passed its guard,
-`4` when some did or a rollback kept a change (§4), and `1` when none did. A target of another product is
+committed exits `1`, unless a rollback kept a change to a table without
+transactions (§4): rows changed there, so it exits `4`. A dry run exits `0`
+when every target passed its guard, `4` when some did or a rollback kept a
+change, and `1` when none did. A target of another product is
 `SKIPPED` (`SOPULI-20006`). It does not stop a real write, and the exit code
 leaves it out; a run where every target is one exits `5`. Nothing runs on it,
 so the plan leaves it out too, and it counts for neither `max_targets` nor

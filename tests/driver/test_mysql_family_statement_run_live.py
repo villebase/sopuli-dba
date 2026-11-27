@@ -317,23 +317,19 @@ def test_a_write_naming_a_myisam_table_is_refused_before_it_runs(
     assert unrollable.session.connection_lost is False
 
 
-def test_a_write_through_a_view_over_myisam_is_refused_on_mysql(unrollable: RunAs) -> None:
-    """MySQL's EXPLAIN names the view's base table. MariaDB sends no EXPLAIN
-    (its EXPLAIN runs a DETERMINISTIC function in a write's WHERE, and names
-    an alias or nothing), so there a write through a view passes the check,
-    and the rollback's warning is what catches it (UC-3 §4)."""
+def test_a_write_through_a_view_over_myisam_is_caught_by_the_rollback(
+    unrollable: RunAs,
+) -> None:
+    """The check does not name a view's base table (UC-3 §4), so the write
+    passes it, and the dry run's rollback warning is what catches it."""
     statement = classify(
         f"UPDATE {unrollable.schema}.vm SET v = 1", dialect=Dialect(unrollable.product)
     )
-    if unrollable.product == "mysql":
-        with pytest.raises(StatementRefusedError, match="no transactions"):
-            unrollable.session.check_write(statement, timeout_ms=5000)
-    else:
-        unrollable.session.check_write(statement, timeout_ms=5000)
-        with pytest.raises(DriverError) as raised:
-            _run(unrollable, statement, guard=RowGuard(expect=1), commit=False)
-        assert raised.value.rollback_incomplete is True
-        assert _tm(unrollable) == 1, "the dry run's change to MyISAM stayed"
+    unrollable.session.check_write(statement, timeout_ms=5000)
+    with pytest.raises(DriverError) as raised:
+        _run(unrollable, statement, guard=RowGuard(expect=1), commit=False)
+    assert raised.value.rollback_incomplete is True
+    assert _tm(unrollable) == 1, "the dry run's change to MyISAM stayed"
 
 
 def test_a_write_to_innodb_alone_passes_the_check(unrollable: RunAs) -> None:

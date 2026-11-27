@@ -83,9 +83,6 @@ class _Cursor:
             self._rows = list(connection.roles)
         elif sql == NON_TRANSACTIONAL:
             self._rows = list(connection.unrollable)
-        elif sql.startswith("EXPLAIN"):
-            self.description = (("id",), ("table",))
-            self._rows = [(1, name) for name in connection.explained]
         elif sql in (READ.text,):
             if connection.columns:
                 self.description = tuple((name,) for name in connection.columns)
@@ -125,8 +122,6 @@ class _Connection:
         self.roles: list[tuple[str]] = []
         #: ``NON_TRANSACTIONAL``'s rows: schema, table, engine, ``DATABASE()``.
         self.unrollable: list[tuple[str, str, str, str | None]] = []
-        #: The table names ``EXPLAIN`` gives.
-        self.explained: list[str | None] = []
         #: What ``SHOW WARNINGS`` gives after a rollback.
         self.warnings: list[tuple[str, int, str]] = []
         #: What it gives only before the first rollback: the failed
@@ -620,7 +615,7 @@ CHECK = 5000
 
 
 @pytest.mark.parametrize("build", [_mysql, _mariadb], ids=["mysql", "mariadb"])
-def test_a_server_with_no_table_without_transactions_is_not_explained(build: Any) -> None:
+def test_a_server_with_no_table_without_transactions_needs_one_read(build: Any) -> None:
     session, connection = build()
     session.check_write(_write("UPDATE acme.settings SET v = 1"), timeout_ms=CHECK)
     assert connection.sent == [NON_TRANSACTIONAL]
@@ -653,87 +648,72 @@ def test_a_write_that_names_a_table_without_transactions_is_refused(
     with pytest.raises(StatementRefusedError, match="no transactions") as raised:
         session.check_write(_write(text, product), timeout_ms=CHECK)
     assert "acme.settings" in raised.value.message
-    explains = [sql for sql in connection.sent if sql.startswith("EXPLAIN")]
-    assert explains == [], "the statement's own names refuse it without EXPLAIN"
+    assert connection.sent == [NON_TRANSACTIONAL], "one read, and nothing else is sent"
 
 
-def test_mysqls_explain_names_a_views_base_table_bounded_and_rolled_back() -> None:
-    session, connection = _mysql()
-    connection.unrollable = [MYISAM]
-    connection.explained = ["settings"]
-    with pytest.raises(StatementRefusedError, match="no transactions"):
-        session.check_write(_write("UPDATE acme.v_settings SET v = 1"), timeout_ms=CHECK)
-    explain = next(at for at, sql in enumerate(connection.sent) if sql.startswith("EXPLAIN"))
-    assert connection.sent[explain - 2].startswith("SET SESSION max_execution_time = 5000")
-    assert connection.sent[explain + 1] == "ROLLBACK"
-    assert connection.sent[-1].startswith("SET SESSION max_execution_time = 0")
-    assert connection._read_timeout == 30
-
-
-def test_mariadb_sends_no_explain() -> None:
-    """MariaDB's EXPLAIN runs a DETERMINISTIC function in a write's WHERE, so
-    the check sends none there (review of #1723). A write through a view is
-    left to the rollback's warning."""
-    session, connection = _mariadb()
-    connection.unrollable = [MYISAM]
-    session.check_write(_write("UPDATE acme.v_settings SET v = 1", "mariadb"), timeout_ms=CHECK)
-    assert not [sql for sql in connection.sent if sql.startswith("EXPLAIN")]
-
-
-def test_an_explain_name_the_statement_gives_itself_matches_only_its_own_schema() -> None:
-    """`acme.event` is InnoDB. EXPLAIN names `event`, which MariaDB's Aria
-    `mysql.event` shares: that is no reason to refuse (review of #1723)."""
-    session, connection = _mysql()
-    connection.unrollable = [("mysql", "event", "Aria", None)]
-    connection.explained = ["event"]
-    session.check_write(_write("UPDATE acme.event SET v = 1"), timeout_ms=CHECK)
-
-
-def test_an_explain_whose_rollback_kept_a_change_refuses() -> None:
-    session, connection = _mysql()
-    connection.unrollable = [MYISAM]
-    connection.warnings = [("Warning", 1196, "Some non-transactional changed tables ...")]
-    with pytest.raises(DriverError) as raised:
-        session.check_write(_write("UPDATE acme.orders SET v = 1"), timeout_ms=CHECK)
-    assert raised.value.rollback_incomplete is True
-
-
+@pytest.mark.parametrize("build", [_mysql, _mariadb], ids=["mysql", "mariadb"])
 @pytest.mark.parametrize(
-    ("text", "unrollable", "explained"),
+    ("text", "unrollable"),
     [
-        ("UPDATE acme.orders SET v = 1", [MYISAM], ["orders"]),
-        ("UPDATE settings SET v = 1", [MYISAM], [None]),
-        (
-            "UPDATE acme.orders u SET v = 1",
-            [("performance_schema", "u", "PERFORMANCE_SCHEMA", None)],
-            ["u"],
-        ),
-        ("UPDATE acme.orders SET note = 'acme.settings'", [MYISAM], ["orders"]),
+        ("UPDATE acme.orders SET v = 1", [MYISAM]),
+        ("UPDATE settings SET v = 1", [MYISAM]),
+        ("UPDATE acme.event SET v = 1", [("mysql", "event", "Aria", None)]),
+        ("UPDATE acme.orders SET note = 'acme.settings'", [MYISAM]),
+        ("UPDATE acme.v_settings SET v = 1", [MYISAM]),
     ],
-    ids=["another-table", "no-default-database", "performance-schema-alias", "in-a-literal"],
+    ids=["another-table", "no-default-database", "same-name-elsewhere", "in-a-literal", "view"],
 )
 def test_a_write_that_names_no_table_without_transactions_passes(
-    text: str, unrollable: list[Any], explained: list[str | None]
+    build: Any, text: str, unrollable: list[Any]
 ) -> None:
-    session, connection = _mysql()
+    """A view's base table is not named here: the rollback's warning catches
+    a write through it (UC-3 §4)."""
+    session, connection = build()
     connection.unrollable = unrollable
-    connection.explained = explained
-    session.check_write(_write(text), timeout_ms=CHECK)
-    assert any(sql.startswith("EXPLAIN FORMAT=TRADITIONAL ") for sql in connection.sent)
+    product = "mysql" if build is _mysql else "mariadb"
+    session.check_write(_write(text, product), timeout_ms=CHECK)
+    assert connection.sent == [NON_TRANSACTIONAL], "no EXPLAIN is sent"
 
 
-def test_an_explain_the_server_refuses_is_a_driver_error() -> None:
+@pytest.mark.parametrize(("timeout_ms", "bound"), [(CHECK, 6), (0, 30)], ids=["bounded", "none"])
+def test_the_checks_read_is_bounded_by_the_timeout(timeout_ms: int, bound: int) -> None:
     session, connection = _mysql()
-    connection.unrollable = [MYISAM]
-    write = _write("UPDATE acme.orders SET v = 1")
-    connection.failures[f"EXPLAIN FORMAT=TRADITIONAL {write.text}"] = pymysql.err.ProgrammingError(
-        1146, "Table 'acme.orders' doesn't exist"
-    )
+    seen: list[float | None] = []
+    execute = _Cursor.execute
+
+    def watch(cursor: _Cursor, sql: str, *args: object) -> None:
+        seen.append(connection._read_timeout)
+        execute(cursor, sql, *args)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(_Cursor, "execute", watch)
+        session.check_write(_write("UPDATE acme.t SET v = 1"), timeout_ms=timeout_ms)
+    assert seen == [bound]
+    assert connection._read_timeout == 30, "the session's budget comes back"
+
+
+def test_a_check_whose_read_fails_is_a_driver_error() -> None:
+    session, connection = _mysql()
+    connection.failures[NON_TRANSACTIONAL] = pymysql.err.OperationalError(1205, "Lock wait")
     with pytest.raises(DriverError) as raised:
-        session.check_write(write, timeout_ms=CHECK)
-    assert raised.value.code == "1146"
+        session.check_write(_write("UPDATE acme.t SET v = 1"), timeout_ms=CHECK)
+    assert raised.value.code == "1205"
+
+
+def test_a_failed_warnings_read_still_rolls_back() -> None:
+    session, connection = _mysql()
+    calls = {"n": 0}
+
+    def flaky() -> tuple[tuple[str, int, str], ...]:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise pymysql.err.OperationalError(2013, "Lost connection")
+        return ()
+
+    connection.show_warnings = flaky  # type: ignore[method-assign]
+    result = _run(session, commit=False)
+    assert result.committed is False
     assert "ROLLBACK" in connection.sent
-    assert connection.sent[-1].startswith("SET SESSION max_execution_time = 0"), "bounds restored"
 
 
 @pytest.mark.parametrize("build", [_mysql, _mariadb], ids=["mysql", "mariadb"])

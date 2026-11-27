@@ -734,6 +734,21 @@ def test_a_dry_run_whose_first_target_kept_a_change_exits_4_not_1(
     assert loaded["exit_code"] == ExitCode.PARTIAL
 
 
+def test_a_dry_run_stopped_by_a_kept_change_does_not_advise_another_dry_run(
+    write_config: WriteConfig, fleet: dict[str, Any]
+) -> None:
+    kept = DriverError("1196: the rollback could not undo every change", code="1196")
+    kept.rollback_incomplete = True
+    fleet["b-beta"] = WriteSession("b-beta", error=kept)
+
+    result = sql(write_config, "--write", "--dry-run", *ALL, "--expect-rows", "1")
+
+    assert "table without transactions kept the statement's change" in result.output
+    assert "move the table to InnoDB" in result.output
+    assert "dry-run again" not in result.output
+    assert "--plan" not in result.output
+
+
 def test_a_target_that_did_not_connect_refuses_a_real_run(
     write_config: WriteConfig, fleet: dict[str, Any]
 ) -> None:

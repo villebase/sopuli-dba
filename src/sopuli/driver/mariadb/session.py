@@ -315,10 +315,6 @@ class MariadbSession(StatementRunning, ClosesConnection):
     #: `sql run`'s bounds: ``max_statement_time`` bounds every statement.
     bounds_every_statement = True
     identity_query = "SELECT @@global.server_uid, DATABASE()"
-    #: No EXPLAIN in `sql run`'s check: MariaDB's runs a DETERMINISTIC stored
-    #: function in a write's WHERE, so the check itself could write a table
-    #: without transactions, and it names an alias or nothing (review of #1723).
-    explain = None
     dialect = Dialect.MARIADB
     #: The words for two targets that are one server
     #: (:class:`~sopuli.driver.clusters.ClusterIdentity`), as on MySQL. Not

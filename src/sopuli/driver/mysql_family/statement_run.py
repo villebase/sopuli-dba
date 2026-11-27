@@ -254,11 +254,6 @@ NON_TRANSACTIONAL = (
     "and t.table_type in ('BASE TABLE', 'SYSTEM VERSIONED')"
 )
 
-#: Schemas whose tables :meth:`StatementRunning.check_write` matches only by a
-#: qualified name: ``performance_schema`` holds tables such as ``users`` and
-#: ``accounts``, which an alias in ``EXPLAIN``'s output would match by chance.
-_QUALIFIED_ONLY = frozenset({"PERFORMANCE_SCHEMA", "INFORMATION_SCHEMA"})
-
 
 @dataclass(frozen=True)
 class _Table:
@@ -268,26 +263,14 @@ class _Table:
     name: str
     engine: str
 
-    def named_by(
-        self,
-        references: frozenset[tuple[str | None, str]],
-        explained: frozenset[str],
-        database: str | None,
-    ) -> bool:
-        """Whether the statement names this table: qualified, alone in the
-        session's default database, or in ``EXPLAIN``'s output."""
+    def named_by(self, references: frozenset[tuple[str | None, str]], database: str | None) -> bool:
+        """Whether the statement names this table: as ``schema.name``, or as
+        a name alone where the session's default database holds it. A table
+        of the same name in another schema is not named."""
         schema, name = self.schema.upper(), self.name.upper()
         if (schema, name) in references:
             return True
-        if database is not None and schema == database.upper() and (None, name) in references:
-            return True
-        # An EXPLAIN name counts only where the statement does not give that
-        # name itself, which is a view's base table. A name the statement
-        # gives was matched above, by its own schema; matching it again in any
-        # schema would refuse `acme.event` for MariaDB's Aria `mysql.event`.
-        return (
-            schema not in _QUALIFIED_ONLY and name in explained and (None, name) not in references
-        )
+        return database is not None and schema == database.upper() and (None, name) in references
 
 
 def _non_transactional(cursor: Any) -> tuple[list[_Table], str | None]:
@@ -307,11 +290,18 @@ def _rolled_back_in_part(connection: Any) -> bool:
     back itself, as on a deadlock (``1213``), the warning is the failed
     statement's, and the rollback after it warns nothing."""
 
+    import pymysql
+
     def warned() -> bool:
         warnings = connection.show_warnings() or ()
         return any(int(row[1]) == INCOMPLETE_ROLLBACK for row in warnings)
 
-    before = warned()
+    # The rollback is sent whatever the first read does: a failed read must
+    # never leave the transaction open.
+    try:
+        before = warned()
+    except pymysql.err.MySQLError:
+        before = False
     connection.rollback()
     return warned() or before
 
@@ -347,8 +337,8 @@ class StatementRunning:
     session that holds one PyMySQL connection.
 
     A session that takes these declares the fields below, and its
-    ``_read``. It sets :attr:`bounds_every_statement`, :attr:`identity_query`,
-    :attr:`explain` and :attr:`dialect`.
+    ``_read``. It sets :attr:`bounds_every_statement`, :attr:`identity_query`
+    and :attr:`dialect`.
     """
 
     #: MariaDB's ``max_statement_time`` bounds every statement. MySQL's
@@ -356,11 +346,6 @@ class StatementRunning:
     bounds_every_statement: ClassVar[bool]
     #: Reads the server's identity and ``DATABASE()``, for the plan fingerprint.
     identity_query: ClassVar[str]
-    #: What :meth:`check_write` puts before the statement to have the server
-    #: name its tables, or ``None`` where it sends no ``EXPLAIN``. MySQL 9.7.4
-    #: defaults to a tree with no table column, so MySQL asks for the table
-    #: form. MariaDB has none (:meth:`_explained` says why).
-    explain: ClassVar[str | None]
     #: The statement check's dialect for this product.
     dialect: ClassVar[Dialect]
 
@@ -429,24 +414,33 @@ class StatementRunning:
         write its guard refuses, would leave the rows changed.
 
         The statement names a table where it writes it as ``schema.name``,
-        or as a name alone in the session's default database. On MySQL,
-        ``EXPLAIN`` also names a view's base table. A column or an alias
-        with a table's name is refused too, and the message names the table.
-        A write a trigger or a function makes is not seen here, nor on
-        MariaDB a write through a view: the rollback reports those
-        (:data:`INCOMPLETE_ROLLBACK`). ``timeout_ms`` bounds the
-        ``EXPLAIN``, which waits for a metadata lock as the write would.
+        or as a name alone in the session's default database, in any of the
+        ways a server's ``sql_mode`` reads it. A column or an alias with a
+        table's name is refused too, and the message names the table.
+
+        A write a trigger, a function or a view makes is not seen here, and
+        the rollback reports it (:data:`INCOMPLETE_ROLLBACK`). ``EXPLAIN``
+        is not asked: it names an alias, the alias inside a view's own
+        definition too, and MariaDB's can run a ``DETERMINISTIC`` stored
+        function that writes. The base tables of a view are often hidden
+        from the run-as account, so ``information_schema`` cannot name them
+        either (#1713, Q3; the maintainer's choice on #1723).
+
+        The check sends one read of ``information_schema``, which
+        ``timeout_ms`` bounds as PyMySQL's read timeout.
         """
-        tables, database = self._read(_non_transactional)
+        connection = self._open_connection()
+        budget = connection._read_timeout
+        if timeout_ms:
+            connection._read_timeout = max(1, math.ceil(timeout_ms / 1000)) + 1
+        try:
+            tables, database = self._read(_non_transactional)
+        finally:
+            connection._read_timeout = budget
         if not tables:
             return
         references = table_references(statement, self.dialect)
-        named = [table for table in tables if table.named_by(references, frozenset(), database)]
-        if not named and self.explain is not None:
-            # Only where the statement's own names match nothing: EXPLAIN adds
-            # a view's base table, and an EXPLAIN that fails then refuses.
-            explained = self._explained(statement, timeout_ms)
-            named = [table for table in tables if table.named_by(references, explained, database)]
+        named = [table for table in tables if table.named_by(references, database)]
         if not named:
             return
         listed = ", ".join(f"{table.schema}.{table.name} ({table.engine})" for table in named)
@@ -459,57 +453,6 @@ class StatementRunning:
                 "or change it another way. A column or an alias with the table's name is "
                 "refused too: rename it in the statement"
             ),
-        )
-
-    def _explained(self, statement: Statement, timeout_ms: int) -> frozenset[str]:
-        """The table names MySQL's ``EXPLAIN`` gives for ``statement``, in
-        upper case.
-
-        The server refuses ``EXPLAIN`` of a write in a read-only transaction
-        (``1792``), so it runs in an ordinary one, rolled back, and bounded as
-        the statement would be. ``EXPLAIN`` names an alias where the statement
-        gives one, so these names add to the statement's own and never
-        replace them. MySQL 8.4's ``EXPLAIN`` did not run a stored function
-        that writes, in the ``WHERE`` or the ``SET``; MariaDB 11.8's ran a
-        ``DETERMINISTIC`` one in the ``WHERE`` (2026-11-27, review of #1723),
-        which is why MariaDB has no :attr:`explain`. Should one run here, the
-        rollback warns ``1196`` and the check refuses.
-        """
-        import pymysql
-
-        connection = self._open_connection()
-        bounds = _Bounds(read_timeout=connection._read_timeout)
-        try:
-            with connection.cursor() as cursor:
-                if connection.server_status & SERVER_STATUS_IN_TRANS:
-                    connection.rollback()
-                bounds = self._bound(connection, cursor, timeout_ms)
-                cursor.execute("START TRANSACTION READ WRITE")
-                try:
-                    connection._read_timeout = bounds.statement_read_timeout
-                    cursor.execute(f"{self.explain} {statement.text}")
-                    columns = [str(column[0]).lower() for column in cursor.description or ()]
-                    rows = cursor.fetchall()
-                finally:
-                    connection._read_timeout = bounds.read_timeout
-                    kept = connection.open and _rolled_back_in_part(connection)
-        except pymysql.err.MySQLError as error:
-            self._connection_lost = not connection.open
-            raise for_statement(self._diagnose(error), read=False).as_error() from error
-        finally:
-            connection._read_timeout = bounds.read_timeout
-            if bounds.restore is not None and connection.open:
-                with suppress(pymysql.err.MySQLError), connection.cursor() as cursor:
-                    cursor.execute(bounds.restore)
-        if kept:
-            raise _incomplete_rollback()
-        if "table" not in columns:
-            return frozenset()
-        at = columns.index("table")
-        return frozenset(
-            str(row[at]).upper()
-            for row in rows
-            if row[at] is not None and not str(row[at]).startswith("<")
         )
 
     def run_statement(

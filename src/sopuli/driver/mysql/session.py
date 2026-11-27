@@ -453,6 +453,27 @@ class MysqlSession(StatementRunning, ClosesConnection):
         revokes and could not use it, for ``SOPULI-W073``."""
         return None if self._restrictions is None else self._restrictions.broken
 
+    def member_of(self, account: str) -> bool:
+        """Whether the session's account holds ``account`` as a role, directly
+        or through other roles, active or not, compared by ``upper()`` (#1713,
+        Q1 A). On MySQL a role is an account, so the service account can be
+        granted to the run-as account, and a default role or a ``SET ROLE``
+        then gives a statement its privileges.
+
+        ``information_schema.APPLICABLE_ROLES`` holds every edge of the path,
+        nested ones too, whether the role is active or not, and any account
+        reads its own rows with no grant. ``CURRENT_ROLE()`` and ``SHOW
+        GRANTS`` miss an inactive or a nested role, and ``mysql.role_edges``
+        needs a grant (probe 13, item 7). A ``GRANT PROXY`` is not counted: a
+        password login does not become the proxied account, and a login that
+        does is refused by its name."""
+
+        def read(cursor: Any) -> bool:
+            cursor.execute(APPLICABLE_ROLES)
+            return any(str(name).upper() == account.upper() for (name,) in cursor.fetchall())
+
+        return self._read(read)
+
     def _diagnose(self, error: Any) -> Diagnosis:
         """A PyMySQL error, classified by :mod:`~sopuli.driver.mysql.errors`."""
         return from_error(error)
@@ -1202,6 +1223,10 @@ def _not_tried(detail: str) -> VerifyResult:
 
 #: Which server this is, for two targets that are one (probe 02, CH5).
 SERVER_UUID = "select @@global.server_uuid"
+
+#: The roles granted to the session's account and to its roles, each edge of
+#: the path, active or not (`sql run`'s session check, #1713 Q1 A).
+APPLICABLE_ROLES = "select role_name from information_schema.applicable_roles"
 
 
 def _server_uuid(cursor: Any) -> str:

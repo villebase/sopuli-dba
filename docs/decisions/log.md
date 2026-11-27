@@ -6847,3 +6847,40 @@ the register.
   Refusing membership in the other direction too, where the service role is a
   member of the run-as role (option C): the statement gains no privilege from
   it, so it would only refuse more setups.
+
+## #1713
+
+- **Decided:** 2026-11-27, #1713
+- **Question:** four questions before `sql run` runs on MySQL and MariaDB.
+  Q1: may the run-as account hold the service account's privileges as a role?
+  Q2: does the row guard count the rows a write matched or the rows it
+  changed? Q3: what of a write to a table whose engine has no transactions,
+  which a rollback does not undo? Q4: may a read write a file on the server
+  with `SELECT … INTO OUTFILE`?
+- **Decision:** the maintainer's: option A for all four.
+  - Q1: the session check refuses a run-as account that is granted the
+    service account as a role, directly or through other roles, active or
+    not, read from `information_schema.APPLICABLE_ROLES` and compared by
+    `upper()`. A proxy grant is not refused. MariaDB answers no: a MariaDB
+    role is never an account. Built in #1717.
+  - Q2: the guard counts matched rows: every MySQL-family session sets
+    `CLIENT.FOUND_ROWS`. Built in #1716.
+  - Q3: a write that `EXPLAIN` shows touches a non-transactional table is
+    refused before any statement runs, and a rollback that warns `1196`
+    reports the target `ERROR` with `outcome_unknown: true`. #1717 builds it,
+    after Q1.
+  - Q4: the MySQL and MariaDB dialect refuses `INTO OUTFILE` and `INTO
+    DUMPFILE`. Built in #1715.
+- **Why:** Q1, as #1690: a statement would run with the service account's
+  privileges, which UC-3 §1 counts as a failure even when the run works; a
+  default role gives them at login, so an inactive role counts too. Q2: one
+  `--expect-rows` means one thing on every product, which a mixed run's one
+  plan needs. Q3: a dry run that changes data, with no sign of it, breaks UC-3
+  §4's promise that a dry run rolls back. Q4: the file outlives the rollback,
+  so the read would be a write that no guard sees (probes 13 and 18, #1714).
+- **Rejected:** Q1: refusing a proxy grant too (B), which a password login
+  does not use, and accepting the role as a gap (C). Q2: counting changed
+  rows (B), which makes the guard mean another thing on MySQL. Q3: the
+  `1196` backstop alone (B), which learns of the change only after it was
+  made, and documenting the gap (C). Q4: documenting it beside PostgreSQL's
+  `dblink_exec()` (B).

@@ -16,6 +16,7 @@ from sopuli.admin import (
     PasswordPrompt,
     forget,
     refuse_service_account,
+    refuse_session_user,
     resolve_run_as,
     run_as_is_wallet,
     run_as_prompts,
@@ -24,7 +25,7 @@ from sopuli.admin import (
 )
 from sopuli.config.model import AdminAuth, AdminCredential, ExpandedTarget, Target
 from sopuli.exit_codes import ExitCode
-from sopuli.safety import RefusedError
+from sopuli.safety import RefusedError, ServiceAccountRefusedError
 from sopuli.secrets import Secret
 
 DSN = "db-test.example.com:1521/CDBQA.pdb.example.com"
@@ -514,3 +515,33 @@ def test_a_refused_typed_password_is_asked_again() -> None:
     prompt(one, "dba_beta")
 
     assert len(asked) == 2
+
+
+@pytest.mark.parametrize(
+    ("product", "words"),
+    [("mysql", "hold the service account as a role"), ("postgresql", "member of the service role")],
+)
+def test_a_run_as_account_holding_the_service_account_is_refused_in_its_products_words(
+    product: str, words: str
+) -> None:
+    """#1713 Q1: on MySQL the service account is granted as a role, and the
+    hint says to revoke it; PostgreSQL keeps its own words (#1690)."""
+    declared = ExpandedTarget(
+        target=Target(
+            name=f"{product}-dev",
+            type=product,
+            dsn=f"{product}-dev.example.com:3306",
+            admin=credential("sopuli_svc", "keyring", entry="svc"),
+        ),
+        index=0,
+    )
+    with pytest.raises(ServiceAccountRefusedError) as raised:
+        refuse_session_user(
+            declared,
+            "dba_alpha",
+            None,
+            env=env(),
+            member_of=lambda account: account.upper() == "SOPULI_SVC",
+        )
+    assert raised.value.hint is not None
+    assert words in raised.value.hint

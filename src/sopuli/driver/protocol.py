@@ -1751,9 +1751,11 @@ class StatementRunner(Protocol):
     def member_of(self, account: str) -> bool:
         """Whether the session's user holds ``account``'s privileges through
         role membership, directly or through other roles, compared by
-        ``upper()``. A superuser is not counted: it gains nothing from
-        ``account``. Oracle answers ``False``: one user is never granted to
-        another (UC-3 §2)."""
+        ``upper()``. On PostgreSQL a superuser is not counted: it gains
+        nothing from ``account`` (#1690). On MySQL a role is an account, so
+        the service account granted as a role counts, active or not (#1713).
+        Oracle and MariaDB answer ``False``: there one account is never
+        granted to another (UC-3 §2)."""
         ...
 
     def database_identity(self) -> tuple[str, str]:

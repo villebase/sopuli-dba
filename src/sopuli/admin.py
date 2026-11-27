@@ -50,7 +50,7 @@ from sopuli.config.errors import ROOT, ConfigError, KeyPath
 from sopuli.config.expansion import declared_at, run_as_at
 from sopuli.config.model import AdminAuth, AdminCredential, Config, ExpandedTarget, MaterialRef
 from sopuli.config.secret_refs import SecretRef
-from sopuli.config.targets import ADMIN_METHODS, ADMIN_PASSWORD_ENV, EXTERNAL
+from sopuli.config.targets import ADMIN_METHODS, ADMIN_PASSWORD_ENV, EXTERNAL, MYSQL
 from sopuli.config.vault_env import DEFAULT_STORE_VARIABLE
 from sopuli.driver.protocol import Credential
 from sopuli.exit_codes import ExitCode
@@ -657,8 +657,8 @@ def refuse_session_user(
     ``current_user`` the account its statements run as, where the caller read
     it. Either is refused with ``SOPULI-20010`` when it equals the admin's name
     by ``upper()``. ``member_of`` asks the session whether its user holds the
-    admin's privileges through role membership, on PostgreSQL (#1690); that is
-    refused too. An ``external`` admin has no name to compare, so nothing is
+    admin's privileges as a role, on PostgreSQL (#1690) and MySQL (#1713);
+    that is refused too. An ``external`` admin has no name to compare, so nothing is
     checked there: the accepted gap of UC-3 §2. The tool never logs in as the
     admin to learn it.
     """
@@ -696,8 +696,13 @@ def refuse_session_user(
             f"{admin_user!r}, so a statement would have its privileges. {admin_user!r} is "
             f"{tail}",
             at=at,
-            hint=f"{hint} that is not a member of the service role, directly or through "
-            "another role",
+            hint=(
+                f"{hint} that does not hold the service account as a role, directly or "
+                "through another role, or revoke that grant"
+                if target.target.type == MYSQL
+                else f"{hint} that is not a member of the service role, directly or through "
+                "another role"
+            ),
         )
 
 

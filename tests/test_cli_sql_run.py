@@ -119,7 +119,7 @@ class FakeSession:
             raise self.identity_error
         return "FREE", "FREEPDB1"
 
-    def check_write(self, statement: Statement) -> None:
+    def check_write(self, statement: Statement, *, timeout_ms: int) -> None:
         self.checked.append(statement)
         if self.check_error is not None:
             raise self.check_error

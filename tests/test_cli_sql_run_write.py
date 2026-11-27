@@ -718,6 +718,22 @@ def test_a_rollback_that_kept_a_change_stops_even_a_dry_run(
     assert loaded["exit_code"] == ExitCode.PARTIAL
 
 
+def test_a_dry_run_whose_first_target_kept_a_change_exits_4_not_1(
+    write_config: WriteConfig, fleet: dict[str, Any]
+) -> None:
+    """Rows changed on the first target, so the dry run did not do nothing."""
+    kept = DriverError("1196: the rollback could not undo every change", code="1196")
+    kept.rollback_incomplete = True
+    fleet["a-alpha"] = WriteSession("a-alpha", error=kept)
+
+    loaded = document(
+        sql(write_config, "--write", "--dry-run", *ALL, "--expect-rows", "1", json_out=True)
+    )
+
+    assert states(loaded)[0] == ("a-alpha", "ERROR")
+    assert loaded["exit_code"] == ExitCode.PARTIAL
+
+
 def test_a_target_that_did_not_connect_refuses_a_real_run(
     write_config: WriteConfig, fleet: dict[str, Any]
 ) -> None:

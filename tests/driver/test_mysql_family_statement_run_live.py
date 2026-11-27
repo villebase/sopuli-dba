@@ -311,24 +311,29 @@ def test_a_write_naming_a_myisam_table_is_refused_before_it_runs(
 ) -> None:
     statement = classify(text.format(s=unrollable.schema), dialect=Dialect(unrollable.product))
     with pytest.raises(StatementRefusedError, match="no transactions") as raised:
-        unrollable.session.check_write(statement)
+        unrollable.session.check_write(statement, timeout_ms=5000)
     assert f"{unrollable.schema}.tm (MyISAM)" in raised.value.message
     assert _tm(unrollable) == 0
     assert unrollable.session.connection_lost is False
 
 
 def test_a_write_through_a_view_over_myisam_is_refused_on_mysql(unrollable: RunAs) -> None:
-    """MySQL's EXPLAIN names the view's base table. MariaDB's names it only
-    for some plans, by the table's rows: on an empty one it names none
-    (``explain_check.py``, 2026-11-27), so there the rollback's warning is
-    what catches a write through a view."""
-    if unrollable.product != "mysql":
-        pytest.skip("MariaDB's EXPLAIN names a view's base table only for some plans")
+    """MySQL's EXPLAIN names the view's base table. MariaDB sends no EXPLAIN
+    (its EXPLAIN runs a DETERMINISTIC function in a write's WHERE, and names
+    an alias or nothing), so there a write through a view passes the check,
+    and the rollback's warning is what catches it (UC-3 §4)."""
     statement = classify(
         f"UPDATE {unrollable.schema}.vm SET v = 1", dialect=Dialect(unrollable.product)
     )
-    with pytest.raises(StatementRefusedError, match="no transactions"):
-        unrollable.session.check_write(statement)
+    if unrollable.product == "mysql":
+        with pytest.raises(StatementRefusedError, match="no transactions"):
+            unrollable.session.check_write(statement, timeout_ms=5000)
+    else:
+        unrollable.session.check_write(statement, timeout_ms=5000)
+        with pytest.raises(DriverError) as raised:
+            _run(unrollable, statement, guard=RowGuard(expect=1), commit=False)
+        assert raised.value.rollback_incomplete is True
+        assert _tm(unrollable) == 1, "the dry run's change to MyISAM stayed"
 
 
 def test_a_write_to_innodb_alone_passes_the_check(unrollable: RunAs) -> None:
@@ -336,7 +341,7 @@ def test_a_write_to_innodb_alone_passes_the_check(unrollable: RunAs) -> None:
         f"UPDATE {unrollable.schema}.t SET v = 'z' WHERE k = 1",
         dialect=Dialect(unrollable.product),
     )
-    unrollable.session.check_write(statement)
+    unrollable.session.check_write(statement, timeout_ms=5000)
 
 
 def test_a_trigger_that_writes_myisam_is_caught_by_the_rollback(unrollable: RunAs) -> None:
@@ -345,7 +350,7 @@ def test_a_trigger_that_writes_myisam_is_caught_by_the_rollback(unrollable: RunA
     so instead of reporting a clean rollback."""
     text = f"UPDATE {unrollable.schema}.tt SET v = 7 WHERE id = 1"
     statement = classify(text, dialect=Dialect(unrollable.product))
-    unrollable.session.check_write(statement)
+    unrollable.session.check_write(statement, timeout_ms=5000)
     with pytest.raises(DriverError) as raised:
         _run(unrollable, statement, guard=RowGuard(expect=1), commit=False)
     assert raised.value.code == "1196"

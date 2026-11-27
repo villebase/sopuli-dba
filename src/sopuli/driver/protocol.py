@@ -1772,11 +1772,12 @@ class StatementRunner(Protocol):
         MariaDB."""
         ...
 
-    def check_write(self, statement: Statement) -> None:
+    def check_write(self, statement: Statement, *, timeout_ms: int) -> None:
         """Refuse a write the rollback could not undo, before any statement
         runs on any target. On MySQL and MariaDB that is a write to a table
         whose engine has no transactions (#1713, Q3). Oracle and PostgreSQL
-        roll back every table, and refuse nothing here. Raises
+        roll back every table, and refuse nothing here. ``timeout_ms`` bounds
+        what the check sends, as it bounds the statement. Raises
         :class:`~sopuli.sql.statement.StatementRefusedError`, or
         :class:`DriverError` where the check could not be made."""
         ...

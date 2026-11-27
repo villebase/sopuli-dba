@@ -413,7 +413,9 @@ def refuse_another_plan(given: str, computed: str) -> None:
     )
 
 
-def refuse_unrollable(connections: Sequence[Connection], statement: Statement) -> None:
+def refuse_unrollable(
+    connections: Sequence[Connection], statement: Statement, *, timeout_ms: int
+) -> None:
     """Refuse a write, dry or real, that a rollback could not undo on some
     target, before any statement runs on any target (#1713, Q3 A′).
 
@@ -432,7 +434,7 @@ def refuse_unrollable(connections: Sequence[Connection], statement: Statement) -
             continue
         assert isinstance(session, StatementRunner)  # checked by _connect
         try:
-            session.check_write(statement)
+            session.check_write(statement, timeout_ms=timeout_ms)
         except StatementRefusedError as error:
             refused.append(error.message)
         except DriverError as error:
@@ -615,9 +617,11 @@ def write_exit_code(outcomes: Sequence[TargetOutcome], *, dry_run: bool) -> int:
     passed = sum(1 for outcome in counted if outcome.state in (COMMITTED, ROLLED_BACK))
     if passed == len(counted):
         return int(ExitCode.SUCCESS)
-    # A commit whose outcome is unknown may have taken effect, so it counts.
+    # A commit whose outcome is unknown may have taken effect, so it counts. On
+    # a dry run, a rollback that kept a change has outcome_unknown too (#1713
+    # Q3): rows changed there, so the run did not do nothing.
     progressed = (
-        passed
+        passed + sum(1 for one in counted if one.outcome_unknown)
         if dry_run
         else sum(1 for one in counted if one.state == COMMITTED or one.outcome_unknown)
     )

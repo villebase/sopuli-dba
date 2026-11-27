@@ -605,6 +605,14 @@ def test_table_references_skips_literals_and_comments(dialect: Dialect, text: st
     assert ("ACME", "TI") in found
 
 
+@MYSQL_FAMILY
+def test_table_references_reads_every_sql_mode(dialect: Dialect) -> None:
+    """Without backslash escapes, `'a\\'` ends at its second quote, and
+    `acme.tm` after it is a name, not a literal (review of #1723)."""
+    text = "UPDATE acme.ti a JOIN acme.tx x ON x.k = 'a\\' JOIN acme.tm AS m ON 1 -- '\nSET m.v = 1"
+    assert ("ACME", "TM") in _references(text, dialect)
+
+
 def test_table_references_reads_only_mysql_and_mariadb() -> None:
     with pytest.raises(ValueError, match="MySQL and MariaDB"):
         table_references(classify("UPDATE t SET v = 1"), ORA)

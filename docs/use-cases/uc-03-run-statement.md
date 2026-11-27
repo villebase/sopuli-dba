@@ -400,21 +400,29 @@ MEMORY and others. A rollback does not undo a change to such a table, so a dry
 run, or a write its guard refuses, would leave the rows changed. So a write,
 dry or real, is refused before any statement runs on any target where it names
 such a table that the run-as account can see. It names one where it writes
-`schema.name`, with backticks or double quotes or neither, where it writes the
-name alone and the session's default database holds it, or where `EXPLAIN`
-names it; on MySQL `EXPLAIN` names a view's base table. The refusal exits 8
-with `SOPULI-20009` and names each table and its engine. A column or an alias
-with such a table's name is refused too. A check that cannot be made, such as
-an `EXPLAIN` the server refuses, refuses the run as well. `EXPLAIN` of a write
-runs in an ordinary transaction, which is rolled back, because both servers
-refuse it in a read-only one (`1792`).
+`schema.name`, with backticks or double quotes or neither, or where it writes
+the name alone and the session's default database holds it. The statement is
+read each way a server's `sql_mode` can read a backslash, as in §3. On MySQL,
+where the statement's own names match nothing, the tool also asks `EXPLAIN`,
+which names a view's base table. The refusal exits 8 with `SOPULI-20009` and
+names each table and its engine. A column or an alias with such a table's name
+is refused too. A check that cannot be made, such as an `EXPLAIN` the server
+refuses, refuses the run as well. `EXPLAIN` of a write runs in an ordinary
+transaction, bounded by `--timeout` and rolled back, because the server refuses
+it in a read-only one (`1792`). MariaDB gets no `EXPLAIN`: its `EXPLAIN` of a
+write ran a `DETERMINISTIC` stored function in the `WHERE`, which wrote a MyISAM
+table, on 11.8 (2026-11-27), and it names an alias or nothing.
 
 A trigger or a function can still write such a table, and on MariaDB so can a
 write through a view. The rollback then tells: the server warns `1196`, and the
 target is `ERROR` with `outcome_unknown: true`, because the rows changed
-although nothing was committed. The run stops there, a dry run included
-([#1713](../decisions/log.md#1713), Q3). Oracle and PostgreSQL roll every table
-back, and refuse nothing here.
+although nothing was committed. The warning is read before the tool's rollback
+too, for a transaction the server rolled back itself, as on a deadlock. The run
+stops there, a dry run included, and a dry run counts the target as changed in
+its exit code ([#1713](../decisions/log.md#1713), Q3). A Ctrl-C does not wait
+for the warning: an interrupted dry run says nothing was committed, which is
+true, and does not say whether such a table kept a change. Oracle and
+PostgreSQL roll every table back, and refuse nothing here.
 
 ### Lock waits
 
@@ -486,7 +494,7 @@ A run where some targets committed and others did not exits `4` (partial
 success), and its output names each target's outcome. A run where every target
 committed, or affected 0 rows and rolled back, exits `0`. A run where no target
 committed exits `1`. A dry run exits `0` when every target passed its guard,
-`4` when some did, and `1` when none did. A target of another product is
+`4` when some did or a rollback kept a change (§4), and `1` when none did. A target of another product is
 `SKIPPED` (`SOPULI-20006`). It does not stop a real write, and the exit code
 leaves it out; a run where every target is one exits `5`. Nothing runs on it,
 so the plan leaves it out too, and it counts for neither `max_targets` nor

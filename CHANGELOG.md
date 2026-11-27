@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.94.0](https://github.com/villebase/sopuli-dba/compare/v0.93.0...v0.94.0) (2026-11-27)
+
+
+### Features
+
+* ask ESO to refresh an ExternalSecret after a promotion ([#1706](https://github.com/villebase/sopuli-dba/issues/1706)) ([#1708](https://github.com/villebase/sopuli-dba/issues/1708)) ([37b9b68](https://github.com/villebase/sopuli-dba/commit/37b9b68d96772772a60671f4700cd3110bdea87d))
+* **config:** name the ExternalSecret to refresh in a kubernetes: block ([#1705](https://github.com/villebase/sopuli-dba/issues/1705)) ([#1707](https://github.com/villebase/sopuli-dba/issues/1707)) ([0df0840](https://github.com/villebase/sopuli-dba/commit/0df0840bc66a0faee73640de216eee6fe0d88277))
+* **postgres:** refuse a run-as role that is a member of the service role ([#1700](https://github.com/villebase/sopuli-dba/issues/1700)) ([#1703](https://github.com/villebase/sopuli-dba/issues/1703)) ([ef7b0d9](https://github.com/villebase/sopuli-dba/commit/ef7b0d9be7454e4b5ee9074fcc08e1ae970eae25))
+* **postgres:** run one statement in a guarded transaction ([#1693](https://github.com/villebase/sopuli-dba/issues/1693)) ([#1701](https://github.com/villebase/sopuli-dba/issues/1701)) ([3456bb8](https://github.com/villebase/sopuli-dba/commit/3456bb8b585891c10bd5468cc710cf3fef567fce))
+* **sql:** a PostgreSQL dialect for the statement check ([#1692](https://github.com/villebase/sopuli-dba/issues/1692)) ([#1695](https://github.com/villebase/sopuli-dba/issues/1695)) ([52d4a74](https://github.com/villebase/sopuli-dba/commit/52d4a74b4ba436d78d7e3f055ec782396dc605dd))
+* **sql:** run sql run on PostgreSQL ([#1694](https://github.com/villebase/sopuli-dba/issues/1694)) ([#1709](https://github.com/villebase/sopuli-dba/issues/1709)) ([17a029c](https://github.com/villebase/sopuli-dba/commit/17a029c25946b55a9ab41ee2693fe0f707347ba4))
+
 ## [0.93.0](https://github.com/villebase/sopuli-dba/compare/v0.92.0...v0.93.0) (2026-11-24)
 
 

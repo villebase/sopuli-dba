@@ -15,6 +15,9 @@ from sopuli.sql.statement import (
 
 PG = Dialect.POSTGRESQL
 ORA = Dialect.ORACLE
+MY = Dialect.MYSQL
+MARIA = Dialect.MARIADB
+MYSQL_FAMILY = pytest.mark.parametrize("dialect", [MY, MARIA], ids=["mysql", "mariadb"])
 
 
 @pytest.mark.parametrize(
@@ -342,3 +345,202 @@ def test_classify_for_with_one_dialect_does_not_name_it() -> None:
     with pytest.raises(StatementRefusedError) as raised:
         classify_for("drop table t", [PG])
     assert raised.value.message.startswith("the statement starts with DROP")
+
+
+# MySQL and MariaDB (#1715).
+
+
+@MYSQL_FAMILY
+@pytest.mark.parametrize(
+    ("raw", "text"),
+    [
+        ("# note\nSELECT 1", "# note\nSELECT 1"),
+        ("SELECT 1; # note", "SELECT 1"),
+        ("SELECT 1; -- note", "SELECT 1"),
+        ("SELECT 1;\t--\tnote", "SELECT 1"),
+        ("SELECT 1;--", "SELECT 1"),
+        ("SELECT 1--1;", "SELECT 1--1"),
+        ("SELECT `a``b` FROM t; # c", "SELECT `a``b` FROM t"),
+        ("SELECT 'it''s', \"a\"\"b\" FROM t;", "SELECT 'it''s', \"a\"\"b\" FROM t"),
+        (
+            "SELECT 'a -- b', \"c # d\", `e /* f` FROM t; -- g",
+            "SELECT 'a -- b', \"c # d\", `e /* f` FROM t",
+        ),
+        ("SELECT /*+ MAX_EXECUTION_TIME(1000) */ 1;", "SELECT /*+ MAX_EXECUTION_TIME(1000) */ 1"),
+        ("UPDATE t SET v = 'Y' WHERE k = 'x';\n/\n", "UPDATE t SET v = 'Y' WHERE k = 'x'"),
+    ],
+)
+def test_mysql_comments_and_literals(dialect: Dialect, raw: str, text: str) -> None:
+    assert classify(raw, dialect=dialect).text == text
+
+
+@MYSQL_FAMILY
+@pytest.mark.parametrize("raw", ["--DELETE FROM t\nSELECT 1", "#\n--x\nSELECT 1"])
+def test_a_double_dash_before_a_letter_is_not_a_mysql_comment(dialect: Dialect, raw: str) -> None:
+    with pytest.raises(StatementRefusedError, match="does not start with a keyword"):
+        classify(raw, dialect=dialect)
+
+
+@MYSQL_FAMILY
+def test_a_double_dash_before_a_letter_after_the_terminator_is_code(dialect: Dialect) -> None:
+    assert classify("SELECT 1; --x").text == "SELECT 1"
+    with pytest.raises(StatementRefusedError, match="';' before its end"):
+        classify("SELECT 1; --x", dialect=dialect)
+
+
+@MYSQL_FAMILY
+def test_mysql_block_comments_do_not_nest(dialect: Dialect) -> None:
+    assert classify("/* /* */ SELECT */ DELETE FROM t", dialect=dialect).keyword == "SELECT"
+
+
+@MYSQL_FAMILY
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "/*!50000 DELETE FROM t */ SELECT 1",
+        "/*! DELETE FROM t */",
+        "SELECT /*! 1 */ FROM t",
+        "/*M!100100 SELECT 1 */",
+        "select /*m! 1 */ 1",
+        "SELECT 1; /*! note */",
+        "SELECT 1 /*!",
+    ],
+)
+def test_an_executable_comment_is_refused(dialect: Dialect, raw: str) -> None:
+    with pytest.raises(StatementRefusedError, match="executable comment"):
+        classify(raw, dialect=dialect)
+
+
+@MYSQL_FAMILY
+@pytest.mark.parametrize(
+    "raw",
+    ["SELECT '/*! x */' FROM t", "# /*! x */\nSELECT 1", "-- /*! x */\nSELECT 1", "SELECT `/*!`"],
+)
+def test_an_executable_comment_marker_in_a_literal_or_comment_is_not_refused(
+    dialect: Dialect, raw: str
+) -> None:
+    assert classify(raw, dialect=dialect).text == raw
+
+
+def test_an_executable_comment_is_an_ordinary_comment_elsewhere() -> None:
+    assert classify("/*! x */ SELECT 1 FROM dual").keyword == "SELECT"
+    assert classify("/*! x */ SELECT 1", dialect=PG).keyword == "SELECT"
+
+
+@MYSQL_FAMILY
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "SELECT * FROM t INTO OUTFILE '/tmp/x'",
+        "select a into dumpfile '/tmp/x' from t",
+        "SELECT * INTO /* c */ OUTFILE '/x' FROM t",
+        "SELECT * INTO # c\n OutFile '/x' FROM t",
+        "UPDATE t SET v = 1 WHERE k IN (SELECT k FROM s INTO OUTFILE '/x')",
+    ],
+)
+def test_a_file_write_is_refused(dialect: Dialect, raw: str) -> None:
+    with pytest.raises(StatementRefusedError, match="writes a file on the server"):
+        classify(raw, dialect=dialect)
+
+
+@MYSQL_FAMILY
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "SELECT 'into outfile' FROM t",
+        "SELECT a INTO @v FROM t",
+        "SELECT outfile FROM t",
+        "SELECT 1 # into outfile",
+        "SELECT `into` outfile FROM t",
+        "INSERT INTO outfiles VALUES (1)",
+    ],
+)
+def test_into_outfile_in_a_literal_comment_or_name_is_not_refused(
+    dialect: Dialect, raw: str
+) -> None:
+    assert classify(raw, dialect=dialect).text == raw
+
+
+def test_a_file_write_is_refused_only_on_mysql_and_mariadb() -> None:
+    raw = "SELECT * FROM t INTO OUTFILE '/tmp/x'"
+    assert classify(raw).text == raw
+    assert classify(raw, dialect=PG).text == raw
+
+
+@MYSQL_FAMILY
+@pytest.mark.parametrize(
+    "raw",
+    [r"SELECT 'it\'s' FROM t", r'SELECT "a\"b" FROM t', r"SELECT 'a\\' FROM t; -- c"],
+)
+def test_a_backslash_escape_both_readings_agree_on(dialect: Dialect, raw: str) -> None:
+    assert classify(raw, dialect=dialect).keyword == "SELECT"
+
+
+@MYSQL_FAMILY
+def test_a_backslash_that_hides_a_terminator_is_refused(dialect: Dialect) -> None:
+    # Without backslash escapes, `-- '` is a comment after the terminator. With
+    # them, the `;` is in a literal that never closes.
+    with pytest.raises(StatementRefusedError, match="';' before its end"):
+        classify(r"SELECT 'a\' FROM t; -- '", dialect=dialect)
+
+
+@MYSQL_FAMILY
+def test_an_escaped_quote_before_a_comment_after_the_terminator_is_refused(
+    dialect: Dialect,
+) -> None:
+    # A false refusal: without backslash escapes, the `;` and the comment are in
+    # a literal that never closes. With no comment, both readings cut the `;`.
+    # A doubled quote reads the same way in both.
+    escaped = r"UPDATE t SET v = 'O\'Brien' WHERE k = 1;"
+    assert classify(escaped, dialect=dialect).text == escaped[:-1]
+    with pytest.raises(StatementRefusedError, match="';' before its end"):
+        classify(escaped + " # note", dialect=dialect)
+    doubled = "UPDATE t SET v = 'O''Brien' WHERE k = 1; # note"
+    assert classify(doubled, dialect=dialect).keyword == "UPDATE"
+
+
+@MYSQL_FAMILY
+def test_a_backslash_that_hides_a_comment_is_refused(dialect: Dialect) -> None:
+    # Without backslash escapes, the `/` line ends the statement, and the rest is
+    # a comment the tool would cut. With them, the whole text is one literal.
+    with pytest.raises(StatementRefusedError, match="with and without backslash escapes"):
+        classify("SELECT 'a\\'\n/\n-- '", dialect=dialect)
+
+
+@MYSQL_FAMILY
+def test_an_executable_comment_one_reading_sees_is_refused(dialect: Dialect) -> None:
+    # Under NO_BACKSLASH_ESCAPES the server ends the literal at `\'` and runs
+    # the comment's text.
+    with pytest.raises(StatementRefusedError, match="executable comment"):
+        classify(r"SELECT 'a\' /*! , 1 */ '' FROM t", dialect=dialect)
+
+
+@MYSQL_FAMILY
+def test_a_file_write_one_reading_sees_is_refused(dialect: Dialect) -> None:
+    with pytest.raises(StatementRefusedError, match="writes a file on the server"):
+        classify(r"SELECT 'a\' INTO OUTFILE '/x' -- '", dialect=dialect)
+
+
+def test_classify_for_reads_mysql_and_mariadb_alike() -> None:
+    raw = r"UPDATE t SET v = 'a\\b' WHERE k = 1; # note"
+    assert classify_for(raw, [MY, MARIA]) == classify(raw, dialect=MY)
+
+
+def test_classify_for_names_mysql_when_its_reading_refuses() -> None:
+    with pytest.raises(StatementRefusedError) as raised:
+        classify_for("SELECT 1 FROM t; --x", [ORA, MY])
+    assert raised.value.message == "read the MySQL way, the statement holds a ';' before its end"
+
+
+def test_classify_for_refuses_postgresql_and_mysql_readings_that_differ() -> None:
+    with pytest.raises(
+        StatementRefusedError, match="reads differently on MySQL and PostgreSQL"
+    ) as raised:
+        classify_for("/* /* */ SELECT */ DELETE FROM t", [PG, MY])
+    assert raised.value.hint is not None
+    assert "backslash escapes" in raised.value.hint
+
+
+def test_classify_for_names_oracle_when_a_hash_comment_is_not_one_there() -> None:
+    with pytest.raises(StatementRefusedError, match="read the Oracle way"):
+        classify_for("# note\nSELECT 1 FROM t", [ORA, MARIA])

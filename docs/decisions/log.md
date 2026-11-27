@@ -6788,6 +6788,36 @@ the register.
   read the target's state. Running the statement twice and comparing counts.
   It would commit a write the operator did not ask for.
 
+## #1696
+
+- **Decided:** 2026-11-25, #1696
+- **Question:** Should sopuli support IBM Db2? Db2 is still maintained and
+  ranks about 10th on DB-Engines. Unlike every product sopuli supports, it
+  stores no password. On Db2 LUW a security plugin checks the logon against
+  the operating system, LDAP or Kerberos, and on Db2 for z/OS RACF does. The
+  only password change Db2 offers is on the logon itself, `CONNECT … USING
+  old NEW new`, which needs the old password and changes only the account
+  that logs on.
+- **Decision:** the maintainer's, A: not supported, for now.
+  `00-principles.md` P1 and the README say so. Nothing in the code changes:
+  the config already refuses `type: db2` as an unknown type.
+- **Why:** UC-1 and UC-2 would have no statement to send to Db2, and
+  account locks, expiry and failed-logon counts belong to the OS or the
+  directory, not to Db2. Only UC-5's reports and UC-3 would carry over. No
+  estate has asked for Db2. The facts above come from IBM's documentation
+  and were not measured.
+- **Rejected:**
+  - B, a read-only Db2 driver for UC-5's reports. It needs three things:
+    `ibm_db`, which bundles IBM's CLI driver; a privileges document measured
+    on Db2; and the Db2 Community Edition image in tier 1, which needs
+    `--privileged`, takes several GB, and takes minutes to start. It would report on accounts the
+    tool cannot then manage.
+  - C, a directory target type, LDAP or Active Directory, as a new use case,
+    with Db2 as one database that uses it. It changes the driver interface in
+    `00-principles.md`, which assumes the database owns the password, and a
+    change to a directory account reaches every system that account logs on
+    to. If it is wanted, it is filed as its own use case.
+
 ## #1690
 
 - **Decided:** 2026-11-25, #1690

@@ -157,6 +157,9 @@ still open — start at [`docs/README.md`](https://github.com/villebase/sopuli-d
   already.
 - It **does not manage grants, roles or privileges.** That is a separate feature,
   and it is not built.
+- It **does not support a database that keeps no passwords**, such as IBM
+  Db2, where the operating system, LDAP, Kerberos or RACF checks the logon. The tool
+  changes a password the database stores, so it has nothing to change there.
 - It **never reads a password back out of a database.** No database it supports
   stores a password in a form anything can read back, and the tool does not try.
 - It **is not a general-purpose secrets manager.** It reads and writes the

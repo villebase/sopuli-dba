@@ -136,6 +136,14 @@ _LOST_COMMIT = (
     "on MySQL a commit lost this way still commits. Check the rows before running again"
 )
 
+#: The hint for a write whose connection was lost before any COMMIT was sent.
+_LOST_WRITE = (
+    "the connection was lost while the write ran, often at --timeout. Nothing was "
+    "committed, and the server rolls the write back, but a table without transactions "
+    "that a view, a trigger or a function wrote keeps its change, and that can no longer "
+    "be read: check the rows on this target before running again"
+)
+
 #: Sent before the operator's statement, and :data:`UTC_SESSION` after it.
 SERVER_TIME_ZONE = "SET time_zone = @@global.time_zone"
 
@@ -541,8 +549,11 @@ class StatementRunning:
         except pymysql.err.MySQLError as error:
             self._connection_lost = not connection.open
             raised = for_statement(self._diagnose(error), read=read)
+            lost_write = begun and not read and not committing and self._connection_lost
             if committing and raised.number in _LOST:
                 raised = replace(raised, hint=_LOST_COMMIT)
+            elif lost_write:
+                raised = replace(raised, hint=_LOST_WRITE)
             failure = raised.as_error()
             # A COMMIT the server refused with a number was not applied. One
             # whose connection was lost may have been: on MySQL it still commits.
@@ -553,6 +564,12 @@ class StatementRunning:
                 rolled = True
                 with suppress(pymysql.err.MySQLError):
                     failure.rollback_incomplete = _rolled_back_in_part(connection)
+            elif lost_write:
+                # The server rolls the transaction back when it sees the
+                # connection gone, and its 1196 goes nowhere: whether a table
+                # without transactions, behind a view or a trigger, kept the
+                # statement's change cannot be read, so it is not ruled out.
+                failure.rollback_incomplete = True
             raise failure from error
         finally:
             if rows is not None and _streaming(connection):

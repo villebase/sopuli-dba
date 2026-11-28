@@ -1064,7 +1064,9 @@ def test_an_interrupt_during_a_dry_run_leaves_no_outcome_unknown(
     assert by_target["b-beta"]["state"] == "ERROR"
     assert "a dry run commits nothing" in by_target["b-beta"]["error"]["message"]
     # No row can have changed, so the hint does not send the operator to check rows.
-    assert by_target["b-beta"]["error"]["hint"] == "nothing was committed; dry-run again"
+    hint = by_target["b-beta"]["error"]["hint"]
+    assert hint.startswith("nothing was committed.")
+    assert "check the rows on this target before you dry-run again" in hint
     assert all(entry["outcome_unknown"] is False for entry in loaded["results"])
 
 

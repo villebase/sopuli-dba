@@ -2210,7 +2210,7 @@
         },
         "outcome_unknown": {
           "type": "boolean",
-          "description": "`sql run --write` (added in 1.109): `true` where the commit was sent and then failed, or the run was interrupted while the statement ran on a real write, so the change may have taken effect. From 1.111 also on MySQL and MariaDB where a rollback could not undo a change to a table without transactions (warning 1196), a dry run's result included: rows changed although nothing was committed. The state is then `ERROR`. `false` on every other write result. Absent on a read."
+          "description": "`sql run --write` (added in 1.109): `true` where the commit was sent and then failed, or the run was interrupted while the statement ran on a real write, so the change may have taken effect. From 1.111 also on MySQL and MariaDB where a rollback could not undo a change to a table without transactions (warning 1196), or a write lost its connection before any commit, so that warning could not be read, a dry run's result included: rows may have changed although nothing was committed. `changed` stays `false` there. The state is then `ERROR`. `false` on every other write result. Absent on a read."
         }
       }
     },

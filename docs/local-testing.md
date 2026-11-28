@@ -3865,7 +3865,7 @@ targets:
     type: mysql
     environment: dev
     dsn: "127.0.0.1:3306"
-    admin: { username: sopuli_svc, auth: { method: env } }
+    admin: { username: sopuli_admin, auth: { method: env } }
     mysql: { ssl_mode: REQUIRED }
   - name: mariadb-dev
     type: mariadb
@@ -3989,20 +3989,20 @@ check the rows there, and move the table to InnoDB before you dry-run this state
 It exits 4, and on `mariadb-dev` the note is `after`. On MySQL a role is an
 account, so a run-as account granted the service account as a role holds its
 privileges, and the run is refused before any statement runs. After root's
-`CREATE USER sopuli_svc@'%' IDENTIFIED BY '<PASSWORD>'` and
-`GRANT sopuli_svc@'%' TO dba_alpha@'%'`:
+`GRANT sopuli_admin@'%' TO dba_alpha@'%'`, with the tool account of §*A MySQL
+server*:
 
 ```
 $ sopuli --config sql-run-mysql.yaml sql run --target mysql-dev --file settings.sql
 ...
-sopuli: defaults.run_as: target 'mysql-dev': the run-as login 'dba_alpha' is a member of 'sopuli_svc', so a statement would have its privileges. 'sopuli_svc' is the account the tool uses for its own work. No statement ran on any target
+sopuli: defaults.run_as: target 'mysql-dev': the run-as login 'dba_alpha' is a member of 'sopuli_admin', so a statement would have its privileges. 'sopuli_admin' is the account the tool uses for its own work. No statement ran on any target
   hint: name a personal or owner account with `run_as:` or `--as USER` that does not hold the service account as a role, directly or through another role, or revoke that grant
 ```
 
 It exits 8. Afterwards, as root on each:
 
 ```sql
-DROP USER IF EXISTS sopuli_svc@'%';
+REVOKE sopuli_admin@'%' FROM dba_alpha@'%';  -- MySQL only
 DROP DATABASE acme;
 DROP USER dba_alpha@'%';
 ```

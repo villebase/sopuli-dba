@@ -425,11 +425,14 @@ A trigger or a function can still write such a table, and on MariaDB so can a
 write through a view. The rollback then tells: the server warns `1196`, and the
 target is `ERROR` with `outcome_unknown: true`, because the rows changed
 although nothing was committed. The warning is read before the tool's rollback
-too, for a transaction the server rolled back itself, as on a deadlock. The run
+too, for a transaction the server rolled back itself, as on a deadlock. A write
+whose connection is lost while it runs, as at `--timeout` on MySQL, is treated
+the same way: the server rolls it back, and its warning cannot be read. The run
 stops there, a dry run included, and a dry run counts the target as changed in
 its exit code ([#1713](../decisions/log.md#1713), Q3). A Ctrl-C does not wait
 for the warning: an interrupted dry run says nothing was committed, which is
-true, and does not say whether such a table kept a change. Oracle and
+true, and that such a table may still have kept a change, so to check the rows
+before a dry run again. Oracle and
 PostgreSQL roll every table back, and refuse nothing here.
 
 ### Lock waits

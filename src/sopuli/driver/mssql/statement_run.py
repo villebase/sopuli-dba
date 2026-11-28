@@ -301,8 +301,18 @@ def batch_statements(columns: Sequence[str], rows: Iterable[Sequence[Any]]) -> l
     ``StmtId`` and its body under it, and a procedure its body under the
     ``EXECUTE PROC`` row, with a ``Parent`` that is not ``0``. So the rows
     with ``Parent`` ``0`` count, one per ``StmtId`` (measured on 16.0.4325.4,
-    #1732). A ``DECLARE`` with no value has no row of its own; it declares a
-    variable that ends with the batch, and changes nothing.
+    #1732).
+
+    Every second statement after an ``UPDATE`` that was tried has a row of
+    its own: ``COMMIT``, ``ROLLBACK``, ``BEGIN TRAN``, ``SAVE TRANSACTION``,
+    ``EXECUTE AS``, ``REVERT``, each ``SET``, ``IF``, ``WHILE``, ``GOTO``,
+    ``RETURN``, ``RAISERROR``, ``PRINT``, ``WAITFOR``, ``USE``, ``KILL``,
+    ``DBCC``, ``CHECKPOINT``, ``RECONFIGURE``, DDL, ``GRANT``, ``DENY``,
+    ``REVOKE``, ``EXEC`` of a procedure or a string, ``BACKUP``, ``BEGIN …
+    END``, ``TRY … CATCH``, cursors, ``SETUSER`` and ``SHUTDOWN``. Only a
+    ``DECLARE`` of a variable or a table variable with no value has none; it
+    ends with the batch, and changes nothing (measured on 16.0.4325.4, review
+    of #1737).
     """
     type_at, statement_at, parent_at = (
         columns.index(name) for name in ("Type", "StmtId", "Parent")
@@ -466,12 +476,18 @@ class StatementRunning:
                 cursor.execute(SHOWPLAN_ON)
                 planning = True
                 cursor.execute(statement.text)
-                columns = [str(column[0]) for column in cursor.description or ()]
-                rows = list(cursor.fetchall()) if columns else []
-                while cursor.nextset():
+                # The columns come from the first row set that has any, so a
+                # first answer without them cannot leave the rows unread
+                # (review of #1737). With none at all, there is no statement.
+                columns: list[str] = []
+                rows: list[Sequence[Any]] = []
+                while True:
                     if cursor.description is not None:
+                        columns = columns or [str(column[0]) for column in cursor.description]
                         rows.extend(cursor.fetchall())
-            statements = batch_statements(columns, rows)
+                    if not cursor.nextset():
+                        break
+            statements = batch_statements(columns, rows) if columns else []
         except Exception as error:
             if not self._is_client_error(error):
                 raise
@@ -484,8 +500,17 @@ class StatementRunning:
             raise diagnosis.as_error() from error
         finally:
             connection.timeout = self.timeouts.query_s
-            if planning and not self._connection_lost:
-                self._quietly(connection, SHOWPLAN_OFF)
+            planned_off = not planning or (
+                not self._connection_lost and self._quietly(connection, SHOWPLAN_OFF)
+            )
+        if not planned_off:
+            # The session may still be under SHOWPLAN, where a statement
+            # compiles and runs nothing. It is marked lost, and the check
+            # fails here, so no target runs the statement (review of #1737).
+            raise DriverError(
+                f"target {self.target.name!r}: SET SHOWPLAN_ALL OFF failed after the check",
+                hint="close this session and open another",
+            )
         _refuse_batch(self.target.name, statements, read=statement.kind is StatementKind.READ)
 
     def run_statement(

@@ -370,8 +370,35 @@ def test_one_statement_passes_the_check(runner: Any, stack: Any, text: str) -> N
         ),
         (f"SELECT id FROM {T} SELECT v FROM {T}", "2 statements"),
         (f"SELECT id INTO {DATABASE}.dbo.made FROM {T}", "as SELECT INTO"),
+        # A second statement that would end the tool's own transaction, or
+        # change who runs or how: each has a row (review of #1737).
+        (f"UPDATE {T} SET v = 1 WHERE id = 1 COMMIT", "(UPDATE, COMMIT TRANSACTION)"),
+        (f"UPDATE {T} SET v = 1 WHERE id = 1 ROLLBACK", "(UPDATE, ROLLBACK TRANSACTION)"),
+        (f"UPDATE {T} SET v = 1 WHERE id = 1 BEGIN TRAN", "(UPDATE, BEGIN TRANSACTION)"),
+        (f"UPDATE {T} SET v = 1 WHERE id = 1 EXECUTE AS LOGIN = 'sa'", "(UPDATE, EXECUTE AS)"),
+        (f"UPDATE {T} SET v = 1 WHERE id = 1 REVERT", "(UPDATE, REVERT)"),
+        (f"UPDATE {T} SET v = 1 WHERE id = 1 SET XACT_ABORT OFF", "(UPDATE, SET ON/OFF)"),
+        (f"UPDATE {T} SET v = 1 WHERE id = 1 SET ROWCOUNT 1", "(UPDATE, SET ROWCNT)"),
+        (f"UPDATE {T} SET v = 1 WHERE id = 1 IF 1 = 1 DELETE FROM {T}", "(UPDATE, COND)"),
+        (f"UPDATE {T} SET v = 1 WHERE id = 1 EXEC ('SELECT 1')", "(UPDATE, EXECUTE STRING)"),
+        (f"UPDATE {T} SET v = 1 WHERE id = 1 DECLARE @x int = 1", "(UPDATE, ASSIGN)"),
     ],
-    ids=["update-delete", "update-grant", "two-selects", "select-into"],
+    ids=[
+        "update-delete",
+        "update-grant",
+        "two-selects",
+        "select-into",
+        "commit",
+        "rollback",
+        "begin-tran",
+        "execute-as",
+        "revert",
+        "set-xact-abort",
+        "set-rowcount",
+        "if",
+        "exec-string",
+        "declare-with-value",
+    ],
 )
 def test_anything_else_is_refused_and_nothing_runs(
     runner: Any, stack: Any, text: str, message: str

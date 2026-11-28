@@ -83,6 +83,8 @@ class _Cursor:
         self.description: tuple[tuple[str], ...] | None = None
         self._rows: list[tuple[Any, ...]] = []
         self.cancelled = False
+        #: The row set :meth:`nextset` moves to, where there is one.
+        self._later: tuple[Any, list[tuple[Any, ...]]] | None = None
 
     def execute(self, sql: str) -> None:
         connection = self.connection
@@ -97,6 +99,10 @@ class _Cursor:
         elif connection.planning:
             self.description = tuple((name,) for name in PLAN_COLUMNS)
             self._rows = list(connection.plan)
+            if connection.count_first:
+                # A first answer with no columns, the plan after it.
+                self._later = (self.description, self._rows)
+                self.description, self._rows = None, []
         elif sql == SETTINGS:
             self._rows = [connection.settings]
         elif sql == "SELECT @@ROWCOUNT":
@@ -124,7 +130,10 @@ class _Cursor:
         return taken
 
     def nextset(self) -> bool:
-        return False
+        if self._later is None:
+            return False
+        (self.description, self._rows), self._later = self._later, None
+        return True
 
     def cancel(self) -> None:
         self.cancelled = True
@@ -148,6 +157,7 @@ class _Connection:
         self.planning = False
         #: What SHOWPLAN_ALL lists: one UPDATE, by default.
         self.plan: list[tuple[Any, ...]] = [_plan_row(1, 1, 0, "UPDATE")]
+        self.count_first = False
 
     def cursor(self) -> _Cursor:
         return _Cursor(self)
@@ -618,3 +628,26 @@ def test_a_check_that_loses_the_connection_sends_nothing_more() -> None:
 
     assert one.connection_lost
     assert connection.sent[-1] == MS_WRITE.text
+
+
+def test_a_plan_after_a_first_answer_without_columns_is_read() -> None:
+    """The columns come from the first row set that has them (review of #1737)."""
+    connection = _Connection()
+    connection.count_first = True
+    connection.plan = [_plan_row(1, 1, 0, "UPDATE"), _plan_row(2, 4, 0, "DELETE")]
+
+    with pytest.raises(StatementRefusedError, match="2 statements"):
+        _session(connection).check_statement(MS_WRITE, timeout_ms=0)
+
+
+def test_a_showplan_that_does_not_turn_off_fails_the_check() -> None:
+    """Under SHOWPLAN a statement compiles and runs nothing, so the session
+    is lost and the check fails before any target runs (review of #1737)."""
+    connection = _Connection()
+    connection.failures[SHOWPLAN_OFF] = QUERY_TIMED_OUT
+    one = _session(connection)
+
+    with pytest.raises(DriverError, match="SHOWPLAN_ALL OFF failed"):
+        one.check_statement(MS_WRITE, timeout_ms=0)
+
+    assert one.connection_lost

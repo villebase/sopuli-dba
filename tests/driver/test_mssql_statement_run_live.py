@@ -237,22 +237,34 @@ def test_a_session_the_server_kills_is_lost(runner: Any, stack: Any) -> None:
     holder = stack.connect()
     holder.autocommit = False
     holder.cursor().execute(f"UPDATE {T} SET v = 1 WHERE id = 4")
-    killer = threading.Timer(1.5, lambda: _value_after(stack, f"KILL {spid}"))
+    failed: list[BaseException] = []
+
+    def kill() -> None:
+        try:
+            _value_after(stack, f"KILL {spid}")
+        except BaseException as error:  # noqa: BLE001 - checked after the join
+            failed.append(error)
+
+    killer = threading.Timer(1.5, kill)
     killer.start()
     try:
-        with pytest.raises(DriverError):
+        # The lock timeout ends the wait if the KILL fails, so the test
+        # cannot hang (review of #1736).
+        with pytest.raises(DriverError) as raised:
             runner.run_statement(
                 _sql(f"UPDATE {T} SET v = 2 WHERE id = 4"),
                 guard=RowGuard(expect=1),
                 commit=True,
                 max_rows=1,
-                timeout_ms=0,
+                timeout_ms=10000,
             )
     finally:
         killer.join()
         holder.rollback()
         holder.close()
 
+    assert failed == []
+    assert raised.value.code == "596"
     assert runner.connection_lost
     assert _value(stack, f"SELECT v FROM {T} WHERE id = 4") == 0
 

@@ -138,20 +138,30 @@ _STATEMENT_HINTS = {
     ),
 }
 
-#: The hint for a connection lost under the ``COMMIT``: the change may have
-#: been made.
-_LOST_COMMIT = (
-    "the connection was lost during the COMMIT, so whether it took effect is unknown. "
-    "Check the rows before running again"
+#: The hint for a ``COMMIT`` that failed: the change may have been made.
+_FAILED_COMMIT = (
+    "the COMMIT failed, so whether it took effect is unknown. Check the rows before running again"
+)
+
+#: The hint for the query timeout on one of the tool's own queries around the
+#: statement, which the session's query budget bounds and ``--timeout`` does not.
+_BUDGET_TIMEOUT = (
+    "a query the tool sends around the statement ran past the session's query budget, "
+    "db.query_timeout_s. Nothing was committed"
 )
 
 
-def for_statement(diagnosis: Diagnosis) -> Diagnosis:
+def for_statement(diagnosis: Diagnosis, *, in_statement: bool = True) -> Diagnosis:
     """``diagnosis`` with `sql run`'s hint, where it has one, and a client's
     own refusal or stop as a ``database`` failure, not a lost connection.
-    The code and the server's message are kept."""
+    ``in_statement`` is false for an error on one of the tool's own queries
+    around the statement, where the query timeout is the session's budget and
+    not ``--timeout`` (review of #1736). The code and the server's message are
+    kept."""
     if diagnosis.code in _STATEMENT_CODES:
         diagnosis = replace(diagnosis, category="database")
+    if diagnosis.code == QUERY_TIMEOUT and not in_statement:
+        return replace(diagnosis, hint=_BUDGET_TIMEOUT)
     hint = _STATEMENT_HINTS.get(diagnosis.code)
     return diagnosis if hint is None else replace(diagnosis, hint=hint)
 
@@ -273,8 +283,8 @@ class StatementRunning:
     session that holds one pyodbc connection.
 
     A session that takes these declares the fields below, its ``_read``, and
-    its ``_driver_error`` and ``_is_client_error``, which classify a pyodbc
-    error without this module importing pyodbc.
+    its ``_diagnose`` and ``_is_client_error``, which classify a pyodbc error
+    without this module importing pyodbc.
     """
 
     connection: Any
@@ -309,9 +319,18 @@ class StatementRunning:
                 original, current = cursor.fetchone()
                 return str(original), str(current)
 
-            self._open_connection()
-            self._logins = self._read(read)
+            self._logins = self._session_read(read)
         return self._logins
+
+    def _session_read(self, reader: Callable[[Any], T]) -> T:
+        """:meth:`_read`, on a connection that is not lost, and marking it
+        lost where the read finds it gone (review of #1736)."""
+        self._open_connection()
+        try:
+            return self._read(reader)
+        except DriverError as error:
+            self._connection_lost = connection_gone(error.__cause__)
+            raise
 
     def session_user(self) -> str:
         """``ORIGINAL_LOGIN()``, the login the session logged in as. Login
@@ -322,8 +341,8 @@ class StatementRunning:
     def current_user(self) -> str:
         """``SUSER_SNAME()``, the login the statement runs as. It differs from
         :meth:`session_user` only inside ``EXECUTE AS LOGIN`` (probe 17, S9),
-        which `sql run` refuses as a first word, and the plan check of #1732
-        as a second statement."""
+        which the statement check refuses as a first word. TODO(#1732): the
+        plan check refuses it as a second statement too."""
         return self._both_logins()[1]
 
     def member_of(self, account: str) -> bool:
@@ -344,12 +363,12 @@ class StatementRunning:
             server, database = cursor.fetchone()
             return "" if server is None else str(server), "" if database is None else str(database)
 
-        self._open_connection()
-        return self._read(read)
+        return self._session_read(read)
 
     def check_write(self, statement: Statement, *, timeout_ms: int) -> None:
-        """Refuse nothing here: every SQL Server table rolls back. The plan
-        check of #1728 Q1 comes in #1732."""
+        """Refuse nothing here: every SQL Server table rolls back.
+        TODO(#1732): the plan check of #1728 Q1, which refuses a batch that
+        is not one statement of the run's kind."""
 
     def run_statement(
         self,
@@ -381,7 +400,8 @@ class StatementRunning:
         connection = self._open_connection()
         read = statement.kind is StatementKind.READ
         settings: _Settings | None = None
-        begun = committed = committing = False
+        committed = committing = in_statement = False
+        converting: list[int] = []
         try:
             with _cursor(connection) as control:
                 control.execute("SELECT @@LOCK_TIMEOUT, @@OPTIONS")
@@ -394,13 +414,14 @@ class StatementRunning:
                     f"SET LOCK_TIMEOUT {lock_timeout(timeout_ms, existing)}"
                 )
                 control.execute(f"{END_TRANSACTION}; BEGIN TRANSACTION")
-                begun = True
             for sqltype, convert in OUTPUT_CONVERTERS.items():
                 connection.add_output_converter(sqltype, convert)
+                converting.append(sqltype)
             # pyodbc gives a cursor the connection's timeout when it is made.
             connection.timeout = query_timeout(timeout_ms)
             with _cursor(connection) as cursor:
                 connection.timeout = self.timeouts.query_s
+                in_statement = True
                 cursor.execute(statement.text)
                 if read:
                     result, more = read_result(cursor, max_rows)
@@ -411,6 +432,7 @@ class StatementRunning:
                 # after the first answer.
                 while cursor.nextset():
                     pass
+                in_statement = False
             with _cursor(connection) as control:
                 control.execute("SELECT @@ROWCOUNT")
                 (found,) = control.fetchone()
@@ -428,20 +450,24 @@ class StatementRunning:
         except Exception as error:
             if not self._is_client_error(error):
                 raise
-            raised = for_statement(self._diagnose(error))
+            raised = for_statement(self._diagnose(error), in_statement=in_statement)
             self._connection_lost = connection_gone(error)
-            if committing and self._connection_lost:
-                raised = replace(raised, hint=_LOST_COMMIT)
+            if committing:
+                raised = replace(raised, hint=_FAILED_COMMIT)
             failure = raised.as_error()
-            # A COMMIT the server refused with a number was rolled back by
-            # XACT_ABORT. One whose connection was lost may have been applied.
-            failure.commit_failed = committing and self._connection_lost
+            # Any COMMIT that failed has an unknown outcome. A fatal server
+            # error can end the session with a number other than KILL's 596,
+            # so the error cannot always tell a COMMIT that was applied from
+            # one that was not (review of #1736).
+            failure.commit_failed = committing
             raise failure from error
         finally:
-            for sqltype in OUTPUT_CONVERTERS:
+            for sqltype in converting:
                 connection.remove_output_converter(sqltype)
             connection.timeout = self.timeouts.query_s
-            undo = [END_TRANSACTION] if begun and not committed else []
+            # END_TRANSACTION reads @@TRANCOUNT, so it is sent even where the
+            # BEGIN's batch failed after BEGIN ran (review of #1736).
+            undo = [] if committed else [END_TRANSACTION]
             if settings is not None:
                 undo.append(settings.restore())
             for sql in undo:

@@ -289,6 +289,55 @@ def test_a_killed_session_is_lost_and_its_commit_unknown() -> None:
             read()
 
 
+def test_any_commit_that_fails_has_an_unknown_outcome() -> None:
+    """A fatal server error can end the session with a number other than
+    596, so a COMMIT the server answered with a number is unknown too
+    (review of #1736)."""
+    connection = _Connection()
+    connection.failures[COMMIT] = _error("HY000", "Some fatal error.", 3314)
+    one = _session(connection)
+
+    with pytest.raises(DriverError) as raised:
+        one.run_statement(WRITE, guard=RowGuard(expect=1), commit=True, max_rows=1, timeout_ms=0)
+
+    assert raised.value.commit_failed
+    assert "unknown" in (raised.value.hint or "")
+
+
+def test_a_timeout_around_the_statement_names_the_budget_not_the_flag() -> None:
+    connection = _Connection()
+    connection.failures[SETTINGS] = QUERY_TIMED_OUT
+
+    with pytest.raises(DriverError) as raised:
+        _session(connection).run_statement(READ, guard=None, commit=False, max_rows=1, timeout_ms=0)
+
+    assert "db.query_timeout_s" in (raised.value.hint or "")
+    assert "--timeout" not in (raised.value.hint or "")
+
+
+def test_the_rollback_is_sent_where_the_begin_failed() -> None:
+    """The BEGIN's batch may fail after BEGIN TRANSACTION ran (review of
+    #1736). END_TRANSACTION reads @@TRANCOUNT, so it is safe to send."""
+    connection = _Connection()
+    connection.failures[BEGIN] = QUERY_TIMED_OUT
+
+    with pytest.raises(DriverError):
+        _session(connection).run_statement(READ, guard=None, commit=False, max_rows=1, timeout_ms=0)
+
+    assert connection.sent[-2:] == [END_TRANSACTION, _restore()]
+
+
+def test_a_session_read_that_finds_the_connection_gone_marks_it_lost() -> None:
+    connection = _Connection()
+    connection.failures["SELECT ORIGINAL_LOGIN(), SUSER_SNAME()"] = LINK_FAILURE
+    one = _session(connection)
+
+    with pytest.raises(DriverError):
+        one.session_user()
+
+    assert one.connection_lost
+
+
 def test_a_rollback_that_fails_marks_the_session_lost() -> None:
     connection = _Connection()
     connection.failures[END_TRANSACTION] = QUERY_TIMED_OUT

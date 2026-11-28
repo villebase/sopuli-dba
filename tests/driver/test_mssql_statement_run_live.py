@@ -20,7 +20,7 @@ from sopuli.config.model import ExpandedTarget, Target, TargetMssql  # noqa: E40
 from sopuli.driver.protocol import Credential, DriverError, Timeouts  # noqa: E402
 from sopuli.secrets import Secret  # noqa: E402
 from sopuli.sql.guard import RowGuard  # noqa: E402
-from sopuli.sql.statement import Dialect, classify  # noqa: E402
+from sopuli.sql.statement import Dialect, StatementRefusedError, classify  # noqa: E402
 
 RUN_AS, PASSWORD = "w1_uc3_runas", "W1-uc3-pw-1"
 DATABASE = "w1_uc3"
@@ -65,6 +65,13 @@ def stack(live_mssql: Any) -> Iterator[Any]:
         # An AFTER trigger that changes five rows of another table, under
         # NOCOUNT OFF, so pyodbc's first count is the trigger's (probe 17, S5).
         "CREATE TRIGGER dbo.tt_after ON dbo.tt AFTER UPDATE AS UPDATE dbo.audit SET n = n + 1",
+        # The plan check needs SHOWPLAN in each database a statement names
+        # (#1728 Q1, probe 17 S1).
+        f"GRANT SHOWPLAN TO [{RUN_AS}]",
+        # A multi-statement function, whose body SHOWPLAN lists too (#1732).
+        "CREATE FUNCTION dbo.tvf (@x int) RETURNS @r TABLE (a int) AS BEGIN "
+        "INSERT INTO @r VALUES (@x); RETURN END",
+        f"GRANT SELECT ON dbo.tvf TO [{RUN_AS}]",
     ):
         cursor.execute(sql)
     cursor.execute("USE master")
@@ -327,3 +334,94 @@ def test_a_type_the_driver_cannot_read_names_the_cast(runner: Any) -> None:
     assert "CAST" in (raised.value.hint or "")
     assert not runner.connection_lost
     assert _settings(runner) == (-1, 0, 0)
+
+
+# --- the statement-list check of #1728 Q1 (#1732) ---------------------------
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        f"SELECT id FROM {T}",
+        "SELECT 1 AS a",
+        f"SELECT a FROM {DATABASE}.dbo.tvf(1)",
+        f"WITH c AS (SELECT id FROM {T}) SELECT id FROM c",
+        f"UPDATE {T} SET v = 1 WHERE id = 1",
+        f"UPDATE {T} SET v = 1 WHERE id = 1 DECLARE @x int",
+    ],
+    ids=["select", "no-query", "function-body", "with", "update", "bare-declare"],
+)
+def test_one_statement_passes_the_check(runner: Any, stack: Any, text: str) -> None:
+    runner.check_statement(_sql(text), timeout_ms=5000)
+
+    assert _value(stack, f"SELECT SUM(v) FROM {T}") == 0, "the check runs nothing"
+    assert runner.connection.cursor().execute("SELECT 1").fetchone()[0] == 1, (
+        "SHOWPLAN is off again: a SELECT runs"
+    )
+
+
+@pytest.mark.parametrize(
+    ("text", "message"),
+    [
+        (f"UPDATE {T} SET v = 1 WHERE id = 1 DELETE FROM {T}", "2 statements (UPDATE, DELETE)"),
+        (
+            f"UPDATE {T} SET v = 1 WHERE id = 1 GRANT CONTROL TO [{RUN_AS}]",
+            "2 statements (UPDATE, GRANT)",
+        ),
+        (f"SELECT id FROM {T} SELECT v FROM {T}", "2 statements"),
+        (f"SELECT id INTO {DATABASE}.dbo.made FROM {T}", "as SELECT INTO"),
+        # A second statement that would end the tool's own transaction, or
+        # change who runs or how: each has a row (review of #1737).
+        (f"UPDATE {T} SET v = 1 WHERE id = 1 COMMIT", "(UPDATE, COMMIT TRANSACTION)"),
+        (f"UPDATE {T} SET v = 1 WHERE id = 1 ROLLBACK", "(UPDATE, ROLLBACK TRANSACTION)"),
+        (f"UPDATE {T} SET v = 1 WHERE id = 1 BEGIN TRAN", "(UPDATE, BEGIN TRANSACTION)"),
+        (f"UPDATE {T} SET v = 1 WHERE id = 1 EXECUTE AS LOGIN = 'sa'", "(UPDATE, EXECUTE AS)"),
+        (f"UPDATE {T} SET v = 1 WHERE id = 1 REVERT", "(UPDATE, REVERT)"),
+        (f"UPDATE {T} SET v = 1 WHERE id = 1 SET XACT_ABORT OFF", "(UPDATE, SET ON/OFF)"),
+        (f"UPDATE {T} SET v = 1 WHERE id = 1 SET ROWCOUNT 1", "(UPDATE, SET ROWCNT)"),
+        (f"UPDATE {T} SET v = 1 WHERE id = 1 IF 1 = 1 DELETE FROM {T}", "(UPDATE, COND)"),
+        (f"UPDATE {T} SET v = 1 WHERE id = 1 EXEC ('SELECT 1')", "(UPDATE, EXECUTE STRING)"),
+        (f"UPDATE {T} SET v = 1 WHERE id = 1 DECLARE @x int = 1", "(UPDATE, ASSIGN)"),
+    ],
+    ids=[
+        "update-delete",
+        "update-grant",
+        "two-selects",
+        "select-into",
+        "commit",
+        "rollback",
+        "begin-tran",
+        "execute-as",
+        "revert",
+        "set-xact-abort",
+        "set-rowcount",
+        "if",
+        "exec-string",
+        "declare-with-value",
+    ],
+)
+def test_anything_else_is_refused_and_nothing_runs(
+    runner: Any, stack: Any, text: str, message: str
+) -> None:
+    with pytest.raises(StatementRefusedError) as refused:
+        runner.check_statement(_sql(text), timeout_ms=5000)
+
+    assert message in refused.value.message
+    assert _value(stack, f"SELECT COUNT(*) FROM {T}") == 5
+    assert _value(stack, f"SELECT SUM(v) FROM {T}") == 0
+    assert _value(stack, f"SELECT OBJECT_ID(N'{DATABASE}.dbo.made')") is None
+
+
+def test_a_login_without_showplan_is_refused_with_the_grant(runner: Any, stack: Any) -> None:
+    connection = stack.connect()
+    connection.cursor().execute(f"USE [{DATABASE}]; REVOKE SHOWPLAN FROM [{RUN_AS}]")
+    connection.close()
+
+    with pytest.raises(DriverError) as raised:
+        runner.check_statement(_sql(f"UPDATE {T} SET v = 1 WHERE id = 1"), timeout_ms=5000)
+
+    assert raised.value.code == "262"
+    assert DATABASE in raised.value.message
+    assert "GRANT SHOWPLAN" in (raised.value.hint or "")
+    assert not runner.connection_lost
+    runner.check_statement(_sql("SELECT 1 AS a"), timeout_ms=5000)

@@ -25,7 +25,7 @@ from sopuli.driver.protocol import AuthenticationError, DriverError, StatementRe
 from sopuli.driver.registry import DRIVERS
 from sopuli.exit_codes import ExitCode
 from sopuli.output.document import SCHEMA_VERSION, Error
-from sopuli.sql.statement import Dialect, Statement, StatementKind
+from sopuli.sql.statement import Dialect, Statement, StatementKind, StatementRefusedError
 
 RUN_SCHEMA = json.loads(
     (
@@ -93,7 +93,7 @@ class FakeSession:
         #: The ``--as`` the opener was given, set by the fixture.
         self.as_user: str | None = None
         self.identity_reads = 0
-        #: What :meth:`check_write` raises, such as a table without
+        #: What :meth:`check_statement` raises, such as a table without
         #: transactions (#1713 Q3); ``None`` refuses nothing.
         self.check_error: Exception | None = None
         self.checked: list[Statement] = []
@@ -119,7 +119,7 @@ class FakeSession:
             raise self.identity_error
         return "FREE", "FREEPDB1"
 
-    def check_write(self, statement: Statement, *, timeout_ms: int) -> None:
+    def check_statement(self, statement: Statement, *, timeout_ms: int) -> None:
         self.checked.append(statement)
         if self.check_error is not None:
             raise self.check_error
@@ -451,6 +451,33 @@ def test_a_with_that_writes_is_named_as_one(
     )
     assert error["hint"].startswith("`sql run` reads with SELECT, and with a WITH that leads")
     assert sessions["opened"] == []
+
+
+def test_a_read_a_target_refuses_to_check_runs_nowhere(
+    write_config: WriteConfig, sessions: dict[str, Any]
+) -> None:
+    """A read is checked on every target before any runs, as a write is: on
+    SQL Server a second statement needs no `;` (#1728 Q1, #1732)."""
+    refusing = FakeSession("qa-alpha")
+    refusing.check_error = StatementRefusedError(
+        "target 'qa-alpha': the server reads the text as 2 statements (SELECT, DELETE), "
+        "and `sql run` runs one",
+        hint="T-SQL needs no ';' between two statements",
+    )
+    sessions["qa-alpha"] = refusing
+
+    result = sql_run(write_config, statement="SELECT 1 FROM dual", json_out=True)
+
+    assert exit_of(result) == ExitCode.ABORTED, result.output
+    error = document(result)["error"]
+    assert error["code"] == "SOPULI-20009"
+    assert "qa-alpha" in error["message"]
+    assert len(sessions["opened"]) == 2
+    assert error["hint"].startswith("nothing was run on any target. T-SQL needs no ';'")
+    for one in sessions["opened"]:
+        assert one.checked, f"{one.target} was not checked"
+        assert one.calls == [], f"{one.target} ran the read"
+        assert one.closed
 
 
 def test_no_run_as_and_no_as_exit_9(write_config: WriteConfig, sessions: dict[str, Any]) -> None:

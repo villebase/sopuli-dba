@@ -629,7 +629,7 @@ CHECK = 5000
 @pytest.mark.parametrize("build", [_mysql, _mariadb], ids=["mysql", "mariadb"])
 def test_a_server_with_no_table_without_transactions_needs_one_read(build: Any) -> None:
     session, connection = build()
-    session.check_write(_write("UPDATE acme.settings SET v = 1"), timeout_ms=CHECK)
+    session.check_statement(_write("UPDATE acme.settings SET v = 1"), timeout_ms=CHECK)
     assert connection.sent == [NON_TRANSACTIONAL]
 
 
@@ -658,7 +658,7 @@ def test_a_write_that_names_a_table_without_transactions_is_refused(
     connection.unrollable = unrollable
     product = "mysql" if build is _mysql else "mariadb"
     with pytest.raises(StatementRefusedError, match="no transactions") as raised:
-        session.check_write(_write(text, product), timeout_ms=CHECK)
+        session.check_statement(_write(text, product), timeout_ms=CHECK)
     assert "acme.settings" in raised.value.message
     assert connection.sent == [NON_TRANSACTIONAL], "one read, and nothing else is sent"
 
@@ -683,7 +683,7 @@ def test_a_write_that_names_no_table_without_transactions_passes(
     session, connection = build()
     connection.unrollable = unrollable
     product = "mysql" if build is _mysql else "mariadb"
-    session.check_write(_write(text, product), timeout_ms=CHECK)
+    session.check_statement(_write(text, product), timeout_ms=CHECK)
     assert connection.sent == [NON_TRANSACTIONAL], "no EXPLAIN is sent"
 
 
@@ -699,7 +699,7 @@ def test_the_checks_read_is_bounded_by_the_timeout(timeout_ms: int, bound: int) 
 
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(_Cursor, "execute", watch)
-        session.check_write(_write("UPDATE acme.t SET v = 1"), timeout_ms=timeout_ms)
+        session.check_statement(_write("UPDATE acme.t SET v = 1"), timeout_ms=timeout_ms)
     assert seen == [bound]
     assert connection._read_timeout == 30, "the session's budget comes back"
 
@@ -708,7 +708,7 @@ def test_a_check_whose_read_fails_is_a_driver_error() -> None:
     session, connection = _mysql()
     connection.failures[NON_TRANSACTIONAL] = pymysql.err.OperationalError(1205, "Lock wait")
     with pytest.raises(DriverError) as raised:
-        session.check_write(_write("UPDATE acme.t SET v = 1"), timeout_ms=CHECK)
+        session.check_statement(_write("UPDATE acme.t SET v = 1"), timeout_ms=CHECK)
     assert raised.value.code == "1205"
 
 

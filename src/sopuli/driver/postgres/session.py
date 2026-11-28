@@ -708,8 +708,9 @@ class PostgresSession(ClosesConnection):
             raise
         return str(row[0]), str(row[1])
 
-    def check_write(self, statement: RunStatement, *, timeout_ms: int) -> None:
-        """Nothing to refuse: every PostgreSQL table is transactional, so a
+    def check_statement(self, statement: RunStatement, *, timeout_ms: int) -> None:
+        """Nothing to refuse: the cursor and the prepared statement refuse a
+        second statement, and every PostgreSQL table is transactional, so a
         rollback undoes the statement's change (UC-3 §3 names what it does
         not undo, such as ``dblink_exec()``)."""
 

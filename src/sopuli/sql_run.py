@@ -413,42 +413,47 @@ def refuse_another_plan(given: str, computed: str) -> None:
     )
 
 
-def refuse_unrollable(
+def check_statement(
     connections: Sequence[Connection], statement: Statement, *, timeout_ms: int
 ) -> None:
-    """Refuse a write, dry or real, that a rollback could not undo on some
-    target, before any statement runs on any target (#1713, Q3 A′).
+    """Refuse a statement, read or write, dry or real, that some target
+    cannot run safely, before any statement runs on any target.
 
-    Each connected session checks the statement (:meth:`StatementRunner.check_write`).
-    On MySQL and MariaDB that refuses a write that names a table without
-    transactions; elsewhere it refuses nothing. A check that cannot be made
-    refuses the run too: the tool does not run a write it could not check.
-    Every target's answer is gathered first, so the refusal names them all.
+    Each connected session checks the statement
+    (:meth:`StatementRunner.check_statement`). On MySQL and MariaDB that
+    refuses a write that names a table without transactions, which a
+    rollback could not undo (#1713, Q3 A′). On SQL Server it refuses a text
+    the server reads as anything but one statement of the run's kind
+    (#1728, Q1). Elsewhere it refuses nothing. A check that cannot be made
+    refuses the run too: the tool does not run a statement it could not
+    check. Every target's answer is gathered first, so the refusal names
+    them all, with each one's hint once.
     """
     from sopuli.sql.statement import StatementRefusedError
 
     refused: list[str] = []
+    hints: dict[str, None] = {}
     for one in sorted(connections, key=lambda each: each.target.name):
         session = one.session
         if session is None:
             continue
         assert isinstance(session, StatementRunner)  # checked by _connect
         try:
-            session.check_write(statement, timeout_ms=timeout_ms)
+            session.check_statement(statement, timeout_ms=timeout_ms)
         except StatementRefusedError as error:
             refused.append(error.message)
+            if error.hint:
+                hints[error.hint] = None
         except DriverError as error:
             refused.append(
-                f"target {one.target.name!r}: the check for tables without transactions "
-                f"failed: {error.message}"
+                f"target {one.target.name!r}: the check before the run failed: {error.message}"
             )
+            if error.hint:
+                hints[error.hint] = None
     if refused:
         raise StatementRefusedError(
             "; ".join(refused),
-            hint="nothing was run on any target. `sql run` writes only tables with "
-            "transactions, so that a dry run and a refused guard can roll every change "
-            "back: move the table to InnoDB, or change it another way. A column or an "
-            "alias with such a table's name is refused too: rename it in the statement",
+            hint=". ".join(["nothing was run on any target", *hints]),
         )
 
 

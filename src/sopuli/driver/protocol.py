@@ -1773,12 +1773,16 @@ class StatementRunner(Protocol):
         Server."""
         ...
 
-    def check_write(self, statement: Statement, *, timeout_ms: int) -> None:
-        """Refuse a write the rollback could not undo, before any statement
-        runs on any target. On MySQL and MariaDB that is a write to a table
-        whose engine has no transactions (#1713, Q3). Oracle, PostgreSQL and
-        SQL Server roll back every table, and refuse nothing here. ``timeout_ms`` bounds
-        what the check sends, as it bounds the statement. Raises
+    def check_statement(self, statement: Statement, *, timeout_ms: int) -> None:
+        """Refuse a statement this target cannot run safely, a read or a
+        write, before any statement runs on any target. On MySQL and MariaDB
+        that is a write to a table whose engine has no transactions, which
+        the rollback could not undo (#1713, Q3). On SQL Server it is a text
+        the server reads as anything but one statement of the run's kind,
+        because T-SQL needs no ``;`` between two (#1728, Q1). Oracle and
+        PostgreSQL refuse nothing here: their servers refuse a second
+        statement, and roll back every table. ``timeout_ms`` bounds what the
+        check sends, as it bounds the statement. Raises
         :class:`~sopuli.sql.statement.StatementRefusedError`, or
         :class:`DriverError` where the check could not be made."""
         ...

@@ -9,6 +9,7 @@ against a server.
 
 from __future__ import annotations
 
+import re
 import struct
 from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
@@ -20,15 +21,18 @@ from sopuli.driver.mssql.capabilities import END_TRANSACTION
 from sopuli.driver.mssql.statement_run import (
     DATETIMEOFFSET,
     OUTPUT_CONVERTERS,
+    SHOWPLAN_OFF,
+    SHOWPLAN_ON,
     VALUE_LIMIT,
     XACT_ABORT_BIT,
     _datetimeoffset,
+    batch_statements,
     lock_timeout,
     query_timeout,
 )
 from sopuli.driver.protocol import DriverError, InternalFaultError, StatementRunner, Timeouts
 from sopuli.sql.guard import RowGuard
-from sopuli.sql.statement import classify
+from sopuli.sql.statement import Dialect, StatementRefusedError, classify
 
 pyodbc = pytest.importorskip("pyodbc")
 session = pytest.importorskip("sopuli.driver.mssql.session")
@@ -64,6 +68,14 @@ KILLED = pyodbc.Error(
 )
 
 
+#: The SHOWPLAN_ALL columns :func:`batch_statements` reads, and one it does not.
+PLAN_COLUMNS = ("StmtText", "StmtId", "NodeId", "Parent", "Type")
+
+
+def _plan_row(statement: int, node: int, parent: int, kind: str) -> tuple[Any, ...]:
+    return (f"statement {statement}", statement, node, parent, kind)
+
+
 class _Cursor:
     def __init__(self, connection: _Connection) -> None:
         self.connection = connection
@@ -71,6 +83,8 @@ class _Cursor:
         self.description: tuple[tuple[str], ...] | None = None
         self._rows: list[tuple[Any, ...]] = []
         self.cancelled = False
+        #: The row set :meth:`nextset` moves to, where there is one.
+        self._later: tuple[Any, list[tuple[Any, ...]]] | None = None
 
     def execute(self, sql: str) -> None:
         connection = self.connection
@@ -79,7 +93,17 @@ class _Cursor:
         failure = connection.failures.get(sql)
         if failure is not None:
             raise failure
-        if sql == SETTINGS:
+        if sql in (SHOWPLAN_ON, SHOWPLAN_OFF):
+            connection.planning = sql == SHOWPLAN_ON
+            self.description = None
+        elif connection.planning:
+            self.description = tuple((name,) for name in PLAN_COLUMNS)
+            self._rows = list(connection.plan)
+            if connection.count_first:
+                # A first answer with no columns, the plan after it.
+                self._later = (self.description, self._rows)
+                self.description, self._rows = None, []
+        elif sql == SETTINGS:
             self._rows = [connection.settings]
         elif sql == "SELECT @@ROWCOUNT":
             self._rows = [(connection.rowcount,)]
@@ -97,12 +121,19 @@ class _Cursor:
     def fetchone(self) -> tuple[Any, ...]:
         return self._rows.pop(0)
 
+    def fetchall(self) -> list[tuple[Any, ...]]:
+        taken, self._rows = self._rows, []
+        return taken
+
     def fetchmany(self, size: int) -> list[tuple[Any, ...]]:
         taken, self._rows = self._rows[:size], self._rows[size:]
         return taken
 
     def nextset(self) -> bool:
-        return False
+        if self._later is None:
+            return False
+        (self.description, self._rows), self._later = self._later, None
+        return True
 
     def cancel(self) -> None:
         self.cancelled = True
@@ -123,6 +154,10 @@ class _Connection:
         self.timeout = BUDGET
         self.converters: dict[int, Any] = {}
         self.cancelled = False
+        self.planning = False
+        #: What SHOWPLAN_ALL lists: one UPDATE, by default.
+        self.plan: list[tuple[Any, ...]] = [_plan_row(1, 1, 0, "UPDATE")]
+        self.count_first = False
 
     def cursor(self) -> _Cursor:
         return _Cursor(self)
@@ -462,3 +497,157 @@ def test_a_long_value_is_cut() -> None:
     assert cut_bytes == "01" * VALUE_LIMIT
     assert cut_text == "y" * VALUE_LIMIT
     assert result.truncated
+
+
+# --- the statement-list check of #1728 Q1 (#1732) ---------------------------
+
+#: The rows SHOWPLAN_ALL gave on 16.0.4325.4 (#1732), without the plan rows.
+#: A multi-statement function adds a TEXT row with its caller's StmtId, and
+#: its body under it; a procedure adds its body under EXECUTE PROC.
+FUNCTION_BODY = [
+    _plan_row(1, 1, 0, "SELECT"),
+    _plan_row(1, 5, 0, "TEXT"),
+    _plan_row(2, 6, 5, "INSERT"),
+    _plan_row(3, 8, 5, "RETURN NONE"),
+]
+PROCEDURE_BODY = [
+    _plan_row(1, 1, 0, "UPDATE"),
+    _plan_row(2, 4, 0, "EXECUTE PROC"),
+    _plan_row(3, 5, 4, "SELECT WITHOUT QUERY"),
+    _plan_row(4, 6, 4, "UPDATE"),
+]
+
+
+@pytest.mark.parametrize(
+    ("rows", "expected"),
+    [
+        ([_plan_row(1, 1, 0, "UPDATE"), _plan_row(1, 2, 1, "PLAN_ROW")], ["UPDATE"]),
+        ([_plan_row(1, 1, 0, "UPDATE"), _plan_row(2, 4, 0, "DELETE")], ["UPDATE", "DELETE"]),
+        (FUNCTION_BODY, ["SELECT"]),
+        ([*FUNCTION_BODY, _plan_row(4, 9, 0, "DELETE")], ["SELECT", "DELETE"]),
+        (PROCEDURE_BODY, ["UPDATE", "EXECUTE PROC"]),
+        ([_plan_row(1, 1, 0, "select without query ")], ["SELECT WITHOUT QUERY"]),
+        ([], []),
+    ],
+    ids=["one", "two", "function-body", "function-then-delete", "procedure", "spelling", "none"],
+)
+def test_batch_statements_counts_the_batchs_own(
+    rows: list[tuple[Any, ...]], expected: list[str]
+) -> None:
+    assert batch_statements(PLAN_COLUMNS, rows) == expected
+
+
+MS_READ = classify("SELECT a FROM acme.dbo.t", dialect=Dialect.MSSQL)
+MS_WRITE = classify("UPDATE acme.dbo.t SET v = 1", dialect=Dialect.MSSQL)
+
+
+@pytest.mark.parametrize(
+    ("statement", "kind"),
+    [
+        (MS_READ, "SELECT"),
+        (MS_READ, "SELECT WITHOUT QUERY"),
+        (MS_WRITE, "UPDATE"),
+        (MS_WRITE, "INSERT"),
+        (MS_WRITE, "DELETE"),
+        (MS_WRITE, "MERGE"),
+    ],
+)
+def test_one_statement_of_the_runs_kind_passes(statement: Any, kind: str) -> None:
+    connection = _Connection()
+    connection.plan = [_plan_row(1, 1, 0, kind)]
+
+    _session(connection).check_statement(statement, timeout_ms=5000)
+
+    assert connection.sent == [SHOWPLAN_ON, statement.text, SHOWPLAN_OFF]
+    assert not connection.planning, "SHOWPLAN is off again"
+    made_with = dict(connection.timeouts)
+    assert made_with[statement.text] == 6, "--timeout bounds the check"
+    assert connection.timeout == BUDGET
+
+
+@pytest.mark.parametrize(
+    ("statement", "plan", "message"),
+    [
+        (
+            MS_WRITE,
+            [_plan_row(1, 1, 0, "UPDATE"), _plan_row(2, 3, 0, "GRANT")],
+            "2 statements (UPDATE, GRANT)",
+        ),
+        (MS_WRITE, PROCEDURE_BODY, "2 statements (UPDATE, EXECUTE PROC)"),
+        (MS_READ, [_plan_row(1, 1, 0, "SELECT INTO")], "as SELECT INTO"),
+        (
+            MS_READ,
+            [_plan_row(1, 1, 0, "DELETE")],
+            "as DELETE, which `sql run` does not run as a read",
+        ),
+        (
+            MS_WRITE,
+            [_plan_row(1, 1, 0, "SELECT")],
+            "as SELECT, which `sql run` does not run as a write",
+        ),
+        (MS_WRITE, [], "0 statements (none)"),
+    ],
+    ids=["second-statement", "procedure", "select-into", "read-deletes", "write-selects", "none"],
+)
+def test_anything_else_is_refused(statement: Any, plan: list[Any], message: str) -> None:
+    connection = _Connection()
+    connection.plan = plan
+
+    with pytest.raises(StatementRefusedError, match=re.escape(message)) as refused:
+        _session(connection).check_statement(statement, timeout_ms=0)
+
+    assert "mssql-dev" in refused.value.message
+    assert connection.sent[-1] == SHOWPLAN_OFF
+    made_with = dict(connection.timeouts)
+    assert made_with[statement.text] == BUDGET, "with no --timeout, the session's budget"
+
+
+def test_a_login_without_showplan_is_told_the_grant() -> None:
+    connection = _Connection()
+    connection.failures[MS_WRITE.text] = _error(
+        "42000", "SHOWPLAN permission denied in database 'acme'.", 262
+    )
+    one = _session(connection)
+
+    with pytest.raises(DriverError) as raised:
+        one.check_statement(MS_WRITE, timeout_ms=0)
+
+    assert raised.value.code == "262"
+    assert "GRANT SHOWPLAN" in (raised.value.hint or "")
+    assert connection.sent[-1] == SHOWPLAN_OFF, "SHOWPLAN is turned off after a refusal"
+    assert not one.connection_lost
+
+
+def test_a_check_that_loses_the_connection_sends_nothing_more() -> None:
+    connection = _Connection()
+    connection.failures[MS_WRITE.text] = LINK_FAILURE
+    one = _session(connection)
+
+    with pytest.raises(DriverError):
+        one.check_statement(MS_WRITE, timeout_ms=0)
+
+    assert one.connection_lost
+    assert connection.sent[-1] == MS_WRITE.text
+
+
+def test_a_plan_after_a_first_answer_without_columns_is_read() -> None:
+    """The columns come from the first row set that has them (review of #1737)."""
+    connection = _Connection()
+    connection.count_first = True
+    connection.plan = [_plan_row(1, 1, 0, "UPDATE"), _plan_row(2, 4, 0, "DELETE")]
+
+    with pytest.raises(StatementRefusedError, match="2 statements"):
+        _session(connection).check_statement(MS_WRITE, timeout_ms=0)
+
+
+def test_a_showplan_that_does_not_turn_off_fails_the_check() -> None:
+    """Under SHOWPLAN a statement compiles and runs nothing, so the session
+    is lost and the check fails before any target runs (review of #1737)."""
+    connection = _Connection()
+    connection.failures[SHOWPLAN_OFF] = QUERY_TIMED_OUT
+    one = _session(connection)
+
+    with pytest.raises(DriverError, match="SHOWPLAN_ALL OFF failed"):
+        one.check_statement(MS_WRITE, timeout_ms=0)
+
+    assert one.connection_lost

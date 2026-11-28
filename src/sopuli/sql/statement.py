@@ -35,17 +35,23 @@ class Dialect(StrEnum):
     statement the same way: ``#`` starts a comment, ``--`` starts one only
     before whitespace or a control character, block comments do not nest,
     ``'...'`` and ``"..."`` take backslash escapes, and `````...````` is a name.
-    The value is the target's ``type:``.
+    SQL Server's block comments nest, ``[...]`` is a name in which ``]]`` is
+    one ``]``, ``''`` is the only escape, and a ``GO`` line is a client command, not
+    T-SQL. The value is the target's ``type:``.
     """
 
     ORACLE = "oracle"
     POSTGRESQL = "postgresql"
     MYSQL = "mysql"
     MARIADB = "mariadb"
+    MSSQL = "mssql"
 
 
 #: The dialects that follow MySQL's rules. One scan serves both.
 _MYSQL_FAMILY = frozenset({Dialect.MYSQL, Dialect.MARIADB})
+
+#: The dialects whose block comments nest: a ``/*`` inside one opens another.
+_NESTING_COMMENTS = frozenset({Dialect.POSTGRESQL, Dialect.MSSQL})
 
 
 class StatementRefusedError(RefusedError):
@@ -113,13 +119,13 @@ def _comment_end(text: str, i: int, dialect: Dialect) -> int | None:
     """Where the block comment that opens at ``text[i]`` ends, or ``None``
     when it never closes.
 
-    On Oracle, MySQL and MariaDB the first ``*/`` closes it. On PostgreSQL a
-    ``/*`` inside opens a nested comment, and each needs its own ``*/``. On
-    MySQL and MariaDB an executable comment is refused.
+    On Oracle, MySQL and MariaDB the first ``*/`` closes it. On PostgreSQL and
+    SQL Server a ``/*`` inside opens a nested comment, and each needs its own
+    ``*/``. On MySQL and MariaDB an executable comment is refused.
     """
     if dialect in _MYSQL_FAMILY:
         _refuse_executable_comment(text, i)
-    if dialect is not Dialect.POSTGRESQL:
+    if dialect not in _NESTING_COMMENTS:
         found = text.find("*/", i + 2)
         return None if found == -1 else found + 2
     depth, j, n = 1, i + 2, len(text)
@@ -291,6 +297,20 @@ def _mysql_quoted_end(text: str, i: int, escapes: str) -> int:
     return _UNCLOSED
 
 
+def _bracket_end(text: str, i: int) -> int:
+    """Where a SQL Server ``[...]`` name that opens at ``text[i]`` ends, or
+    :data:`_UNCLOSED`. ``]]`` inside it is one ``]``."""
+    j, n = i + 1, len(text)
+    while j < n:
+        if text[j] == "]":
+            if text.startswith("]]", j):
+                j += 2
+                continue
+            return j + 1
+        j += 1
+    return _UNCLOSED
+
+
 def _literal_end(
     text: str, i: int, dialect: Dialect, *, escapes: str = _ESCAPING_QUOTES
 ) -> int | None:
@@ -302,6 +322,8 @@ def _literal_end(
     char = text[i]
     if dialect in _MYSQL_FAMILY:
         return _mysql_quoted_end(text, i, escapes) if char in "'\"`" else None
+    if dialect is Dialect.MSSQL and char == "[":
+        return _bracket_end(text, i)
     if dialect is Dialect.ORACLE and _q_quote_start(text, i):
         if i + 2 >= len(text):
             return _UNCLOSED
@@ -511,6 +533,93 @@ def _refuse_file_writes(text: str, dialect: Dialect, escapes: str) -> None:
             )
 
 
+def _is_tsql_word_char(char: str) -> bool:
+    """A character that can be part of an unquoted T-SQL name or keyword. A
+    space outside ASCII is not one."""
+    return char.isalnum() or char in "_@#$" or (not char.isascii() and not char.isspace())
+
+
+def _tsql_tokens(text: str) -> list[tuple[str, int]]:
+    """The tokens of a T-SQL ``text`` outside comments, in order, each with
+    where it starts: a word in upper case, ``"("`` or ``")"``, and ``""`` for
+    a literal, a quoted name or any other character.
+
+    A space outside ASCII, such as a no-break space, separates two words
+    here, whether or not the server reads it as a space. Read as part of a
+    word, it would hide a ``DELETE`` after a ``WITH`` from :func:`_with_verb`,
+    so the scan takes the reading that refuses more (review of #1734)."""
+    tokens: list[tuple[str, int]] = []
+    i, n = 0, len(text)
+    while i < n:
+        if text[i] in _SPACE or text[i].isspace():
+            i += 1
+        elif _line_comment_at(text, i, Dialect.MSSQL):
+            i = _line_end(text, i)
+        elif text.startswith("/*", i):
+            closed = _comment_end(text, i, Dialect.MSSQL)
+            i = n if closed is None else closed
+        elif (literal := _literal_end(text, i, Dialect.MSSQL)) is not None:
+            tokens.append(("", i))
+            i = n if literal == _UNCLOSED else literal
+        elif _is_tsql_word_char(text[i]):
+            start = i
+            while i < n and _is_tsql_word_char(text[i]):
+                i += 1
+            tokens.append((text[start:i].upper(), start))
+        else:
+            tokens.append((text[i] if text[i] in "()" else "", i))
+            i += 1
+    return tokens
+
+
+def _refuse_batch_separator(text: str, tokens: list[tuple[str, int]]) -> None:
+    """Refuse a ``GO`` line in a T-SQL statement.
+
+    ``GO`` alone on a line, or with a count, is how sqlcmd and SSMS end a
+    batch. The server does not know it: ``GO`` is not a reserved word, so
+    ``SELECT 1`` and a ``GO`` line run as ``SELECT 1 AS GO``, and other text
+    may fail to parse. Either way the server would not read the text as the
+    operator's tools do, so the check refuses it, a false refusal where
+    ``GO`` was meant as an alias (review of #1734).
+    """
+    for at, (word, start) in enumerate(tokens):
+        if word != "GO":
+            continue
+        line_start = text.rfind("\n", 0, start) + 1
+        if text[line_start:start].strip(_SPACE):
+            continue
+        line_end = text.find("\n", start)
+        rest = [
+            following for following, where in tokens[at + 1 :] if line_end == -1 or where < line_end
+        ]
+        if not rest or (len(rest) == 1 and rest[0].isascii() and rest[0].isdigit()):
+            raise StatementRefusedError(
+                "the statement holds a GO line, which ends a batch in sqlcmd and SSMS "
+                "and which SQL Server does not read that way",
+                hint="give one statement, without GO",
+            )
+
+
+#: The words that begin the statement a T-SQL ``WITH`` leads to.
+_TSQL_MAIN_VERBS = ("SELECT", *WRITE_KEYWORDS)
+
+
+def _with_verb(tokens: list[tuple[str, int]]) -> str | None:
+    """The statement a T-SQL ``WITH`` leads to: the first of ``SELECT``,
+    ``INSERT``, ``UPDATE``, ``DELETE`` and ``MERGE`` outside brackets, after
+    the common table expressions. ``None`` where there is none, which the
+    server refuses."""
+    depth = 0
+    for word, _start in tokens[1:]:
+        if word == "(":
+            depth += 1
+        elif word == ")":
+            depth = max(depth - 1, 0)
+        elif depth == 0 and word in _TSQL_MAIN_VERBS:
+            return word
+    return None
+
+
 def _classify(raw: str, dialect: Dialect, escapes: str) -> Statement:
     text = _strip_terminators(raw, dialect, escapes)
     word, reason = _first_word(text, dialect)
@@ -538,6 +647,11 @@ def _classify(raw: str, dialect: Dialect, escapes: str) -> Statement:
             "the statement has a '/' alone on its last line",
             hint="give one statement, with at most one ';' or one '/' line at its end",
         )
+    if dialect is Dialect.MSSQL:
+        tokens = _tsql_tokens(text)
+        _refuse_batch_separator(text, tokens)
+        if keyword == "WITH" and _with_verb(tokens) in WRITE_KEYWORDS:
+            kind = StatementKind.WRITE
     if ";" in text:
         raise StatementRefusedError(
             "the statement holds a ';' before its end",
@@ -557,7 +671,11 @@ def classify(raw: str, *, dialect: Dialect = Dialect.ORACLE) -> Statement:
 
     A ``;`` left after the one terminator is refused, so a second statement
     cannot ride along. A ``;`` inside a string literal is refused too. That is a
-    false refusal, and UC-3 accepts it.
+    false refusal, and UC-3 accepts it. T-SQL needs no ``;`` between two
+    statements, so on SQL Server the server's own list of the statements is
+    what refuses a second one (#1728, Q1). The scan refuses a ``GO`` line, and
+    classifies a ``WITH`` by the statement it leads to, so a ``WITH`` that
+    deletes is a write.
 
     On MySQL and MariaDB the server's ``sql_mode`` decides whether a backslash
     escapes a quote, and the tool cannot see it before it connects. So the
@@ -584,6 +702,7 @@ _PRODUCT_NAMES = {
     Dialect.POSTGRESQL: "PostgreSQL",
     Dialect.MYSQL: "MySQL",
     Dialect.MARIADB: "MariaDB",
+    Dialect.MSSQL: "SQL Server",
 }
 
 

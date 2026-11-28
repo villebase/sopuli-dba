@@ -6896,3 +6896,45 @@ the register.
   `1196` backstop alone (B), which learns of the change only after it was
   made, and documenting the gap (C). Q4: documenting it beside PostgreSQL's
   `dblink_exec()` (B).
+
+## #1728
+
+- **Decided:** 2026-11-28, #1728
+- **Question:** five questions before `sql run` runs on SQL Server. Q1: T-SQL
+  needs no `;` between two statements, so how is a second one refused? Q2:
+  SQL Server has no read-only transaction, so what guards a read? Q3: which
+  database does the statement run in? Q4: may the run-as login hold the
+  service login's privileges through `IMPERSONATE`? Q5: what of a linked
+  server, `OPENQUERY` and `OPENROWSET`?
+- **Decision:** the maintainer's: option A for all five.
+  - Q1: before any statement runs, the server lists the statements under
+    `SET SHOWPLAN_ALL ON`, which runs none of them, and a run passes only
+    with exactly one statement of its kind: `SELECT`, not `SELECT … INTO`,
+    for a read, and `UPDATE`, `INSERT`, `DELETE` or `MERGE` for a write. The
+    run-as login needs the `SHOWPLAN` permission. The T-SQL dialect (#1730)
+    stays the first check: it refuses a `GO` line and classifies a `WITH` by
+    the statement it leads to. Built in #1732.
+  - Q2: a read runs in a transaction with `XACT_ABORT ON` that always rolls
+    back. What a rollback does not undo, such as a sequence or an identity
+    value, is listed in UC-3 §3. Built in #1731.
+  - Q3: the statement runs in `master`, where every login the tool makes
+    already lands, and names another database's objects by three-part names.
+    Built in #1731.
+  - Q4: no read. A login cannot be granted to another login, and `EXECUTE
+    AS` is refused as a first word and, by Q1, as a second statement.
+  - Q5: accepted, and documented in UC-3 §3 beside PostgreSQL's
+    `dblink_exec()`.
+- **Why:** Q1: a second statement could be anything the run-as login may run,
+  and a real write would commit it; the server knows where its statements
+  begin, and a list of words in the scan misses one silently. Q2: UC-3's main
+  use is a read across the fleet, and on SQL Server a rollback undoes DDL too.
+  Q3: naming `master` keeps a contained user of the login's name from
+  answering in its place (`02-mssql-privileges.md` §7). Q4: every `sysadmin`
+  holds `IMPERSONATE` on every login, so refusing it would refuse the usual
+  DBA login. Q5: refusing the words would refuse reads of a linked server,
+  and could not see a four-part name.
+- **Rejected:** Q1: a list of statement words in the dialect alone (B), and
+  both (C), which keeps B's false refusals. Q2: no reads on SQL Server (B).
+  Q3: a new `mssql: { database: }` key (B), which can still be added later as
+  an optional key. Q4: refusing `IMPERSONATE` (B). Q5: refusing `OPENQUERY`,
+  `OPENROWSET` and `OPENDATASOURCE` (B).

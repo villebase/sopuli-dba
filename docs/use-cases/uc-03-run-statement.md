@@ -245,8 +245,10 @@ which `]]` is one `]`, and so is `"..."`. `#` starts no comment: `#t` is a
 temporary table. A `WITH` is classified by the statement it leads to, the
 first `SELECT`, `INSERT`, `UPDATE`, `DELETE` or `MERGE` outside brackets, so
 `WITH c AS (...) DELETE FROM c` is a write, refused without `--write`. `GO`
-alone on a line, or with a count, ends a batch in sqlcmd and SSMS and is not
-T-SQL, so the check refuses it by name. T-SQL needs no `;` between two
+alone on a line, or with a count, ends a batch in sqlcmd and SSMS. The server
+does not read it that way: `GO` is not a reserved word, so `SELECT 1` and a
+`GO` line run as `SELECT 1 AS GO`. So the check refuses a `GO` line by name,
+a false refusal where it was meant as an alias. T-SQL needs no `;` between two
 statements, so `UPDATE t SET a = 1 DELETE FROM u` is two, and refusing a
 `;` cannot refuse the second. On SQL Server the server's own list of the
 statements does that, before any statement runs

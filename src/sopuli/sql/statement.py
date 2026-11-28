@@ -36,7 +36,7 @@ class Dialect(StrEnum):
     before whitespace or a control character, block comments do not nest,
     ``'...'`` and ``"..."`` take backslash escapes, and `````...````` is a name.
     SQL Server's block comments nest, ``[...]`` is a name in which ``]]`` is
-    one ``]``, ``''`` is the only escape, and ``GO`` is a client command, not
+    one ``]``, ``''`` is the only escape, and a ``GO`` line is a client command, not
     T-SQL. The value is the target's ``type:``.
     """
 
@@ -534,18 +534,24 @@ def _refuse_file_writes(text: str, dialect: Dialect, escapes: str) -> None:
 
 
 def _is_tsql_word_char(char: str) -> bool:
-    """A character that can be part of an unquoted T-SQL name or keyword."""
-    return char.isalnum() or char in "_@#$" or not char.isascii()
+    """A character that can be part of an unquoted T-SQL name or keyword. A
+    space outside ASCII is not one."""
+    return char.isalnum() or char in "_@#$" or (not char.isascii() and not char.isspace())
 
 
 def _tsql_tokens(text: str) -> list[tuple[str, int]]:
     """The tokens of a T-SQL ``text`` outside comments, in order, each with
     where it starts: a word in upper case, ``"("`` or ``")"``, and ``""`` for
-    a literal, a quoted name or any other character."""
+    a literal, a quoted name or any other character.
+
+    A space outside ASCII, such as a no-break space, separates two words
+    here, whether or not the server reads it as a space. Read as part of a
+    word, it would hide a ``DELETE`` after a ``WITH`` from :func:`_with_verb`,
+    so the scan takes the reading that refuses more (review of #1734)."""
     tokens: list[tuple[str, int]] = []
     i, n = 0, len(text)
     while i < n:
-        if text[i] in _SPACE:
+        if text[i] in _SPACE or text[i].isspace():
             i += 1
         elif _line_comment_at(text, i, Dialect.MSSQL):
             i = _line_end(text, i)
@@ -570,8 +576,11 @@ def _refuse_batch_separator(text: str, tokens: list[tuple[str, int]]) -> None:
     """Refuse a ``GO`` line in a T-SQL statement.
 
     ``GO`` alone on a line, or with a count, is how sqlcmd and SSMS end a
-    batch. The server does not know it, and refuses the text as a syntax
-    error, so the refusal names it first.
+    batch. The server does not know it: ``GO`` is not a reserved word, so
+    ``SELECT 1`` and a ``GO`` line run as ``SELECT 1 AS GO``, and other text
+    may fail to parse. Either way the server would not read the text as the
+    operator's tools do, so the check refuses it, a false refusal where
+    ``GO`` was meant as an alias (review of #1734).
     """
     for at, (word, start) in enumerate(tokens):
         if word != "GO":
@@ -583,10 +592,10 @@ def _refuse_batch_separator(text: str, tokens: list[tuple[str, int]]) -> None:
         rest = [
             following for following, where in tokens[at + 1 :] if line_end == -1 or where < line_end
         ]
-        if not rest or (len(rest) == 1 and rest[0].isdigit()):
+        if not rest or (len(rest) == 1 and rest[0].isascii() and rest[0].isdigit()):
             raise StatementRefusedError(
                 "the statement holds a GO line, which ends a batch in sqlcmd and SSMS "
-                "and which SQL Server does not run",
+                "and which SQL Server does not read that way",
                 hint="give one statement, without GO",
             )
 

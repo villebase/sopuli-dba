@@ -6559,11 +6559,16 @@ def sql_run_command(
     document.selection = selection.as_json() or None
     statement = _sql_statement(path, config, as_user)
     if statement.kind is not StatementKind.READ:
+        # On SQL Server a WITH may lead to a write (UC-3 §3).
+        if statement.keyword == "WITH":
+            opening = "is a WITH that changes data"
+            reads = "`sql run` reads with SELECT, and with a WITH that leads to a SELECT"
+        else:
+            opening = f"starts with {statement.keyword}, which changes data"
+            reads = "`sql run` runs SELECT and WITH"
         raise StatementRefusedError(
-            f"the statement starts with {statement.keyword}, which changes data, "
-            "and `--write` was not given",
-            hint="`sql run` runs SELECT and WITH. A write needs `--write`, a selector "
-            "and a row guard",
+            f"the statement {opening}, and `--write` was not given",
+            hint=f"{reads}. A write needs `--write`, a selector and a row guard",
         )
     document.statement = sql_view.statement_section(statement)
 

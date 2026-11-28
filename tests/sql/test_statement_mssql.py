@@ -148,6 +148,8 @@ def test_a_statement_that_starts_with_go_is_refused_by_its_first_word() -> None:
         "/*\nGO\n*/ SELECT 1",
         "SELECT 1 -- then\n-- GO\n",
         "SELECT gone FROM t",
+        # A digit outside ASCII is no batch count (review of #1734).
+        "SELECT 1\nGO ٥",
     ],
 )
 def test_go_elsewhere_is_not_a_batch_separator(raw: str) -> None:
@@ -171,6 +173,9 @@ def test_go_is_refused_only_the_sql_server_way() -> None:
         "WITH c AS (SELECT 1 AS [)]) UPDATE c SET x = 1",
         "WITH a AS (SELECT 1 AS x), b AS (SELECT x FROM a) DELETE FROM b",
         "WITH c AS (SELECT 1 /* ) */ AS x) DELETE FROM c",
+        # A space outside ASCII separates words (review of #1734).
+        "WITH c AS (SELECT 1 AS x) DELETE FROM c",
+        "WITH c AS (SELECT 1 AS x)　UPDATE c SET x = 2",
     ],
 )
 def test_a_with_that_writes_is_a_write(raw: str) -> None:

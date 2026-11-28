@@ -434,6 +434,25 @@ def test_write_keyword_without_write_flag_refused(
     assert sessions["opened"] == []
 
 
+def test_a_with_that_writes_is_named_as_one(
+    write_config: WriteConfig, sessions: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Read the SQL Server way, a WITH may lead to a DELETE (UC-3 §3).
+    monkeypatch.setattr("sopuli.cli._statement_dialects", lambda _config: {Dialect.MSSQL})
+
+    result = sql_run(
+        write_config, statement="WITH c AS (SELECT 1 AS x) DELETE FROM c", json_out=True
+    )
+
+    assert exit_of(result) == ExitCode.ABORTED, result.output
+    error = document(result)["error"]
+    assert error["message"] == (
+        "the statement is a WITH that changes data, and `--write` was not given"
+    )
+    assert error["hint"].startswith("`sql run` reads with SELECT, and with a WITH that leads")
+    assert sessions["opened"] == []
+
+
 def test_no_run_as_and_no_as_exit_9(write_config: WriteConfig, sessions: dict[str, Any]) -> None:
     result = sql_run(write_config, config=f"version: 1\n{TARGETS}", json_out=True)
 

@@ -393,6 +393,9 @@ S1_STATEMENTS = (
     ("UPDATE GRANT", f"{_W} GRANT VIEW DEFINITION ON SCHEMA::dbo TO guest"),
     ("UPDATE DECLARE", f"{_W} DECLARE @x int"),
     ("DECLARE UPDATE", f"DECLARE @x int {_W}"),
+    ("UPDATE DECLARE with a value", f"{_W} DECLARE @x int = 1"),
+    ("UPDATE DECLARE with a SELECT", f"{_W} DECLARE @x int = (SELECT COUNT(*) FROM {P}.u)"),
+    ("UPDATE SELECT @x =", f"{_W} DECLARE @x int SELECT @x = COUNT(*) FROM {P}.u"),
     ("UPDATE SET", f"{_W} SET XACT_ABORT OFF"),
     ("UPDATE EXEC", f"{_W} EXEC sp_who"),
     ("UPDATE EXECUTE AS", f"{_W} EXECUTE AS LOGIN = '{SVC}'"),
@@ -477,7 +480,13 @@ def s1(server: Server) -> None:
             show("after them, SUSER_SNAME()", one(conn, "SELECT SUSER_SNAME()"))
             show("after them, OBJECT_ID of #t", one(conn, "SELECT OBJECT_ID('tempdb..#t')"))
             if who == PLAN:
-                for label in ("UPDATE DECLARE", "DECLARE UPDATE", "UPDATE SET", "UPDATE PRINT"):
+                for label in (
+                    "UPDATE DECLARE",
+                    "DECLARE UPDATE",
+                    "UPDATE DECLARE with a value",
+                    "UPDATE DECLARE with a SELECT",
+                    "UPDATE SET",
+                ):
                     show(f"whole StmtText, {label}", full_text(conn, dict(S1_STATEMENTS)[label]))
         after = state(server)
         show("nothing changed", before == after or f"{before} -> {after}")

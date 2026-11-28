@@ -6579,6 +6579,13 @@ def sql_run_command(
         finding=_finding,
         attended=run.prompt is not None,
     )
+    try:
+        # On SQL Server a second statement needs no `;`, and only the server
+        # can see it (#1728, Q1).
+        sql_run.check_statement(connections, statement, timeout_ms=timeout * 1000)
+    except BaseException:
+        sql_run.close_all(connections)
+        raise
     outcomes = sql_run.run_read(
         connections,
         statement,
@@ -6693,8 +6700,9 @@ def _sql_write(
             assert plan_given is not None  # refused above
             sql_run.refuse_unconnected(connections)
             sql_run.refuse_another_plan(plan_given, computed)
-        # Dry or real: a dry run that a rollback could not undo is not a dry run.
-        sql_run.refuse_unrollable(connections, statement, timeout_ms=timeout * 1000)
+        # Dry or real: a dry run that a rollback could not undo is not a dry
+        # run, and a second statement in the text is not the one planned.
+        sql_run.check_statement(connections, statement, timeout_ms=timeout * 1000)
         _ask_environments(plan, run, demand, action=action, noun="write", secret_column=False)
         outcomes: list[sql_run.TargetOutcome] = []
         try:

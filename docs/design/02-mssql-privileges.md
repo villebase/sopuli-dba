@@ -808,3 +808,31 @@ session, and caches it as a capability. `creds check` asks each SQL Server
 target before any account is checked, and refuses a host that is not Linux
 at plan time, exit 5, naming `lockout_threshold`. A host that names no
 platform is treated as Windows (#1552).
+
+## 8. UC-3 adds no grant to the tool login
+
+UC-3 (`../use-cases/uc-03-run-statement.md`) runs a statement the operator
+writes, as the run-as login the config names in `run_as:`, never as the tool
+login.
+
+- UC-3 adds no grant to the tool login, and §2.1 does not change.
+- Before any statement runs, the tool reads `ORIGINAL_LOGIN()` and
+  `SUSER_SNAME()` and refuses the run when either is the tool login. One login
+  is never granted to another, so there is no membership to read. A login can
+  act as another only by `EXECUTE AS LOGIN`, which the statement check refuses
+  as a first word and the statement list below as a second statement. Every
+  `sysadmin` holds `IMPERSONATE` on every login, so reading it would refuse the
+  usual DBA login ([#1728](../decisions/log.md#1728), Q4).
+- **The run-as login needs `SHOWPLAN` in each database its statement names.**
+  T-SQL needs no `;` between two statements, so before anything runs the tool
+  asks the server to list the statements with `SET SHOWPLAN_ALL ON`, which
+  compiles the batch and runs none of it ([#1728](../decisions/log.md#1728),
+  Q1). `SHOWPLAN` is needed in each database the statement names, and not in
+  `master`, where the session runs; without it the server refuses with `262`,
+  which names the database. A statement that names no database object, such as
+  `SELECT 1`, needs none. A `sysadmin` has it. Grant it to the login's user in
+  each database it reads or writes: `GRANT SHOWPLAN TO [dba_alpha]`.
+- Beyond that, the run-as login needs what its statements need: a user in each
+  database they name, and the permissions on the objects. Any login reads
+  `ORIGINAL_LOGIN()`, `SUSER_SNAME()`, `SERVERPROPERTY('ServerName')` and
+  `DB_NAME()` (`17_statement_run_probe.py`, S1 and S9, #1729).

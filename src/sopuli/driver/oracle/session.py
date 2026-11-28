@@ -1202,9 +1202,10 @@ class OracleSession(ClosesConnection):
             except Exception as error:  # noqa: BLE001 -- classified, never swallowed
                 raise from_error(error).as_error() from error
 
-    def check_write(self, statement: RunStatement, *, timeout_ms: int) -> None:
-        """Nothing to refuse: a rollback undoes every table's change, apart
-        from an autonomous transaction's, which UC-3 §3 accepts."""
+    def check_statement(self, statement: RunStatement, *, timeout_ms: int) -> None:
+        """Nothing to refuse: the server refuses a second statement, and a
+        rollback undoes every table's change, apart from an autonomous
+        transaction's, which UC-3 §3 accepts."""
 
     def run_statement(
         self,

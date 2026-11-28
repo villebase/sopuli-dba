@@ -31,6 +31,7 @@ The parts were built in this order, each by its own issue:
 | SQL Server: decisions | #1728, decided |
 | The statement check's T-SQL dialect | #1730, built (§3) |
 | The SQL Server runner | #1731, built. `StatementRunning` in `src/sopuli/driver/mssql/statement_run.py` |
+| The statement list on SQL Server, and the refusal of a text that is not one statement of the run's kind | #1732, built (§2, §3) |
 
 `sql run` runs on Oracle, PostgreSQL, MySQL and MariaDB. A target of another
 product, SQL Server today, is refused at plan time by `require_command`, with
@@ -179,6 +180,15 @@ others.
    name. On MariaDB a role is never an account, so the read does not apply
    ([#1713](../decisions/log.md#1713), Q1).
 
+   On SQL Server the tool reads `ORIGINAL_LOGIN()` and `SUSER_SNAME()`, and
+   refuses the run when either is the service login. One login is never
+   granted to another, so there is no membership to read. A login acts as
+   another only through `EXECUTE AS LOGIN`, which the statement check refuses
+   as a first word and the statement list of §3 as a second statement. A
+   `sysadmin` run-as login is not refused, though it holds `IMPERSONATE` on
+   every login: refusing that would refuse the usual DBA login
+   ([#1728](../decisions/log.md#1728), Q4).
+
    There is a gap here, and it is accepted. When `admin:` is `external`, the
    config holds no service-account name, so the session check has nothing to
    compare and does not run. The tool never opens a connection with `admin:` to
@@ -254,6 +264,23 @@ statements, so `UPDATE t SET a = 1 DELETE FROM u` is two, and refusing a
 `;` cannot refuse the second. On SQL Server the server's own list of the
 statements does that, before any statement runs
 ([#1728](../decisions/log.md#1728), Q1).
+
+**The statement list on SQL Server.** After the session check of §2, and
+before any statement runs on any target, the tool sends `SET SHOWPLAN_ALL ON`,
+the statement, and `SET SHOWPLAN_ALL OFF` on each SQL Server target. Under
+`SHOWPLAN_ALL` the server compiles the batch, runs none of it, and lists each
+statement with its type. A read passes as one `SELECT`, and a write as one
+`UPDATE`, `INSERT`, `DELETE` or `MERGE`; a `WITH` has its main statement's
+type. Anything else refuses the run on every target with `SOPULI-20009`, a
+read as well as a write: two statements, a `SELECT … INTO`, which makes a
+table, and a write keyword that the server reads as a `SELECT`. The message
+names the target and what the server read. A statement that a function or a
+procedure runs is not counted as one of the batch's. A `DECLARE` with no value
+has no row of its own, and passes: it declares a variable that ends with the
+batch. The run-as login needs `SHOWPLAN` in each database the statement names
+(`../design/02-mssql-privileges.md` §8); a server that refuses the check, as
+with `262` for a login without it, refuses the run too. `--timeout` bounds the
+check. Measured on 16.0.4325.4 (#1729, #1732).
 
 On MySQL and MariaDB a read runs in `START TRANSACTION READ ONLY`, and the
 server refuses a write with `1792`, `SELECT ... FOR UPDATE` and a `WITH` that

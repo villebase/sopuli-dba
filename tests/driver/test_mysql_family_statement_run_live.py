@@ -311,7 +311,7 @@ def test_a_write_naming_a_myisam_table_is_refused_before_it_runs(
 ) -> None:
     statement = classify(text.format(s=unrollable.schema), dialect=Dialect(unrollable.product))
     with pytest.raises(StatementRefusedError, match="no transactions") as raised:
-        unrollable.session.check_write(statement, timeout_ms=5000)
+        unrollable.session.check_statement(statement, timeout_ms=5000)
     assert f"{unrollable.schema}.tm (MyISAM)" in raised.value.message
     assert _tm(unrollable) == 0
     assert unrollable.session.connection_lost is False
@@ -325,7 +325,7 @@ def test_a_write_through_a_view_over_myisam_is_caught_by_the_rollback(
     statement = classify(
         f"UPDATE {unrollable.schema}.vm SET v = 1", dialect=Dialect(unrollable.product)
     )
-    unrollable.session.check_write(statement, timeout_ms=5000)
+    unrollable.session.check_statement(statement, timeout_ms=5000)
     with pytest.raises(DriverError) as raised:
         _run(unrollable, statement, guard=RowGuard(expect=1), commit=False)
     assert raised.value.rollback_incomplete is True
@@ -337,7 +337,7 @@ def test_a_write_to_innodb_alone_passes_the_check(unrollable: RunAs) -> None:
         f"UPDATE {unrollable.schema}.t SET v = 'z' WHERE k = 1",
         dialect=Dialect(unrollable.product),
     )
-    unrollable.session.check_write(statement, timeout_ms=5000)
+    unrollable.session.check_statement(statement, timeout_ms=5000)
 
 
 def test_a_trigger_that_writes_myisam_is_caught_by_the_rollback(unrollable: RunAs) -> None:
@@ -346,7 +346,7 @@ def test_a_trigger_that_writes_myisam_is_caught_by_the_rollback(unrollable: RunA
     so instead of reporting a clean rollback."""
     text = f"UPDATE {unrollable.schema}.tt SET v = 7 WHERE id = 1"
     statement = classify(text, dialect=Dialect(unrollable.product))
-    unrollable.session.check_write(statement, timeout_ms=5000)
+    unrollable.session.check_statement(statement, timeout_ms=5000)
     with pytest.raises(DriverError) as raised:
         _run(unrollable, statement, guard=RowGuard(expect=1), commit=False)
     assert raised.value.code == "1196"

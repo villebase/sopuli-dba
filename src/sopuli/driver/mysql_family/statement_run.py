@@ -316,7 +316,7 @@ def _rolled_back_in_part(connection: Any) -> bool:
 
 def _incomplete_rollback() -> DriverError:
     """The backstop of #1713 Q3: a write rolled back, and a table without
-    transactions kept its change. :meth:`StatementRunning.check_write`
+    transactions kept its change. :meth:`StatementRunning.check_statement`
     refuses a write that names one; a trigger, a function or, on MariaDB, a
     view can still reach one."""
     error = DriverError(
@@ -415,11 +415,12 @@ class StatementRunning:
 
         return self._read(read)
 
-    def check_write(self, statement: Statement, *, timeout_ms: int) -> None:
+    def check_statement(self, statement: Statement, *, timeout_ms: int) -> None:
         """Refuse a write that names a table without transactions, such as
         MyISAM, Aria or MEMORY, before any statement runs (#1713, Q3 A′). A
         rollback does not undo a change to such a table, so a dry run, or a
-        write its guard refuses, would leave the rows changed.
+        write its guard refuses, would leave the rows changed. A read is
+        refused nothing here: it runs in a read-only transaction.
 
         The statement names a table where it writes it as ``schema.name``,
         or as a name alone in the session's default database, in any of the
@@ -437,6 +438,8 @@ class StatementRunning:
         The check sends one read of ``information_schema``, which
         ``timeout_ms`` bounds as PyMySQL's read timeout.
         """
+        if statement.kind is not StatementKind.WRITE:
+            return
         connection = self._open_connection()
         budget = connection._read_timeout
         if timeout_ms:
@@ -457,8 +460,9 @@ class StatementRunning:
             f"transactions, {listed}. A rollback does not undo a change to it, so a dry run "
             "or a write its guard refuses would leave it changed",
             hint=(
-                "`sql run` writes only tables with transactions: move the table to InnoDB, "
-                "or change it another way. A column or an alias with the table's name is "
+                "`sql run` writes only tables with transactions, so that a dry run and a "
+                "refused guard can roll every change back: move the table to InnoDB, or "
+                "change it another way. A column or an alias with such a table's name is "
                 "refused too: rename it in the statement"
             ),
         )

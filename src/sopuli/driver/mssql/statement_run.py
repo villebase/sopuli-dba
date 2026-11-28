@@ -38,7 +38,7 @@ from __future__ import annotations
 
 import math
 import struct
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
@@ -57,7 +57,7 @@ from sopuli.driver.mssql.errors import (
 from sopuli.driver.protocol import DriverError, InternalFaultError, StatementResult, Timeouts
 from sopuli.output.debug import logger
 from sopuli.sql.guard import RowGuard
-from sopuli.sql.statement import Statement, StatementKind
+from sopuli.sql.statement import Statement, StatementKind, StatementRefusedError
 from sopuli.sql.values import JsonValue, to_json
 
 LOG = logger("mssql")
@@ -270,6 +270,82 @@ def lock_timeout(timeout_ms: int, existing: int) -> int:
     return min(timeout_ms, existing)
 
 
+#: The server compiles a batch, runs none of it, and lists its statements.
+#: Each ``SET SHOWPLAN`` must be a batch of its own.
+SHOWPLAN_ON = "SET SHOWPLAN_ALL ON"
+SHOWPLAN_OFF = "SET SHOWPLAN_ALL OFF"
+#: ``SHOWPLAN permission denied in database '…'``.
+NO_SHOWPLAN = "262"
+_NO_SHOWPLAN_HINT = (
+    "`sql run` asks the server to list the statement's parts before it runs anything, "
+    "and the run-as login needs the SHOWPLAN permission for that in each database the "
+    "statement names, the one this message names among them: GRANT SHOWPLAN TO the "
+    "login's user there (02-mssql-privileges.md §8)"
+)
+
+#: The ``SHOWPLAN_ALL`` types a read and a write may be (probe 17, S1).
+#: ``SELECT 1`` is ``SELECT WITHOUT QUERY``; ``SELECT … INTO`` is ``SELECT
+#: INTO``, which makes a table, and passes as neither. A ``WITH`` has its main
+#: statement's type.
+READ_TYPES = ("SELECT", "SELECT WITHOUT QUERY")
+WRITE_TYPES = ("UPDATE", "INSERT", "DELETE", "MERGE")
+
+
+def batch_statements(columns: Sequence[str], rows: Iterable[Sequence[Any]]) -> list[str]:
+    """The type of each statement of the batch, in order, from
+    ``SHOWPLAN_ALL``'s one row set.
+
+    A statement of the batch has a row of its own whose ``Type`` is not
+    ``PLAN_ROW`` and whose ``Parent`` is ``0``. A module the statement calls
+    adds rows too: a multi-statement function a ``TEXT`` row with the same
+    ``StmtId`` and its body under it, and a procedure its body under the
+    ``EXECUTE PROC`` row, with a ``Parent`` that is not ``0``. So the rows
+    with ``Parent`` ``0`` count, one per ``StmtId`` (measured on 16.0.4325.4,
+    #1732). A ``DECLARE`` with no value has no row of its own; it declares a
+    variable that ends with the batch, and changes nothing.
+    """
+    type_at, statement_at, parent_at = (
+        columns.index(name) for name in ("Type", "StmtId", "Parent")
+    )
+    found: dict[int, str] = {}
+    for row in rows:
+        kind = str(row[type_at]).strip().upper()
+        if kind == "PLAN_ROW" or int(row[parent_at]) != 0:
+            continue
+        found.setdefault(int(row[statement_at]), kind)
+    return list(found.values())
+
+
+def _refuse_batch(target: str, statements: Sequence[str], *, read: bool) -> None:
+    """Refuse a batch that is not one statement of the run's kind."""
+    if len(statements) != 1:
+        listed = ", ".join(statements) or "none"
+        raise StatementRefusedError(
+            f"target {target!r}: the server reads the text as {len(statements)} statements "
+            f"({listed}), and `sql run` runs one",
+            hint="T-SQL needs no ';' between two statements, so a text that reads as one "
+            "statement to the eye can hold two. Give one SELECT, UPDATE, INSERT, DELETE or "
+            "MERGE",
+        )
+    (kind,) = statements
+    if kind in (READ_TYPES if read else WRITE_TYPES):
+        return
+    if read:
+        hint = (
+            "a read is one SELECT that returns rows. A SELECT ... INTO makes a table: "
+            "leave out the INTO"
+            if kind == "SELECT INTO"
+            else "a read is one SELECT, or a WITH that leads to one"
+        )
+    else:
+        hint = "a write is one UPDATE, INSERT, DELETE or MERGE"
+    raise StatementRefusedError(
+        f"target {target!r}: the server reads the statement as {kind}, which "
+        f"`sql run` does not run as a {'read' if read else 'write'}",
+        hint=hint,
+    )
+
+
 def query_timeout(timeout_ms: int) -> int:
     """The client's bound on the statement, in whole seconds, one past
     ``LOCK_TIMEOUT``, so the server's ``1222`` comes first for a lock wait.
@@ -341,8 +417,8 @@ class StatementRunning:
     def current_user(self) -> str:
         """``SUSER_SNAME()``, the login the statement runs as. It differs from
         :meth:`session_user` only inside ``EXECUTE AS LOGIN`` (probe 17, S9),
-        which the statement check refuses as a first word. TODO(#1732): the
-        plan check refuses it as a second statement too."""
+        which the statement check refuses as a first word, and
+        :meth:`check_statement` as a second statement."""
         return self._both_logins()[1]
 
     def member_of(self, account: str) -> bool:
@@ -365,10 +441,52 @@ class StatementRunning:
 
         return self._session_read(read)
 
-    def check_write(self, statement: Statement, *, timeout_ms: int) -> None:
-        """Refuse nothing here: every SQL Server table rolls back.
-        TODO(#1732): the plan check of #1728 Q1, which refuses a batch that
-        is not one statement of the run's kind."""
+    def check_statement(self, statement: Statement, *, timeout_ms: int) -> None:
+        """Refuse a text the server reads as anything but one statement of
+        the run's kind, before any statement runs on any target (#1728, Q1).
+
+        T-SQL needs no ``;`` between two statements, so the statement check
+        cannot see where one ends. The server can: under ``SET SHOWPLAN_ALL
+        ON`` it compiles the batch, runs none of it, and lists each statement
+        with its type (probe 17, S1). A read passes as one ``SELECT``, not
+        ``SELECT INTO``, and a write as one ``UPDATE``, ``INSERT``, ``DELETE``
+        or ``MERGE`` (:func:`batch_statements`).
+
+        The run-as login needs ``SHOWPLAN`` in each database the statement
+        names, and none in ``master``; without it the server refuses with
+        ``262``. ``timeout_ms`` bounds the check as it bounds the statement,
+        and ``0`` leaves the session's own query budget.
+        """
+        connection = self._open_connection()
+        statements: list[str] = []
+        planning = False
+        connection.timeout = query_timeout(timeout_ms) or self.timeouts.query_s
+        try:
+            with _cursor(connection) as cursor:
+                cursor.execute(SHOWPLAN_ON)
+                planning = True
+                cursor.execute(statement.text)
+                columns = [str(column[0]) for column in cursor.description or ()]
+                rows = list(cursor.fetchall()) if columns else []
+                while cursor.nextset():
+                    if cursor.description is not None:
+                        rows.extend(cursor.fetchall())
+            statements = batch_statements(columns, rows)
+        except Exception as error:
+            if not self._is_client_error(error):
+                raise
+            self._connection_lost = connection_gone(error)
+            diagnosis = self._diagnose(error)
+            if diagnosis.code == NO_SHOWPLAN:
+                diagnosis = replace(diagnosis, hint=_NO_SHOWPLAN_HINT)
+            else:
+                diagnosis = for_statement(diagnosis)
+            raise diagnosis.as_error() from error
+        finally:
+            connection.timeout = self.timeouts.query_s
+            if planning and not self._connection_lost:
+                self._quietly(connection, SHOWPLAN_OFF)
+        _refuse_batch(self.target.name, statements, read=statement.kind is StatementKind.READ)
 
     def run_statement(
         self,

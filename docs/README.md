@@ -1257,6 +1257,120 @@ The probes are in `sql/mssql/`, and the matrix of 2019, 2022 and 2025 is the
   connected and stopped answering logins, with endpoint encryption on or
   off; the same setup formed a group on 2019 and 2025. Measuring it needs
   another host, such as a Linux VM, or another 2022 update.
+- `verified` `mssql-showplan-statement-list` (#1729) — **Does `SET
+  SHOWPLAN_ALL ON` list every statement of a batch, and run none of them, for
+  UC-3's plan check (#1728, Q1)?**
+  It lists them in **one row set for the whole batch, not one per
+  statement**. Each statement has a row of its own whose `Type` is not
+  `PLAN_ROW`, numbered by `StmtId`, with its own text in `StmtText`: `UPDATE
+  … DELETE …` gives `UPDATE` and `DELETE`, and a second statement of `GRANT`,
+  `SET` (`SET ON/OFF`), `EXEC` (`EXECUTE PROC`, then the procedure's own
+  statements), `EXECUTE AS`, `PRINT` or `SELECT` has its own row. **A
+  `DECLARE` with no value has no row**: `UPDATE … DECLARE @x int` gives one
+  `UPDATE` row, whose `StmtText` holds the whole batch. A `DECLARE` with a
+  value has one, `ASSIGN` or `SELECT`. `SELECT 1` is `SELECT WITHOUT QUERY`,
+  `SELECT … INTO` is `SELECT INTO`, a `WITH` is the type of its main
+  statement, and a `SELECT` from `OPENQUERY(lnk, 'UPDATE …')` is `SELECT`.
+  **Nothing runs**, as a granted login or as `sysadmin`. A missing table or
+  database is refused, `208`, with no rows.
+  `sql/mssql/17_statement_run_probe.py` measures it.
+- `verified` `mssql-showplan-permission` (#1729) — **Where does the plan
+  check need `SHOWPLAN`?**
+  In each database the statement names, and not in `master`, the session's
+  database: a statement in `master` that names only `sopuli_probe`'s tables
+  passes with `SHOWPLAN` in `sopuli_probe` alone. The first database without
+  it is named in the refusal, `262`. `SELECT 1` needs none.
+  `sql/mssql/17_statement_run_probe.py` measures it.
+- `verified` `mssql-transaction-read-guard` (#1729) — **What does a
+  rolled-back transaction with `XACT_ABORT ON` undo, for UC-3's reads
+  (#1728, Q2)?**
+  DDL and grants: `CREATE TABLE` and `ALTER TABLE`, by three-part name,
+  `GRANT`, `CREATE LOGIN` and `ALTER LOGIN`, and a temporary table's rows.
+  `ALTER DATABASE` and `CREATE DATABASE` are refused in a transaction,
+  `226`, and `BACKUP` `3021`, which ends the transaction under `XACT_ABORT`.
+  **Not undone**: a sequence value, an identity value, a table variable's
+  row, and `sp_getapplock` with `@LockOwner = 'Session'`, which stays held
+  after the rollback. `sql/mssql/17_statement_run_probe.py` measures it.
+- `verified` `mssql-linked-server-transaction` (#1729) — **What does a
+  linked server do inside a transaction, with no distributed transaction
+  set up (#1728, Q5)?**
+  Measured on a loopback linked server through MSOLEDBSQL. Outside a
+  transaction a four-part `UPDATE` commits on the remote side; **inside one
+  it is refused, `3910`**, and the transaction ends. That is the loopback's
+  limit, which Microsoft documents: a loopback cannot take part in a
+  distributed transaction. **A linked server to another host, with MSDTC,
+  may promote the transaction and run the remote write**, which then
+  commits or rolls back with ours, so UC-3 cannot rely on the refusal. `OPENQUERY` with a
+  `SELECT` runs inside one. A pass-through `UPDATE` in `OPENQUERY` returns
+  its rows, but leaves the remote row unchanged, inside a transaction or
+  outside one. A linked server with a provider string refuses every login
+  but a `sysadmin`, `7416`; on 2025 MSOLEDBSQL needs one for the server's
+  own certificate. A linked server to another host, and MSDTC, are not
+  measured. `sql/mssql/17_statement_run_probe.py` measures it.
+- `verified` `pyodbc-batch` (#1729) — **What does pyodbc do with a text of
+  two statements?**
+  The server runs both. `rowcount` is the first statement's, and
+  `nextset()` moves to the next. `GO` on a line of its own is a syntax
+  error, `102`. A `?` in a literal is sent as written, and one outside a
+  literal with no parameters is refused by the driver, `07002`.
+  `sql/mssql/17_statement_run_probe.py` measures it.
+- `verified` `mssql-tsql-lexing` (#1729) — **How does T-SQL read comments,
+  literals and names, for the dialect?**
+  Block comments nest. `--` starts a comment with no space after it
+  (`SELECT 5--3` is 5). `''` is the only escape in `'…'`, and a backslash is
+  a character. `N'…'` is a literal. `[a]]b]` is the name `a]b`. ODBC Driver
+  18 sets `QUOTED_IDENTIFIER ON` for the session, also in a database whose
+  default is off, so `"…"` is a name. `sql/mssql/17_statement_run_probe.py`
+  measures it.
+- `verified` `mssql-write-rowcount` (#1729) — **What does pyodbc's
+  `rowcount` count after a write?**
+  With `NOCOUNT` off, as the driver leaves it: the rows an `UPDATE`
+  matched, also when it sets them to their own values, and the sum of a
+  `MERGE`'s rows. **An `AFTER` trigger whose statements count rows comes
+  first**: an `UPDATE` of 1 row whose trigger updates 5 gives 5, then 1
+  after `nextset()`; with `NOCOUNT ON` in the trigger, 1 alone. An `INSTEAD
+  OF` trigger on a view gives each of its statements' counts, then the
+  view's. `@@ROWCOUNT` read afterwards is the statement's own.
+  `sql/mssql/17_statement_run_probe.py` measures it.
+- `verified` `mssql-statement-timeout` (#1729) — **What does a timeout
+  leave behind on SQL Server?**
+  `SET LOCK_TIMEOUT` ends a lock wait with `1222`, pyodbc's
+  `connection.timeout` ends a statement with `HYT00`, and `cursor.cancel()`
+  from another thread with `HY008`. After each the connection is usable.
+  **Under `XACT_ABORT OFF` the transaction stays open, with its earlier
+  writes and their locks; under `XACT_ABORT ON` it is rolled back.** A
+  deadlock victim, `1205`, is rolled back. Whether any of them bounds a
+  `COMMIT` is not measured. `sql/mssql/17_statement_run_probe.py` measures
+  it.
+- `verified` `pyodbc-large-result` (#1729) — **Does stopping early in a
+  large result return at once?**
+  Yes. After `fetchmany(100)` of a million rows, `close()`, with or without
+  `cancel()`, returns at once, the session has no request left, and the
+  next statement runs at once. `sql/mssql/17_statement_run_probe.py`
+  measures it.
+- `verified` `pyodbc-mssql-value-types` (#1729) — **What does pyodbc 5.5.0
+  return for each SQL Server type?**
+  Python's own types for the numbers, the dates and times, `bit`, the
+  strings, `xml` and the binary types; `uniqueidentifier` as a `str`;
+  `datetime2` and `time` cut to the microsecond. **It refuses
+  `datetimeoffset`, `sql_variant`, `hierarchyid` and `geography`, `HY106`**;
+  an output converter reads `datetimeoffset`.
+  `sql/mssql/17_statement_run_probe.py` measures it.
+- `verified` `mssql-run-as-identity` (#1729) — **What do the login and
+  database functions read, for UC-3's session check?**
+  `ORIGINAL_LOGIN()` and `SUSER_SNAME()` are the login's name, `USER_NAME()`
+  its user in `master` (`guest` with none, `dbo` for a `sysadmin`), and
+  `DB_NAME()` `master`. **Inside `EXECUTE AS LOGIN`, `ORIGINAL_LOGIN()` is
+  the caller and `SUSER_SNAME()` the login impersonated.**
+  `SERVERPROPERTY('ServerName')` and `@@SERVERNAME` are the host's name.
+  `sql/mssql/17_statement_run_probe.py` measures it.
+- `verified` `mssql-impersonate-read` (#1729) — **What would a read of
+  `IMPERSONATE` on the service login show (#1728, Q4)?**
+  `HAS_PERMS_BY_NAME(svc, 'LOGIN', 'IMPERSONATE')` is 1 for every
+  `sysadmin` and for a login with the grant, and 0 for one without. A login
+  without `VIEW SERVER STATE` sees its own grant in `sys.server_permissions`
+  and `fn_my_permissions`. `sql/mssql/17_statement_run_probe.py` measures
+  it.
 
 ### Vault
 

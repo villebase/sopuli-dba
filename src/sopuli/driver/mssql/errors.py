@@ -1,10 +1,12 @@
 """How a pyodbc exception from SQL Server is classified. Tier 0.
 
-pyodbc raises an exception whose ``args`` are ``(sqlstate, message)``. The
-message holds one or more ODBC diagnostic records, joined by ``"; "``. Each
-record is the SQLSTATE in brackets, the components that raised it, the text,
-and a number in parentheses, as ODBC Driver 18 18.7.1.1 writes them (measured
-on 16.0.4325.4)::
+pyodbc raises an exception whose ``args`` are ``(sqlstate, message)``, or
+``(message, sqlstate)`` for an error of pyodbc's own, such as ``HY106`` for a
+column type it cannot read (#1731). The message holds one or more ODBC
+diagnostic records, joined by ``"; "``. Each record is the SQLSTATE in
+brackets, the components that raised it, the text, and a number in
+parentheses, as ODBC Driver 18 18.7.1.1 writes them (measured on
+16.0.4325.4)::
 
     [28000] [Microsoft][ODBC Driver 18 for SQL Server][SQL Server]Login failed
     for user 'acme_app'. (18456) (SQLDriverConnect)
@@ -277,10 +279,58 @@ def server_error(found: tuple[Record, ...]) -> Record | None:
     )
 
 
+#: A SQLSTATE: five digits or capital letters.
+_SQLSTATE = re.compile(r"[0-9A-Z]{5}")
+
+
+def _arguments(exc: Any) -> tuple[str, str]:
+    """The pyodbc exception's SQLSTATE and text. pyodbc gives them in that
+    order, except for an error of its own, such as ``HY106`` for a type it
+    cannot read, where the text comes first (#1731)."""
+    args: tuple[Any, ...] = getattr(exc, "args", ())
+    if len(args) < 2:
+        only = str(args[0]) if args else ""
+        return (only if _SQLSTATE.fullmatch(only) else ""), only
+    first, second = str(args[0]), str(args[1])
+    if not _SQLSTATE.fullmatch(first) and _SQLSTATE.fullmatch(second):
+        return second, first
+    return first, second
+
+
 def raw_message(exc: Any) -> str:
     """The pyodbc exception's text, where its records are."""
-    args: tuple[Any, ...] = getattr(exc, "args", ())
-    return str(args[1]) if len(args) > 1 else " ".join(str(arg) for arg in args)
+    return _arguments(exc)[1]
+
+
+#: The SQLSTATE class of a connection that is gone.
+CONNECTION_EXCEPTION = "08"
+#: The server ended the session, as a ``KILL`` does: "Cannot continue the
+#: execution because the session is in the kill state". It comes as
+#: ``HY000``, and the next statement gets ``08S01`` (measured on
+#: 16.0.4325.4, #1736).
+SESSION_KILLED = 596
+
+
+#: The ODBC driver's own record when the server ended the session: on
+#: Windows it comes before the server's ``596``, and on Linux, in the tier-1
+#: CI job, without it (#1736).
+_TERMINATED = re.compile(r"Connection may have been terminated by the server", re.IGNORECASE)
+
+
+def connection_gone(exc: Any) -> bool:
+    """Whether the connection that raised ``exc`` can take nothing more: its
+    SQLSTATE, or any record's, is class ``08``, the server ended the session
+    (:data:`SESSION_KILLED`), or the driver says the server may have ended it
+    (:data:`_TERMINATED`). A lock timeout, the query timeout and a cancel
+    leave it usable (probe 17, S6)."""
+    sqlstate, text = _arguments(exc)
+    if sqlstate.startswith(CONNECTION_EXCEPTION) or _TERMINATED.search(text):
+        return True
+    return any(
+        record.sqlstate.startswith(CONNECTION_EXCEPTION)
+        or (record.server and record.number == SESSION_KILLED)
+        for record in records(text)
+    )
 
 
 def unchanged(message: str) -> str:
@@ -314,9 +364,8 @@ def from_error(
     ``connecting`` is true while the session is being opened, when nothing has
     run. ``strict`` is true when the target's ``encrypt`` is ``strict``.
     """
-    args: tuple[Any, ...] = getattr(exc, "args", ())
-    sqlstate = str(args[0]) if args else ""
-    raw = scrub(raw_message(exc))
+    sqlstate, text = _arguments(exc)
+    raw = scrub(text)
     found = records(raw)
     message = " ".join(dict.fromkeys(record.text for record in found)) or raw.strip()
 

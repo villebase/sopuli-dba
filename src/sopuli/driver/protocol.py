@@ -1730,8 +1730,8 @@ class StatementResult:
 class StatementRunner(Protocol):
     """A session that runs one statement in a guarded transaction (UC-3).
 
-    Built by the Oracle, PostgreSQL, MySQL and MariaDB sessions. `sql run`
-    refuses a product at plan time, by
+    Built by the Oracle, PostgreSQL, MySQL, MariaDB and SQL Server sessions.
+    `sql run` refuses a product at plan time, by
     :func:`sopuli.driver.registry.require_command`, until its registry entry
     lists the command.
     """
@@ -1760,8 +1760,8 @@ class StatementRunner(Protocol):
         ``upper()``. On PostgreSQL a superuser is not counted: it gains
         nothing from ``account`` (#1690). On MySQL a role is an account, so
         the service account granted as a role counts, active or not (#1713).
-        Oracle and MariaDB answer ``False``: there one account is never
-        granted to another (UC-3 §2)."""
+        Oracle, MariaDB and SQL Server answer ``False``: there one account is
+        never granted to another (UC-3 §2, #1728)."""
         ...
 
     def database_identity(self) -> tuple[str, str]:
@@ -1769,14 +1769,15 @@ class StatementRunner(Protocol):
         fingerprint: ``(DB_UNIQUE_NAME, CON_NAME)`` on Oracle,
         ``(system_identifier, current_database())`` on PostgreSQL, and
         ``(server_uuid, DATABASE())`` on MySQL, with ``server_uid`` on
-        MariaDB."""
+        MariaDB, and ``(SERVERPROPERTY('ServerName'), DB_NAME())`` on SQL
+        Server."""
         ...
 
     def check_write(self, statement: Statement, *, timeout_ms: int) -> None:
         """Refuse a write the rollback could not undo, before any statement
         runs on any target. On MySQL and MariaDB that is a write to a table
-        whose engine has no transactions (#1713, Q3). Oracle and PostgreSQL
-        roll back every table, and refuse nothing here. ``timeout_ms`` bounds
+        whose engine has no transactions (#1713, Q3). Oracle, PostgreSQL and
+        SQL Server roll back every table, and refuse nothing here. ``timeout_ms`` bounds
         what the check sends, as it bounds the statement. Raises
         :class:`~sopuli.sql.statement.StatementRefusedError`, or
         :class:`DriverError` where the check could not be made."""
@@ -1793,7 +1794,9 @@ class StatementRunner(Protocol):
     ) -> StatementResult:
         """Run ``statement`` and leave nothing behind unless it was meant to stay.
 
-        A read runs in a read-only transaction and is rolled back. A write is
+        A read runs in a read-only transaction and is rolled back; SQL Server
+        has none, so there it is a transaction with ``XACT_ABORT ON`` that is
+        always rolled back (#1728, Q2). A write is
         committed only when ``commit`` is true, the guard passes and the row
         count is above zero; otherwise it is rolled back. The read-only
         transaction and the rollback cover this statement's own transaction,

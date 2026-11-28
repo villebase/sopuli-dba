@@ -30,6 +30,7 @@ The parts were built in this order, each by its own issue:
 | `sql run` on MySQL and MariaDB | #1718, built |
 | SQL Server: decisions | #1728, decided |
 | The statement check's T-SQL dialect | #1730, built (§3) |
+| The SQL Server runner | #1731, built. `StatementRunning` in `src/sopuli/driver/mssql/statement_run.py` |
 
 `sql run` runs on Oracle, PostgreSQL, MySQL and MariaDB. A target of another
 product, SQL Server today, is refused at plan time by `require_command`, with
@@ -265,6 +266,20 @@ transactions (§4). Measured on MySQL 8.0.46, 8.4.13 and 9.7.4 and MariaDB
 10.11.19, 11.4.13, 11.8.9 and 12.3.3 (`13_statement_run_probe.py`,
 `18_statement_run_probe.py`).
 
+SQL Server has no read-only transaction. A read runs in `BEGIN TRANSACTION`
+with `XACT_ABORT ON`, and always ends with a rollback, as a write does that
+does not commit ([#1728](../decisions/log.md#1728), Q2). The rollback undoes
+DDL and a `GRANT` too, unlike on Oracle and MySQL. It does not undo a
+sequence's `NEXT VALUE FOR`, an identity value, a table variable's rows, or
+an application lock a session holds (`sp_getapplock`). The statement runs in
+`master`, where every login the tool makes lands, and names another
+database's objects by three-part names, such as `acme.dbo.orders`
+([#1728](../decisions/log.md#1728), Q3). A `SELECT … INTO` returns no rows,
+and is refused when it runs. A statement on a linked server inside the
+transaction is refused by the server, `3910`. Measured on 15.0.4510.2,
+16.0.4325.4, 17.0.5065.9 and 16.0.1000.6 (`17_statement_run_probe.py`,
+#1729).
+
 On PostgreSQL, `standard_conforming_strings = off` lets `\'` escape a quote in a
 plain `'...'` literal too. The tool cannot see the setting, and it has been on
 by default since PostgreSQL 9.1. A wrong reading can only cut the text inside a
@@ -368,7 +383,9 @@ targets, never all of them. `max_targets` applies unchanged (invariant 10).
   `@@global.server_uid` and `DATABASE()`; a session with no default database
   has `""`. MariaDB's `server_uid` changes at each restart, so a restart
   between the dry run and the real run changes the hash, and the operator runs
-  the dry run again. Where
+  the dry run again. On SQL Server it is `SERVERPROPERTY('ServerName')` and
+  `DB_NAME()`, which is `master`, so an Availability Group failover between
+  the two runs changes the hash too. Where
   a PostgreSQL session starts as another role, that role is in the hash too,
   so a default role set between the dry run and the real run changes it. On
   MySQL and MariaDB the account the server matched, `user@host`, is in the
@@ -495,6 +512,18 @@ read timeout still commits. A commit whose connection is lost has
 `outcome_unknown: true` (§5). Measured on MySQL 8.0.46, 8.4.13 and 9.7.4 and
 MariaDB 10.11.19, 11.4.13, 11.8.9 and 12.3.3 (`13_statement_run_probe.py`,
 `18_statement_run_probe.py`, #1714).
+
+On SQL Server no server setting bounds a statement. `SET LOCK_TIMEOUT` bounds
+a wait for a lock (`1222`), and the client's query timeout, one second past
+it in whole seconds, bounds the call (`HYT00`). A lower `LOCK_TIMEOUT` the
+login already has stays. With `XACT_ABORT ON` either one rolls the
+transaction back and releases its locks, and the session stays usable. A
+deadlock's victim (`1205`) is rolled back too. No bound is left on the
+commit. The row count is `@@ROWCOUNT`, the statement's own: pyodbc's count
+comes first from a trigger that changes other rows. A commit whose
+connection is lost has `outcome_unknown: true` (§5). Measured on 15.0.4510.2,
+16.0.4325.4, 17.0.5065.9 and 16.0.1000.6 (`17_statement_run_probe.py`,
+#1729).
 
 ---
 

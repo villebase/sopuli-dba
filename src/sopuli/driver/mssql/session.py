@@ -95,6 +95,7 @@ from sopuli.driver.mssql.errors import (
 from sopuli.driver.mssql.limits import LIMIT
 from sopuli.driver.mssql.password import MustChange, password_value
 from sopuli.driver.mssql.scope import observe
+from sopuli.driver.mssql.statement_run import StatementRunning
 from sopuli.driver.protocol import (
     ACCOUNT_LOCK,
     ACCOUNT_UNLOCK,
@@ -307,10 +308,12 @@ def _server_name(cursor: Cursor) -> str | None:
 
 
 @dataclass
-class MssqlSession(ClosesConnection):
+class MssqlSession(StatementRunning, ClosesConnection):
     """One open connection to a SQL Server instance. Implements the
     :class:`~sopuli.driver.protocol.Session` methods for `doctor`, UC-1, UC-2
-    and UC-5, as the module docstring lists. What SQL Server has no
+    and UC-5, as the module docstring lists, and UC-3's
+    :class:`~sopuli.driver.protocol.StatementRunner` through
+    :class:`~sopuli.driver.mssql.statement_run.StatementRunning`. What SQL Server has no
     counterpart for is refused by capability; :meth:`apply_attributes` is
     never reached; if it is, it raises
     :class:`~sopuli.driver.protocol.InternalFaultError`."""
@@ -345,6 +348,19 @@ class MssqlSession(ClosesConnection):
     #: command has nothing to set back: its policy stays off, and a login as
     #: it counts toward no lockout.
     _policy_off: set[str] = field(default_factory=set, init=False, repr=False)
+    #: ``ORIGINAL_LOGIN()`` and ``SUSER_SNAME()``, for `sql run`'s session
+    #: check, read on first use.
+    _logins: tuple[str, str] | None = field(default=None, init=False, repr=False)
+    #: A `sql run` statement left the connection unusable.
+    _connection_lost: bool = field(default=False, init=False, repr=False)
+
+    def _is_client_error(self, error: BaseException) -> bool:
+        """Whether ``error`` is pyodbc's, for :class:`StatementRunning`."""
+        return isinstance(error, pyodbc.Error)
+
+    def _diagnose(self, error: BaseException) -> server_errors.Diagnosis:
+        """A pyodbc error, classified, for :class:`StatementRunning`."""
+        return from_error(error)
 
     def scope(self) -> Scope:
         """What this session is: a server, read-write or not, and its

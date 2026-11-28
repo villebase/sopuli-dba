@@ -32,7 +32,11 @@ mcr.microsoft.com/mssql/server 2019-latest, 2022-latest and 2025-latest images
 of test/compose.yaml profile mssql-matrix, with Python 3.13.12, pyodbc 5.5.0
 and ODBC Driver 18 (msodbcsql18.dll 18.07.0001) on Windows 11 AMD64, on
 2026-11-28 (#1729). Twice, exit 0, and the same result both times, but for
-the times taken and which session a deadlock chose.
+the times taken and which session a deadlock chose. Also on 16.0.1000.6,
+SQL Server 2022 Express on the windows-latest runner of
+.github/workflows/mssql-windows-probe.yml, with ODBC Driver 18
+(msodbcsql18.dll 18.04.0001) and the server on the same host: twice in one
+job, exit 0, the same result both times, and the same as 16.0.4325.4's.
 
 RESULTS -- the same on every release, except where noted
 
@@ -147,9 +151,10 @@ RESULTS -- the same on every release, except where noted
          transaction is rolled back; the other session's statement runs.
        - Whether any of these bound COMMIT is not measured: the probe made
          no COMMIT wait.
-  S7   a SELECT of a million rows of 204 bytes reads in full in 3.9 to 5.5
-       s. **After `fetchmany(100)`, `cancel()` and `close()`, or `close()`
-       alone, return at once**, the session has no request left, and the
+  S7   a SELECT of a million rows of 204 bytes reads in full in 4.1 to 5.7
+       s, and in 3.0 to 3.3 s on 16.0.1000.6. **After `fetchmany(100)`,
+       `cancel()` and `close()`, or `close()` alone, return at once**, the
+       session has no request left, and the
        next SELECT takes under 0.01 s. Without `close()`, the request is
        still running until the next execute on the same cursor, which
        takes 0.01 to 0.02 s.

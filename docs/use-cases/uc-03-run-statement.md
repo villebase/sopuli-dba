@@ -62,7 +62,6 @@ small:
 
 **Not in scope:**
 
-- SQL Server. The driver interface leaves room for it, and it comes later.
 - Statements declared by name in the config. They can be added later without
   changing this design.
 - DDL, PL/SQL blocks, `ALTER SYSTEM`, and anything else that is not one query

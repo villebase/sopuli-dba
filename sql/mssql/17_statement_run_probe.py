@@ -27,9 +27,156 @@ number that the ODBC driver puts in parentheses after its message.
 
 It MEASURES and decides nothing.
 
-STATUS: not yet run.
+STATUS: run on 15.0.4510.2, 16.0.4325.4 and 17.0.5065.9, the
+mcr.microsoft.com/mssql/server 2019-latest, 2022-latest and 2025-latest images
+of test/compose.yaml profile mssql-matrix, with Python 3.13.12, pyodbc 5.5.0
+and ODBC Driver 18 (msodbcsql18.dll 18.07.0001) on Windows 11 AMD64, on
+2026-11-28 (#1729). Twice, exit 0, and the same result both times, but for
+the times taken and which session a deadlock chose.
 
-RESULTS -- not yet recorded.
+RESULTS -- the same on every release, except where noted
+
+  S1   **`SET SHOWPLAN_ALL ON` gives one row set for the whole batch, not one
+       per statement.** In it, each statement has a row of its own whose
+       Type is not PLAN_ROW, numbered by StmtId, with the statement's own
+       text in StmtText. `UPDATE ... DELETE ...` gives UPDATE (1) and DELETE
+       (2); `SELECT 1 SELECT 2` two `SELECT WITHOUT QUERY` rows; `UPDATE ...
+       GRANT ...` UPDATE and GRANT; `SET XACT_ABORT OFF` `SET ON/OFF`;
+       `EXECUTE AS LOGIN` `EXECUTE AS`; `PRINT` PRINT; and `EXEC sp_who`
+       `EXECUTE PROC`, followed by 16 rows of the procedure's own statements.
+       **A `DECLARE` with no value has no row**: `UPDATE ... DECLARE @x int`
+       and `DECLARE @x int UPDATE ...` each give one UPDATE row, whose
+       StmtText is the whole batch, the DECLARE included. A DECLARE with a
+       value has its own row: `= 1` ASSIGN, `= (SELECT ...)` SELECT, and so
+       has `SELECT @x = ...`, SELECT.
+       The Type of each form: `SELECT 1` is `SELECT WITHOUT QUERY`; `SELECT
+       ... INTO` a table or `#t` is `SELECT INTO`; UPDATE, INSERT, DELETE
+       with a join and MERGE are UPDATE, INSERT, DELETE and MERGE; a WITH is
+       the type of its main statement (SELECT, UPDATE, DELETE, INSERT); a
+       SELECT that calls a scalar function, a table-valued function or
+       `NEXT VALUE FOR`, a SELECT from `OPENQUERY(lnk, 'UPDATE ...')`, and a
+       SELECT across two databases are SELECT; a four-part UPDATE on a
+       linked server is UPDATE.
+       **Nothing runs**, as a login with the grants and as sysadmin: no row
+       changes, no table is made, the sequence does not move, the GRANT is
+       not given, `@@TRANCOUNT` stays 0 and `SUSER_SNAME()` is unchanged
+       after `EXECUTE AS`.
+       A table or a database that does not exist is refused, 208, with no
+       row set. On 17.0.5065.9 the plan login's three linked-server
+       statements are refused, 7416 (S2).
+       **`SHOWPLAN` is needed in each database the statement names, not in
+       `master`**: the first database without it is named in the refusal,
+       262 "SHOWPLAN permission denied in database 'sopuli_probe'". With
+       `SHOWPLAN` in sopuli_probe alone, a statement in `master` that names
+       only sopuli_probe's tables passes. `SELECT 1` passes with no SHOWPLAN
+       anywhere.
+  S2   in `BEGIN TRANSACTION` with `XACT_ABORT ON`, then ROLLBACK, as a login
+       that is db_owner of sopuli_probe:
+       - **`CREATE TABLE` and `ALTER TABLE`, by three-part name, and a
+         `GRANT` in master run and are undone**; as sa, `CREATE LOGIN` and
+         `ALTER LOGIN ... DISABLE` too.
+       - `ALTER DATABASE` and `CREATE DATABASE` are refused, 226, and
+         `BACKUP DATABASE` 3021. Under XACT_ABORT the refusal ends the
+         transaction: `@@TRANCOUNT` is 0 after it.
+       - **Not undone**: `NEXT VALUE FOR`'s value (the next is 2 after a
+         rolled-back 1), an identity value (`IDENT_CURRENT` stays 2), a row
+         in a table variable, and **`sp_getapplock` with `@LockOwner =
+         'Session'`, still held after the rollback**: another session's
+         request with `@LockTimeout = 0` gets -1. A temporary table's row
+         is undone, and one made inside the transaction is dropped.
+       - A loopback linked server, through MSOLEDBSQL with each login
+         mapped to itself. Outside a transaction, a four-part UPDATE commits
+         on the remote side. **Inside one, it is refused, 3910 "Transaction
+         context in use by another session"**, and the transaction ends.
+         `OPENQUERY(lnk, 'SELECT 1')` runs inside one. `OPENQUERY(lnk,
+         'UPDATE ... OUTPUT inserted.v')` returns the new value, and `SET
+         NOCOUNT ON; UPDATE ...; SELECT 1` its row, but the remote row is
+         unchanged afterwards, inside a transaction or outside one.
+         On 17.0.5065.9 the provider refuses the server's certificate
+         without a provider string, 7412, and with `Encrypt=Optional`
+         every login but a sysadmin is refused, 7416, mapping or not; the
+         sysadmin results are those above. On 15.0.4510.2 and 16.0.4325.4
+         the linked server has no provider string. On 16.0.4325.4, tried by
+         hand before this run, `TrustServerCertificate=Yes` or
+         `Encrypt=Optional` made every login but a sysadmin's 7416 too.
+  S3   `cursor.execute(text)` with two statements runs both: two UPDATEs
+       give `rowcount` 1, then 2 after `nextset()`. Two SELECTs give two row
+       sets, each with `rowcount` -1. An UPDATE then a SELECT gives
+       `rowcount` 1 with no result, then the SELECT's rows after
+       `nextset()`. **`GO` on a line of its own is refused, 102.** A `?` in
+       a literal is sent as written; a `?` outside one, with no parameters,
+       is refused by the driver, 07002 "COUNT field incorrect".
+  S4   **Block comments nest**: `SELECT 1 AS a /* /* */ , 2 AS b */` gives
+       one column. `--` starts a comment with no space before or after it
+       (`SELECT 5--3` gives 5), and a `/*` after it is part of the comment.
+       Inside a literal, `--` and `/*` are text. `''` is a quote; a
+       backslash is a character, not an escape. `N'...'` is a literal.
+       `[a]]b]` is the name `a]b`, and a `'` inside `[...]` is part of the
+       name. **ODBC Driver 18 sets QUOTED_IDENTIFIER ON for the session**,
+       in master and in a database whose default is OFF, so `"name"` is a
+       column there. `DATABASEPROPERTYEX(..., 'IsQuotedIdentifiersEnabled')`
+       reads 0 for master as well.
+  S5   NOCOUNT is off as the driver leaves it. `rowcount` is:
+       - the matched rows of an UPDATE, 2 for two rows set to their own
+         value, and 0 when none match;
+       - the sum of a MERGE's rows, 4 for 1 update, 1 insert and 2 deletes;
+       - **with an AFTER trigger under NOCOUNT OFF, the trigger's count
+         first**: 5, then the statement's 1 after `nextset()`. Under
+         NOCOUNT ON in the trigger, 1 alone;
+       - with an INSTEAD OF trigger on a view, 1, 5, then 1: the trigger's
+         two statements, then the view's own;
+       - -1 for a SELECT.
+       `@@ROWCOUNT` read next in the session is the statement's own count
+       in each case: 1 with each trigger, 3 after the SELECT.
+  S6   sa holds a lock on a row; the run-as session has written another row
+       in its transaction, then waits:
+       - **`SET LOCK_TIMEOUT 1000`: 1222 after 1.0 s**, for a SELECT and an
+         UPDATE. With XACT_ABORT OFF the transaction stays open, with the
+         earlier write and its lock. **With XACT_ABORT ON it is rolled
+         back**: `@@TRANCOUNT` 0, the earlier write undone, no lock held.
+       - **`connection.timeout = 2`: HYT00 "Query timeout expired" after
+         2.0 s**, for a long SELECT, a SELECT waiting on the lock and an
+         UPDATE waiting on it. The connection stays usable. With
+         XACT_ABORT OFF the transaction stays open, with the earlier write
+         and its lock; with XACT_ABORT ON it is rolled back and the lock
+         released.
+       - **`cursor.cancel()` from another thread: HY008 "Operation
+         canceled" after 1.0 s**, for a long SELECT and an UPDATE waiting
+         on the lock, with the same transaction states as the timeout.
+       - A deadlock: the victim gets 1205 (SQLSTATE 40001), and its
+         transaction is rolled back; the other session's statement runs.
+       - Whether any of these bound COMMIT is not measured: the probe made
+         no COMMIT wait.
+  S7   a SELECT of a million rows of 204 bytes reads in full in 3.9 to 5.5
+       s. **After `fetchmany(100)`, `cancel()` and `close()`, or `close()`
+       alone, return at once**, the session has no request left, and the
+       next SELECT takes under 0.01 s. Without `close()`, the request is
+       still running until the next execute on the same cursor, which
+       takes 0.01 to 0.02 s.
+  S8   pyodbc 5.5.0 returns: decimal and money as Decimal (money with four
+       places), bigint as int (9007199254740993 exact), bit as bool, float
+       as float, real as float (0.10000000149011612), date as date,
+       datetime as datetime (12:34:56.789 as .790000), datetime2 and time
+       to the microsecond (7 digits cut to 6), uniqueidentifier as str in
+       upper case, binary, varbinary(max) and rowversion as bytes,
+       nvarchar(max) of 5000 characters and xml as str, and NULL as None.
+       **It refuses four types, HY106 "ODBC SQL type ... is not yet
+       supported"**: datetimeoffset (-155), sql_variant (-16), and
+       hierarchyid and geography (-151). With an output converter for
+       -155, datetimeoffset reads as an aware datetime.
+  S9   ORIGINAL_LOGIN(), SUSER_SNAME(), USER_NAME(), DB_NAME(),
+       ServerName and @@SERVERNAME: a login with no grant reads its own
+       name twice, `guest`, `master`, and the host's name twice; a
+       sysadmin reads `dbo` as its user. **Inside `EXECUTE AS LOGIN`,
+       ORIGINAL_LOGIN() is the caller and SUSER_SNAME() the login
+       impersonated.** A login without IMPERSONATE is refused, 15406.
+  S10  **`HAS_PERMS_BY_NAME(svc, 'LOGIN', 'IMPERSONATE')` is 1 for a
+       sysadmin**, 1 for a login with the grant, and 0 for one without.
+       A login with the grant and without VIEW SERVER STATE sees its own
+       IMPERSONATE row in `sys.server_permissions`, and IMPERSONATE in
+       `fn_my_permissions(svc, 'LOGIN')`, and sees svc in
+       `sys.server_principals`; a login without the grant sees none of
+       them.
 
 HOW TO RUN, against the matrix (test/README.md), from the repo root:
 
@@ -90,10 +237,12 @@ DATABASES = ("sopuli_probe", "sopuli_probe_other", "sopuli_probe_qi")
 _NUMBER = re.compile(r"\((\d{2,6})\)")
 _PREFIX = re.compile(r"(\[[^\]]*\])+")
 _PROCESS = re.compile(r"Process ID \d+")
-#: A SELECT that runs for minutes: no case lets it finish.
+#: A SELECT that runs for hours: no case lets it finish. The predicate makes
+#: the server read each row; a bare COUNT_BIG(*) of the cross join finished
+#: in under 2 s on Windows.
 LONG_SELECT = (
     "SELECT COUNT_BIG(*) FROM sys.all_columns AS a CROSS JOIN sys.all_columns AS b "
-    "CROSS JOIN sys.all_columns AS c"
+    "CROSS JOIN sys.all_columns AS c WHERE CHECKSUM(a.name, b.name, c.name) = 7"
 )
 MILLION = (
     "SELECT TOP (1000000) CAST(ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) AS int) AS n, "

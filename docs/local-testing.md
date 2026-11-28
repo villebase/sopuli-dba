@@ -3550,7 +3550,7 @@ there the date is `unknown`, with the reason; the history is still complete.
 ## 9b. Run one query on many targets (UC-3)
 
 `sql run` runs one `SELECT` or `WITH` statement on each selected target and
-shows the rows. With `--write` it runs one write (§*A write*, below). It runs on Oracle, PostgreSQL (§*On PostgreSQL*, below), MySQL and MariaDB (§*On MySQL and MariaDB*, below). It never connects as the account in
+shows the rows. With `--write` it runs one write (§*A write*, below). It runs on Oracle, PostgreSQL (§*On PostgreSQL*, below), MySQL and MariaDB (§*On MySQL and MariaDB*, below), and SQL Server (§*On SQL Server*, below). It never connects as the account in
 `admin:`. It connects as the account in `run_as:`, here a personal account. As
 SYS in the PDB:
 
@@ -4005,6 +4005,118 @@ It exits 8. Afterwards, as root on each:
 REVOKE sopuli_admin@'%' FROM dba_alpha@'%';  -- MySQL only
 DROP DATABASE acme;
 DROP USER dba_alpha@'%';
+```
+
+### On SQL Server
+
+`sql run` runs on the SQL Server of §*A SQL Server instance* too. The statement
+runs in `master`, so it names another database's objects by three-part names.
+As `sa`, create a database with a table, and a personal login with a user in
+it:
+
+```sql
+CREATE DATABASE acme;
+CREATE LOGIN [dba_alpha] WITH PASSWORD = N'<PASSWORD>', CHECK_POLICY = OFF;
+USE acme;
+CREATE TABLE dbo.acme_settings (name nvarchar(20) PRIMARY KEY, flag int NOT NULL);
+INSERT INTO dbo.acme_settings VALUES (N'audit', 0), (N'trace', 0);
+CREATE USER [dba_alpha] FOR LOGIN [dba_alpha];
+ALTER ROLE db_datareader ADD MEMBER [dba_alpha];
+ALTER ROLE db_datawriter ADD MEMBER [dba_alpha];
+GRANT SHOWPLAN TO [dba_alpha];
+```
+
+`SHOWPLAN` lets the tool ask the server to list the statement's parts before
+anything runs ([`design/02-mssql-privileges.md`](design/02-mssql-privileges.md)
+§8). Export the password as `DBA_ALPHA_PASSWORD`, and save this as
+`sql-run-mssql.yaml`:
+
+```yaml
+version: 1
+defaults:
+  run_as:
+    username: dba_alpha
+    auth: { method: env, password_env: DBA_ALPHA_PASSWORD }
+targets:
+  - name: mssql-dev
+    type: mssql
+    environment: dev
+    dsn: "127.0.0.1:14322"
+    admin: { username: sopuli_admin, auth: { method: env } }
+    mssql: { trust_server_certificate: true }
+```
+
+A read, and then a write with its dry run first:
+
+```
+$ cat ms-settings.sql
+SELECT name, flag FROM acme.dbo.acme_settings ORDER BY name;
+$ sopuli --config sql-run-mssql.yaml sql run --file ms-settings.sql
+read statement:
+  SELECT name, flag FROM acme.dbo.acme_settings ORDER BY name
+
+TARGET     name   flag
+mssql-dev  audit  0
+mssql-dev  trace  0
+
+mssql-dev  2 rows
+
+1 warning:
+  targets[0].mssql.trust_server_certificate: target 'mssql-dev' does not verify the server (`trust_server_certificate: true`)
+    hint: anything between this run and the server can present its own certificate and read the password a run sets. Use `trust_server_certificate: false` (the default), with the CA that issued the server's certificate in the operating system's trust store, which ODBC Driver 18 checks the server against
+$ cat ms-audit-on.sql
+UPDATE acme.dbo.acme_settings SET flag = 1 WHERE name = N'audit';
+$ sopuli --config sql-run-mssql.yaml sql run --write --target mssql-dev --expect-rows 1 --dry-run < ms-audit-on.sql
+Plan: 1 account x 1 target = 1 write   [dev]
+
+ACCOUNT    TARGET     INTENT
+dba_alpha  mssql-dev  sql_write
+
+write statement:
+  UPDATE acme.dbo.acme_settings SET flag = 1 WHERE name = N'audit'
+
+mssql-dev  ROLLED_BACK  1 row, rolled back (dry run)
+
+plan fingerprint: fdab49ed7d65
+to run it, drop --dry-run and add:  --plan fdab49ed7d65
+...
+$ sopuli --config sql-run-mssql.yaml sql run --write --target mssql-dev --expect-rows 1 --plan fdab49ed7d65 < ms-audit-on.sql
+...
+mssql-dev  COMMITTED  1 row
+
+plan fingerprint: fdab49ed7d65
+...
+```
+
+Each exits 0. SQL Server has no read-only transaction, so a read runs in a
+transaction that is always rolled back. T-SQL needs no `;` between two
+statements, so the tool asks the server how many statements the text holds,
+before anything runs, a read's too:
+
+```
+$ cat ms-two.sql
+UPDATE acme.dbo.acme_settings SET flag = 1 WHERE name = N'audit'
+DELETE FROM acme.dbo.acme_settings WHERE name = N'trace';
+$ sopuli --config sql-run-mssql.yaml sql run --write --target mssql-dev --expect-rows 1 --dry-run < ms-two.sql
+sopuli: target 'mssql-dev': the server reads the text as 2 statements (UPDATE, DELETE), and `sql run` runs one
+  hint: nothing was run on any target. T-SQL needs no ';' between two statements, so a text that reads as one statement to the eye can hold two. Give one SELECT, UPDATE, INSERT, DELETE or MERGE
+```
+
+It exits 8, and the `trace` row is still there. A login without `SHOWPLAN` is
+refused the same way. After `sa`'s `REVOKE SHOWPLAN FROM [dba_alpha]` in
+`acme`:
+
+```
+$ sopuli --config sql-run-mssql.yaml sql run --file ms-settings.sql
+sopuli: target 'mssql-dev': the check before the run failed: 262: SHOWPLAN permission denied in database 'acme'.
+  hint: nothing was run on any target. `sql run` asks the server to list the statement's parts before it runs anything, and the run-as login needs the SHOWPLAN permission for that in each database the statement names, the one this message names among them: GRANT SHOWPLAN TO the login's user there (02-mssql-privileges.md §8)
+```
+
+It exits 8. Afterwards, as `sa`:
+
+```sql
+DROP DATABASE acme;
+DROP LOGIN [dba_alpha];
 ```
 
 ---

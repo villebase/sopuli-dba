@@ -6,7 +6,7 @@ Depends on: `../design/00-principles.md`, `../design/01-configuration.md`,
 
 This document specifies a command that runs one statement against a selected
 set of declared targets and shows what each target returned. **UC-3 is built on
-Oracle, PostgreSQL, MySQL and MariaDB.** The command name, `sopuli sql run`, is
+Oracle, PostgreSQL, MySQL, MariaDB and SQL Server.** The command name, `sopuli sql run`, is
 a working name.
 The parts were built in this order, each by its own issue:
 
@@ -32,12 +32,16 @@ The parts were built in this order, each by its own issue:
 | The statement check's T-SQL dialect | #1730, built (§3) |
 | The SQL Server runner | #1731, built. `StatementRunning` in `src/sopuli/driver/mssql/statement_run.py` |
 | The statement list on SQL Server, and the refusal of a text that is not one statement of the run's kind | #1732, built (§2, §3) |
+| What SQL Server does, measured | #1729, built. `17_statement_run_probe.py` |
+| `sql run` on SQL Server | #1733, built |
 
-`sql run` runs on Oracle, PostgreSQL, MySQL and MariaDB. A target of another
-product, SQL Server today, is refused at plan time by `require_command`, with
-`SOPULI-20006`, never by a version check (invariant 4): `sql.run` is not in the
-shared command set, and only those four drivers list it. The umbrella issues
-are #1657 for Oracle, #1689 for PostgreSQL and #1712 for MySQL and MariaDB.
+`sql run` runs on every product the tool supports: Oracle, PostgreSQL, MySQL,
+MariaDB and SQL Server. `sql.run` is not in the shared command set: each driver
+lists it, so a driver added later runs it only once it has a runner and a
+dialect. Until then a target of that product is refused at plan time by
+`require_command`, with `SOPULI-20006`, never by a version check (invariant 4).
+The umbrella issues are #1657 for Oracle, #1689 for PostgreSQL, #1712 for MySQL
+and MariaDB, and #1727 for SQL Server.
 
 ---
 
@@ -58,7 +62,6 @@ small:
 
 **Not in scope:**
 
-- SQL Server. The driver interface leaves room for it, and it comes later.
 - Statements declared by name in the config. They can be added later without
   changing this design.
 - DDL, PL/SQL blocks, `ALTER SYSTEM`, and anything else that is not one query

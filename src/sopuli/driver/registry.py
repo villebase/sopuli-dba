@@ -380,8 +380,11 @@ DRIVERS: dict[str, DatabaseDriver] = {
         # (#1552), `creds status` (#1631), UC-5's reports (#1555), and UC-2's
         # commands (#1554):
         # `account list`, `suspend`, `reset-password` on both paths, and
-        # `expire-password`, refused at plan time by capability.
-        commands=CONNECTING_COMMANDS,
+        # `expire-password`, refused at plan time by capability. And `sql run`
+        # (UC-3, #1727). Each driver names `sql.run` itself rather than the
+        # shared set holding it, so a driver added later runs it only once it
+        # has a runner and a dialect.
+        commands=CONNECTING_COMMANDS | {"sql.run"},
         not_applicable=frozenset({"profile", "valid_until"}),
         no_profiles="SQL Server has no profiles; declare these logins by name with `accounts:`",
         seen_reset_unmasked=(

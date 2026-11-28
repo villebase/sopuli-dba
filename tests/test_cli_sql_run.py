@@ -310,7 +310,8 @@ def test_all_down_exit_1(write_config: WriteConfig, sessions: dict[str, Any]) ->
     assert result.exit_code == ExitCode.FAILURE, result.output
 
 
-#: A product `sql run` does not run on.
+#: A target of a product `sql run` does not run on, with the fixture
+#: `no_sql_run_on_mssql`: every product runs it (#1733).
 MSSQL_TARGET = (
     "  - name: ms-alpha\n"
     "    type: mssql\n"
@@ -319,6 +320,7 @@ MSSQL_TARGET = (
 )
 
 
+@pytest.mark.usefixtures("no_sql_run_on_mssql")
 def test_a_target_of_a_product_it_does_not_run_on_is_skipped_20006(
     write_config: WriteConfig, sessions: dict[str, Any]
 ) -> None:
@@ -347,6 +349,7 @@ PG_TARGET = (
 ORACLE_ONLY = "SELECT q'[it's]' FROM dual; -- n\n"
 
 
+@pytest.mark.usefixtures("no_sql_run_on_mssql")
 def test_a_skipped_product_does_not_check_the_statement(
     write_config: WriteConfig, sessions: dict[str, Any]
 ) -> None:

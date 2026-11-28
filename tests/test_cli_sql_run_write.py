@@ -870,6 +870,7 @@ def test_a_refused_typed_password_refuses_a_real_run(
     assert all(session.calls == [] for session in fleet["opened"])
 
 
+@pytest.mark.usefixtures("no_sql_run_on_mssql")
 def test_a_target_of_another_product_does_not_refuse_a_real_run(
     write_config: WriteConfig, fleet: dict[str, Any]
 ) -> None:
@@ -894,7 +895,8 @@ def test_a_target_of_another_product_does_not_refuse_a_real_run(
     assert loaded["exit_code"] == ExitCode.SUCCESS
 
 
-#: The fleet with a SQL Server target, which `sql run` skips.
+#: The fleet with a SQL Server target, which `sql run` skips under the
+#: fixture `no_sql_run_on_mssql`: every product runs it (#1733).
 WITH_MSSQL = CONFIG + (
     "  - name: e-ms\n"
     "    type: mssql\n"
@@ -904,6 +906,7 @@ WITH_MSSQL = CONFIG + (
 )
 
 
+@pytest.mark.usefixtures("no_sql_run_on_mssql")
 def test_zero_rows_and_a_skipped_target_exit_0(
     write_config: WriteConfig, fleet: dict[str, Any]
 ) -> None:
@@ -919,6 +922,7 @@ def test_zero_rows_and_a_skipped_target_exit_0(
     assert result.exit_code == ExitCode.SUCCESS, result.output
 
 
+@pytest.mark.usefixtures("no_sql_run_on_mssql")
 def test_every_target_skipped_exits_5(write_config: WriteConfig, fleet: dict[str, Any]) -> None:
     result = sql(
         write_config,
@@ -956,6 +960,7 @@ def test_a_dry_run_with_a_failing_target_offers_no_plan(
     assert len(loaded["statement"]["fingerprint"]) == 12
 
 
+@pytest.mark.usefixtures("no_sql_run_on_mssql")
 def test_a_dry_run_with_a_skipped_target_still_offers_the_plan(
     write_config: WriteConfig, fleet: dict[str, Any]
 ) -> None:
@@ -1171,6 +1176,7 @@ def test_an_interrupt_right_after_a_commit_keeps_it(
     assert sessions["b-beta"].calls == []
 
 
+@pytest.mark.usefixtures("no_sql_run_on_mssql")
 def test_a_skipped_target_is_not_in_the_plan(
     write_config: WriteConfig, fleet: dict[str, Any]
 ) -> None:
@@ -1216,6 +1222,7 @@ def test_readonly_on_a_write_names_the_read_instead(
         assert "lock status" not in hint
 
 
+@pytest.mark.usefixtures("no_sql_run_on_mssql")
 def test_a_dry_run_where_every_target_is_skipped_says_nothing_would_run(
     write_config: WriteConfig, fleet: dict[str, Any]
 ) -> None:

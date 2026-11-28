@@ -6520,9 +6520,12 @@ def sql_run_command(
     committed, and 5 when no target is of a product this command runs on. A
     target of another product is skipped and does not change the exit code.
     On MySQL and MariaDB a write that names a table without transactions,
-    such as MyISAM, is refused before any statement runs.
+    such as MyISAM, is refused before any statement runs. On SQL Server, a
+    read or a write that the server reads as more than one statement is
+    refused before any statement runs, and the statement runs in master, so
+    name another database's objects by three-part names.
 
-    It runs on Oracle, PostgreSQL, MySQL and MariaDB.
+    It runs on Oracle, PostgreSQL, MySQL, MariaDB and SQL Server.
     """
     if write:
         if max_result_rows is not None:

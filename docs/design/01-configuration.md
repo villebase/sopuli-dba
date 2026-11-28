@@ -1728,7 +1728,12 @@ refused too where the run-as role starts as the service role, or is a member
 of it, directly or through other roles. A superuser is not counted as a member
 ([#1690](../decisions/log.md#1690)). On MySQL the session is refused where the
 run-as account is granted the service account as a role, directly or through
-other roles, active or not ([#1713](../decisions/log.md#1713)).
+other roles, active or not ([#1713](../decisions/log.md#1713)). On SQL Server
+the session is refused where `ORIGINAL_LOGIN()` or `SUSER_SNAME()` is the
+service login; one login is never granted to another
+([#1728](../decisions/log.md#1728), Q4). There the run-as login also needs
+`SHOWPLAN` in each database its statement names
+(`02-mssql-privileges.md` §8).
 
 ### `oracle:` on a target — assertions, not settings
 

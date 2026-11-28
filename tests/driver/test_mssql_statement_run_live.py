@@ -248,3 +248,33 @@ def test_a_datetimeoffset_and_a_hierarchyid_are_read(runner: Any) -> None:
     )
     assert isinstance(node, str)
     assert node
+
+
+def test_a_spatial_value_is_its_bytes_in_hex(runner: Any) -> None:
+    result = runner.run_statement(
+        _sql("SELECT geometry::Point(1, 2, 0) AS g"),
+        guard=None,
+        commit=False,
+        max_rows=1,
+        timeout_ms=0,
+    )
+
+    assert result.rows == (("00000000010c000000000000f03f0000000000000040",),)
+
+
+def test_a_type_the_driver_cannot_read_names_the_cast(runner: Any) -> None:
+    """A sql_variant that holds an int is pyodbc's HY106, text first in its
+    error (#1731). The session stays usable."""
+    with pytest.raises(DriverError) as raised:
+        runner.run_statement(
+            _sql("SELECT CAST(1 AS sql_variant) AS v"),
+            guard=None,
+            commit=False,
+            max_rows=1,
+            timeout_ms=0,
+        )
+
+    assert raised.value.code == "HY106"
+    assert "CAST" in (raised.value.hint or "")
+    assert not runner.connection_lost
+    assert _settings(runner) == (-1, 0, 0)

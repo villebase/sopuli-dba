@@ -275,8 +275,10 @@ an application lock a session holds (`sp_getapplock`). The statement runs in
 `master`, where every login the tool makes lands, and names another
 database's objects by three-part names, such as `acme.dbo.orders`
 ([#1728](../decisions/log.md#1728), Q3). A `SELECT … INTO` returns no rows,
-and is refused when it runs. A statement on a linked server inside the
-transaction is refused by the server, `3910`. Measured on 15.0.4510.2,
+and is refused when it runs. A write on a loopback linked server inside the
+transaction is refused, `3910`, but that is the loopback's own limit: with
+MSDTC, a write on a linked server to another host may join the transaction,
+so `sql run` does not rely on the refusal. Measured on 15.0.4510.2,
 16.0.4325.4, 17.0.5065.9 and 16.0.1000.6 (`17_statement_run_probe.py`,
 #1729).
 

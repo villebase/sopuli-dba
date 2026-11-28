@@ -202,6 +202,20 @@ def test_the_first_server_record_decides() -> None:
     assert "The user does not have permission" in diagnosis.message
 
 
+class _PyodbcOwnError(Exception):
+    """pyodbc's own error, text first: as it raises for a sql_variant that
+    holds an int, measured on 16.0.4325.4 with pyodbc 5.5.0 (#1731)."""
+
+
+def test_an_error_of_pyodbcs_own_keeps_its_sqlstate_as_the_code() -> None:
+    text = "ODBC SQL type -16 is not yet supported.  column-index=0  type=-16"
+
+    diagnosis = from_error(_PyodbcOwnError(text, "HY106"))
+
+    assert diagnosis.code == "HY106"
+    assert diagnosis.message == text
+
+
 def test_an_untrusted_certificate_names_the_settings() -> None:
     diagnosis = from_error(UNTRUSTED, connecting=True)
     assert (diagnosis.code, diagnosis.category, diagnosis.hint) == (

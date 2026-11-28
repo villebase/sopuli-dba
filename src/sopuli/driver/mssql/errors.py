@@ -1,10 +1,12 @@
 """How a pyodbc exception from SQL Server is classified. Tier 0.
 
-pyodbc raises an exception whose ``args`` are ``(sqlstate, message)``. The
-message holds one or more ODBC diagnostic records, joined by ``"; "``. Each
-record is the SQLSTATE in brackets, the components that raised it, the text,
-and a number in parentheses, as ODBC Driver 18 18.7.1.1 writes them (measured
-on 16.0.4325.4)::
+pyodbc raises an exception whose ``args`` are ``(sqlstate, message)``, or
+``(message, sqlstate)`` for an error of pyodbc's own, such as ``HY106`` for a
+column type it cannot read (#1731). The message holds one or more ODBC
+diagnostic records, joined by ``"; "``. Each record is the SQLSTATE in
+brackets, the components that raised it, the text, and a number in
+parentheses, as ODBC Driver 18 18.7.1.1 writes them (measured on
+16.0.4325.4)::
 
     [28000] [Microsoft][ODBC Driver 18 for SQL Server][SQL Server]Login failed
     for user 'acme_app'. (18456) (SQLDriverConnect)
@@ -277,10 +279,26 @@ def server_error(found: tuple[Record, ...]) -> Record | None:
     )
 
 
+#: A SQLSTATE: five digits or capital letters.
+_SQLSTATE = re.compile(r"[0-9A-Z]{5}")
+
+
+def _arguments(exc: Any) -> tuple[str, str]:
+    """The pyodbc exception's SQLSTATE and text. pyodbc gives them in that
+    order, except for an error of its own, such as ``HY106`` for a type it
+    cannot read, where the text comes first (#1731)."""
+    args: tuple[Any, ...] = getattr(exc, "args", ())
+    if len(args) < 2:
+        return (str(args[0]) if args else ""), " ".join(str(arg) for arg in args)
+    first, second = str(args[0]), str(args[1])
+    if not _SQLSTATE.fullmatch(first) and _SQLSTATE.fullmatch(second):
+        return second, first
+    return first, second
+
+
 def raw_message(exc: Any) -> str:
     """The pyodbc exception's text, where its records are."""
-    args: tuple[Any, ...] = getattr(exc, "args", ())
-    return str(args[1]) if len(args) > 1 else " ".join(str(arg) for arg in args)
+    return _arguments(exc)[1]
 
 
 def unchanged(message: str) -> str:
@@ -314,9 +332,8 @@ def from_error(
     ``connecting`` is true while the session is being opened, when nothing has
     run. ``strict`` is true when the target's ``encrypt`` is ``strict``.
     """
-    args: tuple[Any, ...] = getattr(exc, "args", ())
-    sqlstate = str(args[0]) if args else ""
-    raw = scrub(raw_message(exc))
+    sqlstate, text = _arguments(exc)
+    raw = scrub(text)
     found = records(raw)
     message = " ".join(dict.fromkeys(record.text for record in found)) or raw.strip()
 

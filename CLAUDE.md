@@ -34,12 +34,12 @@ so. That is a design decision, not an implementation detail.
 | `docs/design/02-postgres-privileges.md` | any SQL issued against PostgreSQL, and the tool account's grants there |
 | `docs/design/02-mysql-privileges.md` | any SQL issued against MySQL, and the tool account's grants there |
 | `docs/design/02-mariadb-privileges.md` | any SQL issued against MariaDB, and the tool account's grants there |
-| `docs/design/02-mssql-privileges.md` | any SQL issued against SQL Server, and the tool login's grants there |
+| `docs/design/02-mssql-privileges.md` | any SQL issued against SQL Server, the tool login's grants there, and the `SHOWPLAN` a `sql run` login needs |
 | `docs/design/03-json-output.md` | anything that produces output, and redaction |
 | `docs/design/04-testing.md` | tests and the test stack |
 | `docs/use-cases/uc-01-app-credential-sync.md` | application credentials: `creds generate`, `apply`, `check`, `rotate` |
 | `docs/use-cases/uc-02-personal-account-passwords.md` | personal accounts: `account` verbs, password reset, delivery methods |
-| `docs/use-cases/uc-03-run-statement.md` | `sql run`: one statement across many targets. UC-3 is built on Oracle (#1662, #1663), PostgreSQL (#1689), and MySQL and MariaDB (#1712) |
+| `docs/use-cases/uc-03-run-statement.md` | `sql run`: one statement across many targets. UC-3 is built on Oracle (#1662, #1663), PostgreSQL (#1689), MySQL and MariaDB (#1712), and SQL Server (#1727) |
 | `docs/use-cases/uc-05-fleet-reports.md` | the `report` commands, the only commands that list the accounts the config does not declare on their own |
 | `docs/measurements.md` | quoting or adding a result measured on an Oracle release |
 | `docs/decisions/log.md` | why a decision was made, and what was rejected |

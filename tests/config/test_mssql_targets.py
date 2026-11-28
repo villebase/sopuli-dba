@@ -325,11 +325,12 @@ def test_two_spellings_of_one_login_are_refused() -> None:
 
 
 def test_the_written_commands() -> None:
-    """`doctor`, UC-1's commands, UC-5's three reports and UC-2's four are
-    written for SQL Server (#1549, #1551, #1552, #1554, #1555, #1631)."""
+    """`doctor`, UC-1's commands, UC-5's three reports, UC-2's four and
+    `sql run` are written for SQL Server (#1549, #1551, #1552, #1554, #1555,
+    #1631, #1733)."""
     target = loaded(targets=[SERVER]).expanded_targets[0].target
 
-    assert DRIVERS["mssql"].commands is CONNECTING_COMMANDS
+    assert DRIVERS["mssql"].commands == CONNECTING_COMMANDS | {"sql.run"}
     assert DRIVERS["mssql"].not_applicable == frozenset({"profile", "valid_until"})
     assert DRIVERS["mssql"].extra == "mssql"
     assert DRIVERS["mssql"].provides == frozenset({"pyodbc"})
@@ -347,6 +348,7 @@ def test_the_written_commands() -> None:
     require_command(target, "account.suspend")
     require_command(target, "account.reset-password")
     require_command(target, "creds.status")
+    require_command(target, "sql.run")
     # Only SQL Server's unseen reset keeps the login's flags, so only its
     # targets are asked about them at plan time without `reset_records:`.
     assert DRIVERS["mssql"].reset_keeps_policy_flags is True

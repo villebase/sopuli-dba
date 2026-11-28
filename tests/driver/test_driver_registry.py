@@ -329,17 +329,20 @@ def test_account_list_is_let_through_on_postgresql() -> None:
     require_command(target("pg-dev", "postgresql"), "account.list")
 
 
-@pytest.mark.parametrize("kind", ["mssql"])
-def test_sql_run_is_refused_where_it_is_not_written(kind: str) -> None:
-    """UC-3 is written for Oracle (#1661), PostgreSQL (#1694), and MySQL and
-    MariaDB (#1718). The shared set does not list it."""
+@pytest.mark.usefixtures("no_sql_run_on_mssql")
+def test_sql_run_is_refused_where_it_is_not_written() -> None:
+    """The shared set does not list `sql.run`: each driver names it, so a
+    driver whose entry leaves it out is refused (UC-3 §5). Every product
+    runs it (#1733), so the fixture makes SQL Server such a driver."""
     assert "sql.run" not in CONNECTING_COMMANDS
     with pytest.raises(DriverNotImplementedError):
-        require_command(target("dev", kind), "sql.run")
+        require_command(target("dev", "mssql"), "sql.run")
 
 
-@pytest.mark.parametrize("kind", ["oracle", "postgresql", "mysql", "mariadb"])
+@pytest.mark.parametrize("kind", ["oracle", "postgresql", "mysql", "mariadb", "mssql"])
 def test_sql_run_is_let_through_where_it_is_written(kind: str) -> None:
+    """UC-3 is written for Oracle (#1661), PostgreSQL (#1694), MySQL and
+    MariaDB (#1718), and SQL Server (#1733)."""
     require_command(target("dev", kind), "sql.run")
 
 

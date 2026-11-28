@@ -116,6 +116,16 @@ def write_config(tmp_path: Path) -> WriteConfig:
 
 
 @pytest.fixture
+def no_sql_run_on_mssql(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make SQL Server a product `sql run` does not run on, by taking
+    ``sql.run`` out of its registry entry. Every product runs it (#1733), so
+    a test of the skip of another product needs one (UC-3 §5)."""
+    from sopuli.driver.registry import CONNECTING_COMMANDS, DRIVERS
+
+    monkeypatch.setitem(DRIVERS, "mssql", replace(DRIVERS["mssql"], commands=CONNECTING_COMMANDS))
+
+
+@pytest.fixture
 def config_file(write_config: WriteConfig) -> Path:
     """A valid config file, for tests that need one to exist but do not care."""
     return write_config(MINIMAL_CONFIG)

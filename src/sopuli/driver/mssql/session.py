@@ -33,9 +33,10 @@ It serves UC-2: :meth:`MssqlSession.suspend_account` disables a login,
 :meth:`MssqlSession.resolve_role` and :meth:`MssqlSession.accounts_matching`
 resolve a `role:` predicate to the logins that hold a server role. It serves
 UC-5's reports through :meth:`MssqlSession.survey_with_profiles` and
-:meth:`MssqlSession.survey_privileges`. What SQL Server has no counterpart
-for, an expired password without a reset, a profile and a rollover window, is
-refused by capability, exit 5.
+:meth:`MssqlSession.survey_privileges`, and UC-3's `sql run` through
+:class:`~sopuli.driver.mssql.statement_run.StatementRunning` (#1727). What
+SQL Server has no counterpart for, an expired password without a reset, a
+profile and a rollover window, is refused by capability, exit 5.
 
 **pyodbc's pooling is off for the process.** A pooled connection is kept open
 after ``close()``, and the next ``connect()`` with the same string reuses it

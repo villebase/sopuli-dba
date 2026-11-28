@@ -28,6 +28,8 @@ The parts were built in this order, each by its own issue:
 | The MySQL and MariaDB runner | #1716, built. `StatementRunning` in `src/sopuli/driver/mysql_family/statement_run.py` |
 | The refusal of a MySQL run-as account that holds the service account as a role, and of a write to a table without transactions | #1717, built (§2, §4) |
 | `sql run` on MySQL and MariaDB | #1718, built |
+| SQL Server: decisions | #1728, decided |
+| The statement check's T-SQL dialect | #1730, built (§3) |
 
 `sql run` runs on Oracle, PostgreSQL, MySQL and MariaDB. A target of another
 product, SQL Server today, is refused at plan time by `require_command`, with
@@ -236,6 +238,20 @@ refuses what any reading refuses, and a statement that two readings cut
 differently. A `\'` followed by a comment after the
 terminator is then a false refusal; `''` reads the same way in both.
 
+SQL Server's rules are T-SQL's. Block comments nest, as on PostgreSQL, and
+`--` always starts a comment. `'...'` and `N'...'` are strings in which `''`
+is one quote and a backslash is an ordinary character. `[...]` is a name, in
+which `]]` is one `]`, and so is `"..."`. `#` starts no comment: `#t` is a
+temporary table. A `WITH` is classified by the statement it leads to, the
+first `SELECT`, `INSERT`, `UPDATE`, `DELETE` or `MERGE` outside brackets, so
+`WITH c AS (...) DELETE FROM c` is a write, refused without `--write`. `GO`
+alone on a line, or with a count, ends a batch in sqlcmd and SSMS and is not
+T-SQL, so the check refuses it by name. T-SQL needs no `;` between two
+statements, so `UPDATE t SET a = 1 DELETE FROM u` is two, and refusing a
+`;` cannot refuse the second. On SQL Server the server's own list of the
+statements does that, before any statement runs
+([#1728](../decisions/log.md#1728), Q1).
+
 On MySQL and MariaDB a read runs in `START TRANSACTION READ ONLY`, and the
 server refuses a write with `1792`, `SELECT ... FOR UPDATE` and a `WITH` that
 writes among them. As on Oracle, DDL commits before it runs, so the keyword
@@ -377,7 +393,8 @@ is not a comment. On PostgreSQL the scan reads dollar quotes and `E'...'`
 literals whole instead of `q'[...]'`, and a nested comment ends at its own
 `*/` (§3). On MySQL and MariaDB it reads backtick names whole, and `#` is a
 comment, and so is `--` followed by whitespace, a control character or the
-end of the text (§3). The trailing `/` line is removed on every product, so one
+end of the text (§3). On SQL Server it reads `[...]` names whole, and a nested
+comment ends at its own `*/`. The trailing `/` line is removed on every product, so one
 statement reads the same way on a run over more than one. A `/*` that never
 closes after the terminator is refused as an unclosed comment. A second line that holds only `/`, left at the end, is
 refused, and so is a `;` still left in the text. A `/` inside the statement, such as a

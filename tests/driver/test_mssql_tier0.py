@@ -243,6 +243,7 @@ LINK_FAILURE = (
     ("args", "gone"),
     [
         (KILLED, True),
+        (KILLED[:1] + (KILLED[1].split("; ")[0],), True),
         (LINK_FAILURE, True),
         (
             (
@@ -260,7 +261,7 @@ LINK_FAILURE = (
             False,
         ),
     ],
-    ids=["killed", "link-failure", "query-timeout", "lock-timeout"],
+    ids=["killed", "killed-driver-record-alone", "link-failure", "query-timeout", "lock-timeout"],
 )
 def test_connection_gone(args: tuple[str, str], gone: bool) -> None:
     assert connection_gone(_PyodbcOwnError(*args)) is gone

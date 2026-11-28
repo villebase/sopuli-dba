@@ -264,8 +264,10 @@ def test_a_session_the_server_kills_is_lost(runner: Any, stack: Any) -> None:
         holder.close()
 
     assert failed == []
-    assert raised.value.code == "596"
-    assert runner.connection_lost
+    # 596 on Windows; on Linux, in the tier-1 CI job, the ODBC driver's own
+    # HY000 record (#1736). Not the lock timeout's 1222 either way.
+    assert raised.value.code in ("596", "HY000"), raised.value.message
+    assert runner.connection_lost, raised.value.message
     assert _value(stack, f"SELECT v FROM {T} WHERE id = 4") == 0
 
 

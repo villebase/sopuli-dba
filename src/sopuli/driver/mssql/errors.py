@@ -311,13 +311,20 @@ CONNECTION_EXCEPTION = "08"
 SESSION_KILLED = 596
 
 
+#: The ODBC driver's own record when the server ended the session: on
+#: Windows it comes before the server's ``596``, and on Linux, in the tier-1
+#: CI job, without it (#1736).
+_TERMINATED = re.compile(r"Connection may have been terminated by the server", re.IGNORECASE)
+
+
 def connection_gone(exc: Any) -> bool:
     """Whether the connection that raised ``exc`` can take nothing more: its
-    SQLSTATE, or any record's, is class ``08``, or the server ended the
-    session (:data:`SESSION_KILLED`). A lock timeout, the query timeout and a
-    cancel leave it usable (probe 17, S6)."""
+    SQLSTATE, or any record's, is class ``08``, the server ended the session
+    (:data:`SESSION_KILLED`), or the driver says the server may have ended it
+    (:data:`_TERMINATED`). A lock timeout, the query timeout and a cancel
+    leave it usable (probe 17, S6)."""
     sqlstate, text = _arguments(exc)
-    if sqlstate.startswith(CONNECTION_EXCEPTION):
+    if sqlstate.startswith(CONNECTION_EXCEPTION) or _TERMINATED.search(text):
         return True
     return any(
         record.sqlstate.startswith(CONNECTION_EXCEPTION)

@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.95.0](https://github.com/villebase/sopuli-dba/compare/v0.94.0...v0.95.0) (2026-11-28)
+
+
+### Features
+
+* **mysql,mariadb:** refuse a write a rollback could not undo ([#1717](https://github.com/villebase/sopuli-dba/issues/1717)) ([#1723](https://github.com/villebase/sopuli-dba/issues/1723)) ([a7f28fa](https://github.com/villebase/sopuli-dba/commit/a7f28fa135b25335415c029684374959d9ea8ef1))
+* **mysql,mariadb:** run one statement in a guarded transaction ([#1716](https://github.com/villebase/sopuli-dba/issues/1716)) ([#1721](https://github.com/villebase/sopuli-dba/issues/1721)) ([5a11bee](https://github.com/villebase/sopuli-dba/commit/5a11bee8ce050dbc23c75dfb938f3e1116cffef7))
+* **mysql:** refuse a run-as account granted the service account as a role ([#1717](https://github.com/villebase/sopuli-dba/issues/1717)) ([#1722](https://github.com/villebase/sopuli-dba/issues/1722)) ([c6bf1ba](https://github.com/villebase/sopuli-dba/commit/c6bf1ba4abb2dd36b95846a67a13fcbf2e51b255))
+* **sql:** a MySQL and MariaDB dialect for the statement check ([#1715](https://github.com/villebase/sopuli-dba/issues/1715)) ([#1719](https://github.com/villebase/sopuli-dba/issues/1719)) ([5f93002](https://github.com/villebase/sopuli-dba/commit/5f93002beec17a4795c05bec08ccf710e3f3fce1))
+* **sql:** sql run on MySQL and MariaDB ([#1718](https://github.com/villebase/sopuli-dba/issues/1718)) ([#1725](https://github.com/villebase/sopuli-dba/issues/1725)) ([7ee75cf](https://github.com/villebase/sopuli-dba/commit/7ee75cf5d4c77c49326c32ca16596784c67fa7f6))
+
 ## [0.94.0](https://github.com/villebase/sopuli-dba/compare/v0.93.0...v0.94.0) (2026-11-27)
 
 

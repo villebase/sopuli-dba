@@ -26,7 +26,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: mssql-windows-probe-${{ github.ref }}
+  group: mssql-windows-probe-${{ github.ref }}-${{ inputs.probe }}
   cancel-in-progress: true
 
 jobs:

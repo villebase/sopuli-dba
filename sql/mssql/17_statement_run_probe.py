@@ -91,7 +91,12 @@ RESULTS -- the same on every release, except where noted
        - A loopback linked server, through MSOLEDBSQL with each login
          mapped to itself. Outside a transaction, a four-part UPDATE commits
          on the remote side. **Inside one, it is refused, 3910 "Transaction
-         context in use by another session"**, and the transaction ends.
+         context in use by another session"**, and the transaction ends,
+         also on Windows, where MSDTC runs. Microsoft documents that a
+         loopback linked server cannot take part in a distributed
+         transaction, so this is the loopback's limit: a linked server to
+         another host, where MSDTC can promote the transaction, is not
+         measured.
          `OPENQUERY(lnk, 'SELECT 1')` runs inside one. `OPENQUERY(lnk,
          'UPDATE ... OUTPUT inserted.v')` returns the new value, and `SET
          NOCOUNT ON; UPDATE ...; SELECT 1` its row, but the remote row is
@@ -311,7 +316,7 @@ def err(exc: BaseException) -> str:
     args = getattr(exc, "args", ())
     state = args[0] if args and isinstance(args[0], str) else type(exc).__name__
     text = str(args[1]) if len(args) > 1 else str(exc)
-    numbers = [n for n in _NUMBER.findall(text) if n != "0"]
+    numbers = _NUMBER.findall(text)
     message = _NUMBER.sub("", _PREFIX.sub("", text.split("(SQL")[0])).strip()
     message = _PROCESS.sub("Process ID <n>", message)
     return " ".join(part for part in (state, numbers[0] if numbers else "", message[:100]) if part)
@@ -710,7 +715,8 @@ S2_LINKED = (
 
 
 def in_transaction(conn: Any, body: str, after: str = "") -> str:
-    """BEGIN TRANSACTION with XACT_ABORT ON, the body, ROLLBACK, and `after`."""
+    """BEGIN TRANSACTION with XACT_ABORT ON, the body, ROLLBACK, and `after`.
+    XACT_ABORT is OFF again after it, as the session started."""
     run(conn, "SET XACT_ABORT ON")
     run(conn, "BEGIN TRANSACTION")
     try:
@@ -718,6 +724,7 @@ def in_transaction(conn: Any, body: str, after: str = "") -> str:
         inside = tran_state(conn)
     finally:
         rollback(conn)
+        run(conn, "SET XACT_ABORT OFF")
     text = f"{got}; then (@@TRANCOUNT, XACT_STATE()) {inside}"
     return text + (f"; after the rollback {attempt(conn, after)}" if after else "")
 
@@ -980,19 +987,17 @@ def s6_deadlock(server: Server) -> None:
         run(b, f"UPDATE {P}.u SET v = v + 1 WHERE id = 2")
         results: dict[str, str] = {}
 
-        def second() -> None:
-            results["first to wait"] = attempt(a, f"UPDATE {P}.u SET v = v + 1 WHERE id = 2")
+        def in_a() -> None:
+            results["a"] = attempt(a, f"UPDATE {P}.u SET v = v + 1 WHERE id = 2")
 
-        thread = threading.Thread(target=second)
+        thread = threading.Thread(target=in_a)
         thread.start()
         time.sleep(0.5)
-        results["second to wait"] = attempt(b, f"UPDATE {P}.t SET v = v + 1 WHERE id = 2")
+        results["b"] = attempt(b, f"UPDATE {P}.t SET v = v + 1 WHERE id = 2")
         thread.join()
-        # The server chooses the victim, which differs between runs.
-        sessions = sorted(
-            ((results["first to wait"], a), (results["second to wait"], b)),
-            key=lambda pair: pair[0] == "ran",
-        )
+        # The server chooses the victim, which differs between runs, so the
+        # sessions are shown by outcome.
+        sessions = sorted(((results["a"], a), (results["b"], b)), key=lambda pair: pair[0] == "ran")
         for name, (got, conn) in zip(("the victim", "the other"), sessions, strict=True):
             after = tran_state(conn)
             show(f"a deadlock, {name}", f"{got}; then (@@TRANCOUNT, XACT_STATE()) {after}")
@@ -1184,7 +1189,8 @@ def s10(server: Server) -> None:
 STEPS: tuple[Callable[[Server], None], ...] = (s1, s2, s3, s4, s5, s6, s7, s8, s9, s10)
 
 
-def probe(server: Server) -> None:
+def probe(server: Server) -> bool:
+    """Run every step on the server; False if any step failed."""
     with closing(server.sa()) as sa:
         version, edition = run(
             sa,
@@ -1193,23 +1199,26 @@ def probe(server: Server) -> None:
         )[0]
         driver = f"{sa.getinfo(pyodbc.SQL_DRIVER_NAME)} {sa.getinfo(pyodbc.SQL_DRIVER_VER)}"
     print(f"== {server.label}: {version}, {edition}, pyodbc {pyodbc.version}, {driver}")
+    passed = True
     setup(server)
     try:
         for step in STEPS:
             try:
                 step(server)
             except pyodbc.Error as exc:
+                # The steps after it still run; the probe exits 1.
                 print(f"  STEP {step.__name__} FAILED: {err(exc)}")
+                passed = False
             reset(server)
     finally:
         drop_all(server)
+    return passed
 
 
 def main() -> int:
     sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[attr-defined]
-    for server in servers(sys.argv[1:]):
-        probe(server)
-    return 0
+    results = [probe(server) for server in servers(sys.argv[1:])]
+    return 0 if all(results) else 1
 
 
 if __name__ == "__main__":

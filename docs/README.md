@@ -1296,7 +1296,11 @@ The probes are in `sql/mssql/`, and the matrix of 2019, 2022 and 2025 is the
   set up (#1728, Q5)?**
   Measured on a loopback linked server through MSOLEDBSQL. Outside a
   transaction a four-part `UPDATE` commits on the remote side; **inside one
-  it is refused, `3910`**, and the transaction ends. `OPENQUERY` with a
+  it is refused, `3910`**, and the transaction ends. That is the loopback's
+  limit, which Microsoft documents: a loopback cannot take part in a
+  distributed transaction. **A linked server to another host, with MSDTC,
+  may promote the transaction and run the remote write**, which then
+  commits or rolls back with ours, so UC-3 cannot rely on the refusal. `OPENQUERY` with a
   `SELECT` runs inside one. A pass-through `UPDATE` in `OPENQUERY` returns
   its rows, but leaves the remote row unchanged, inside a transaction or
   outside one. A linked server with a provider string refuses every login

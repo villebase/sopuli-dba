@@ -7,6 +7,7 @@ session is (#1728, Q3). The module drops what it made.
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from typing import Any
@@ -228,6 +229,40 @@ def test_a_lock_wait_ends_at_the_timeout_and_the_session_stays_usable(
     assert not runner.connection_lost
     assert _settings(runner) == (-1, 0, 0)
     assert _value(stack, f"SELECT v FROM {T} WHERE id = 3") == 0
+
+
+def test_a_session_the_server_kills_is_lost(runner: Any, stack: Any) -> None:
+    """A KILL gives 596 as HY000, not 08S01 (review of #1736)."""
+    spid = runner.connection.cursor().execute("SELECT @@SPID").fetchone()[0]
+    holder = stack.connect()
+    holder.autocommit = False
+    holder.cursor().execute(f"UPDATE {T} SET v = 1 WHERE id = 4")
+    killer = threading.Timer(1.5, lambda: _value_after(stack, f"KILL {spid}"))
+    killer.start()
+    try:
+        with pytest.raises(DriverError):
+            runner.run_statement(
+                _sql(f"UPDATE {T} SET v = 2 WHERE id = 4"),
+                guard=RowGuard(expect=1),
+                commit=True,
+                max_rows=1,
+                timeout_ms=0,
+            )
+    finally:
+        killer.join()
+        holder.rollback()
+        holder.close()
+
+    assert runner.connection_lost
+    assert _value(stack, f"SELECT v FROM {T} WHERE id = 4") == 0
+
+
+def _value_after(stack: Any, sql: str) -> None:
+    connection = stack.connect()
+    try:
+        connection.cursor().execute(sql)
+    finally:
+        connection.close()
 
 
 def test_a_datetimeoffset_and_a_hierarchyid_are_read(runner: Any) -> None:

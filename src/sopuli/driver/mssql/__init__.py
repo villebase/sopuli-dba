@@ -5,5 +5,6 @@ extra. The others are tier 0: ``password``, ``limits`` and ``statements``
 compute the value a password change sends and build the statements that send
 it; ``connection``, ``errors``, ``scope`` and ``client`` build the connection
 string, classify a failure and read what the session is, with no client on
-the machine. ``docs/design/02-mssql-privileges.md`` is the spec.
+the machine; ``statement_run`` runs `sql run`'s statement (UC-3) on the
+session's connection. ``docs/design/02-mssql-privileges.md`` is the spec.
 """

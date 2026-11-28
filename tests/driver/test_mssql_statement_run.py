@@ -54,6 +54,14 @@ def _error(state: str, text: str, number: int = 0, *, server: bool = True) -> Ex
 LOCK_TIMED_OUT = _error("HY000", "Lock request time out period exceeded.", 1222)
 QUERY_TIMED_OUT = _error("HYT00", "Query timeout expired", server=False)
 LINK_FAILURE = _error("08S01", "Communication link failure", 10054, server=False)
+#: What a session gets when the server KILLs it (review of #1736).
+KILLED = pyodbc.Error(
+    "HY000",
+    "[HY000] [Microsoft][ODBC Driver 18 for SQL Server]Unspecified error occurred on SQL "
+    "Server. Connection may have been terminated by the server. (0) (SQLExecDirectW); "
+    "[HY000] [Microsoft][ODBC Driver 18 for SQL Server][SQL Server]Cannot continue the "
+    "execution because the session is in the kill state. (596)",
+)
 
 
 class _Cursor:
@@ -259,8 +267,37 @@ def test_a_query_timeout_leaves_the_session_usable() -> None:
         one.run_statement(READ, guard=None, commit=False, max_rows=1, timeout_ms=1000)
 
     assert raised.value.code == "HYT00"
+    assert raised.value.category == "database", "the statement's, not the connection's"
     assert "client stopped it" in (raised.value.hint or "")
     assert not one.connection_lost
+
+
+def test_a_killed_session_is_lost_and_its_commit_unknown() -> None:
+    """The server's 596 comes as HY000, not 08S01 (review of #1736)."""
+    connection = _Connection()
+    connection.failures[COMMIT] = KILLED
+    one = _session(connection)
+
+    with pytest.raises(DriverError) as raised:
+        one.run_statement(WRITE, guard=RowGuard(expect=1), commit=True, max_rows=1, timeout_ms=0)
+
+    assert one.connection_lost
+    assert raised.value.commit_failed
+    assert connection.sent[-1] == COMMIT, "nothing is sent after it"
+    for read in (one.session_user, one.database_identity):
+        with pytest.raises(DriverError, match="lost under an earlier statement"):
+            read()
+
+
+def test_a_rollback_that_fails_marks_the_session_lost() -> None:
+    connection = _Connection()
+    connection.failures[END_TRANSACTION] = QUERY_TIMED_OUT
+    one = _session(connection)
+
+    one.run_statement(READ, guard=None, commit=False, max_rows=5, timeout_ms=0)
+
+    assert one.connection_lost, "the transaction may still be open"
+    assert connection.sent[-1] == END_TRANSACTION, "the settings are not sent after it"
 
 
 def test_a_lost_connection_sends_nothing_more() -> None:

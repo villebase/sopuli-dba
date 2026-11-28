@@ -18,6 +18,7 @@ from sopuli.driver.mssql.errors import (
     CERTIFICATE_HINT,
     DRIVER_HINT,
     STRICT_HINT,
+    connection_gone,
     from_error,
     records,
 )
@@ -214,6 +215,55 @@ def test_an_error_of_pyodbcs_own_keeps_its_sqlstate_as_the_code() -> None:
 
     assert diagnosis.code == "HY106"
     assert diagnosis.message == text
+
+
+def test_a_message_alone_is_not_taken_for_a_sqlstate() -> None:
+    assert from_error(_PyodbcOwnError("some driver text")).code == "HY000"
+
+
+#: What a session waiting on a lock gets when the server KILLs it, measured
+#: on 16.0.4325.4 with pyodbc 5.5.0 (review of #1736), and what the next
+#: statement gets.
+KILLED = (
+    "HY000",
+    "[HY000] [Microsoft][ODBC Driver 18 for SQL Server]Unspecified error occurred on SQL "
+    "Server. Connection may have been terminated by the server. (0) (SQLExecDirectW); "
+    "[HY000] [Microsoft][ODBC Driver 18 for SQL Server][SQL Server]Cannot continue the "
+    "execution because the session is in the kill state. (596)",
+)
+LINK_FAILURE = (
+    "08S01",
+    "[08S01] [Microsoft][ODBC Driver 18 for SQL Server]TCP Provider: An existing connection "
+    "was forcibly closed by the remote host.\r\n (10054) (SQLExecDirectW); [08S01] "
+    "[Microsoft][ODBC Driver 18 for SQL Server]Communication link failure (10054)",
+)
+
+
+@pytest.mark.parametrize(
+    ("args", "gone"),
+    [
+        (KILLED, True),
+        (LINK_FAILURE, True),
+        (
+            (
+                "HYT00",
+                "[HYT00] [Microsoft][ODBC Driver 18 for SQL Server]Query timeout expired (0)",
+            ),
+            False,
+        ),
+        (
+            (
+                "HY000",
+                "[HY000] [Microsoft][ODBC Driver 18 for SQL Server][SQL Server]Lock request time "
+                "out period exceeded. (1222) (SQLExecDirectW)",
+            ),
+            False,
+        ),
+    ],
+    ids=["killed", "link-failure", "query-timeout", "lock-timeout"],
+)
+def test_connection_gone(args: tuple[str, str], gone: bool) -> None:
+    assert connection_gone(_PyodbcOwnError(*args)) is gone
 
 
 def test_an_untrusted_certificate_names_the_settings() -> None:

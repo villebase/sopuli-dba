@@ -3,7 +3,7 @@
 :class:`StatementRunning` gives :class:`~sopuli.driver.mssql.session.MssqlSession`
 the :class:`~sopuli.driver.protocol.StatementRunner` methods. It imports no
 vendor client at its top (ADR-006): pyodbc's errors reach it through the
-session's ``_driver_error`` and ``_is_client_error``.
+session's ``_diagnose`` and ``_is_client_error``.
 
 What the code relies on was measured by ``17_statement_run_probe.py`` (#1729)
 on 15.0.4510.2, 16.0.4325.4, 17.0.5065.9 and 16.0.1000.6, with pyodbc 5.5.0
@@ -29,6 +29,9 @@ and ODBC Driver 18:
   session has no request left, so a capped read leaves the session usable.
 - The statement runs in ``master``, where every login the tool makes lands,
   and names other databases' objects by three-part names (#1728, Q3).
+- A session the server ends, as a ``KILL`` does, gets ``596`` as ``HY000``,
+  not ``08S01``; :func:`~sopuli.driver.mssql.errors.connection_gone` reads
+  both as a lost connection (measured on 16.0.4325.4, #1736).
 """
 
 from __future__ import annotations
@@ -49,11 +52,15 @@ from sopuli.driver.mssql.errors import (
     READ_ONLY_DATABASE,
     SERVER_PERMISSION_DENIED,
     Diagnosis,
+    connection_gone,
 )
 from sopuli.driver.protocol import DriverError, InternalFaultError, StatementResult, Timeouts
+from sopuli.output.debug import logger
 from sopuli.sql.guard import RowGuard
 from sopuli.sql.statement import Statement, StatementKind
 from sopuli.sql.values import JsonValue, to_json
+
+LOG = logger("mssql")
 
 T = TypeVar("T")
 
@@ -78,10 +85,11 @@ TRANSACTION_CONTEXT_IN_USE = "3910"
 #: The ODBC driver cannot read a column of this type.
 TYPE_NOT_SUPPORTED = "HY106"
 
-#: The SQLSTATE class of a connection that is gone. A lock timeout, the query
-#: timeout and a cancel leave the connection usable (probe 17, S6), and so
-#: does a client refusal such as ``HY106`` or ``07002``.
-CONNECTION_EXCEPTION = "08"
+#: The client's own refusals and stops, which the driver classifies as a
+#: connection failure because no server record came with them. The connection
+#: is usable after each (probe 17, S6 and S8), so `sql run` reports them as
+#: the statement's (review of #1736).
+_STATEMENT_CODES = (QUERY_TIMEOUT, CANCELLED, PARAMETER_COUNT, TYPE_NOT_SUPPORTED)
 
 #: `sql run`'s hints, which replace the driver's: those speak of the tool
 #: login and a password change, and here the run-as login runs a statement.
@@ -139,8 +147,11 @@ _LOST_COMMIT = (
 
 
 def for_statement(diagnosis: Diagnosis) -> Diagnosis:
-    """``diagnosis`` with `sql run`'s hint, where it has one. The code and
-    the server's message are kept."""
+    """``diagnosis`` with `sql run`'s hint, where it has one, and a client's
+    own refusal or stop as a ``database`` failure, not a lost connection.
+    The code and the server's message are kept."""
+    if diagnosis.code in _STATEMENT_CODES:
+        diagnosis = replace(diagnosis, category="database")
     hint = _STATEMENT_HINTS.get(diagnosis.code)
     return diagnosis if hint is None else replace(diagnosis, hint=hint)
 
@@ -298,6 +309,7 @@ class StatementRunning:
                 original, current = cursor.fetchone()
                 return str(original), str(current)
 
+            self._open_connection()
             self._logins = self._read(read)
         return self._logins
 
@@ -332,6 +344,7 @@ class StatementRunning:
             server, database = cursor.fetchone()
             return "" if server is None else str(server), "" if database is None else str(database)
 
+        self._open_connection()
         return self._read(read)
 
     def check_write(self, statement: Statement, *, timeout_ms: int) -> None:
@@ -416,7 +429,7 @@ class StatementRunning:
             if not self._is_client_error(error):
                 raise
             raised = for_statement(self._diagnose(error))
-            self._connection_lost = raised.code.startswith(CONNECTION_EXCEPTION)
+            self._connection_lost = connection_gone(error)
             if committing and self._connection_lost:
                 raised = replace(raised, hint=_LOST_COMMIT)
             failure = raised.as_error()
@@ -428,22 +441,31 @@ class StatementRunning:
             for sqltype in OUTPUT_CONVERTERS:
                 connection.remove_output_converter(sqltype)
             connection.timeout = self.timeouts.query_s
-            if not self._connection_lost:
-                undo = [END_TRANSACTION] if begun and not committed else []
-                if settings is not None:
-                    undo.append(settings.restore())
-                for sql in undo:
-                    self._quietly(connection, sql)
+            undo = [END_TRANSACTION] if begun and not committed else []
+            if settings is not None:
+                undo.append(settings.restore())
+            for sql in undo:
+                if self._connection_lost or not self._quietly(connection, sql):
+                    break
 
-    def _quietly(self, connection: Any, sql: str) -> None:
-        """Send ``sql``, and let a failure go: the error being raised, or the
-        result being returned, is the answer."""
+    def _quietly(self, connection: Any, sql: str) -> bool:
+        """Send ``sql``, and say whether it ran. A failure is not raised: the
+        error being raised, or the result being returned, is the answer. But
+        the session is then marked lost, so nothing more is sent on it: a
+        rollback that failed may have left the transaction and its locks
+        open, and a restore that failed the statement's settings in place
+        (review of #1736). `sql run` closes the session, and the server ends
+        the transaction with it."""
         try:
             with _cursor(connection) as cursor:
                 cursor.execute(sql)
         except Exception as error:
             if not self._is_client_error(error):
                 raise
+            LOG.debug("%s: %s failed: %s", self.target.name, sql, self._diagnose(error).code)
+            self._connection_lost = True
+            return False
+        return True
 
     def _open_connection(self) -> Any:
         """The connection, or a refusal to send on one that is lost."""

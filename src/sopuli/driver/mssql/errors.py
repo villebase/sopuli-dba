@@ -289,7 +289,8 @@ def _arguments(exc: Any) -> tuple[str, str]:
     cannot read, where the text comes first (#1731)."""
     args: tuple[Any, ...] = getattr(exc, "args", ())
     if len(args) < 2:
-        return (str(args[0]) if args else ""), " ".join(str(arg) for arg in args)
+        only = str(args[0]) if args else ""
+        return (only if _SQLSTATE.fullmatch(only) else ""), only
     first, second = str(args[0]), str(args[1])
     if not _SQLSTATE.fullmatch(first) and _SQLSTATE.fullmatch(second):
         return second, first
@@ -299,6 +300,30 @@ def _arguments(exc: Any) -> tuple[str, str]:
 def raw_message(exc: Any) -> str:
     """The pyodbc exception's text, where its records are."""
     return _arguments(exc)[1]
+
+
+#: The SQLSTATE class of a connection that is gone.
+CONNECTION_EXCEPTION = "08"
+#: The server ended the session, as a ``KILL`` does: "Cannot continue the
+#: execution because the session is in the kill state". It comes as
+#: ``HY000``, and the next statement gets ``08S01`` (measured on
+#: 16.0.4325.4, #1736).
+SESSION_KILLED = 596
+
+
+def connection_gone(exc: Any) -> bool:
+    """Whether the connection that raised ``exc`` can take nothing more: its
+    SQLSTATE, or any record's, is class ``08``, or the server ended the
+    session (:data:`SESSION_KILLED`). A lock timeout, the query timeout and a
+    cancel leave it usable (probe 17, S6)."""
+    sqlstate, text = _arguments(exc)
+    if sqlstate.startswith(CONNECTION_EXCEPTION):
+        return True
+    return any(
+        record.sqlstate.startswith(CONNECTION_EXCEPTION)
+        or (record.server and record.number == SESSION_KILLED)
+        for record in records(text)
+    )
 
 
 def unchanged(message: str) -> str:

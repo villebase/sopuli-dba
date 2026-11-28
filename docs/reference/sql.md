@@ -2,7 +2,8 @@
 
 # sopuli sql
 
-Run one statement on the selected targets (UC-3). Oracle and PostgreSQL.
+Run one statement on the selected targets (UC-3). Oracle, PostgreSQL,
+MySQL and MariaDB.
 
 The statement runs as the account `run_as:` or `--as` names, never as the
 account the tool uses for its own work.
@@ -38,8 +39,10 @@ that changes no row is rolled back. Exit 0 when every target committed or
 changed no row, 4 when some committed and some did not, 1 when none
 committed, and 5 when no target is of a product this command runs on. A
 target of another product is skipped and does not change the exit code.
+On MySQL and MariaDB a write that names a table without transactions,
+such as MyISAM, is refused before any statement runs.
 
-It runs on Oracle and PostgreSQL.
+It runs on Oracle, PostgreSQL, MySQL and MariaDB.
 
 Options:
 

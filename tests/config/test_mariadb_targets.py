@@ -200,15 +200,15 @@ def test_a_role_names_no_host_on_mariadb() -> None:
 # ------------------------------------------------------------- the driver ---
 
 
-def test_the_driver_serves_exactly_doctor_uc1_uc2_and_three_reports() -> None:
+def test_the_driver_serves_exactly_doctor_uc1_uc2_uc3_and_three_reports() -> None:
     """`doctor` connects (#1268), and UC-1's (#1270, #1271), UC-2's (#1272)
     and UC-5's `report accounts` (#1462), `report history` (#1460) and
     `report privileges` (#1483) commands run: the shared set, which
     `tests/driver/test_driver_registry.py` pins, with which commands are
-    refused."""
+    refused, and UC-3's `sql run` (#1718)."""
     target = loaded(targets=[SERVER]).expanded_targets[0].target
 
-    assert DRIVERS["mariadb"].commands is CONNECTING_COMMANDS
+    assert DRIVERS["mariadb"].commands == CONNECTING_COMMANDS | {"sql.run"}
     assert DRIVERS["mariadb"].extra == "mariadb"
     # PyMySQL's `ed25519` extra brings PyNaCl; without it the extra is not installed.
     assert DRIVERS["mariadb"].provides == frozenset({"pymysql", "nacl"})

@@ -3550,7 +3550,7 @@ there the date is `unknown`, with the reason; the history is still complete.
 ## 9b. Run one query on many targets (UC-3)
 
 `sql run` runs one `SELECT` or `WITH` statement on each selected target and
-shows the rows. With `--write` it runs one write (§*A write*, below). It runs on Oracle and PostgreSQL (§*On PostgreSQL*, below). It never connects as the account in
+shows the rows. With `--write` it runs one write (§*A write*, below). It runs on Oracle, PostgreSQL (§*On PostgreSQL*, below), MySQL and MariaDB (§*On MySQL and MariaDB*, below). It never connects as the account in
 `admin:`. It connects as the account in `run_as:`, here a personal account. As
 SYS in the PDB:
 
@@ -3835,6 +3835,176 @@ differ. Afterwards, as the superuser:
 ```sql
 DROP SCHEMA dba_alpha CASCADE;
 DROP ROLE dba_alpha;
+```
+
+### On MySQL and MariaDB
+
+`sql run` runs on the stack's MySQL and MariaDB too. As root on each, create a
+personal account with a schema, a table with transactions and one without:
+
+```sql
+CREATE DATABASE acme;
+CREATE TABLE acme.acme_settings (name VARCHAR(20) PRIMARY KEY, flag INT) ENGINE=InnoDB;
+INSERT INTO acme.acme_settings VALUES ('audit', 0), ('trace', 0);
+CREATE TABLE acme.acme_log (id INT PRIMARY KEY, note TEXT) ENGINE=MyISAM;
+CREATE USER dba_alpha@'%' IDENTIFIED BY '<PASSWORD>';
+GRANT ALL ON acme.* TO dba_alpha@'%';
+```
+
+Export that password as `DBA_ALPHA_PASSWORD`, and save this as
+`sql-run-mysql.yaml`:
+
+```yaml
+version: 1
+defaults:
+  run_as:
+    username: dba_alpha
+    auth: { method: env, password_env: DBA_ALPHA_PASSWORD }
+targets:
+  - name: mysql-dev
+    type: mysql
+    environment: dev
+    dsn: "127.0.0.1:3306"
+    admin: { username: sopuli_admin, auth: { method: env } }
+    mysql: { ssl_mode: REQUIRED }
+  - name: mariadb-dev
+    type: mariadb
+    environment: dev
+    dsn: "127.0.0.1:3307"
+    admin: { username: sopuli_admin, auth: { method: env } }
+    mariadb: { ssl_mode: REQUIRED }
+```
+
+A read, and then a write with its dry run first:
+
+```
+$ cat settings.sql
+SELECT name, flag FROM acme.acme_settings ORDER BY name;
+$ sopuli --config sql-run-mysql.yaml sql run --file settings.sql
+read statement:
+  SELECT name, flag FROM acme.acme_settings ORDER BY name
+
+TARGET       name   flag
+mysql-dev    audit  0
+mysql-dev    trace  0
+mariadb-dev  audit  0
+mariadb-dev  trace  0
+
+mysql-dev    2 rows
+mariadb-dev  2 rows
+
+2 warnings:
+  targets[0].mysql.ssl_mode: target 'mysql-dev' does not verify the server (`ssl_mode: REQUIRED`)
+    hint: anything between this run and the server can present its own certificate and read the password a run sets. Use `ssl_mode: VERIFY_IDENTITY` (the default), with `ssl_ca` naming the CA that issued the server's certificate
+  targets[1].mariadb.ssl_mode: target 'mariadb-dev' does not verify the server (`ssl_mode: REQUIRED`)
+    hint: anything between this run and the server can present its own certificate and read the password a run sets. Use `ssl_mode: VERIFY_IDENTITY` (the default), with `ssl_ca` naming the CA that issued the server's certificate
+$ cat audit-on.sql
+UPDATE acme.acme_settings SET flag = 1 WHERE name = 'audit';
+$ sopuli --config sql-run-mysql.yaml sql run --write --target mysql-dev --target mariadb-dev --expect-rows 1 --dry-run < audit-on.sql
+Plan: 1 account x 2 targets = 2 writes   [dev]
+
+ACCOUNT    TARGET       INTENT
+dba_alpha  mariadb-dev  sql_write
+dba_alpha  mysql-dev    sql_write
+
+write statement:
+  UPDATE acme.acme_settings SET flag = 1 WHERE name = 'audit'
+
+mariadb-dev  ROLLED_BACK  1 row, rolled back (dry run)
+mysql-dev    ROLLED_BACK  1 row, rolled back (dry run)
+
+plan fingerprint: f8dc2a60a3a2
+to run it, drop --dry-run and add:  --plan f8dc2a60a3a2
+...
+$ sopuli --config sql-run-mysql.yaml sql run --write --target mysql-dev --target mariadb-dev --expect-rows 1 --plan f8dc2a60a3a2 < audit-on.sql
+...
+mariadb-dev  COMMITTED  1 row
+mysql-dev    COMMITTED  1 row
+
+plan fingerprint: f8dc2a60a3a2
+...
+```
+
+Each exits 0. The row count is the rows the statement matched, as on Oracle
+and PostgreSQL, so a dry run of the same write afterwards still counts 1 row,
+although `flag` is 1 already. A read runs in a read-only transaction, and the
+server refuses one that would write:
+
+```
+$ cat lock.sql
+SELECT * FROM acme.acme_settings FOR UPDATE;
+$ sopuli --config sql-run-mysql.yaml sql run --file lock.sql
+read statement:
+  SELECT * FROM acme.acme_settings FOR UPDATE
+
+mysql-dev  ERROR: 1792 (25006): Cannot execute statement in a READ ONLY transaction.
+mariadb-dev  ERROR: 1792 (25006): Cannot execute statement in a READ ONLY transaction
+
+...
+  1792 on mysql-dev, mariadb-dev: a SELECT or WITH runs in a read-only transaction, and `sql run` cannot run one that writes, such as SELECT ... FOR UPDATE, a WITH that writes, or a function that writes
+```
+
+It exits 1. A rollback does not undo a change to a MyISAM table, so a write
+that names one is refused before any statement runs, a dry run too:
+
+```
+$ cat log-clean.sql
+DELETE FROM acme.acme_log WHERE id = 1;
+$ sopuli --config sql-run-mysql.yaml sql run --write --target mysql-dev --max-rows 1 --dry-run < log-clean.sql
+...
+sopuli: target 'mysql-dev': the write names a table whose engine has no transactions, acme.acme_log (MyISAM). A rollback does not undo a change to it, so a dry run or a write its guard refuses would leave it changed
+  hint: nothing was run on any target. `sql run` writes only tables with transactions, so that a dry run and a refused guard can roll every change back: move the table to InnoDB, or change it another way. A column or an alias with such a table's name is refused too: rename it in the statement
+```
+
+It exits 8. A write through a view over that table is not seen before it runs.
+Its dry run's rollback cannot undo it, the server says so, and the run stops.
+After root's `INSERT INTO acme.acme_log VALUES (1, 'before')` and
+`CREATE VIEW acme.v_log AS SELECT id, note FROM acme.acme_log`:
+
+```
+$ cat view-note.sql
+UPDATE acme.v_log SET note = 'after' WHERE id = 1;
+$ sopuli --config sql-run-mysql.yaml sql run --write --target mysql-dev --target mariadb-dev --expect-rows 1 --dry-run < view-note.sql
+Plan: 1 account x 2 targets = 2 writes   [dev]
+
+ACCOUNT    TARGET       INTENT
+dba_alpha  mariadb-dev  sql_write
+dba_alpha  mysql-dev    sql_write
+
+write statement:
+  UPDATE acme.v_log SET note = 'after' WHERE id = 1
+
+mariadb-dev  ERROR          1196: the rollback could not undo every change: a table without transactions, which a trigger, a function or a view wrote, keeps what the statement wrote
+mysql-dev    NOT_ATTEMPTED  not run: the write stopped at mariadb-dev, which did not succeed
+
+plan fingerprint: 1a8e39003328
+the dry run stopped: on mariadb-dev a table without transactions kept the statement's change, although nothing was committed
+check the rows there, and move the table to InnoDB before you dry-run this statement again; the targets after it were not run
+
+...
+  1196 on mariadb-dev: nothing was committed, but the rows may have changed: check them on this target before running again. Move the table to InnoDB before a write reaches it
+  mysql-dev: fix the cause on mariadb-dev, dry-run the remaining targets again, and run again
+```
+
+It exits 4, and on `mariadb-dev` the note is `after`. On MySQL a role is an
+account, so a run-as account granted the service account as a role holds its
+privileges, and the run is refused before any statement runs. After root's
+`GRANT sopuli_admin@'%' TO dba_alpha@'%'`, with the tool account of §*A MySQL
+server*:
+
+```
+$ sopuli --config sql-run-mysql.yaml sql run --target mysql-dev --file settings.sql
+...
+sopuli: defaults.run_as: target 'mysql-dev': the run-as login 'dba_alpha' is a member of 'sopuli_admin', so a statement would have its privileges. 'sopuli_admin' is the account the tool uses for its own work. No statement ran on any target
+  hint: name a personal or owner account with `run_as:` or `--as USER` that does not hold the service account as a role, directly or through another role, or revoke that grant
+```
+
+It exits 8. Afterwards, as root on each:
+
+```sql
+REVOKE sopuli_admin@'%' FROM dba_alpha@'%';  -- MySQL only
+DROP DATABASE acme;
+DROP USER dba_alpha@'%';
 ```
 
 ---

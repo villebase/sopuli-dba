@@ -17,10 +17,10 @@ account can answer, and names the server by its ``server_uuid``. For UC-2 it
 resolves a `role:` rule (:mod:`~sopuli.driver.mysql.roles`), resets a
 password, suspends an account and expires a password. For UC-5 it surveys
 every account and every privilege, for `report accounts` and `report
-privileges`. For UC-3 it runs one statement in a guarded transaction
-(:class:`~sopuli.driver.mysql_family.statement_run.StatementRunning`), which
-`sql run` does not use yet (#1718). The registry lists `doctor`, the `creds`
-commands, every `account` command and the `report` commands.
+privileges`. For UC-3's `sql run` it runs one statement in a guarded
+transaction (:class:`~sopuli.driver.mysql_family.statement_run.StatementRunning`).
+The registry lists `doctor`, the `creds` commands, every `account` command,
+the `report` commands and `sql run`.
 :meth:`MysqlSession.apply_attributes`, which a policy's `account:` block needs,
 is never reached, because a capability check refuses the block first. If it
 is, it raises :class:`~sopuli.driver.protocol.InternalFaultError` without a

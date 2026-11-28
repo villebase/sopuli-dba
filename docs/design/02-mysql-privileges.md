@@ -671,8 +671,7 @@ guard reads `@@performance_schema` first and says it is unavailable.
 
 UC-3 (`../use-cases/uc-03-run-statement.md`) runs a statement the operator
 writes, as the run-as account the config names in `run_as:`, never as the tool
-account. `sql run` does not run on MySQL yet (#1718); the session check below
-is built.
+account.
 
 - UC-3 adds no grant to the tool account, and §2.1 does not change.
 - Before any statement runs, the tool reads `CURRENT_USER()` and refuses the
@@ -682,4 +681,6 @@ is built.
   ([#1713](../decisions/log.md#1713), Q1).
 - The run-as account needs nothing beyond what its statements need. Any
   account reads `CURRENT_USER()`, `@@global.server_uuid` and its own rows of
-  `APPLICABLE_ROLES` (`13_statement_run_probe.py`, #1714).
+  `APPLICABLE_ROLES` (`13_statement_run_probe.py`, #1714). For a write it reads
+  `INFORMATION_SCHEMA.TABLES` and `ENGINES`, which list the tables it has a
+  privilege on, to refuse a write to one without transactions (UC-3 §4).

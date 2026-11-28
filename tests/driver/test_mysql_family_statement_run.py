@@ -513,6 +513,18 @@ def test_a_statement_lost_with_its_connection_is_not_a_failed_commit() -> None:
     assert session.connection_lost is True
     assert raised.value.hint is not None
     assert "--timeout" in raised.value.hint
+    # The server's 1196 cannot be read on a lost connection, so a kept change
+    # to a table without transactions is not ruled out (review of #1725).
+    assert raised.value.rollback_incomplete is True
+    assert "check the rows" in raised.value.hint
+
+
+def test_a_read_lost_with_its_connection_is_not_an_incomplete_rollback() -> None:
+    session, connection = _mysql()
+    connection.failures[READ.text] = pymysql.err.OperationalError(2013, "Lost connection")
+    with pytest.raises(DriverError) as raised:
+        _run(session, READ, guard=None, commit=False)
+    assert raised.value.rollback_incomplete is False
 
 
 def test_a_lost_session_refuses_before_sending_anything() -> None:

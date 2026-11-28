@@ -332,7 +332,8 @@ def test_a_target_that_verifies_the_server_does_not_warn(mysql: dict[str, str] |
 def test_the_commands_the_mysql_driver_is_written_for() -> None:
     """UC-1 (#1223), UC-2 (#1225) and UC-5's `report accounts` (#1461),
     `report history` (#1460) and `report privileges` (#1482): the shared set,
-    which `tests/driver/test_driver_registry.py` pins."""
+    which `tests/driver/test_driver_registry.py` pins, and UC-3's `sql run`
+    (#1718)."""
     target = server()
 
     for command in (
@@ -343,4 +344,4 @@ def test_the_commands_the_mysql_driver_is_written_for() -> None:
         "report.privileges",
     ):
         require_command(target, command)
-    assert DRIVERS["mysql"].commands is CONNECTING_COMMANDS
+    assert DRIVERS["mysql"].commands == CONNECTING_COMMANDS | {"sql.run"}

@@ -25,11 +25,10 @@ for `report privileges`, with the global level from the optional view
 `sopuli.global_privileges` (:mod:`~sopuli.driver.mariadb.global_privileges`,
 #1483). Besides `doctor`, which the registry never lists, it lists UC-1's
 `creds generate`, `apply`, `check`, `rotate`, `status` and `finish-rollover`,
-UC-2's four verbs, and UC-5's `report accounts`, `report history` and
-`report privileges`; another command refuses a MariaDB target with
-``SOPULI-20006``. For UC-3 it runs one statement in a guarded transaction
-(:class:`~sopuli.driver.mysql_family.statement_run.StatementRunning`), which
-`sql run` does not use yet (#1718).
+UC-2's four verbs, UC-5's `report accounts`, `report history` and `report
+privileges`, and UC-3's `sql run`, which runs one statement in a guarded
+transaction (:class:`~sopuli.driver.mysql_family.statement_run.StatementRunning`);
+another command refuses a MariaDB target with ``SOPULI-20006``.
 
 The session names its server by ``@@server_uid``, so the CLI refuses two
 targets that are one server, as on MySQL (#1286). MariaDB has no

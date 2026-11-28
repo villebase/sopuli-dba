@@ -446,7 +446,9 @@ def refuse_unrollable(
         raise StatementRefusedError(
             "; ".join(refused),
             hint="nothing was run on any target. `sql run` writes only tables with "
-            "transactions, so a dry run and a refused guard can roll every change back",
+            "transactions, so that a dry run and a refused guard can roll every change "
+            "back: move the table to InnoDB, or change it another way. A column or an "
+            "alias with such a table's name is refused too: rename it in the statement",
         )
 
 
@@ -523,7 +525,14 @@ def _interrupted(one: Connection, *, commit: bool) -> TargetOutcome:
         hint = "check the rows on this target before you run it again"
     else:
         said = "a dry run commits nothing"
-        hint = "nothing was committed; dry-run again"
+        # On MySQL and MariaDB a table without transactions, written through
+        # a view, a trigger or a function, keeps its change, and an interrupt
+        # leaves no time to read whether one did (UC-3 §4).
+        hint = (
+            "nothing was committed. On MySQL and MariaDB a table without transactions "
+            "may still have kept a change: check the rows on this target before you "
+            "dry-run again"
+        )
     return TargetOutcome(
         one.target.name,
         one.run_as,

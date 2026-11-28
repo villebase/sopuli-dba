@@ -702,3 +702,25 @@ image starts with it off, and
 PyMySQL, given a TLS context, refuses the login itself with `2026`
 (`06_pymysql_login_probe.py`, PL2). A 10.11 target whose `ssl_mode` requires
 TLS needs TLS turned on at the server.
+
+## 8. UC-3 adds no grant
+
+UC-3 (`../use-cases/uc-03-run-statement.md`) runs a statement the operator
+writes, as the run-as account the config names in `run_as:`, never as the tool
+account.
+
+- UC-3 adds no grant to the tool account, and §2.1 does not change.
+- Before any statement runs, the tool reads `CURRENT_USER()` and refuses the
+  run when its user name is the tool account's. A MariaDB role is never an
+  account, so the tool account cannot be granted to the run-as account as a
+  role (`1064`), and no role is read
+  ([#1713](../decisions/log.md#1713), Q1).
+- The run-as account needs nothing beyond what its statements need. Any
+  account reads `CURRENT_USER()` and `@@global.server_uid`
+  (`18_statement_run_probe.py`, #1714). For a write it reads
+  `INFORMATION_SCHEMA.TABLES` and `ENGINES`, which list the tables it has a
+  privilege on, to refuse a write to one without transactions, such as an
+  Aria table (UC-3 §4).
+- An account's own `SHOW GRANTS` holds its stored password value. `sql run`
+  refuses `SHOW`, so a statement cannot print it that way; a `SELECT` on
+  `mysql.global_priv` can, where the run-as account may read it.

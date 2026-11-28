@@ -297,7 +297,10 @@ DRIVERS: dict[str, DatabaseDriver] = {
     # (#1460); `report privileges`, one row per path, each with its level.
     # Under `partial_revokes` the revokes come from the optional view
     # `sopuli.account_state`, and global privileges are not checked without it
-    # (#1482, #1502).
+    # (#1482, #1502). UC-3: `sql run`, a read in a read-only transaction and a
+    # write that commits only past its guard (#1716), as a run-as account that
+    # is not the service account or granted it as a role (#1722), refusing a
+    # write that names a table without transactions (#1723).
     "mysql": DatabaseDriver(
         module="sopuli.driver.mysql.session",
         extra="mysql",
@@ -312,7 +315,7 @@ DRIVERS: dict[str, DatabaseDriver] = {
             "MySQL has no profiles; declare these accounts by name with `accounts:`, "
             "or by a role they hold with `role:`"
         ),
-        commands=CONNECTING_COMMANDS,
+        commands=CONNECTING_COMMANDS | {"sql.run"},
     ),
     # PyMySQL reaches MariaDB too, and its `ed25519` extra brings PyNaCl for that
     # plugin (#1267, decisions 1 and 5), so the extra provides `nacl` as well as
@@ -339,7 +342,8 @@ DRIVERS: dict[str, DatabaseDriver] = {
     # are not checked without it (#1491). `report privileges`, one row per
     # path: an account's global level comes from the optional view
     # `sopuli.global_privileges`, and is not checked without it, or for a role
-    # or `PUBLIC` (#1483, decisions A and C).
+    # or `PUBLIC` (#1483, decisions A and C). UC-3: `sql run`, as on MySQL
+    # (#1716, #1723), where a role is never an account, so no role check.
     "mariadb": DatabaseDriver(
         module="sopuli.driver.mariadb.session",
         extra="mariadb",
@@ -355,7 +359,7 @@ DRIVERS: dict[str, DatabaseDriver] = {
             "MariaDB has no profiles; declare these accounts by name with `accounts:`, "
             "or by a role they hold with `role:`"
         ),
-        commands=CONNECTING_COMMANDS,
+        commands=CONNECTING_COMMANDS | {"sql.run"},
     ),
     # The session connects and reports the instance for `doctor` (#1549),
     # changes a password for UC-1 (#1551), reads a login for `creds status`
